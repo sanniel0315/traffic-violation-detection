@@ -1,0 +1,75 @@
+cameras:
+  cam_01:
+    detect:
+      fps: 10
+      height: 1080
+      width: 1920
+    enabled: true
+    ffmpeg:
+      inputs:
+      - path: rtsp://admin:admin@192.168.0.100:554/stream1
+        roles:
+        - detect
+        - record
+    objects:
+      filters:
+        car:
+          max_area: 500000
+          min_area: 5000
+          min_score: 0.5
+        motorcycle:
+          max_area: 100000
+          min_area: 1000
+          min_score: 0.5
+      track:
+      - car
+      - motorcycle
+      - bicycle
+      - person
+    record:
+      alerts:
+        retain:
+          days: 14
+      detections:
+        retain:
+          days: 14
+      enabled: true
+      retain:
+        days: 7
+        mode: motion
+    snapshots:
+      bounding_box: true
+      enabled: true
+      retain:
+        default: 14
+      timestamp: true
+    zones:
+      sidewalk_zone:
+        coordinates: 100,500,800,500,800,900,100,900
+        objects:
+        - car
+        - motorcycle
+detect:
+  enabled: true
+detectors:
+  tensorrt:
+    device: 0
+    type: tensorrt
+ffmpeg:
+  hwaccel_args: preset-jetson-h264
+  output_args:
+    record: preset-record-generic-audio-copy
+mqtt:
+  enabled: false
+record:
+  enabled: true
+  retain:
+    days: 7
+    mode: motion
+snapshots:
+  bounding_box: true
+  enabled: true
+  retain:
+    default: 14
+  timestamp: true
+version: 0.16-0

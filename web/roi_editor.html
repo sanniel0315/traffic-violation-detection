@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>ROI 編輯器</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/element-plus"></script>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; }
+        .roi-wrapper { position: relative; display: inline-block; margin-top: 16px; }
+        .roi-wrapper img { max-width: 100%; display: block; }
+        .roi-wrapper canvas { position: absolute; top: 0; left: 0; cursor: crosshair; }
+        .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+        .zone-list { margin-top: 20px; }
+        .zone-item { display: flex; align-items: center; gap: 12px; padding: 10px; background: #f5f5f5; border-radius: 4px; margin-bottom: 8px; }
+        .zone-color { width: 24px; height: 24px; border-radius: 4px; }
+        .instructions { background: #e6f7ff; padding: 12px; border-radius: 4px; margin-bottom: 16px; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div class="container">
+        <h2>ROI 偵測區域設定 - {{ cameraName }}</h2>
+        
+        <div class="instructions">
+            <strong>操作說明：</strong>
+            <ul style="margin:8px 0 0 20px">
+                <li>在影像上<strong>點擊</strong>來繪製多邊形頂點（至少 3 點）</li>
+                <li><strong>右鍵點擊</strong>可取消上一個點</li>
+                <li>完成後點擊「儲存區域」按鈕</li>
+            </ul>
+        </div>
+        
+        <div class="toolbar">
+            <span>區域類型：</span>
+            <el-radio-group v-model="zoneType">
+                <el-radio-button value="detection">偵測區</el-radio-button>
+                <el-radio-button value="stop_line">停止線</el-radio-button>
+                <el-radio-button value="crosswalk">斑馬線</el-radio-button>
+                <el-radio-button value="no_parking">禁停區</el-radio-button>
+            </el-radio-group>
+            <el-input v-model="zoneName" placeholder="區域名稱" style="width:150px"/>
+            <el-button type="primary" @click="saveZone" :disabled="points.length < 3">💾 儲存區域</el-button>
+            <el-button @click="clearPoints">🗑️ 清除繪製</el-button>
+            <el-button @click="undoPoint" :disabled="!points.length">↩️ 取消上一點</el-button>
+        </div>
+        
+        <div class="roi-wrapper">
+            <img ref="imgRef" :src="imageUrl" @load="initCanvas" crossorigin="anonymous">
+            <canvas ref="canvasRef" @click="addPoint" @contextmenu.prevent="undoPoint"></canvas>
+        </div>
+        
+        <div class="zone-list" v-if="zones.length">
+            <h3>已設定的區域 ({{ zones.length }})</h3>
+            <div class="zone-item" v-for="(zone, idx) in zones" :key="idx">
+                <div class="zone-color" :style="{background: colors[zone.type]}"></div>
+                <span style="flex:1">{{ zone.name }} ({{ typeNames[zone.type] }})</span>
+                <span style="color:#999">{{ zone.points.length }} 點</span>
+                <el-button size="small" type="danger" @click="deleteZone(idx)">刪除</el-button>
+            </div>
+        </div>
+        
+        <div style="margin-top:20px">
+            <el-button @click="goBack">← 返回</el-button>
+        </div>
+    </div>
+</div>
+
+<script>
+const { createApp, ref, onMounted, nextTick } = Vue;
+
+createApp({
+    setup() {
+        const cameraId = new URLSearchParams(location.search).get('id') || 1;
+        const cameraName = ref('攝影機');
+        const imageUrl = ref('');
+        const imgRef = ref(null);
+        const canvasRef = ref(null);
+        const points = ref([]);
+        const zones = ref([]);
+        const zoneType = ref('detection');
+        const zoneName = ref('');
+        
+        const colors = {
+            detection: '#67c23a',
+            stop_line: '#e6a23c', 
+            crosswalk: '#409eff',
+            no_parking: '#f56c6c'
+        };
+        const typeNames = {
+            detection: '偵測區',
+            stop_line: '停止線',
+            crosswalk: '斑馬線',
+            no_parking: '禁停區'
+        };
+        
+        const loadCamera = async () => {
+            try {
+                const res = await fetch(`/api/cameras/${cameraId}`);
+                const data = await res.json();
+                cameraName.value = data.name;
+                zones.value = data.zones || [];
+                imageUrl.value = `/api/stream/${cameraId}/snapshot?t=${Date.now()}`;
+            } catch (e) {
+                console.error(e);
+            }
+        };
+        
+        const initCanvas = () => {
+            nextTick(() => {
+                const img = imgRef.value;
+                const canvas = canvasRef.value;
+                if (img && canvas) {
+                    canvas.width = img.clientWidth;
+                    canvas.height = img.clientHeight;
+                    draw();
+                }
+            });
+        };
+        
+        const draw = () => {
+            const canvas = canvasRef.value;
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // 畫已儲存的區域
+            zones.value.forEach(zone => {
+                ctx.fillStyle = colors[zone.type] + '40';
+                ctx.strokeStyle = colors[zone.type];
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                zone.points.forEach((p, i) => {
+                    if (i === 0) ctx.moveTo(p[0], p[1]);
+                    else ctx.lineTo(p[0], p[1]);
+                });
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                // 標籤
+                if (zone.points.length > 0) {
+                    ctx.fillStyle = colors[zone.type];
+                    ctx.font = '14px sans-serif';
+                    ctx.fillText(zone.name, zone.points[0][0] + 5, zone.points[0][1] - 5);
+                }
+            });
+            
+            // 畫正在繪製的點
+            if (points.value.length) {
+                ctx.fillStyle = colors[zoneType.value] + '40';
+                ctx.strokeStyle = colors[zoneType.value];
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                points.value.forEach((p, i) => {
+                    if (i === 0) ctx.moveTo(p[0], p[1]);
+                    else ctx.lineTo(p[0], p[1]);
+                });
+                if (points.value.length > 2) ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                // 畫頂點
+                points.value.forEach((p, i) => {
+                    ctx.beginPath();
+                    ctx.arc(p[0], p[1], 6, 0, Math.PI * 2);
+                    ctx.fillStyle = colors[zoneType.value];
+                    ctx.fill();
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '10px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(i + 1, p[0], p[1] + 3);
+                });
+            }
+        };
+        
+        const addPoint = (e) => {
+            const rect = canvasRef.value.getBoundingClientRect();
+            const x = Math.round(e.clientX - rect.left);
+            const y = Math.round(e.clientY - rect.top);
+            points.value.push([x, y]);
+            draw();
+        };
+        
+        const undoPoint = () => {
+            points.value.pop();
+            draw();
+        };
+        
+        const clearPoints = () => {
+            points.value = [];
+            draw();
+        };
+        
+        const saveZone = async () => {
+            if (points.value.length < 3) {
+                ElementPlus.ElMessage.warning('至少需要 3 個點');
+                return;
+            }
+            
+            const newZone = {
+                type: zoneType.value,
+                name: zoneName.value || `${typeNames[zoneType.value]} ${zones.value.length + 1}`,
+                points: [...points.value]
+            };
+            
+            const newZones = [...zones.value, newZone];
+            
+            try {
+                await fetch(`/api/cameras/${cameraId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ zones: newZones })
+                });
+                
+                zones.value = newZones;
+                points.value = [];
+                zoneName.value = '';
+                draw();
+                ElementPlus.ElMessage.success('區域已儲存');
+            } catch (e) {
+                ElementPlus.ElMessage.error('儲存失敗');
+            }
+        };
+        
+        const deleteZone = async (idx) => {
+            const newZones = zones.value.filter((_, i) => i !== idx);
+            try {
+                await fetch(`/api/cameras/${cameraId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ zones: newZones })
+                });
+                zones.value = newZones;
+                draw();
+                ElementPlus.ElMessage.success('已刪除');
+            } catch (e) {
+                ElementPlus.ElMessage.error('刪除失敗');
+            }
+        };
+        
+        const goBack = () => {
+            window.location.href = '/web/';
+        };
+        
+        onMounted(() => {
+            loadCamera();
+        });
+        
+        return {
+            cameraId, cameraName, imageUrl, imgRef, canvasRef,
+            points, zones, zoneType, zoneName, colors, typeNames,
+            initCanvas, addPoint, undoPoint, clearPoints, saveZone, deleteZone, goBack
+        };
+    }
+}).use(ElementPlus).mount('#app');
+</script>
+</body>
+</html>

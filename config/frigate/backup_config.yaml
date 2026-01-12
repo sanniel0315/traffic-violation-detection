@@ -1,0 +1,83 @@
+# Frigate NVR 配置 - Jetson Xavier NX
+mqtt:
+  enabled: false  # 先關閉，之後可整合 Home Assistant
+
+# 使用 TensorRT 偵測器 (Jetson 優化)
+detectors:
+  tensorrt:
+    type: tensorrt
+    device: 0
+
+# FFmpeg 硬體加速 (Jetson)
+ffmpeg:
+  hwaccel_args: preset-jetson-h264
+  output_args:
+    record: preset-record-generic-audio-copy
+
+# 攝影機設定
+cameras:
+  # 範例攝影機 - 請修改為實際 RTSP URL
+  cam_01:
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsp://admin:admin@192.168.0.100:554/stream1
+          roles:
+            - detect
+            - record
+    detect:
+      width: 1920
+      height: 1080
+      fps: 10
+    objects:
+      track:
+        - car
+        - motorcycle
+        - bicycle
+        - person
+      filters:
+        car:
+          min_area: 5000
+          max_area: 500000
+          min_score: 0.5
+        motorcycle:
+          min_area: 1000
+          max_area: 100000
+          min_score: 0.5
+    # 違規偵測區域
+    zones:
+      sidewalk_zone:
+        coordinates: 100,500,800,500,800,900,100,900
+        objects:
+          - car
+          - motorcycle
+    record:
+      enabled: true
+      retain:
+        days: 7
+        mode: motion
+      events:
+        retain:
+          default: 14
+          mode: active_objects
+    snapshots:
+      enabled: true
+      timestamp: true
+      bounding_box: true
+      retain:
+        default: 14
+
+# 錄影設定
+record:
+  enabled: true
+  retain:
+    days: 7
+    mode: motion
+
+# 快照設定
+snapshots:
+  enabled: true
+  timestamp: true
+  bounding_box: true
+  retain:
+    default: 14

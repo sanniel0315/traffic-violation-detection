@@ -1,0 +1,41 @@
+# ===== 核心框架 =====
+numpy>=1.24.0
+opencv-python-headless>=4.8.0
+Pillow>=10.0.0
+
+# ===== AI/ML =====
+ultralytics>=8.0.0
+
+# ===== OCR 車牌辨識 =====
+easyocr>=1.7.0
+paddleocr>=2.7.0
+
+# ===== Web 後端 =====
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+websockets>=12.0
+aiofiles>=23.2.0
+
+# ===== 資料庫 =====
+sqlalchemy>=2.0.0
+asyncpg>=0.29.0
+alembic>=1.12.0
+redis>=5.0.0
+
+# ===== MQTT =====
+paho-mqtt>=1.6.0
+
+# ===== 工具 =====
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+loguru>=0.7.0
+tqdm>=4.66.0
+shapely>=2.0.0
+schedule>=1.2.0
+
+# ===== 開發工具 =====
+pytest>=7.4.0
+black>=23.0.0
+pyyaml
