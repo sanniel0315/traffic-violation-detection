@@ -13,6 +13,7 @@ services:
     command: python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
     restart: unless-stopped
     environment:
+      - TZ=Asia/Taipei
       - FRIGATE_HOST=frigate
       - FRIGATE_PORT=5000
 
@@ -52,4 +53,7 @@ services:
       - "8555:8555/tcp"
       - "8555:8555/udp"
     environment:
+      - TZ=Asia/Taipei
       - FRIGATE_RTSP_PASSWORD=admin123
+
+# 時區設定已加入 environment

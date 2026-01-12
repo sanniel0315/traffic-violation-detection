@@ -15,6 +15,7 @@ router = APIRouter(prefix="/api/lpr/stream", tags=["lpr-stream"])
 
 _lpr_tasks: Dict[int, 'LPRStreamTask'] = {}
 _yolo_model = None
+_yolo_lock = threading.Lock()
 _recognizer = None
 
 SNAPSHOT_DIR = '/workspace/storage/lpr_snapshots'
@@ -24,7 +25,7 @@ def get_yolo():
     global _yolo_model
     if _yolo_model is None:
         from ultralytics import YOLO
-        _yolo_model = YOLO('/workspace/yolov8n.pt')
+        _yolo_model = YOLO('/workspace/yolov8n.engine', task='detect')
     return _yolo_model
 
 def get_recognizer():
@@ -93,7 +94,8 @@ class LPRStreamTask:
                 continue
                 
             try:
-                results = yolo(frame, verbose=False, conf=0.5)
+                with _yolo_lock:
+                    results = yolo(frame, verbose=False, conf=0.5)
                 
                 for r in results:
                     for box in r.boxes:
