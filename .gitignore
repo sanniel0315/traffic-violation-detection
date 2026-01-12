@@ -1,62 +1,37 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
-.Python
 .env
-.venv
-env/
 venv/
+.venv/
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Docker
-.docker/
-
-# 資料檔案
-*.db
-*.sqlite
-storage/violations/*
-storage/lpr_snapshots/*
-!storage/violations/.gitkeep
-!storage/lpr_snapshots/.gitkeep
-
-# 模型檔案
+# Models (大檔案)
 *.pt
 *.engine
 *.onnx
+models/
 
-# 日誌
-*.log
-logs/
+# Storage (運行時資料)
+storage/
+output/
 
-# 系統
-.DS_Store
-Thumbs.db
-
-# 敏感資訊
-.env
-*.pem
-*.key
-
-# 大型檔案
-*.pt
-*.engine
-*.onnx
-*.weights
-storage/lpr_snapshots/*
-storage/violations/*
+# Frigate
 config/frigate/*.db*
 
 # 測試檔案
 *.mp4
 *.avi
 *.mkv
-output/violations/*
-source/*.mp4
+source/
+
+# IDE
+.vscode/
+.idea/
+
+# Git backup
 .git_backup/
+
+# Logs
+*.log
+nohup.out
