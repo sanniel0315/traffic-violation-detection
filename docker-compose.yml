@@ -1,0 +1,55 @@
+services:
+  # 主 API 服務
+  api:
+    build: .
+    image: traffic-dev:latest
+    container_name: traffic-api
+    runtime: nvidia
+    volumes:
+      - ./:/workspace
+    working_dir: /workspace
+    ports:
+      - "8000:8000"
+    command: python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+    environment:
+      - FRIGATE_HOST=frigate
+      - FRIGATE_PORT=5000
+
+  # 開發環境
+  dev:
+    build: .
+    image: traffic-dev:latest
+    container_name: traffic-dev
+    runtime: nvidia
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./:/workspace
+    working_dir: /workspace
+    network_mode: host
+
+  # Frigate NVR - Jetson 專用版本
+  frigate:
+    container_name: frigate
+    privileged: true
+    restart: unless-stopped
+    # Jetson JetPack 6 版本
+    image: ghcr.io/blakeblackshear/frigate:stable-tensorrt-jp6
+    runtime: nvidia
+    shm_size: "256mb"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./config/frigate:/config
+      - ./storage/frigate:/media/frigate
+      - type: tmpfs
+        target: /tmp/cache
+        tmpfs:
+          size: 256000000
+    ports:
+      - "5000:5000"
+      - "8554:8554"
+      - "8555:8555/tcp"
+      - "8555:8555/udp"
+    environment:
+      - FRIGATE_RTSP_PASSWORD=admin123

@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""台灣車牌辨識模組"""
+import re
+import cv2
+import numpy as np
+from typing import Optional, Dict, List, Any
+
+class PlateRecognizer:
+    """車牌辨識器"""
+    
+    # 台灣車牌格式
+    PLATE_PATTERNS = [
+        r'^[A-Z]{2,3}-\d{4}$',      # 舊式: AB-1234, ABC-1234
+        r'^[A-Z]{2,3}-\d{2,3}$',    # 機車: AB-123, ABC-12
+        r'^\d{4}-[A-Z]{2}$',        # 新式: 1234-AB
+        r'^[A-Z]{3}-\d{4}$',        # 新式小客車: ABC-1234
+    ]
+    
+    def __init__(self, use_paddleocr: bool = True):
+        """
+        初始化車牌辨識器
+        
+        Args:
+            use_paddleocr: 是否使用 PaddleOCR
+        """
+        self.ocr = None
+        self.use_paddleocr = use_paddleocr
+        
+        if use_paddleocr:
+            try:
+                from paddleocr import PaddleOCR
+                self.ocr = PaddleOCR(
+                    use_angle_cls=True,
+                    lang='en'
+                )
+                print("✅ PaddleOCR 初始化完成")
+            except ImportError:
+                print("⚠️ PaddleOCR 未安裝，使用備用方法")
+                self.use_paddleocr = False
+    
+    def preprocess_plate(self, plate_img: np.ndarray) -> np.ndarray:
+        """車牌影像預處理"""
+        # 轉灰階
+        if len(plate_img.shape) == 3:
+            gray = cv2.cvtColor(plate_img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = plate_img
+        
+        # 調整大小
+        h, w = gray.shape
+        if w < 100:
+            scale = 100 / w
+            gray = cv2.resize(gray, None, fx=scale, fy=scale)
+        
+        # 二值化
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        binary = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, 11, 2
+        )
+        
+        return binary
+    
+    def detect_plate_region(self, frame: np.ndarray, vehicle_bbox: Dict) -> Optional[np.ndarray]:
+        """從車輛區域偵測車牌位置"""
+        x1 = vehicle_bbox['x1']
+        y1 = vehicle_bbox['y1']
+        x2 = vehicle_bbox['x2']
+        y2 = vehicle_bbox['y2']
+        
+        # 擷取車輛區域
+        vehicle_roi = frame[y1:y2, x1:x2]
+        if vehicle_roi.size == 0:
+            return None
+        
+        # 車牌通常在下半部
+        h, w = vehicle_roi.shape[:2]
+        lower_half = vehicle_roi[int(h*0.5):, :]
+        
+        # 轉灰階並邊緣偵測
+        gray = cv2.cvtColor(lower_half, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 100, 200)
+        
+        # 尋找輪廓
+        contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:10]:
+            peri = cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+            
+            if len(approx) == 4:
+                x, y, w, h = cv2.boundingRect(approx)
+                aspect_ratio = w / h
+                
+                # 台灣車牌比例約 2:1 ~ 4:1
+                if 1.5 < aspect_ratio < 5 and w > 60:
+                    plate_roi = lower_half[y:y+h, x:x+w]
+                    return plate_roi
+        
+        return None
+    
+    def recognize(self, plate_img: np.ndarray) -> Dict[str, Any]:
+        """
+        辨識車牌文字
+        
+        Returns:
+            {
+                'plate_number': str,
+                'confidence': float,
+                'valid': bool
+            }
+        """
+        if plate_img is None or plate_img.size == 0:
+            return {'plate_number': None, 'confidence': 0, 'valid': False}
+        
+        processed = self.preprocess_plate(plate_img)
+        text = ""
+        confidence = 0.0
+        
+        if self.ocr:
+            try:
+                result = self.ocr.ocr(processed, cls=True)
+                if result and result[0]:
+                    texts = []
+                    confs = []
+                    for line in result[0]:
+                        texts.append(line[1][0])
+                        confs.append(line[1][1])
+                    text = ''.join(texts).upper()
+                    confidence = sum(confs) / len(confs) if confs else 0
+            except Exception as e:
+                print(f"OCR 錯誤: {e}")
+        
+        # 清理文字
+        plate_number = self._clean_plate_text(text)
+        valid = self._validate_plate(plate_number)
+        
+        return {
+            'plate_number': plate_number,
+            'confidence': confidence,
+            'valid': valid
+        }
+    
+    def _clean_plate_text(self, text: str) -> str:
+        """清理車牌文字"""
+        # 移除空白和特殊字元
+        text = re.sub(r'[^A-Z0-9]', '', text.upper())
+        
+        # 常見 OCR 錯誤修正
+        corrections = {
+            '0': 'O', 'O': '0',  # 視情況
+            '1': 'I', 'I': '1',
+            '5': 'S', 'S': '5',
+            '8': 'B', 'B': '8',
+        }
+        
+        # 嘗試加入分隔符
+        if len(text) >= 6:
+            # 嘗試 XXX-0000 格式
+            if text[:3].isalpha() and text[3:].isdigit():
+                return f"{text[:3]}-{text[3:]}"
+            # 嘗試 XX-0000 格式
+            if text[:2].isalpha() and text[2:].isdigit():
+                return f"{text[:2]}-{text[2:]}"
+            # 嘗試 0000-XX 格式
+            if text[:4].isdigit() and text[4:].isalpha():
+                return f"{text[:4]}-{text[4:]}"
+        
+        return text
+    
+    def _validate_plate(self, plate: str) -> bool:
+        """驗證車牌格式"""
+        if not plate:
+            return False
+        for pattern in self.PLATE_PATTERNS:
+            if re.match(pattern, plate):
+                return True
+        return False
+    
+    def process_vehicle(self, frame: np.ndarray, vehicle_bbox: Dict) -> Dict[str, Any]:
+        """處理單一車輛，偵測並辨識車牌"""
+        plate_roi = self.detect_plate_region(frame, vehicle_bbox)
+        
+        if plate_roi is not None:
+            result = self.recognize(plate_roi)
+            result['plate_image'] = plate_roi
+            return result
+        
+        return {'plate_number': None, 'confidence': 0, 'valid': False}
+
+
+if __name__ == '__main__':
+    recognizer = PlateRecognizer(use_paddleocr=False)
+    print("車牌辨識器測試完成")

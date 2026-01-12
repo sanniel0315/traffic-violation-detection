@@ -1,0 +1,1381 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>交通違規影像分析系統</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/element-plus"></script>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Microsoft JhengHei", sans-serif; background: #f0f2f5; }
+        .layout { display: flex; min-height: 100vh; }
+        
+        /* 側邊欄 */
+        .sidebar { width: 200px; background: #fff; border-right: 1px solid #e5e5e5; flex-shrink: 0; }
+        .sidebar-header { padding: 16px; font-weight: bold; color: #333; border-bottom: 1px solid #eee; }
+        .menu-item { display: flex; align-items: center; padding: 12px 16px; color: #666; cursor: pointer; border-left: 3px solid transparent; }
+        .menu-item:hover { background: #f5f5f5; color: #333; }
+        .menu-item.active { background: #fff0f0; color: #c9302c; border-left-color: #c9302c; }
+        .menu-item.highlight { background: #c9302c; color: #fff; border-left-color: #c9302c; }
+        .menu-item span { margin-left: 8px; }
+        .submenu { padding-left: 20px; }
+        .submenu .menu-item { padding: 10px 16px; font-size: 14px; }
+        .submenu .menu-item { padding: 10px 16px 10px 40px; font-size: 14px; }
+        .menu-item .arrow { margin-left: auto; font-size: 10px; transition: transform 0.2s; }
+        .menu-item .arrow.open { transform: rotate(90deg); }
+        
+        /* 主內容 */
+        .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .header { background: #fff; padding: 12px 20px; border-bottom: 1px solid #e5e5e5; display: flex; justify-content: space-between; align-items: center; }
+        .content { flex: 1; padding: 16px; overflow-y: auto; }
+        
+        /* 儀表板佈局 */
+        .dashboard-layout { display: grid; grid-template-columns: 1fr 380px; gap: 16px; height: 100%; }
+        .dashboard-left { display: flex; flex-direction: column; gap: 16px; }
+        .dashboard-right { display: flex; flex-direction: column; gap: 16px; }
+        
+        /* 地圖區 */
+        .map-section { background: #fff; border-radius: 8px; flex: 1; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .map-header { padding: 12px 16px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+        .map-container { height: calc(100% - 50px); }
+        #map { height: 100%; width: 100%; }
+        
+        /* 圓形指示器 */
+        .status-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .status-card { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .status-card h4 { color: #666; font-size: 14px; margin-bottom: 4px; }
+        .status-card .subtitle { color: #999; font-size: 12px; margin-bottom: 16px; }
+        .circle-indicator { width: 120px; height: 120px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto; }
+        .circle-indicator.red { background: linear-gradient(135deg, #ff6b6b, #c9302c); box-shadow: 0 4px 15px rgba(201,48,44,0.4); }
+        .circle-indicator.yellow { background: linear-gradient(135deg, #ffd93d, #f39c12); box-shadow: 0 4px 15px rgba(243,156,18,0.4); }
+        .circle-indicator.green { background: linear-gradient(135deg, #6bcb77, #27ae60); box-shadow: 0 4px 15px rgba(39,174,96,0.4); }
+        .circle-indicator .number { color: #fff; font-size: 48px; font-weight: bold; }
+        
+        /* 違規列表 */
+        .violation-list { background: #fff; border-radius: 8px; flex: 1; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow: hidden; display: flex; flex-direction: column; }
+        .violation-list-header { padding: 12px 16px; border-bottom: 1px solid #eee; font-weight: 600; }
+        .violation-list-body { flex: 1; overflow-y: auto; }
+        .violation-item { display: flex; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid #f5f5f5; font-size: 13px; }
+        .violation-item:hover { background: #fafafa; }
+        .violation-item .location { color: #333; }
+        .violation-item .count { color: #c9302c; font-weight: 600; }
+        
+        /* 事件統計 */
+        .event-stats { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .event-stats h4 { margin-bottom: 12px; color: #333; }
+        
+        /* 其他頁面樣式 */
+        .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 16px; }
+        .card-header { padding: 12px 16px; border-bottom: 1px solid #eee; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+        .card-body { padding: 16px; }
+        .data-table { width: 100%; border-collapse: collapse; }
+        .data-table th, .data-table td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+        .data-table th { background: #f9f9f9; color: #666; font-weight: 600; }
+        .data-table tr:hover { background: #f5f5f5; cursor: pointer; }
+        .thumbnail { width: 80px; height: 50px; object-fit: cover; border-radius: 4px; }
+        .filter-bar { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; padding: 16px; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        
+        /* 攝影機 */
+        .camera-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 16px; }
+        .camera-card { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .camera-preview { position: relative; background: #000; height: 240px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        .camera-preview img { max-width: 100%; max-height: 100%; }
+        .camera-preview .badge { position: absolute; top: 8px; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+        .camera-preview .status-badge { right: 8px; }
+        .camera-preview .detection-badge { left: 8px; background: #c9302c; color: #fff; }
+        .camera-info { padding: 12px; }
+        .camera-info h4 { margin-bottom: 4px; }
+        .camera-info p { color: #666; font-size: 13px; margin-bottom: 8px; }
+        .camera-list-item { display: flex; gap: 16px; padding: 16px; border-bottom: 1px solid #eee; }
+        .camera-list-thumb { width: 200px; height: 120px; background: #000; border-radius: 8px; overflow: hidden; cursor: pointer; }
+        .camera-list-thumb img { width: 100%; height: 100%; object-fit: cover; }
+        .camera-list-info { flex: 1; }
+        
+        /* 彈窗 */
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 2000; }
+        .modal-box { background: #fff; width: 95%; max-width: 1200px; max-height: 90vh; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
+        .modal-header { padding: 12px 20px; background: #1e222d; color: #fff; display: flex; justify-content: space-between; align-items: center; }
+        .modal-content { display: flex; flex: 1; overflow: hidden; }
+        .modal-video { flex: 1; background: #000; position: relative; display: flex; align-items: center; justify-content: center; }
+        .modal-video img { max-width: 100%; max-height: 100%; }
+        .modal-video canvas { position: absolute; cursor: crosshair; }
+        .modal-sidebar { width: 320px; background: #f5f5f5; padding: 16px; overflow-y: auto; }
+        .modal-footer { padding: 12px 20px; background: #f5f5f5; border-top: 1px solid #ddd; display: flex; justify-content: space-between; }
+        .section-title { font-weight: 600; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #ddd; }
+        .config-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; }
+        .zone-item { display: flex; align-items: center; gap: 8px; padding: 8px; background: #fff; border-radius: 4px; margin-bottom: 8px; }
+        .zone-color { width: 16px; height: 16px; border-radius: 3px; }
+        
+        /* 違規詳情 */
+        .detail-box { max-width: 1400px; }
+        .detail-header { padding: 12px 20px; background: #f5f5f5; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; }
+        .detail-info { padding: 12px 20px; background: #fafafa; display: flex; gap: 24px; flex-wrap: wrap; border-bottom: 1px solid #eee; }
+        .detail-info-item { display: flex; gap: 8px; }
+        .detail-info-item .label { color: #666; }
+        .detail-info-item .value { font-weight: 600; }
+        .detail-body { display: grid; grid-template-columns: 1fr 1fr; }
+        .detail-section { padding: 16px; }
+        .detail-section:first-child { border-right: 1px solid #eee; }
+        .detail-section-header { display: flex; justify-content: space-between; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid #c9302c; }
+        .detail-media { background: #000; border-radius: 8px; min-height: 350px; display: flex; align-items: center; justify-content: center; }
+        .detail-media img { max-width: 100%; max-height: 400px; }
+        .photo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .photo-item { position: relative; border-radius: 8px; overflow: hidden; }
+        .photo-item img { width: 100%; height: 150px; object-fit: cover; }
+        .photo-item .overlay { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: #fff; padding: 6px; font-size: 11px; }
+        .detail-footer { padding: 16px 20px; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 12px; background: #fafafa; }
+        .btn-secondary { background: #6c757d; color: #fff; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; }
+        .btn-primary { background: #c9302c; color: #fff; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; }
+        
+        .rtsp-preview { background: #f0f0f0; padding: 10px; border-radius: 4px; margin-top: 8px; font-family: monospace; font-size: 12px; word-break: break-all; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div class="layout">
+        <!-- 側邊欄 -->
+        <div class="sidebar">
+            <div class="menu-item" @click="menuOpen.query=!menuOpen.query"><span>🔍</span><span>事件查詢統計</span><span class="arrow" :class="{open:menuOpen.query}">▶</span></div>
+            <div class="submenu" v-show="menuOpen.query">
+                <div class="menu-item" :class="{active:page==='statistics'}" @click="page='statistics'"><span>📊</span><span>統計分析</span></div>
+                <div class="menu-item" :class="{active:page==='violations'}" @click="page='violations'"><span>🔎</span><span>複合條件查詢</span></div>
+                <div class="menu-item" :class="{active:page==='reports'}" @click="page='reports'"><span>📄</span><span>一般報表</span></div>
+                <div class="menu-item" :class="{active:page==='repeat'}" @click="page='repeat'"><span>🚗</span><span>車輛累犯查詢</span></div>
+            </div>
+            <div class="menu-item highlight" @click="page='dashboard'"><span>📊</span><span>違規件數統計</span></div>
+            <div class="menu-item" :class="{active:page==='map'}" @click="page='map'"><span>🗺️</span><span>地圖儀錶板</span></div>
+            <div class="menu-item" :class="{active:page==='review'}" @click="page='review'"><span>📋</span><span>開單管理</span></div>
+            <div class="menu-item" :class="{active:page==='cameras'}" @click="page='cameras';loadCameras()"><span>📹</span><span>攝影機管理</span></div>
+            <div class="menu-item" :class="{active:page==='frigate'}" @click="page='frigate';loadFrigateStatus()"><span>🎬</span><span>NVR 設定</span></div>
+            <div class="menu-item" :class="{active:page==='lpr'}" @click="page='lpr';loadLprStatus()"><span>🚗</span><span>車牌辨識</span></div>
+            <div class="menu-item" :class="{active:page==='monitor'}" @click="page='monitor';loadCameras()"><span>🖥️</span><span>即時監控</span></div>
+            <div class="menu-item" :class="{active:page==='logs'}" @click="page='logs'"><span>📜</span><span>系統監控日誌</span></div>
+        </div>
+        
+        <!-- 主內容 -->
+        <div class="main">
+            <div class="header">
+                <div>
+                    <el-select v-model="selectedArea" placeholder="區域範圍" size="small" style="width:150px">
+                        <el-option label="全部區域" value="all"/>
+                        <el-option label="新北市板橋" value="banqiao"/>
+                        <el-option label="台北市" value="taipei"/>
+                    </el-select>
+                </div>
+                <div style="display:flex;align-items:center;gap:16px">
+                    <span>系統狀態 <el-tag type="success" size="small">啟用</el-tag></span>
+                    <span>{{ currentTime }}</span>
+                </div>
+            </div>
+            
+            <div class="content">
+                <!-- 儀表板 (主頁) -->
+                <div v-if="page==='dashboard' || page==='map'" class="dashboard-layout">
+                    <div class="dashboard-left">
+                        <!-- 地圖 -->
+                        <div class="map-section">
+                            <div class="map-header">
+                                <span>攝影機分佈</span>
+                            </div>
+                            <div class="map-container">
+                                <div id="map"></div>
+                            </div>
+                        </div>
+                        <!-- 最近一小時事件統計 -->
+                        <div class="event-stats">
+                            <h4>最近一小時事件統計</h4>
+                            <div style="display:flex;gap:20px;margin-top:12px">
+                                <div v-for="(count, type) in hourlyStats" :key="type" style="text-align:center">
+                                    <div style="font-size:24px;font-weight:bold;color:#c9302c">{{ count }}</div>
+                                    <div style="font-size:12px;color:#666">{{ type }}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="dashboard-right">
+                        <!-- 狀態卡片 -->
+                        <div class="status-cards">
+                            <div class="status-card">
+                                <h4>系統狀況</h4>
+                                <div class="subtitle">共 {{ dashboard.offline_cameras || 0 }} 設備故障</div>
+                                <div class="circle-indicator" :class="dashboard.offline_cameras > 0 ? 'red' : 'green'">
+                                    <span class="number">{{ dashboard.offline_cameras || 0 }}</span>
+                                </div>
+                            </div>
+                            <div class="status-card">
+                                <h4>今日違規</h4>
+                                <div class="subtitle">共 {{ dashboard.today_violations || 0 }} 起</div>
+                                <div class="circle-indicator yellow">
+                                    <span class="number">{{ dashboard.today_violations || 0 }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- 違規列表 -->
+                        <div class="violation-list">
+                            <div class="violation-list-header">今日違規明細</div>
+                            <div class="violation-list-body">
+                                <div class="violation-item" v-for="v in recentViolations" :key="v.id" @click="showDetail(v)">
+                                    <span class="location">{{ v.location }} - {{ v.violation_name }}</span>
+                                    <span class="count">{{ v.license_plate }}</span>
+                                </div>
+                                <div v-if="!recentViolations.length" style="padding:20px;text-align:center;color:#999">暫無違規記錄</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 即時監控 -->
+                <div v-if="page==='monitor'">
+                    <div class="camera-grid">
+                        <div class="camera-card" v-for="c in cameras" :key="c.id">
+                            <div class="camera-preview" @click="openPreview(c)">
+                                <img v-if="c.showStream" :src="'/api/stream/'+c.id+'/live?t='+streamKey" @error="c.showStream=false">
+                                <div v-else style="color:#666" @click.stop="c.showStream=true;streamKey=Date.now()">📹 點擊載入</div>
+                                <el-tag class="badge status-badge" :type="c.status==='online'?'success':'info'" size="small">{{ c.status==='online'?'線上':'離線' }}</el-tag>
+                                <span v-if="detectionStatus[c.id]?.running" class="badge detection-badge">● 偵測中</span>
+                            </div>
+                            <div class="camera-info">
+                                <h4>{{ c.name }}</h4>
+                                <p>{{ c.location }}</p>
+                                <div style="display:flex;gap:8px">
+                                    <el-button size="small" type="primary" @click="openPreview(c)">設定</el-button>
+                                    <el-button size="small" type="success" @click="startDetection(c.id)" v-if="!detectionStatus[c.id]?.running">啟動</el-button>
+                                    <el-button size="small" type="danger" @click="stopDetection(c.id)" v-else>停止</el-button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 違規查詢 -->
+                <!-- 複合條件查詢 -->
+                <div v-if="page==='violations'">
+                    <div class="card">
+                        <div class="card-header">
+                            <span>複合條件查詢</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <span>系統狀態</span>
+                                <el-tag type="success" size="small">良好</el-tag>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- 時間區間按鈕 -->
+                            <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+                                <span>時間區間</span>
+                                <el-button size="small" type="danger">本日</el-button>
+                                <el-button size="small" type="danger">本週</el-button>
+                                <el-button size="small" type="danger">本月</el-button>
+                                <el-button size="small" type="primary">近24小時</el-button>
+                                <el-button size="small" type="primary">近一週</el-button>
+                                <el-button size="small" type="warning">最近一個月</el-button>
+                                <el-button size="small" type="warning">最近三個月</el-button>
+                            </div>
+                            <!-- 日期時間選擇 -->
+                            <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>從</span>
+                                    <el-date-picker v-model="filters.dateFrom" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-time-picker v-model="filters.timeFrom" placeholder="時間" size="small" style="width:120px"/>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>到</span>
+                                    <el-date-picker v-model="filters.dateTo" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-time-picker v-model="filters.timeTo" placeholder="時間" size="small" style="width:120px"/>
+                                </div>
+                            </div>
+                            <!-- 篩選條件 -->
+                            <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>車牌號碼</span>
+                                    <el-input v-model="filters.plate" placeholder="車牌號碼" style="width:150px" size="small" clearable/>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>點位</span>
+                                    <el-select v-model="filters.location" placeholder="點位" size="small" style="width:150px" clearable>
+                                        <el-option label="全部" value=""/>
+                                        <el-option v-for="loc in locations" :key="loc" :label="loc" :value="loc"/>
+                                    </el-select>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>攝影機</span>
+                                    <el-select v-model="filters.camera" placeholder="攝影機" size="small" style="width:150px" clearable>
+                                        <el-option label="全部" value=""/>
+                                        <el-option v-for="c in cameras" :key="c.id" :label="c.name" :value="c.id"/>
+                                    </el-select>
+                                </div>
+                            </div>
+                            <div style="display:flex;gap:16px;align-items:center">
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>違規種類</span>
+                                    <el-select v-model="filters.type" placeholder="違規種類" size="small" style="width:150px" clearable>
+                                        <el-option label="全部" value=""/>
+                                        <el-option label="闖紅燈" value="RED_LIGHT"/>
+                                        <el-option label="超速" value="SPEEDING"/>
+                                        <el-option label="違規停車" value="ILLEGAL_PARKING"/>
+                                        <el-option label="駕車行駛人行道或騎樓" value="SIDEWALK"/>
+                                    </el-select>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>開單結果</span>
+                                    <el-select v-model="filters.status" placeholder="開單結果" size="small" style="width:120px" clearable>
+                                        <el-option label="全部" value=""/>
+                                        <el-option label="未處理" value="pending"/>
+                                        <el-option label="已舉發" value="confirmed"/>
+                                        <el-option label="已製單" value="issued"/>
+                                        <el-option label="製單失敗" value="failed"/>
+                                        <el-option label="不舉發" value="rejected"/>
+                                    </el-select>
+                                </div>
+                                <el-button type="danger" @click="loadViolations">查詢</el-button>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 查詢結果 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span>違規件數 {{ violations.length }} 件</span>
+                            <div style="display:flex;gap:8px">
+                                <el-button type="success" size="small">清單與圖片下載</el-button>
+                                <el-button type="primary" size="small">下載</el-button>
+                            </div>
+                        </div>
+                        <div class="card-body" style="padding:0">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>點位名稱</th>
+                                        <th>違規起始時間 ↓</th>
+                                        <th>違規結束時間</th>
+                                        <th>車牌號碼</th>
+                                        <th>違規種類</th>
+                                        <th>照片</th>
+                                        <th>檢視</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="v in violations" :key="v.id">
+                                        <td>{{ v.location }}</td>
+                                        <td>{{ formatTime(v.created_at) }}</td>
+                                        <td>{{ formatTime(v.end_time || v.created_at) }}</td>
+                                        <td>{{ v.license_plate || '-' }}</td>
+                                        <td>{{ v.violation_name }}</td>
+                                        <td><img v-if="v.image_path" :src="v.image_path" class="thumbnail" @click="showDetail(v)"></td>
+                                        <td><el-button circle size="small" @click="showDetail(v)">👁</el-button></td>
+                                    </tr>
+                                    <tr v-if="!violations.length">
+                                        <td colspan="7" style="text-align:center;color:#999;padding:40px">(無資料)</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div style="display:flex;justify-content:flex-end;align-items:center;padding:12px 16px;gap:16px;border-top:1px solid #eee">
+                                <span style="color:#666;font-size:13px">每頁筆數：</span>
+                                <el-select v-model="pageSize" size="small" style="width:80px">
+                                    <el-option :value="10" label="10"/>
+                                    <el-option :value="20" label="20"/>
+                                    <el-option :value="50" label="50"/>
+                                </el-select>
+                                <el-pagination small layout="prev, pager, next" :total="violations.length"/>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 開單管理 -->
+                <div v-if="page==='review'">
+                    <div class="card">
+                        <div class="card-header">
+                            <span>開單管理</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <span>系統狀態</span>
+                                <el-tag type="success" size="small">良好</el-tag>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- 時間區間按鈕 -->
+                            <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+                                <span>時間區間</span>
+                                <el-button size="small" type="danger">本日</el-button>
+                                <el-button size="small" type="danger">本週</el-button>
+                                <el-button size="small" type="danger">本月</el-button>
+                                <el-button size="small" type="primary">近24小時</el-button>
+                                <el-button size="small" type="primary">近一週</el-button>
+                                <el-button size="small" type="warning">最近一個月</el-button>
+                                <el-button size="small" type="warning">最近三個月</el-button>
+                            </div>
+                            <!-- 日期時間選擇 -->
+                            <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>從</span>
+                                    <el-date-picker v-model="reviewDateFrom" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-time-picker v-model="reviewTimeFrom" placeholder="時間" size="small" style="width:120px"/>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>到</span>
+                                    <el-date-picker v-model="reviewDateTo" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-time-picker v-model="reviewTimeTo" placeholder="時間" size="small" style="width:120px"/>
+                                </div>
+                            </div>
+                            <!-- 篩選條件 -->
+                            <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>車牌號碼</span>
+                                    <el-input v-model="reviewPlate" placeholder="車牌號碼" style="width:150px" size="small" clearable/>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>點位</span>
+                                    <el-select v-model="reviewLocation" placeholder="點位" size="small" style="width:150px" clearable>
+                                        <el-option label="全部" value=""/>
+                                        <el-option v-for="loc in locations" :key="loc" :label="loc" :value="loc"/>
+                                    </el-select>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>攝影機</span>
+                                    <el-select v-model="reviewCamera" placeholder="攝影機" size="small" style="width:150px" clearable>
+                                        <el-option label="全部" value=""/>
+                                        <el-option v-for="c in cameras" :key="c.id" :label="c.name" :value="c.id"/>
+                                    </el-select>
+                                </div>
+                            </div>
+                            <div style="display:flex;gap:16px;align-items:center">
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>違規種類</span>
+                                    <el-select v-model="reviewType" placeholder="違規種類" size="small" style="width:150px" clearable>
+                                        <el-option label="全部" value=""/>
+                                        <el-option label="闖紅燈" value="RED_LIGHT"/>
+                                        <el-option label="超速" value="SPEEDING"/>
+                                        <el-option label="違規停車" value="ILLEGAL_PARKING"/>
+                                        <el-option label="駕車行駛人行道或騎樓" value="SIDEWALK"/>
+                                    </el-select>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>開單結果</span>
+                                    <el-select v-model="reviewStatus" placeholder="開單結果" size="small" style="width:120px">
+                                        <el-option label="未處理" value="pending"/>
+                                        <el-option label="已舉發" value="confirmed"/>
+                                        <el-option label="不舉發" value="rejected"/>
+                                    </el-select>
+                                </div>
+                                <el-button type="danger" @click="loadPendingViolations">查詢</el-button>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 待審核列表 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span>違規件數 {{ pendingViolations.length }} 件</span>
+                            <div style="display:flex;gap:8px">
+                                <el-button type="success" size="small">清單與圖片下載</el-button>
+                                <el-button type="primary" size="small">下載</el-button>
+                            </div>
+                        </div>
+                        <div class="card-body" style="padding:0">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>點位名稱</th>
+                                        <th>違規起始時間 ↓</th>
+                                        <th>違規結束時間</th>
+                                        <th>車牌號碼</th>
+                                        <th>違規種類</th>
+                                        <th>照片</th>
+                                        <th>檢視</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="v in pendingViolations" :key="v.id">
+                                        <td>{{ v.location }}</td>
+                                        <td>{{ formatTime(v.created_at) }}</td>
+                                        <td>{{ formatTime(v.end_time || v.created_at) }}</td>
+                                        <td>{{ v.license_plate || '-' }}</td>
+                                        <td>{{ v.violation_name }}</td>
+                                        <td><img v-if="v.image_path" :src="v.image_path" class="thumbnail" @click="showDetail(v)"></td>
+                                        <td><el-button circle size="small" @click="showDetail(v)">👁</el-button></td>
+                                    </tr>
+                                    <tr v-if="!pendingViolations.length">
+                                        <td colspan="7" style="text-align:center;color:#999;padding:40px">(無資料)</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div style="display:flex;justify-content:flex-end;align-items:center;padding:12px 16px;gap:16px;border-top:1px solid #eee">
+                                <span style="color:#666;font-size:13px">每頁筆數：</span>
+                                <el-select v-model="pageSize" size="small" style="width:80px">
+                                    <el-option :value="10" label="10"/>
+                                    <el-option :value="20" label="20"/>
+                                    <el-option :value="50" label="50"/>
+                                </el-select>
+                                <el-pagination small layout="prev, pager, next" :total="pendingViolations.length"/>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 攝影機管理 -->
+                <div v-if="page==='cameras'">
+                    <div class="card">
+                        <div class="card-header"><span>攝影機列表</span><el-button type="primary" size="small" @click="newCamera">新增</el-button></div>
+                        <div class="card-body" style="padding:0">
+                            <div v-for="c in cameras" :key="c.id" class="camera-list-item">
+                                <div class="camera-list-thumb" @click="openPreview(c)">
+                                    <img :src="'/api/stream/'+c.id+'/snapshot?t='+c.thumbKey" @error="handleThumbError($event)">
+                                </div>
+                                <div class="camera-list-info">
+                                    <h3 style="margin-bottom:8px">{{ c.name }}</h3>
+                                    <p style="color:#666;margin-bottom:4px">📍 {{ c.location }}</p>
+                                    <p style="color:#999;font-size:12px;margin-bottom:12px">{{ c.source }}</p>
+                                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+                                        <el-tag :type="c.status==='online'?'success':'info'" size="small">{{ c.status==='online'?'線上':'離線' }}</el-tag>
+                                        <el-tag v-if="c.detection_config?.red_light" size="small" type="danger">闘紅燈</el-tag>
+                                        <el-tag v-if="c.detection_config?.speeding" size="small" type="warning">超速</el-tag>
+                                        <el-tag v-if="c.zones?.length" size="small">{{ c.zones.length }} ROI</el-tag>
+                                        <el-tag v-if="detectionStatus[c.id]?.running" size="small" type="success" effect="dark">● 偵測中</el-tag>
+                                    </div>
+                                    <div style="display:flex;gap:8px">
+                                        <el-button size="small" type="primary" @click="openPreview(c)">預覽設定</el-button>
+                                        <el-button size="small" type="success" @click="testCamera(c.id)">測試</el-button>
+                                        <el-button size="small" @click="editCamera(c)">編輯</el-button>
+                                        <el-button size="small" type="danger" @click="deleteCamera(c.id)">刪除</el-button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 系統日誌 -->
+                <div v-if="page==='logs'">
+                    <div class="card">
+                        <div class="card-header"><span>系統監控日誌</span></div>
+                        <div class="card-body">
+                            <div v-for="log in systemLogs" :key="log.id" style="padding:8px 0;border-bottom:1px solid #eee;font-size:13px">
+                                <span style="color:#999">{{ log.time }}</span>
+                                <span :style="{color: log.level==='error'?'#c9302c':'#333', marginLeft:'12px'}">{{ log.message }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 統計分析 -->
+                <div v-if="page==='statistics'">
+                    <div class="card">
+                        <div class="card-header">
+                            <span>統計分析</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <span>系統狀態</span>
+                                <el-tag type="success" size="small">良好</el-tag>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- 時間區間按鈕 -->
+                            <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+                                <span>時間區間</span>
+                                <el-button size="small" type="danger">本日</el-button>
+                                <el-button size="small" type="danger">本週</el-button>
+                                <el-button size="small" type="danger">本月</el-button>
+                                <el-button size="small" type="primary">近24小時</el-button>
+                                <el-button size="small" type="primary">近一週</el-button>
+                                <el-button size="small" type="warning">最近一個月</el-button>
+                                <el-button size="small" type="warning">最近三個月</el-button>
+                            </div>
+                            <!-- 日期選擇 -->
+                            <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>從</span>
+                                    <el-date-picker v-model="statsDateFrom" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-time-picker v-model="statsTimeFrom" placeholder="時間" size="small" style="width:120px"/>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>到</span>
+                                    <el-date-picker v-model="statsDateTo" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-time-picker v-model="statsTimeTo" placeholder="時間" size="small" style="width:120px"/>
+                                </div>
+                                <el-input v-model="statsPlate" placeholder="車牌號碼" style="width:150px" size="small"/>
+                            </div>
+                            <!-- 篩選條件 -->
+                            <div style="display:flex;gap:16px;margin-bottom:20px;align-items:center">
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>點位</span>
+                                    <el-select v-model="statsLocation" placeholder="點位" size="small" style="width:150px">
+                                        <el-option label="全部" value=""/>
+                                        <el-option v-for="loc in locations" :key="loc" :label="loc" :value="loc"/>
+                                    </el-select>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>攝影機</span>
+                                    <el-select v-model="statsCamera" placeholder="攝影機" size="small" style="width:150px">
+                                        <el-option label="全部" value=""/>
+                                        <el-option v-for="c in cameras" :key="c.id" :label="c.name" :value="c.id"/>
+                                    </el-select>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>週期</span>
+                                    <el-select v-model="statsPeriod" placeholder="週期" size="small" style="width:120px">
+                                        <el-option label="每小時" value="hour"/>
+                                        <el-option label="每日" value="day"/>
+                                        <el-option label="每週" value="week"/>
+                                    </el-select>
+                                </div>
+                                <el-button type="danger" @click="loadStats">分析</el-button>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 圖表 -->
+                    <div class="card">
+                        <div class="card-header"><span>每小時違規事件統計</span></div>
+                        <div class="card-body">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+                                <span style="width:12px;height:12px;background:#f56c6c;display:inline-block"></span>
+                                <span style="font-size:13px">騎車行駛人行道或騎樓</span>
+                            </div>
+                            <div style="height:300px;display:flex;align-items:flex-end;gap:4px;border-bottom:1px solid #eee;padding-bottom:8px">
+                                <div v-for="(item,idx) in hourlyChartData" :key="idx" style="flex:1;display:flex;flex-direction:column;align-items:center">
+                                    <div :style="{height:item.count*50+'px',background:'#f56c6c',width:'80%',minHeight:item.count?'20px':'0'}"></div>
+                                </div>
+                            </div>
+                            <div style="display:flex;gap:4px;margin-top:8px">
+                                <div v-for="(item,idx) in hourlyChartData" :key="idx" style="flex:1;text-align:center;font-size:11px;color:#666">{{ item.label }}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 車輛累犯查詢 -->
+                <div v-if="page==='repeat'">
+                    <div class="card">
+                        <div class="card-header">
+                            <span>車輛累犯查詢</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <span>系統狀態</span>
+                                <el-tag type="success" size="small">良好</el-tag>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- 時間區間按鈕 -->
+                            <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+                                <span>時間區間</span>
+                                <el-button size="small" type="danger">本日</el-button>
+                                <el-button size="small" type="danger">本週</el-button>
+                                <el-button size="small" type="danger">本月</el-button>
+                                <el-button size="small" type="primary">近24小時</el-button>
+                                <el-button size="small" type="primary">近一週</el-button>
+                                <el-button size="small" type="warning">最近一個月</el-button>
+                                <el-button size="small" type="warning">最近三個月</el-button>
+                            </div>
+                            <!-- 日期選擇 -->
+                            <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>從</span>
+                                    <el-date-picker v-model="repeatDateFrom" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-time-picker v-model="repeatTimeFrom" placeholder="時間" size="small" style="width:120px"/>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>到</span>
+                                    <el-date-picker v-model="repeatDateTo" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-time-picker v-model="repeatTimeTo" placeholder="時間" size="small" style="width:120px"/>
+                                </div>
+                            </div>
+                            <!-- 篩選條件 -->
+                            <div style="display:flex;gap:16px;margin-bottom:20px;align-items:center">
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>車牌號碼</span>
+                                    <el-input v-model="repeatPlate" placeholder="車牌號碼" style="width:150px" size="small"/>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>累犯次數</span>
+                                    <el-input-number v-model="repeatThreshold" :min="0" size="small" style="width:100px"/>
+                                    <span>次以上</span>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>違規種類</span>
+                                    <el-select v-model="repeatViolationType" placeholder="違規種類" size="small" style="width:150px">
+                                        <el-option label="全部" value=""/>
+                                        <el-option label="闖紅燈" value="RED_LIGHT"/>
+                                        <el-option label="超速" value="SPEEDING"/>
+                                        <el-option label="違規停車" value="ILLEGAL_PARKING"/>
+                                    </el-select>
+                                </div>
+                                <el-button type="danger" @click="loadRepeatOffenders">分析</el-button>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 通知列表 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span>通知列表</span>
+                            <el-button type="danger" size="small">下載</el-button>
+                        </div>
+                        <div class="card-body" style="padding:0">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width:80px">項次</th>
+                                        <th>車牌</th>
+                                        <th style="width:120px">累計次數 ↓</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="(item,idx) in repeatOffenders" :key="item.plate">
+                                        <td>{{ idx + 1 }}</td>
+                                        <td>{{ item.plate }}</td>
+                                        <td style="color:#c9302c">{{ item.count }}</td>
+                                    </tr>
+                                    <tr v-if="!repeatOffenders.length">
+                                        <td colspan="3" style="text-align:center;color:#999;padding:40px">暫無資料</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 一般報表 -->
+                <div v-if="page==='reports'">
+                    <div class="card">
+                        <div class="card-header"><span>一般報表</span></div>
+                        <div class="card-body">
+                            <div style="display:flex;gap:16px;margin-bottom:20px">
+                                <el-date-picker v-model="reportDateRange" type="daterange" start-placeholder="開始" end-placeholder="結束"/>
+                                <el-select v-model="reportType" placeholder="報表類型" style="width:150px">
+                                    <el-option label="日報表" value="daily"/>
+                                    <el-option label="週報表" value="weekly"/>
+                                    <el-option label="月報表" value="monthly"/>
+                                </el-select>
+                                <el-button type="primary">產生報表</el-button>
+                                <el-button type="success">匯出</el-button>
+                            </div>
+                            <p style="color:#666;text-align:center;padding:40px">選擇日期範圍後點擊產生報表</p>
+                        </div>
+                    </div>
+                </div>
+                <!-- NVR 設定 -->
+                <div v-if="page==='frigate'">
+                    <div class="card">
+                        <div class="card-header">
+                            <span>🎬 Frigate NVR 設定</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <span>連線狀態</span>
+                                <el-tag :type="frigateStatus.status==='online'?'success':'danger'" size="small">
+                                    {{ frigateStatus.status==='online'?'已連線':'離線' }}
+                                </el-tag>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- 連線資訊 -->
+                            <div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap">
+                                <div style="flex:1;min-width:200px">
+                                    <div style="font-weight:bold;margin-bottom:8px">🌐 連線設定</div>
+                                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+                                        <span style="width:80px">主機:</span>
+                                        <el-input v-model="frigateConfig.host" placeholder="frigate" style="width:150px" size="small"/>
+                                    </div>
+                                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+                                        <span style="width:80px">端口:</span>
+                                        <el-input-number v-model="frigateConfig.port" :min="1" :max="65535" size="small"/>
+                                    </div>
+                                    <el-button type="primary" size="small" @click="testFrigateConnection">測試連線</el-button>
+                                </div>
+                                <div style="flex:1;min-width:200px" v-if="frigateStatus.status==='online'">
+                                    <div style="font-weight:bold;margin-bottom:8px">📊 系統資訊</div>
+                                    <p style="font-size:13px;color:#666">版本: {{ frigateStatus.version }}</p>
+                                    <p style="font-size:13px;color:#666">攝影機: {{ frigateStatus.cameras?.length || 0 }} 台</p>
+                                    <p style="font-size:13px;color:#666">偵測器: TensorRT</p>
+                                </div>
+                            </div>
+                            
+                            <!-- MQTT 設定 -->
+                            <div style="border-top:1px solid #eee;padding-top:16px;margin-bottom:20px">
+                                <div style="font-weight:bold;margin-bottom:12px">
+                                    📡 MQTT 設定 (Home Assistant 整合)
+                                    <el-switch v-model="frigateConfig.mqtt_enabled" style="margin-left:12px"/>
+                                </div>
+                                <div v-if="frigateConfig.mqtt_enabled" style="display:flex;gap:16px;flex-wrap:wrap">
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>主機:</span>
+                                        <el-input v-model="frigateConfig.mqtt_host" placeholder="192.168.0.1" style="width:150px" size="small"/>
+                                    </div>
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>端口:</span>
+                                        <el-input-number v-model="frigateConfig.mqtt_port" :min="1" :max="65535" size="small"/>
+                                    </div>
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>帳號:</span>
+                                        <el-input v-model="frigateConfig.mqtt_user" placeholder="mqtt_user" style="width:120px" size="small"/>
+                                    </div>
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>密碼:</span>
+                                        <el-input v-model="frigateConfig.mqtt_password" type="password" placeholder="******" style="width:120px" size="small"/>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 操作按鈕 -->
+                            <div style="display:flex;gap:8px">
+                                <el-button type="success" @click="saveFrigateSettings">儲存設定</el-button>
+                                <el-button type="primary" @click="syncCamerasToFrigate">同步攝影機</el-button>
+                                <el-button type="warning" @click="restartFrigate">重啟 Frigate</el-button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Frigate 攝影機列表 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span>📹 Frigate 攝影機</span>
+                            <el-button type="primary" size="small" @click="loadFrigateCameras">重新載入</el-button>
+                        </div>
+                        <div class="card-body" style="padding:0">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>名稱</th>
+                                        <th>狀態</th>
+                                        <th>FPS</th>
+                                        <th>偵測 FPS</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="cam in frigateCameras" :key="cam.name">
+                                        <td>{{ cam.name }}</td>
+                                        <td>
+                                            <el-tag :type="cam.enabled!==false?'success':'info'" size="small">
+                                                {{ cam.enabled!==false?'啟用':'停用' }}
+                                            </el-tag>
+                                        </td>
+                                        <td>{{ cam.fps || '-' }}</td>
+                                        <td>{{ cam.detection_fps || '-' }}</td>
+                                        <td>
+                                            <el-button size="small" @click="viewFrigateCamera(cam)">查看</el-button>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="!frigateCameras.length">
+                                        <td colspan="5" style="text-align:center;color:#999;padding:30px">
+                                            {{ frigateStatus.status==='online'?'尚無攝影機':'請先連線 Frigate' }}
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- 最近事件 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span>📝 最近偵測事件</span>
+                            <el-button type="primary" size="small" @click="loadFrigateEvents">重新載入</el-button>
+                        </div>
+                        <div class="card-body" style="padding:0">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>時間</th>
+                                        <th>攝影機</th>
+                                        <th>物件</th>
+                                        <th>區域</th>
+                                        <th>快照</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="evt in frigateEvents" :key="evt.id">
+                                        <td>{{ formatFrigateTime(evt.start_time) }}</td>
+                                        <td>{{ evt.camera }}</td>
+                                        <td>
+                                            <el-tag size="small">{{ evt.label }}</el-tag>
+                                        </td>
+                                        <td>{{ evt.zones?.join(', ') || '-' }}</td>
+                                        <td>
+                                            <img v-if="evt.has_snapshot" 
+                                                 :src="'/api/frigate/events/'+evt.id+'/snapshot'" 
+                                                 style="width:60px;height:40px;object-fit:cover;cursor:pointer"
+                                                 @click="viewFrigateEvent(evt)">
+                                            <span v-else>-</span>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="!frigateEvents.length">
+                                        <td colspan="5" style="text-align:center;color:#999;padding:30px">暫無事件</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <!-- 車牌辨識 -->
+                <div v-if="page==='lpr'">
+                    <div class="card">
+                        <div class="card-header">
+                            <span>🚗 車牌辨識 (LPR)</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <span>狀態</span>
+                                <el-tag :type="lprStatus.status==='online'?'success':'danger'" size="small">
+                                    {{ lprStatus.status==='online'?'就緒':'離線' }}
+                                </el-tag>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div style="display:flex;gap:20px;flex-wrap:wrap">
+                                <!-- 上傳測試 -->
+                                <div style="flex:1;min-width:300px">
+                                    <div style="font-weight:bold;margin-bottom:12px">📤 上傳圖片測試</div>
+                                    <div style="border:2px dashed #ddd;border-radius:8px;padding:20px;text-align:center;margin-bottom:12px">
+                                        <input type="file" ref="lprFileInput" accept="image/*" @change="handleLprFile" style="display:none">
+                                        <el-button type="primary" @click="$refs.lprFileInput.click()">選擇圖片</el-button>
+                                        <p style="color:#999;margin-top:8px;font-size:13px">支援 JPG, PNG 格式</p>
+                                    </div>
+                                    <div v-if="lprPreview" style="margin-bottom:12px">
+                                        <img :src="lprPreview" style="max-width:100%;max-height:200px;border-radius:4px">
+                                    </div>
+                                    <el-button type="success" @click="recognizeLpr" :loading="lprLoading" :disabled="!lprFile">
+                                        開始辨識
+                                    </el-button>
+                                </div>
+                                
+                                <!-- 辨識結果 -->
+                                <div style="flex:1;min-width:300px">
+                                    <div style="font-weight:bold;margin-bottom:12px">📋 辨識結果</div>
+                                    <div style="background:#f5f5f5;border-radius:8px;padding:20px;min-height:150px">
+                                        <div v-if="lprResult.plate_number" style="text-align:center">
+                                            <div style="font-size:32px;font-weight:bold;color:#409eff;letter-spacing:4px;margin-bottom:12px">
+                                                {{ lprResult.plate_number }}
+                                            </div>
+                                            <div style="display:flex;gap:16px;justify-content:center">
+                                                <el-tag :type="lprResult.valid?'success':'warning'">
+                                                    {{ lprResult.valid?'格式正確':'格式異常' }}
+                                                </el-tag>
+                                                <span style="color:#666">信心度: {{ (lprResult.confidence*100).toFixed(1) }}%</span>
+                                            </div>
+                                        </div>
+                                        <div v-else style="text-align:center;color:#999;padding:40px 0">
+                                            {{ lprLoading?'辨識中...':'上傳圖片開始辨識' }}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 串流辨識 -->
+                            <div style="border-top:1px solid #eee;margin-top:20px;padding-top:20px">
+                                <div style="font-weight:bold;margin-bottom:12px">📹 串流持續辨識</div>
+                                <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                                    <el-select v-model="lprCameraId" placeholder="選擇攝影機" style="width:200px">
+                                        <el-option v-for="c in cameras" :key="c.id" :label="c.name" :value="c.id"/>
+                                    </el-select>
+                                    <el-button type="success" @click="startLprStream" :disabled="!lprCameraId || lprStreamRunning">
+                                        ▶ 開始辨識
+                                    </el-button>
+                                    <el-button type="danger" @click="stopLprStream" :disabled="!lprStreamRunning">
+                                        ⏹ 停止
+                                    </el-button>
+                                    <el-button type="primary" @click="recognizeFromCamera" :loading="lprLoading" :disabled="!lprCameraId">
+                                        📷 單次擷取
+                                    </el-button>
+                                </div>
+                                <div v-if="lprStreamRunning" style="margin-top:12px;padding:12px;background:#e8f5e9;border-radius:8px">
+                                    <div style="display:flex;gap:20px;align-items:center">
+                                        <span style="color:#2e7d32;font-weight:bold">🔴 辨識中...</span>
+                                        <span>已處理: {{ lprStreamStatus.total_frames || 0 }} 幀</span>
+                                        <span>車輛數: {{ lprStreamStatus.vehicles_detected || 0 }}</span>
+                                        <span>車牌數: {{ lprStreamStatus.total_detections || 0 }}</span>
+                                        <span v-if="lprStreamStatus.last_plate">最新: <strong style="color:#1565c0">{{ lprStreamStatus.last_plate }}</strong></span>
+                                    </div>
+                                </div>
+                                
+                                <!-- 視覺化串流 -->
+                                <div style="margin-top:16px">
+                                    <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
+                                        <span style="font-weight:bold">🎥 視覺化串流</span>
+                                        <el-switch v-model="showLprVisual" @change="toggleLprVisual"/>
+                                    </div>
+                                    <div v-if="showLprVisual && lprCameraId" style="background:#000;border-radius:8px;overflow:hidden">
+                                        <img :src="'/api/lpr/visual/stream/'+lprCameraId" style="width:100%;max-height:480px;object-fit:contain" @error="showLprVisual=false">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 辨識歷史 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span>📜 辨識歷史</span>
+                            <el-button type="danger" size="small" @click="lprHistory=[]">清除</el-button>
+                        </div>
+                        <div class="card-body" style="padding:0">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>時間</th>
+                                        <th>截圖</th>
+                                        <th>車牌號碼</th>
+                                        <th>信心度</th>
+                                        <th>車種</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="h in lprHistory" :key="h.id||h.time">
+                                        <td style="font-size:12px">{{ h.time }}</td>
+                                        <td>
+                                            <img v-if="h.snapshot" 
+                                                 :src="'/api/lpr/stream/snapshot/'+h.snapshot" 
+                                                 style="width:80px;height:50px;object-fit:cover;cursor:pointer;border-radius:4px"
+                                                 @click="showLprSnapshot(h)">
+                                            <span v-else style="color:#999">-</span>
+                                        </td>
+                                        <td style="font-weight:bold;color:#409eff;letter-spacing:2px;cursor:pointer" @click="showLprSnapshot(h)">
+                                            {{ h.plate_number || '-' }}
+                                        </td>
+                                        <td>{{ (h.confidence*100).toFixed(1) }}%</td>
+                                        <td>
+                                            <el-tag size="small">{{ h.vehicle_type || '車輛' }}</el-tag>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="!lprHistory.length">
+                                        <td colspan="5" style="text-align:center;color:#999;padding:30px">尚無辨識記錄</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- 截圖檢視彈窗 -->
+                    <div v-if="lprSnapshotModal" class="modal-overlay" @click.self="lprSnapshotModal=false" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:9999">
+                        <div style="background:#fff;border-radius:8px;max-width:90vw;max-height:90vh;overflow:hidden">
+                            <div style="padding:12px 16px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
+                                <span style="font-weight:bold;font-size:18px;color:#409eff;letter-spacing:2px">{{ lprSnapshotData.plate_number }}</span>
+                                <div style="display:flex;gap:12px;align-items:center">
+                                    <span style="color:#666">{{ lprSnapshotData.time }}</span>
+                                    <el-tag size="small">{{ lprSnapshotData.vehicle_type }}</el-tag>
+                                    <span>{{ (lprSnapshotData.confidence*100).toFixed(1) }}%</span>
+                                    <el-button circle size="small" @click="lprSnapshotModal=false">✕</el-button>
+                                </div>
+                            </div>
+                            <img v-if="lprSnapshotData.snapshot" :src="'/api/lpr/stream/snapshot/'+lprSnapshotData.snapshot" style="max-width:85vw;max-height:80vh;display:block">
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+    
+    <!-- 預覽與設定彈窗 -->
+    <div class="modal-overlay" v-if="showPreviewModal" @click.self="closePreview">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>📹 {{ previewCamera?.name }}</h3>
+                <el-button circle @click="closePreview">✕</el-button>
+            </div>
+            <div class="modal-content">
+                <div class="modal-video">
+                    <img ref="previewImg" :src="previewImageUrl" @load="initRoiCanvas">
+                    <canvas ref="roiCanvas" @click="addRoiPoint" @contextmenu.prevent="undoRoiPoint"></canvas>
+                </div>
+                <div class="modal-sidebar">
+                    <div class="section-title">🎯 偵測功能</div>
+                    <div class="config-item"><span>闘紅燈</span><el-switch v-model="previewCamera.detection_config.red_light" @change="saveConfig"/></div>
+                    <div class="config-item"><span>超速</span><el-switch v-model="previewCamera.detection_config.speeding" @change="saveConfig"/></div>
+                    <div class="config-item"><span>違規停車</span><el-switch v-model="previewCamera.detection_config.illegal_parking" @change="saveConfig"/></div>
+                    <div class="config-item"><span>逆向行駛</span><el-switch v-model="previewCamera.detection_config.wrong_way" @change="saveConfig"/></div>
+                    <div class="config-item"><span>未戴安全帽</span><el-switch v-model="previewCamera.detection_config.no_helmet" @change="saveConfig"/></div>
+                    <div class="config-item" v-if="previewCamera.detection_config.speeding"><span>速限</span><el-input-number v-model="previewCamera.detection_config.speed_limit" :min="20" :max="120" size="small" @change="saveConfig"/></div>
+                    
+                    <div class="section-title" style="margin-top:20px">📐 ROI 區域</div>
+                    <p style="font-size:12px;color:#666;margin-bottom:8px">點擊畫面繪製，右鍵取消</p>
+                    <el-radio-group v-model="roiType" size="small" style="margin-bottom:8px">
+                        <el-radio-button value="detection">偵測區</el-radio-button>
+                        <el-radio-button value="stop_line">停止線</el-radio-button>
+                    </el-radio-group>
+                    <el-input v-model="roiName" placeholder="區域名稱" size="small" style="margin-bottom:8px"/>
+                    <div style="display:flex;gap:8px;margin-bottom:12px">
+                        <el-button size="small" type="primary" @click="saveRoi" :disabled="roiPoints.length<3">儲存</el-button>
+                        <el-button size="small" @click="clearRoi">清除</el-button>
+                    </div>
+                    <div v-if="previewCamera?.zones?.length">
+                        <div class="zone-item" v-for="(z,i) in previewCamera.zones" :key="i">
+                            <div class="zone-color" :style="{background:zoneColors[z.type]}"></div>
+                            <span style="flex:1;font-size:12px">{{ z.name }}</span>
+                            <el-button size="small" type="danger" link @click="deleteZone(i)">刪除</el-button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <div>
+                    <el-button type="success" @click="startDetection(previewCamera.id)" v-if="!detectionStatus[previewCamera?.id]?.running">▶️ 啟動偵測</el-button>
+                    <el-button type="danger" @click="stopDetection(previewCamera.id)" v-else>⏹️ 停止偵測</el-button>
+                </div>
+                <div>
+                    <el-button @click="refreshPreview">🔄 重整</el-button>
+                    <el-button type="primary" @click="closePreview">完成</el-button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 違規詳情彈窗 -->
+    <div class="modal-overlay" v-if="showDetailModal" @click.self="showDetailModal=false">
+        <div class="modal-box detail-box">
+            <div class="detail-header"><h3>違規詳情</h3><el-button circle size="small" @click="showDetailModal=false">✕</el-button></div>
+            <div class="detail-info">
+                <div class="detail-info-item"><span class="label">地點:</span><span class="value">{{ selected.location }}</span></div>
+                <div class="detail-info-item"><span class="label">類型:</span><el-tag :type="getTagType(selected.violation_type)">{{ selected.violation_name }}</el-tag></div>
+                <div class="detail-info-item"><span class="label">車牌:</span><span class="value" style="color:#c9302c;font-size:18px">{{ selected.license_plate }}</span></div>
+                <div class="detail-info-item"><span class="label">時間:</span><span class="value">{{ formatTime(selected.created_at) }}</span></div>
+            </div>
+            <div class="detail-body">
+                <div class="detail-section">
+                    <div class="detail-section-header"><span>違規影像</span></div>
+                    <div class="detail-media"><img v-if="selected.image_path" :src="selected.image_path"></div>
+                </div>
+                <div class="detail-section">
+                    <div class="detail-section-header"><span>舉發資訊</span></div>
+                    <div class="photo-grid">
+                        <div class="photo-item" v-for="(p,i) in selectedPhotos" :key="i"><img :src="p.url"><div class="overlay">{{ p.time }}</div></div>
+                    </div>
+                </div>
+            </div>
+            <div class="detail-footer" v-if="selected.status==='pending'">
+                <button class="btn-secondary" @click="review(selected.id,'rejected');showDetailModal=false">不舉發</button>
+                <button class="btn-primary" @click="review(selected.id,'confirmed');showDetailModal=false">舉發</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 攝影機編輯 -->
+    <el-dialog v-model="showCameraDialog" :title="cameraForm.id?'編輯攝影機':'新增攝影機'" width="600px">
+        <el-form :model="cameraForm" label-width="80px">
+            <el-form-item label="名稱"><el-input v-model="cameraForm.name"/></el-form-item>
+            <el-form-item label="IP"><el-input v-model="cameraForm.ip"/></el-form-item>
+            <el-row :gutter="12">
+                <el-col :span="12"><el-form-item label="帳號"><el-input v-model="cameraForm.username"/></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="密碼"><el-input v-model="cameraForm.password" type="password" show-password/></el-form-item></el-col>
+            </el-row>
+            <el-row :gutter="12">
+                <el-col :span="12"><el-form-item label="埠號"><el-input v-model="cameraForm.port"/></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="路徑"><el-input v-model="cameraForm.stream_path"/></el-form-item></el-col>
+            </el-row>
+            <div class="rtsp-preview"><strong>RTSP:</strong> {{ rtspUrl }}</div>
+            <el-form-item label="位置" style="margin-top:12px"><el-input v-model="cameraForm.location"/></el-form-item>
+            <el-form-item label="經度"><el-input v-model="cameraForm.lng" placeholder="121.5654"/></el-form-item>
+            <el-form-item label="緯度"><el-input v-model="cameraForm.lat" placeholder="25.0330"/></el-form-item>
+        </el-form>
+        <template #footer>
+            <el-button @click="showCameraDialog=false">取消</el-button>
+            <el-button type="success" @click="testCameraForm">測試</el-button>
+            <el-button type="primary" @click="saveCamera">儲存</el-button>
+        </template>
+    </el-dialog>
+</div>
+
+<script>
+const{createApp,ref,reactive,computed,onMounted,onUnmounted,nextTick,watch}=Vue;
+createApp({
+    setup(){
+        const page=ref('dashboard');
+        const currentTime=ref('');
+        const menuOpen=reactive({query:true});
+        const selectedArea=ref('all');
+        const dashboard=ref({});
+        const violations=ref([]);
+        const recentViolations=ref([]);
+        const cameras=ref([]);
+        const detectionStatus=ref({});
+        const streamKey=ref(Date.now());
+        const hourlyStats=ref({'闘紅燈':0,'超速':0,'違停':0});
+        const systemLogs=ref([
+            {id:1,time:'08:30:00',level:'info',message:'系統啟動完成'},
+            {id:2,time:'08:31:00',level:'info',message:'攝影機 1 連線成功'}
+        ]);
+        const statsDateFrom=ref(null);
+        const statsTimeFrom=ref(null);
+        const statsDateTo=ref(null);
+        const statsTimeTo=ref(null);
+        const statsPlate=ref("");
+        const statsLocation=ref("");
+        const statsCamera=ref("");
+        const statsPeriod=ref("hour");
+        const hourlyChartData=ref([{label:"01/08 10:00",count:1},{label:"01/08 12:00",count:1},{label:"01/08 14:00",count:2}]);
+        const repeatDateFrom=ref(null);
+        const repeatTimeFrom=ref(null);
+        const repeatDateTo=ref(null);
+        const repeatTimeTo=ref(null);
+        const repeatPlate=ref("");
+        const repeatThreshold=ref(0);
+        const repeatViolationType=ref("");
+        const repeatOffenders=ref([]);
+        const reportDateRange=ref(null);
+        const reportType=ref("daily");
+        const frigateStatus=reactive({status:"offline",version:"",cameras:[],detectors:{}});
+        const frigateConfig=reactive({host:"frigate",port:5000,mqtt_enabled:false,mqtt_host:"",mqtt_port:1883,mqtt_user:"",mqtt_password:""});
+        const frigateCameras=ref([]);
+        const frigateEvents=ref([]);
+        const lprStatus=reactive({status:"offline",engine:"",gpu:false});
+        const lprFile=ref(null);
+        const lprPreview=ref("");
+        const lprLoading=ref(false);
+        const lprResult=reactive({plate_number:null,confidence:0,valid:false});
+        const lprCameraId=ref(null);
+        const lprHistory=ref([]);
+        const lprStreamRunning=ref(false);
+        const lprStreamStatus=reactive({total_frames:0,total_detections:0,last_plate:null});
+        let lprPollTimer=null;
+        const showLprVisual=ref(false);
+        const lprSnapshotModal=ref(false);
+        const lprSnapshotData=reactive({});
+        const locations=ref([]);
+        
+        // 地圖
+        let map=null;
+        const initMap=()=>{
+            nextTick(()=>{
+                if(map)return;
+                const mapEl=document.getElementById('map');
+                if(!mapEl)return;
+                map=L.map('map').setView([25.0330,121.5654],14);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'OSM'}).addTo(map);
+                updateMarkers();
+            });
+        };
+        const updateMarkers=()=>{
+            if(!map)return;
+            cameras.value.forEach(c=>{
+                if(c.lat&&c.lng){
+                    const icon=L.divIcon({className:'',html:`<div style="background:${c.status==='online'?'#27ae60':'#e74c3c'};width:24px;height:24px;border-radius:50%;border:2px solid #fff;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px">📹</div>`});
+                    L.marker([c.lat,c.lng],{icon}).addTo(map).bindPopup(c.name);
+                }
+            });
+        };
+        
+        // 預覽
+        const showPreviewModal=ref(false);
+        const previewCamera=ref(null);
+        const previewImageUrl=ref('');
+        const previewImg=ref(null);
+        const roiCanvas=ref(null);
+        const roiType=ref('detection');
+        const roiName=ref('');
+        const roiPoints=ref([]);
+        const zoneColors={detection:'#67c23a',stop_line:'#e6a23c',crosswalk:'#409eff',no_parking:'#f56c6c'};
+        
+        // 詳情
+        const showDetailModal=ref(false);
+        const selected=ref({});
+        const selectedPhotos=ref([]);
+        
+        // 編輯
+        const showCameraDialog=ref(false);
+        const cameraForm=reactive({id:null,name:'',ip:'',username:'admin',password:'',port:'554',stream_path:'stream1',location:'',lat:'',lng:'',detection_config:{}});
+        const filters=reactive({dateFrom:null,timeFrom:null,dateTo:null,timeTo:null,plate:'',location:'',camera:'',type:'',status:''});
+        const pageSize=ref(10);
+        const reviewDateFrom=ref(null);
+        const reviewTimeFrom=ref(null);
+        const reviewDateTo=ref(null);
+        const reviewTimeTo=ref(null);
+        const reviewPlate=ref('');
+        const reviewLocation=ref('');
+        const reviewCamera=ref('');
+        const reviewType=ref('');
+        const reviewStatus=ref('pending');
+        const pendingViolations=ref([]);
+        
+        const rtspUrl=computed(()=>{
+            if(!cameraForm.ip)return'rtsp://';
+            let u='rtsp://';
+            if(cameraForm.username){u+=cameraForm.username;if(cameraForm.password)u+=':'+cameraForm.password;u+='@';}
+            u+=cameraForm.ip;if(cameraForm.port)u+=':'+cameraForm.port;if(cameraForm.stream_path)u+='/'+cameraForm.stream_path;
+            return u;
+        });
+        
+        const load=async()=>{
+            try{
+                dashboard.value=await(await fetch('/api/dashboard')).json();
+                violations.value=(await(await fetch('/api/violations?page_size=100')).json()).items||[];
+                recentViolations.value=violations.value.slice(0,20);
+                detectionStatus.value=await(await fetch('/api/stream/detection/all')).json();
+            }catch(e){}
+        };
+        const loadCameras=async()=>{
+            const d=await(await fetch('/api/cameras')).json();
+            cameras.value=(d.items||[]).map(c=>({...c,thumbKey:Date.now(),detection_config:c.detection_config||{},zones:c.zones||[]}));
+            updateMarkers();
+        };
+        const loadStats=async()=>{hourlyChartData.value=[{label:"01/08 10:00",count:1},{label:"01/08 12:00",count:1},{label:"01/08 14:00",count:2}];ElementPlus.ElMessage.success("分析完成");};
+        const loadRepeatOffenders=async()=>{const grouped={};violations.value.forEach(v=>{if(v.license_plate){grouped[v.license_plate]=grouped[v.license_plate]||{plate:v.license_plate,count:0};grouped[v.license_plate].count++;}});repeatOffenders.value=Object.values(grouped).filter(g=>g.count>=repeatThreshold.value).sort((a,b)=>b.count-a.count);ElementPlus.ElMessage.success("查詢完成");};
+        const loadFrigateStatus=async()=>{try{const r=await fetch('/api/frigate/status');const d=await r.json();Object.assign(frigateStatus,d);if(d.status==='online'){loadFrigateCameras();loadFrigateEvents();}}catch(e){frigateStatus.status='offline';}};
+        const loadFrigateCameras=async()=>{try{const r=await fetch('/api/frigate/cameras');const d=await r.json();frigateCameras.value=d.cameras||[];}catch(e){console.error(e);}};
+        const loadFrigateEvents=async()=>{try{const r=await fetch('/api/frigate/events?limit=20');const d=await r.json();frigateEvents.value=d.events||[];}catch(e){console.error(e);}};
+        const testFrigateConnection=async()=>{await loadFrigateStatus();if(frigateStatus.status==='online'){ElementPlus.ElMessage.success('連線成功');}else{ElementPlus.ElMessage.error('無法連線');}};
+        const saveFrigateSettings=async()=>{try{await fetch('/api/frigate/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(frigateConfig)});ElementPlus.ElMessage.success('設定已儲存');}catch(e){ElementPlus.ElMessage.error('儲存失敗');}};
+        const syncCamerasToFrigate=async()=>{try{const r=await fetch('/api/frigate/sync-cameras',{method:'POST'});const d=await r.json();if(d.status==='success'){ElementPlus.ElMessage.success(d.message);loadFrigateCameras();}else{ElementPlus.ElMessage.error(d.message);}}catch(e){ElementPlus.ElMessage.error('同步失敗');}};
+        const restartFrigate=async()=>{if(!confirm('確定要重啟 Frigate？'))return;try{const r=await fetch('/api/frigate/restart',{method:'POST'});const d=await r.json();ElementPlus.ElMessage.info(d.message);}catch(e){ElementPlus.ElMessage.error('重啟失敗');}};
+        const viewFrigateCamera=(cam)=>{window.open('http://'+frigateConfig.host+':'+frigateConfig.port+'/cameras/'+cam.name,'_blank');};
+        const viewFrigateEvent=(evt)=>{window.open('http://'+frigateConfig.host+':'+frigateConfig.port+'/events?camera='+evt.camera+'&label='+evt.label,'_blank');};
+        const formatFrigateTime=(ts)=>{if(!ts)return'-';return new Date(ts*1000).toLocaleString('zh-TW');};
+        const loadLprStatus=async()=>{try{const r=await fetch('/api/lpr/status');const d=await r.json();Object.assign(lprStatus,d);}catch(e){lprStatus.status='offline';}};
+        const handleLprFile=(e)=>{const f=e.target.files[0];if(f){lprFile.value=f;const reader=new FileReader();reader.onload=(ev)=>{lprPreview.value=ev.target.result;};reader.readAsDataURL(f);}};
+        const recognizeLpr=async()=>{if(!lprFile.value)return;lprLoading.value=true;try{const fd=new FormData();fd.append('file',lprFile.value);const r=await fetch('/api/lpr/recognize-upload',{method:'POST',body:fd});const d=await r.json();Object.assign(lprResult,d);lprHistory.value.unshift({...d,time:new Date().toLocaleTimeString('zh-TW'),source:'上傳'});if(d.plate_number){ElementPlus.ElMessage.success('辨識成功: '+d.plate_number);}else{ElementPlus.ElMessage.warning('未偵測到車牌');}}catch(e){ElementPlus.ElMessage.error('辨識失敗');}finally{lprLoading.value=false;}};
+        const startLprStream=async()=>{if(!lprCameraId.value)return;try{const r=await fetch('/api/lpr/stream/start/'+lprCameraId.value,{method:'POST'});const d=await r.json();if(d.status==='started'||d.status==='running'){lprStreamRunning.value=true;ElementPlus.ElMessage.success('開始串流辨識');pollLprResults();}else{ElementPlus.ElMessage.warning(d.message);}}catch(e){ElementPlus.ElMessage.error('啟動失敗');}};
+        const stopLprStream=async()=>{if(!lprCameraId.value)return;try{await fetch('/api/lpr/stream/stop/'+lprCameraId.value,{method:'POST'});lprStreamRunning.value=false;if(lprPollTimer){clearInterval(lprPollTimer);lprPollTimer=null;}ElementPlus.ElMessage.info('已停止辨識');}catch(e){ElementPlus.ElMessage.error('停止失敗');}};
+        const showLprSnapshot=(h)=>{Object.assign(lprSnapshotData,h);lprSnapshotModal.value=true;};
+        const toggleLprVisual=(v)=>{if(v&&!lprCameraId.value){showLprVisual.value=false;ElementPlus.ElMessage.warning("請先選擇攝影機");}};
+        const pollLprResults=()=>{if(lprPollTimer)clearInterval(lprPollTimer);lprPollTimer=setInterval(async()=>{if(!lprStreamRunning.value||!lprCameraId.value){clearInterval(lprPollTimer);return;}try{const r=await fetch('/api/lpr/stream/status/'+lprCameraId.value);const d=await r.json();Object.assign(lprStreamStatus,d);if(!d.running){lprStreamRunning.value=false;clearInterval(lprPollTimer);}const r2=await fetch('/api/lpr/stream/results/'+lprCameraId.value+'?limit=20');const d2=await r2.json();if(d2.results&&d2.results.length){d2.results.forEach(item=>{if(!lprHistory.value.find(h=>h.id===item.id)){lprHistory.value.unshift({...item,source:'串流'});}});if(lprHistory.value.length>100)lprHistory.value=lprHistory.value.slice(0,100);}}catch(e){console.error(e);}},1000);};
+        const recognizeFromCamera=async()=>{if(!lprCameraId.value)return;lprLoading.value=true;try{const r=await fetch('/api/lpr/recognize-camera/'+lprCameraId.value,{method:'POST'});const d=await r.json();Object.assign(lprResult,d);lprHistory.value.unshift({...d,time:new Date().toLocaleTimeString('zh-TW'),source:'單次'});if(d.plate_number){ElementPlus.ElMessage.success('辨識成功: '+d.plate_number);}else{ElementPlus.ElMessage.warning('未偵測到車牌');}}catch(e){ElementPlus.ElMessage.error('辨識失敗');}finally{lprLoading.value=false;}};
+        const loadViolations=async()=>{
+            let u='/api/violations?page_size=100';
+            if(filters.plate)u+=`&license_plate=${filters.plate}`;
+            if(filters.type)u+=`&violation_type=${filters.type}`;
+            if(filters.status)u+=`&status=${filters.status}`;
+            violations.value=(await(await fetch(u)).json()).items||[];
+        };
+        const loadPendingViolations=async()=>{let u="/api/violations?status=pending&page_size=100";if(reviewPlate.value)u+=`&license_plate=${reviewPlate.value}`;if(reviewType.value)u+=`&violation_type=${reviewType.value}`;pendingViolations.value=(await(await fetch(u)).json()).items||[];};
+        
+        const openPreview=(c)=>{previewCamera.value={...c,detection_config:{...c.detection_config},zones:[...(c.zones||[])]};previewImageUrl.value=`/api/stream/${c.id}/snapshot?t=${Date.now()}`;roiPoints.value=[];roiName.value='';showPreviewModal.value=true;};
+        const closePreview=()=>{showPreviewModal.value=false;loadCameras();};
+        const refreshPreview=()=>{previewImageUrl.value=`/api/stream/${previewCamera.value.id}/snapshot?t=${Date.now()}`;};
+        const saveConfig=async()=>{await fetch(`/api/cameras/${previewCamera.value.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({detection_config:previewCamera.value.detection_config})});ElementPlus.ElMessage.success('已儲存');};
+        
+        const initRoiCanvas=()=>{nextTick(()=>{const img=previewImg.value,c=roiCanvas.value;if(img&&c){c.width=img.clientWidth;c.height=img.clientHeight;c.style.width=img.clientWidth+'px';c.style.height=img.clientHeight+'px';c.style.left='50%';c.style.top='50%';c.style.transform='translate(-50%,-50%)';drawRoi();}});};
+        const drawRoi=()=>{const c=roiCanvas.value;if(!c)return;const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);(previewCamera.value?.zones||[]).forEach(z=>{ctx.fillStyle=zoneColors[z.type]+'40';ctx.strokeStyle=zoneColors[z.type];ctx.lineWidth=2;ctx.beginPath();z.points.forEach((p,i)=>{i===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1]);});ctx.closePath();ctx.fill();ctx.stroke();if(z.points[0]){ctx.fillStyle=zoneColors[z.type];ctx.font='12px sans-serif';ctx.fillText(z.name,z.points[0][0]+5,z.points[0][1]-5);}});if(roiPoints.value.length){ctx.fillStyle=zoneColors[roiType.value]+'40';ctx.strokeStyle=zoneColors[roiType.value];ctx.lineWidth=2;ctx.beginPath();roiPoints.value.forEach((p,i)=>{i===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1]);});if(roiPoints.value.length>2)ctx.closePath();ctx.fill();ctx.stroke();roiPoints.value.forEach((p,i)=>{ctx.beginPath();ctx.arc(p[0],p[1],5,0,Math.PI*2);ctx.fillStyle=zoneColors[roiType.value];ctx.fill();});}};
+        const addRoiPoint=(e)=>{const r=roiCanvas.value.getBoundingClientRect();roiPoints.value.push([Math.round(e.clientX-r.left),Math.round(e.clientY-r.top)]);drawRoi();};
+        const undoRoiPoint=()=>{roiPoints.value.pop();drawRoi();};
+        const clearRoi=()=>{roiPoints.value=[];drawRoi();};
+        const saveRoi=async()=>{if(roiPoints.value.length<3)return;const z={type:roiType.value,name:roiName.value||`區域${(previewCamera.value.zones?.length||0)+1}`,points:[...roiPoints.value]};const zones=[...(previewCamera.value.zones||[]),z];await fetch(`/api/cameras/${previewCamera.value.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({zones})});previewCamera.value.zones=zones;roiPoints.value=[];roiName.value='';drawRoi();ElementPlus.ElMessage.success('已儲存');};
+        const deleteZone=async(i)=>{const zones=previewCamera.value.zones.filter((_,idx)=>idx!==i);await fetch(`/api/cameras/${previewCamera.value.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({zones})});previewCamera.value.zones=zones;drawRoi();};
+        
+        const showDetail=(v)=>{selected.value=v;selectedPhotos.value=v.image_path?[{url:v.image_path,time:formatTime(v.created_at)}]:[];showDetailModal.value=true;};
+        const review=async(id,s)=>{await fetch(`/api/violations/${id}/review`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:s})});load();ElementPlus.ElMessage.success(s==='confirmed'?'已舉發':'已駁回');};
+        
+        const newCamera=()=>{Object.assign(cameraForm,{id:null,name:'',ip:'',username:'admin',password:'',port:'554',stream_path:'stream1',location:'',lat:'',lng:'',detection_config:{red_light:true,speeding:true,illegal_parking:true}});showCameraDialog.value=true;};
+        const editCamera=(c)=>{Object.assign(cameraForm,{id:c.id,name:c.name,ip:c.ip||'',username:c.username||'',password:c.password||'',port:c.port||'554',stream_path:c.stream_path||'',location:c.location||'',lat:c.lat||'',lng:c.lng||'',detection_config:{...c.detection_config}});showCameraDialog.value=true;};
+        const saveCamera=async()=>{const d={name:cameraForm.name,source:rtspUrl.value,ip:cameraForm.ip,username:cameraForm.username,password:cameraForm.password,port:cameraForm.port,stream_path:cameraForm.stream_path,location:cameraForm.location,lat:parseFloat(cameraForm.lat)||null,lng:parseFloat(cameraForm.lng)||null,detection_config:cameraForm.detection_config};await fetch(cameraForm.id?`/api/cameras/${cameraForm.id}`:'/api/cameras',{method:cameraForm.id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});showCameraDialog.value=false;loadCameras();ElementPlus.ElMessage.success('已儲存');};
+        const testCamera=async(id)=>{const r=await(await fetch(`/api/cameras/${id}/test`,{method:'POST'})).json();ElementPlus.ElMessage[r.status==='success'?'success':'error'](r.message);loadCameras();};
+        const testCameraForm=async()=>{const r=await(await fetch('/api/cameras/test-url',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:rtspUrl.value})})).json();ElementPlus.ElMessage[r.status==='success'?'success':'error'](r.message);};
+        const deleteCamera=async(id)=>{if(confirm('確定?')){await fetch(`/api/cameras/${id}`,{method:'DELETE'});loadCameras();}};
+        const handleThumbError=(e)=>{e.target.src='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><rect fill="%23222" width="200" height="120"/><text fill="%23666" x="50%" y="50%" text-anchor="middle" dy=".3em">無訊號</text></svg>';};
+        
+        const startDetection=async(id)=>{await fetch(`/api/stream/${id}/detection/start`,{method:'POST'});detectionStatus.value[id]={running:true};ElementPlus.ElMessage.success('已啟動');};
+        const stopDetection=async(id)=>{await fetch(`/api/stream/${id}/detection/stop`,{method:'POST'});detectionStatus.value[id]={running:false};ElementPlus.ElMessage.info('已停止');};
+        
+        const formatTime=(t)=>t?new Date(t).toLocaleString('zh-TW'):'';
+        const getTagType=(t)=>({RED_LIGHT:'danger',SPEEDING:'warning',ILLEGAL_PARKING:'info'}[t]||'');
+        const getStatusType=(s)=>({pending:'warning',confirmed:'success',rejected:'info'}[s]||'');
+        const getStatusText=(s)=>({pending:'未處理',confirmed:'已舉發',rejected:'不舉發'}[s]||s);
+        
+        watch(page,(v)=>{if(v==='dashboard'||v==='map')nextTick(initMap);});
+        
+        let timer;
+        onMounted(()=>{load();loadCameras();setInterval(()=>{currentTime.value=new Date().toLocaleString('zh-TW')},1000);timer=setInterval(load,15000);nextTick(initMap);});
+        onUnmounted(()=>{clearInterval(timer);});
+        
+        return{page,currentTime,menuOpen,selectedArea,dashboard,violations,recentViolations,cameras,detectionStatus,streamKey,hourlyStats,systemLogs,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsPeriod,hourlyChartData,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,frigateStatus,frigateConfig,frigateCameras,frigateEvents,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprHistory,lprStreamRunning,lprStreamStatus,showLprVisual,lprSnapshotModal,lprSnapshotData,showLprSnapshot,toggleLprVisual,
+            showPreviewModal,previewCamera,previewImageUrl,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,
+            showDetailModal,selected,selectedPhotos,showCameraDialog,cameraForm,filters,rtspUrl,
+            load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadRepeatOffenders,loadFrigateStatus,loadFrigateCameras,loadFrigateEvents,testFrigateConnection,saveFrigateSettings,syncCamerasToFrigate,restartFrigate,viewFrigateCamera,viewFrigateEvent,formatFrigateTime,loadLprStatus,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,pollLprResults,openPreview,closePreview,refreshPreview,saveConfig,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,
+            showDetail,review,newCamera,editCamera,saveCamera,testCamera,testCameraForm,deleteCamera,handleThumbError,startDetection,stopDetection,
+            formatTime,getTagType,getStatusType,getStatusText};
+    }
+}).use(ElementPlus).mount('#app');
+</script>
+</body>
+</html>
