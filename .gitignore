@@ -35,3 +35,24 @@ source/
 # Logs
 *.log
 nohup.out
+
+# --- local backups / temp ---
+*.bak
+*.bak*
+*backup*
+backups/
+backup.sh
+web/index_*
+config/frigate/.vacuum
+
+# --- python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- logs / runs ---
+logs/
+runs/
+output/
+recordings/
