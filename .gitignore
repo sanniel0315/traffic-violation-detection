@@ -15,6 +15,11 @@ models/
 # Storage (運行時資料)
 storage/
 output/
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/*.db-*
+data/*.sqlite-*
 
 # Frigate
 config/frigate/*.db*
@@ -35,3 +40,28 @@ source/
 # Logs
 *.log
 nohup.out
+
+# --- local backups / temp ---
+*.bak
+*.bak*
+*backup*
+backups/
+backup.sh
+!scripts/settings_backup.py
+web/index_*
+config/frigate/.vacuum
+
+# --- python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- logs / runs ---
+logs/
+runs/
+output/
+recordings/
+
+# --- settings backup (track this file) ---
+!config/settings_backup.json
