@@ -223,6 +223,15 @@ username: admin
 password: admin123
 ```
 
+### 部署後自動檢查（建議每次必跑）
+```bash
+# API 健康 + 交通事件區間查詢 + VD 前端關鍵標記
+python3 scripts/smoke_check.py --base-url http://127.0.0.1:8000 --timeout 60
+
+# 一鍵：重啟 API 並自動驗證
+./scripts/restart_and_verify.sh http://127.0.0.1:8000 60
+```
+
 ---
 
 ## 📤 推送流程
