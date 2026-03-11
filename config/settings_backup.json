@@ -1,0 +1,506 @@
+{
+  "meta": {
+    "schema": "traffic-settings-backup/v1",
+    "exported_at": "2026-03-11T03:32:04.630256+00:00",
+    "db_path": "/home/mic-711/projects/traffic-violation-detection/data/violations.db"
+  },
+  "cameras": [
+    {
+      "id": 1,
+      "name": "匝道攝影機",
+      "source": "rtsp://root:root@111.70.33.189:554/axis-media/media.amp",
+      "ip": "111.70.33.189",
+      "username": "root",
+      "password": "root",
+      "port": "554",
+      "stream_path": "axis-media/media.amp",
+      "location": "測試路口",
+      "enabled": true,
+      "detection_enabled": true,
+      "detection_config": {
+        "red_light": false,
+        "speeding": true,
+        "illegal_parking": false,
+        "speed_limit": 50,
+        "no_helmet": false,
+        "congestion": {
+          "medium_threshold": 0.2,
+          "high_threshold": 0.4,
+          "critical_threshold": 0.6,
+          "smoothing_window": 10,
+          "analyze_interval_sec": 1
+        }
+      },
+      "zones": [
+        {
+          "id": "zone_1772184741392_qqpdys",
+          "type": "flow_detection",
+          "name": "車流區 1",
+          "points": [
+            [
+              872,
+              141
+            ],
+            [
+              1878,
+              712
+            ],
+            [
+              1918,
+              1061
+            ],
+            [
+              1650,
+              1069
+            ],
+            [
+              736,
+              158
+            ]
+          ],
+          "lane_tags": [
+            "straight"
+          ],
+          "lane_no": 1,
+          "direction": "",
+          "speed_limit": null,
+          "overspeed_kmh": null,
+          "scope": "traffic_flow_settings",
+          "coord_space": "natural",
+          "source_width": 1920,
+          "source_height": 1080,
+          "lane": ""
+        },
+        {
+          "id": "zone_1772184761637_eauj4p",
+          "type": "flow_detection",
+          "name": "車流區 2",
+          "points": [
+            [
+              947,
+              88
+            ],
+            [
+              1907,
+              451
+            ],
+            [
+              1901,
+              688
+            ],
+            [
+              878,
+              120
+            ]
+          ],
+          "lane_tags": [
+            "straight"
+          ],
+          "lane_no": 2,
+          "direction": "",
+          "speed_limit": null,
+          "overspeed_kmh": null,
+          "scope": "traffic_flow_settings",
+          "coord_space": "natural",
+          "source_width": 1920,
+          "source_height": 1080,
+          "lane": ""
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "台62基隆段隧道口",
+      "source": "rtsp://admin:1qaz%40WSX@111.70.34.183:6554/profile2/media.smp",
+      "ip": "111.70.34.183",
+      "username": "admin",
+      "password": "1qaz@WSX",
+      "port": "6554",
+      "stream_path": "profile2/media.smp",
+      "location": "",
+      "enabled": true,
+      "detection_enabled": true,
+      "detection_config": {
+        "red_light": false,
+        "speeding": true,
+        "illegal_parking": false,
+        "speed_limit": 50,
+        "congestion": {
+          "medium_threshold": 0.2,
+          "high_threshold": 0.4,
+          "critical_threshold": 0.6,
+          "smoothing_window": 10,
+          "analyze_interval_sec": 1.0
+        }
+      },
+      "zones": [
+        {
+          "id": "zone_1773196946433_ho70z8",
+          "type": "flow_detection",
+          "name": "車流區 1",
+          "points": [
+            [
+              1475,
+              238
+            ],
+            [
+              1898,
+              384
+            ],
+            [
+              1918,
+              1044
+            ],
+            [
+              1017,
+              1017
+            ],
+            [
+              1097,
+              482
+            ],
+            [
+              1331,
+              294
+            ]
+          ],
+          "lane_tags": [
+            "straight"
+          ],
+          "lane_no": 1,
+          "direction": "",
+          "speed_limit": 60,
+          "overspeed_kmh": 10,
+          "scope": "traffic_flow_settings",
+          "coord_space": "natural",
+          "source_width": 1920,
+          "source_height": 1080,
+          "lane": ""
+        },
+        {
+          "id": "zone_1773196962956_avhrmz",
+          "type": "flow_detection",
+          "name": "車流區 2",
+          "points": [
+            [
+              898,
+              168
+            ],
+            [
+              1282,
+              243
+            ],
+            [
+              1022,
+              528
+            ],
+            [
+              993,
+              992
+            ],
+            [
+              24,
+              966
+            ],
+            [
+              100,
+              538
+            ],
+            [
+              180,
+              287
+            ]
+          ],
+          "lane_tags": [
+            "straight"
+          ],
+          "lane_no": 2,
+          "direction": "",
+          "speed_limit": 60,
+          "overspeed_kmh": 10,
+          "scope": "traffic_flow_settings",
+          "coord_space": "natural",
+          "source_width": 1920,
+          "source_height": 1080,
+          "lane": ""
+        },
+        {
+          "id": "zone_1773199230636_ys1svd",
+          "type": "speed_roi",
+          "name": "車速區 1",
+          "points": [
+            [
+              1445,
+              254
+            ],
+            [
+              1139,
+              461
+            ],
+            [
+              1054,
+              616
+            ],
+            [
+              1040,
+              1054
+            ],
+            [
+              1381,
+              1064
+            ],
+            [
+              1902,
+              1069
+            ],
+            [
+              1688,
+              242
+            ]
+          ],
+          "lane_tags": [],
+          "lane_no": 1,
+          "direction": "",
+          "speed_limit": 60,
+          "overspeed_kmh": 10,
+          "scope": "speed_detection",
+          "coord_space": "natural",
+          "source_width": 1920,
+          "source_height": 1080,
+          "lane": ""
+        },
+        {
+          "id": "zone_1773199246348_pqkvle",
+          "type": "speed_roi",
+          "name": "車速區 2",
+          "points": [
+            [
+              986,
+              171
+            ],
+            [
+              1330,
+              277
+            ],
+            [
+              1061,
+              542
+            ],
+            [
+              994,
+              1069
+            ],
+            [
+              22,
+              1064
+            ],
+            [
+              30,
+              456
+            ]
+          ],
+          "lane_tags": [],
+          "lane_no": 2,
+          "direction": "",
+          "speed_limit": 60,
+          "overspeed_kmh": 10,
+          "scope": "speed_detection",
+          "coord_space": "natural",
+          "source_width": 1920,
+          "source_height": 1080,
+          "lane": ""
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "62_1",
+      "source": "rtsp://admin:1qaz%40WSX@111.70.34.184:6554/profile2/media.smp",
+      "ip": "111.70.34.184",
+      "username": "admin",
+      "password": "1qaz@WSX",
+      "port": "6554",
+      "stream_path": "profile2/media.smp",
+      "location": "",
+      "enabled": true,
+      "detection_enabled": true,
+      "detection_config": {
+        "red_light": false,
+        "speeding": true,
+        "illegal_parking": false,
+        "congestion": {
+          "medium_threshold": 0.2,
+          "high_threshold": 0.4,
+          "critical_threshold": 0.6,
+          "smoothing_window": 10,
+          "analyze_interval_sec": 1.0
+        },
+        "speed_limit": 60
+      },
+      "zones": [
+        {
+          "type": "lane_straight",
+          "name": "S",
+          "points": [
+            [
+              1022,
+              208
+            ],
+            [
+              1273,
+              212
+            ],
+            [
+              1861,
+              1034
+            ],
+            [
+              562,
+              1066
+            ]
+          ],
+          "lane": "middle",
+          "direction": "",
+          "coord_space": "natural",
+          "source_width": 1920,
+          "source_height": 1080,
+          "lane_tags": [
+            "straight"
+          ],
+          "speed_limit": null,
+          "overspeed_kmh": null
+        },
+        {
+          "type": "lane_straight",
+          "name": "W",
+          "points": [
+            [
+              715,
+              167
+            ],
+            [
+              923,
+              205
+            ],
+            [
+              226,
+              1053
+            ],
+            [
+              5,
+              473
+            ]
+          ],
+          "lane": "middle",
+          "direction": "",
+          "coord_space": "natural",
+          "source_width": 1920,
+          "source_height": 1080,
+          "lane_tags": [
+            "straight"
+          ],
+          "speed_limit": null,
+          "overspeed_kmh": null
+        },
+        {
+          "type": "speed_roi",
+          "name": "車速區 7",
+          "points": [
+            [
+              1219,
+              262
+            ],
+            [
+              1002,
+              237
+            ],
+            [
+              526,
+              1042
+            ],
+            [
+              1696,
+              1050
+            ]
+          ],
+          "lane": "",
+          "direction": "S2N",
+          "coord_space": "natural",
+          "source_width": 1920,
+          "source_height": 1080,
+          "lane_tags": [],
+          "speed_limit": null,
+          "overspeed_kmh": null
+        },
+        {
+          "type": "speed_roi",
+          "name": "車速區 8",
+          "points": [
+            [
+              730,
+              182
+            ],
+            [
+              917,
+              224
+            ],
+            [
+              213,
+              1032
+            ],
+            [
+              18,
+              568
+            ]
+          ],
+          "lane": "",
+          "direction": "N2S",
+          "coord_space": "natural",
+          "source_width": 1920,
+          "source_height": 1080,
+          "lane_tags": [],
+          "speed_limit": null,
+          "overspeed_kmh": null
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "role": "admin",
+      "enabled": true
+    }
+  ],
+  "system_files": {
+    "feature_state": {
+      "updated_at": "2026-03-10T10:30:25.759337",
+      "features": {
+        "detection": {
+          "3": true,
+          "1": true,
+          "2": true
+        },
+        "congestion": {
+          "1": true,
+          "2": true,
+          "3": true
+        },
+        "lpr": {
+          "2": true,
+          "1": false,
+          "3": false
+        }
+      }
+    },
+    "ntp_settings": {
+      "enabled": true,
+      "servers": [
+        "time.stdtime.gov.tw",
+        "time.google.com"
+      ],
+      "sync_interval_minutes": 10,
+      "updated_at": "2026-03-05T09:30:42.826545+08:00"
+    }
+  }
+}

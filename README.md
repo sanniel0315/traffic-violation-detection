@@ -1,128 +1,795 @@
-# 🚗 交通違規影像分析系統
+# 🚦 交通違規影像分析系統
 
-基於 **NVIDIA Jetson Xavier NX 8GB** 的邊緣 AI 交通違規偵測系統，整合即時影像串流、YOLOv8 物件偵測、車牌辨識及違規事件管理。
+基於 NVIDIA Jetson 平台的 AI 邊緣運算交通監控系統，整合車輛偵測、車牌辨識、違規偵測、壅塞分析等功能。
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Platform](https://img.shields.io/badge/platform-Jetson%20NX%208GB-green.svg)
-![Python](https://img.shields.io/badge/python-3.10-blue.svg)
-![YOLOv8](https://img.shields.io/badge/YOLOv8-Ultralytics-orange.svg)
-
----
-
-## 📋 功能特色
-
-### 核心功能
-- 🎥 **即時影像監控** - 支援多路 RTSP 攝影機串流，GStreamer 硬體解碼
-- 🚙 **車輛偵測** - YOLOv8 即時偵測車輛、機車、行人等 (支援 TensorRT 加速)
-- 🔢 **車牌辨識 (LPR)** - 多重影像預處理 + Tesseract OCR
-- 📍 **ROI 區域設定** - 視覺化多邊形繪製違規偵測區域
-- 📊 **統計分析** - 時段統計、違規類型分析、累犯查詢
-- 📸 **證據保存** - 自動儲存違規截圖與車牌影像
-Markdown# 🚗 交通違規影像分析系統 (Traffic Violation Detection System)
-
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Platform](https://img.shields.io/badge/platform-Jetson%20NX-green.svg)
-![Python](https://img.shields.io/badge/python-3.10-blue.svg)
-![YOLOv8](https://img.shields.io/badge/YOLOv8-Ultralytics-orange.svg)
-![Vue](https://img.shields.io/badge/frontend-Vue%203-42b883.svg)
-
-基於 **NVIDIA Jetson Xavier NX** 的邊緣 AI 交通違規偵測系統。整合即時 RTSP 影像串流、YOLOv8 物件偵測、Tesseract 車牌辨識及違規事件管理，並支援與 Frigate NVR 及 Home Assistant 連動。
+![Platform](https://img.shields.io/badge/Platform-Jetson%20NX-green)
+![Python](https://img.shields.io/badge/Python-3.10-blue)
+![CUDA](https://img.shields.io/badge/CUDA-12.2-brightgreen)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
 ---
 
-## 📋 功能特色
+## 📋 目錄
 
-### 核心功能
-- 🎥 **即時影像監控** - 支援多路 RTSP 攝影機串流，採用 GStreamer 硬體解碼。
-- 🚙 **多類別物件偵測** - 整合 YOLOv8 偵測車輛（汽車、機車、卡車）與行人。
-- 🔢 **車牌辨識 (LPR)** - 針對台灣車牌優化的 Tesseract OCR，包含特殊車牌處理。
-- 📍 **ROI 區域防護** - 支援視覺化繪製偵測區域 (Region of Interest)，精準判斷違規。
-- 📸 **自動取證** - 違規觸發時自動快照、裁切車牌並儲存高解析度證據影像。
-- 📊 **數據儀表板** - 提供 Vue 3 前端介面，展示即時影像、統計圖表與歷史查詢。
-
-### 影像預處理技術
-為解決邊緣運算環境下的光影變化與模糊問題，系統實作了多重預處理管線：
-
-| 預處理方法 | 說明 | 適用場景 |
-|-----------|------|---------|
-| **CLAHE** | 對比度限制自適應直方圖均衡化 | 改善夜間或隧道內低光源環境 |
-| **Otsu 二值化** | 自動計算最佳閾值進行二值化 | 提升標準光源下的字元清晰度 |
-| **透視變換** | 基於輪廓的四點透視校正 | 修正斜視角拍攝造成的車牌變形 |
-| **形態學運算** | 膨脹與侵蝕操作 | 修復斷裂字元或去除噪點 |
+- [系統特色](#-系統特色)
+- [系統需求](#-系統需求)
+- [專案架構](#-專案架構)
+- [安裝部署](#-安裝部署)
+- [推送流程](#-推送流程)
+- [登入與權限](#-登入與權限)
+- [API 文件](#-api-文件)
+- [模組說明](#-模組說明)
+- [使用指南](#-使用指南)
+- [開發指南](#-開發指南)
 
 ---
 
-## 🏗️ 系統架構
+## ✨ 系統特色
 
-本專案採用微服務架構，將影像擷取、AI 推論與後端服務解耦，確保系統穩定性。
+| 功能 | 說明 | 技術 |
+|------|------|------|
+| 🚗 **車輛偵測** | 偵測汽車、機車、公車、卡車、自行車、行人 | YOLOv8n + TensorRT |
+| 🔢 **車牌辨識** | 台灣車牌格式辨識，多重預處理提升準確率 | Tesseract OCR |
+| 🚨 **違規偵測** | 闖紅燈、超速、違規停車、逆向行駛 | ROI + 規則引擎 |
+| 🚦 **壅塞偵測** | 即時車流密度分析，四級壅塞等級判定 | 佔用率演算法 |
+| 📹 **NVR 整合** | Frigate NVR 整合，支援動態偵測與錄影 | Frigate + MQTT |
+| 🔐 **登入與權限** | 帳密登入、角色管理、前台權限勾選派放 | Cookie Session + RBAC UI |
+| 🌐 **Web 介面** | 響應式 SPA 管理介面 | Vue 3 + Element Plus |
+| 📊 **系統日誌** | 即時監控與連線狀態記錄 | FastAPI + WebSocket |
 
-```mermaid
-graph TD
-    subgraph Input_Sources [影像來源]
-        Cam[IP 攝影機 (RTSP)] -->|H.264 Stream| Frigate[Frigate NVR<br/>動態偵測/錄影]
-    end
+---
 
-    subgraph Edge_Compute [Jetson NX 邊緣運算]
-        Frigate -->|RTMP/RTSP| Jetson
-        Jetson[Jetson Xavier NX]
-        
-        direction TB
-        Jetson -->|TensorRT| Detect[YOLOv8 物件偵測]
-        Jetson -->|OpenCV + Tesseract| OCR[車牌辨識 LPR]
-        Detect -.->|ROI 觸發| OCR
-    end
+## 💻 系統需求
 
-    subgraph Backend [後端服務]
-        Detect --> API[FastAPI Server]
-        OCR --> API
-        API <--> DB[(PostgreSQL)]
-        API --> FS[證據儲存<br/>(SSD/NVMe)]
-        API -->|MQTT| HA[Home Assistant]
-    end
+### 硬體需求
+```
+裝置: NVIDIA Jetson Xavier NX 8GB (或更高)
+儲存: 64GB+ SSD/SD Card
+網路: 支援 RTSP 攝影機
+```
 
-    subgraph User_Interface [前端介面]
-        API <--> Web[Vue 3 Dashboard]
-        User((管理者)) <--> Web
-    end
+### 軟體環境
+```
+系統: JetPack 6.0 (Ubuntu 22.04)
+CUDA: 12.2
+TensorRT: 8.6
+Python: 3.10
+Docker: 24.0+
+```
 
-    style Jetson fill:#76b900,stroke:#333,stroke-width:2px,color:white
-    style Frigate fill:#ff5722,stroke:#333,stroke-width:2px,color:white
-    style API fill:#009688,stroke:#333,stroke-width:2px,color:white
-💻 硬體與環境需求硬體規格項目建議規格說明邊緣裝置NVIDIA Jetson Xavier NX 8GB需開啟 15W 或 20W 電源模式儲存空間NVMe SSD 512GB+建議使用 NVMe 以應付高速影像寫入攝影機1080p RTSP IP Camera建議幀率 30fps，支援 H.264軟體環境OS: Ubuntu 20.04 (JetPack 5.1) 或 Ubuntu 22.04 (JetPack 6.0)Container: Docker 24.0+ / NVIDIA Container ToolkitAI Framework: PyTorch 2.1 (with CUDA), TensorRT 8.5+Backend: Python 3.10, FastAPI, SQLAlchemyFrontend: Node.js 18+, Vue 3, Element Plus⚡ 效能優化 (TensorRT)為在 Jetson NX 上達到即時處理，模型經過 TensorRT 優化轉換：模型格式精度平均 FPS (Jetson NX)延遲 (Latency)PyTorch (.pt)FP32~18 FPS~55msTensorRT (.engine)FP16~42 FPS~23msTensorRT (.engine)INT8~58 FPS~17ms (需校準)註：以上數據基於 YOLOv8n 模型測試，實際效能視輸入解析度與 ROI 數量而定。📁 專案結構Bashtraffic-violation-detection/
-├── docker-compose.yml          # 服務編排設定
-├── api/                        # FastAPI 後端核心
-│   ├── main.py                 # 程式入口
-│   ├── routes/                 # API 路由
-│   └── services/               # 核心邏輯 (偵測、LPR)
-├── web/                        # Vue 3 前端原始碼
-├── configs/                    # 設定檔 (Frigate, YOLO)
-├── models/                     # AI 模型存放區 (.pt, .engine)
-├── storage/                    # 違規影像儲存 (Docker Volume)
-└── scripts/                    # 工具腳本 (模型轉換、測試)
-🚀 快速開始1. 克隆專案Bashgit clone [https://github.com/YOUR_USERNAME/traffic-violation-detection.git](https://github.com/YOUR_USERNAME/traffic-violation-detection.git)
+---
+
+## 📁 專案架構
+```
+traffic-violation-detection/
+│
+├── 📄 Dockerfile                    # Docker 映像建置
+├── 📄 docker-compose.yml            # 容器編排設定
+├── 📄 requirements.txt              # Python 依賴
+├── 📄 README.md                     # 本文件
+│
+├── 📂 api/                          # FastAPI 後端服務
+│   ├── 📄 main.py                   # API 入口點
+│   ├── 📄 models.py                 # SQLAlchemy 資料模型
+│   └── 📂 routes/                   # API 路由模組
+│       ├── 📄 auth.py               # 登入/登出/目前使用者
+│       ├── 📄 cameras.py            # 攝影機 CRUD + 連線測試
+│       ├── 📄 violations.py         # 違規事件管理
+│       ├── 📄 stream.py             # 即時串流 + 偵測服務
+│       ├── 📄 frigate.py            # Frigate NVR 整合
+│       ├── 📄 lpr.py                # 車牌辨識 (單張)
+│       ├── 📄 lpr_stream.py         # 車牌辨識串流
+│       ├── 📄 lpr_visual.py         # LPR 視覺化串流
+│       ├── 📄 congestion.py         # 壅塞偵測服務
+│       └── 📄 logs.py               # 系統日誌服務
+│
+├── 📂 detection/                    # 偵測模組
+│   ├── 📄 vehicle_detector.py       # YOLOv8 車輛偵測
+│   ├── 📄 violation_detector.py     # 違規偵測邏輯
+│   └── 📄 congestion_detector.py    # 壅塞偵測器
+│
+├── 📂 recognition/                  # 辨識模組
+│   ├── 📄 plate_recognizer.py       # Tesseract 車牌 OCR
+│   └── 📄 frigate_integration.py    # Frigate 事件整合
+│
+├── 📂 web/                          # 前端介面
+│   ├── 📄 index.html                # Vue 3 SPA 主頁
+│   ├── 📄 roi_editor.html           # ROI 編輯器
+│   └── 📂 fonts/                    # 字型檔（含 CJK 疊加字型）
+│
+├── 📂 config/                       # 設定檔
+│   └── 📂 frigate/
+│       └── 📄 config.yml            # Frigate NVR 設定
+│
+├── 📂 models/                       # AI 模型 (不納入版控)
+│   ├── 📄 yolov8n.pt                # YOLOv8 PyTorch 模型
+│   └── 📄 yolov8n.engine            # TensorRT 加速模型
+│
+├── 📂 storage/                      # 資料儲存 (不納入版控)
+│   ├── 📂 violations/               # 違規截圖
+│   ├── 📂 lpr_snapshots/            # 車牌辨識截圖
+│   └── 📂 frigate/                  # Frigate 錄影
+│
+└── 📂 data/                         # 資料庫
+    └── 📄 violations.db             # SQLite 資料庫
+```
+
+---
+
+## 🔄 系統架構圖
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              使用者介面層                                     │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    web/index.html (Vue 3 SPA)                        │   │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │   │
+│  │  │ 儀表板   │ │ 攝影機   │ │ 違規管理 │ │ 車牌辨識 │ │ 系統日誌 │   │   │
+│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                     │ HTTP / WebSocket
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         API 服務層 (FastAPI :8000)                           │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ /api/cameras      攝影機管理 (CRUD, 連線測試)                        │   │
+│  │ /api/violations   違規事件 (查詢, 審核, 統計)                        │   │
+│  │ /api/stream       即時串流 (MJPEG, 偵測啟停)                         │   │
+│  │ /api/lpr          車牌辨識 (單張/串流/視覺化)                        │   │
+│  │ /api/congestion   壅塞偵測 (啟停/狀態/串流)                          │   │
+│  │ /api/frigate      NVR 整合 (設定/事件/錄影)                          │   │
+│  │ /api/logs         系統日誌 (即時/查詢/清除)                          │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                     │
+         ┌───────────────────────────┼───────────────────────────┐
+         ▼                           ▼                           ▼
+┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
+│   偵測模組       │       │   辨識模組       │       │   儲存層         │
+│ ┌─────────────┐ │       │ ┌─────────────┐ │       │ ┌─────────────┐ │
+│ │VehicleDetect│ │       │ │PlateRecogniz│ │       │ │  SQLite DB  │ │
+│ │ (YOLOv8)    │ │       │ │ (Tesseract) │ │       │ │  violations │ │
+│ └─────────────┘ │       │ └─────────────┘ │       │ │  cameras    │ │
+│ ┌─────────────┐ │       │ ┌─────────────┐ │       │ └─────────────┘ │
+│ │Congestion   │ │       │ │ Frigate     │ │       │ ┌─────────────┐ │
+│ │ Detector    │ │       │ │ Integration │ │       │ │ File Storage│ │
+│ └─────────────┘ │       │ └─────────────┘ │       │ │ screenshots │ │
+│ ┌─────────────┐ │       └─────────────────┘       │ └─────────────┘ │
+│ │Violation    │ │                                 └─────────────────┘
+│ │ Detector    │ │
+│ └─────────────┘ │
+└─────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              外部服務層                                      │
+│  ┌─────────────────────────────┐  ┌─────────────────────────────────────┐  │
+│  │ Frigate NVR (:5000)         │  │ IP 攝影機 (RTSP)                    │  │
+│  │ ├─ 動態偵測                 │  │ ├─ rtsp://user:pass@ip:port/path    │  │
+│  │ ├─ 事件錄影                 │  │ └─ H.264/H.265 編碼                 │  │
+│  │ └─ MQTT 推送                │  └─────────────────────────────────────┘  │
+│  └─────────────────────────────┘                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🚀 安裝部署
+
+### 方式一：Docker 部署 (推薦)
+```bash
+# 1. 克隆專案
+git clone https://github.com/your-repo/traffic-violation-detection.git
 cd traffic-violation-detection
-2. 環境設定複製範例設定檔並修改參數 (資料庫密碼、RTSP 網址等)。Bashcp .env.example .env
-nano .env
-3. 下載與轉換模型Bash# 下載 YOLOv8 權重
-mkdir -p models
-wget -P models/ [https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8n.pt](https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8n.pt)
 
-# (建議) 轉換為 TensorRT Engine 以獲得最佳效能
-docker run --gpus all --rm -v $(pwd):/app ultralytics/ultralytics:latest \
-    yolo export model=/app/models/yolov8n.pt format=engine half=True device=0
-4. 啟動系統Bashdocker compose up -d
-5. 存取服務Web 管理介面: http://localhost:8080API 文件 (Swagger): http://localhost:8000/docsFrigate NVR: http://localhost:5000🚗 支援車牌與違規類型支援車牌格式自用小客車: ABC-1234, AB-1234, ABC-123, AA-1111機車: 一般重型機車、輕型機車特殊車牌: 軍車 (軍A-12345)、試車牌 (試1234)、臨時牌 (臨12345)偵測違規類型違規停車 (Illegal Parking) - 在 ROI 紅區停留超過設定秒數逆向行駛 (Wrong Way) - 車輛移動向量與車道方向相反闖紅燈 (Red Light Violation) - (需整合號誌燈號訊號)行駛人行道 - 車輛中心點進入人行道 ROI📄 授權條款本專案採用 MIT License 授權。📞 聯絡與貢獻歡迎提交 Issue 或 Pull Request 來協助改進本專案。Author: [Your Name/Handle]Email: [your.email@example.com]
-### 上傳 GitHub 的建議步驟：
+# 2. 建立環境變數
+cp .env.example .env
 
-1.  **建立檔案**：在專案根目錄建立 `README.md` 並貼上上述內容。
-2.  **替換資訊**：搜尋文件中的 `YOUR_USERNAME`、`[Your Name/Handle]` 和 `[your.email@example.com]`，替換成你的真實資訊。
-3.  **上傳圖片**：
-    * 如果你有系統截圖，建議在專案中建立 `docs/images/` 資料夾。
-    * 將截圖放入後，在 README 中加入 `![Dashboard Screenshot](docs/images/dashboard.png)` 這樣的語法來展示成果。
-4.  **Push**：
-    ```bash
-    git add README.md
-    git commit -m "docs: update comprehensive README with architecture diagrams"
-    git push origin main
-    ```
-⭐ 如果這個專案對你有幫助，請給個 Star！
+# 3. 啟動服務
+docker compose up -d
+
+# 4. 查看日誌
+docker logs -f traffic-api
+```
+
+### 方式二：手動安裝
+```bash
+# 1. 安裝依賴
+pip install -r requirements.txt
+
+# 2. 安裝 Tesseract OCR
+sudo apt install tesseract-ocr tesseract-ocr-chi-tra
+
+# 3. 下載 YOLOv8 模型
+wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt -O models/yolov8n.pt
+# 4. (可選) 放置 TensorRT 模型
+# cp /path/to/yolov8n.engine models/yolov8n.engine
+
+# 5. 啟動 API
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### 存取服務
+
+| 服務 | URL | 說明 |
+|------|-----|------|
+| Web 介面 | http://localhost:8000/web/ | 管理介面 |
+| API 文件 | http://localhost:8000/docs | Swagger UI |
+| Frigate NVR | http://localhost:5000 | NVR 介面 |
+
+**預設登入帳號（首次初始化）**
+```
+username: admin
+password: admin123
+```
+
+---
+
+## 📤 推送流程
+
+已整理完整操作文件：[`推送流程.md`](./推送流程.md)
+
+內容包含：
+- GitHub SSH 金鑰設定與驗證
+- 專案推送標準步驟（branch/commit/push）
+- 設定備份流程（`config/settings_backup.json`）
+- Docker 有網打包、現場離線部署流程
+
+---
+
+## 🔐 登入與權限
+
+### 登入機制
+- Web 首頁未登入時會顯示登入頁。
+- 後端透過 `HttpOnly` Cookie 維持 Session。
+- 支援 API：
+  - `POST /api/auth/login`
+  - `GET /api/auth/me`
+  - `POST /api/auth/logout`
+
+### 角色模型
+- `admin`：可管理權限派放與所有功能
+- `ops`：可使用營運/維運功能（預設不含權限管理）
+- `viewer`：依派放權限只讀/部分可見
+
+### 權限派放（前台）
+- Web 側欄新增 `🔐 權限管理`（僅 `admin` 可見）。
+- 可對 `admin / ops / viewer` 勾選功能可見權限。
+- 權限即時影響：
+  - 側欄功能顯示
+  - 頁面可存取性（無權限頁會自動導回可用頁）
+
+---
+
+## 📡 API 文件
+
+### 認證 `/api/auth`
+
+| 方法 | 端點 | 說明 |
+|------|------|------|
+| `POST` | `/api/auth/login` | 使用帳密登入 |
+| `GET` | `/api/auth/me` | 取得目前登入使用者 |
+| `POST` | `/api/auth/logout` | 登出 |
+| `GET` | `/api/auth/users` | 取得使用者列表（admin） |
+| `POST` | `/api/auth/users` | 新增使用者（admin） |
+| `PUT` | `/api/auth/users/{id}` | 更新角色/啟停用（admin） |
+| `PUT` | `/api/auth/users/{id}/password` | 重設密碼（admin） |
+| `DELETE` | `/api/auth/users/{id}` | 刪除使用者（admin） |
+
+**users CRUD 規則**
+- 只有 `admin` 可管理使用者。
+- 不可刪除或停用目前登入中的管理者。
+- 系統至少保留一位啟用中的 `admin`。
+
+### 攝影機管理 `/api/cameras`
+
+| 方法 | 端點 | 說明 |
+|------|------|------|
+| `GET` | `/api/cameras` | 取得所有攝影機 |
+| `GET` | `/api/cameras/{id}` | 取得單一攝影機 |
+| `POST` | `/api/cameras` | 新增攝影機 |
+| `PUT` | `/api/cameras/{id}` | 更新攝影機 |
+| `DELETE` | `/api/cameras/{id}` | 刪除攝影機 |
+| `POST` | `/api/cameras/{id}/test` | 測試連線 |
+| `POST` | `/api/cameras/test-url` | 測試 RTSP URL |
+
+**新增攝影機範例：**
+```bash
+curl -X POST http://localhost:8000/api/cameras \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "前門攝影機",
+    "source": "rtsp://admin:password@192.168.1.100:554/stream1",
+    "location": "大門入口",
+    "detection_config": {
+      "red_light": true,
+      "speeding": true,
+      "illegal_parking": true
+    }
+  }'
+```
+
+---
+
+### 違規管理 `/api/violations`
+
+| 方法 | 端點 | 說明 |
+|------|------|------|
+| `GET` | `/api/violations` | 查詢違規列表 |
+| `GET` | `/api/violations/{id}` | 取得違規詳情 |
+| `PUT` | `/api/violations/{id}/review` | 審核違規 |
+| `GET` | `/api/violations/statistics` | 違規統計 |
+
+**查詢參數：**
+```
+?status=pending          # 狀態過濾
+&violation_type=RED_LIGHT # 類型過濾
+&license_plate=ABC-1234   # 車牌過濾
+&page=1&page_size=20      # 分頁
+```
+
+---
+
+### 即時串流 `/api/stream`
+
+| 方法 | 端點 | 說明 |
+|------|------|------|
+| `GET` | `/api/stream/{id}/live` | MJPEG 即時串流 |
+| `GET` | `/api/stream/{id}/live-overlay` | MJPEG 疊加串流（ROI/辨識） |
+| `GET` | `/api/stream/{id}/snapshot` | 取得截圖 |
+| `POST` | `/api/stream/{id}/detection/start` | 啟動偵測 |
+| `POST` | `/api/stream/{id}/detection/stop` | 停止偵測 |
+| `GET` | `/api/stream/detection/all` | 所有偵測狀態 |
+
+---
+
+### 車牌辨識 `/api/lpr`
+
+| 方法 | 端點 | 說明 |
+|------|------|------|
+| `GET` | `/api/lpr/status` | LPR 服務狀態 |
+| `POST` | `/api/lpr/recognize-upload` | 上傳圖片辨識 |
+| `POST` | `/api/lpr/recognize-camera/{id}` | 攝影機截圖辨識 |
+| `POST` | `/api/lpr/stream/start/{id}` | 啟動串流辨識 |
+| `POST` | `/api/lpr/stream/stop/{id}` | 停止串流辨識 |
+| `GET` | `/api/lpr/stream/status/{id}` | 串流辨識狀態 |
+| `GET` | `/api/lpr/stream/results/{id}` | 取得辨識結果 |
+| `GET` | `/api/lpr/visual/stream/{id}` | 視覺化串流 |
+
+**上傳辨識範例：**
+```bash
+curl -X POST http://localhost:8000/api/lpr/recognize-upload \
+  -F "file=@plate_image.jpg"
+```
+
+**回應：**
+```json
+{
+  "plate_number": "ABC-1234",
+  "confidence": 0.92,
+  "valid": true,
+  "type": "一般",
+  "vehicle_type": "car"
+}
+```
+
+---
+
+### 壅塞偵測 `/api/congestion`
+
+| 方法 | 端點 | 說明 |
+|------|------|------|
+| `POST` | `/api/congestion/{id}/start` | 啟動壅塞偵測 |
+| `POST` | `/api/congestion/{id}/stop` | 停止壅塞偵測 |
+| `GET` | `/api/congestion/{id}/status` | 取得壅塞狀態 |
+| `GET` | `/api/congestion/status/all` | 所有壅塞狀態 |
+| `GET` | `/api/congestion/{id}/snapshot` | 壅塞分析截圖 |
+| `GET` | `/api/congestion/{id}/stream` | 壅塞視覺化串流 |
+
+**壅塞狀態回應：**
+```json
+{
+  "running": true,
+  "result": {
+    "vehicle_count": 15,
+    "occupancy": 0.42,
+    "level": "medium",
+    "level_name": "中等",
+    "vehicle_stats": {"car": 10, "motorcycle": 5}
+  }
+}
+```
+
+**壅塞等級定義：**
+| 等級 | 佔用率 | 說明 |
+|------|--------|------|
+| `low` | < 20% | 暢通 |
+| `medium` | 20-40% | 中等 |
+| `high` | 40-60% | 擁擠 |
+| `critical` | > 60% | 嚴重壅塞 |
+
+---
+
+### NVR 整合 `/api/frigate`
+
+| 方法 | 端點 | 說明 |
+|------|------|------|
+| `GET` | `/api/frigate/status` | NVR 狀態 |
+| `GET` | `/api/frigate/cameras` | NVR 攝影機列表 |
+| `POST` | `/api/frigate/camera` | 新增 NVR 攝影機 |
+| `DELETE` | `/api/frigate/camera/{name}` | 刪除攝影機 |
+| `PUT` | `/api/frigate/camera/{name}/switch` | 單台錄影/偵測開關 |
+| `GET` | `/api/frigate/camera/{name}/motion-roi` | 取得 Motion ROI |
+| `PUT` | `/api/frigate/camera/{name}/motion-roi` | 更新 Motion ROI |
+| `GET` | `/api/frigate/events` | 取得事件 |
+| `POST` | `/api/frigate/sync-cameras` | 同步攝影機 |
+| `POST` | `/api/frigate/restart` | 重啟 NVR |
+
+---
+
+### 系統日誌 `/api/logs`
+
+| 方法 | 端點 | 說明 |
+|------|------|------|
+| `GET` | `/api/logs` | 取得日誌 |
+| `DELETE` | `/api/logs` | 清除日誌 |
+
+**查詢參數：**
+```
+?limit=100        # 數量限制
+&level=error      # 等級過濾 (info/warning/error/success)
+&source=camera    # 來源過濾
+```
+
+---
+
+## 🔧 模組說明
+
+### 1. 車輛偵測模組 `detection/vehicle_detector.py`
+```python
+class VehicleDetector:
+    """YOLOv8 車輛偵測器"""
+    
+    VEHICLE_CLASSES = {
+        0: 'person',      # 行人
+        1: 'bicycle',     # 自行車
+        2: 'car',         # 汽車
+        3: 'motorcycle',  # 機車
+        5: 'bus',         # 公車
+        7: 'truck'        # 卡車
+    }
+    
+    def __init__(self, model_path=None, conf_threshold=0.5):
+        """初始化偵測器"""
+        
+    def detect(self, frame) -> List[Dict]:
+        """
+        偵測影像中的車輛
+        
+        Returns:
+            [{'class_name': 'car', 'confidence': 0.85, 'bbox': {...}}, ...]
+        """
+        
+    def detect_with_draw(self, frame) -> Tuple[ndarray, List]:
+        """偵測並繪製標註框"""
+```
+
+---
+
+### 2. 壅塞偵測模組 `detection/congestion_detector.py`
+```python
+class CongestionDetector:
+    """壅塞偵測器 - 計算車流密度與佔用率"""
+    
+    LEVEL_NAMES = {
+        'low': '暢通',
+        'medium': '中等', 
+        'high': '擁擠',
+        'critical': '嚴重壅塞'
+    }
+    
+    def __init__(self, vehicle_detector=None):
+        """初始化，可共用 VehicleDetector 實例"""
+        
+    def analyze(self, frame, zones=None) -> Dict:
+        """
+        分析壅塞程度
+        
+        Args:
+            frame: BGR 影像
+            zones: ROI 區域設定 (來自攝影機設定)
+            
+        Returns:
+            {
+                'vehicle_count': 15,
+                'occupancy': 0.42,
+                'level': 'medium',
+                'level_name': '中等',
+                'vehicle_stats': {'car': 10, 'motorcycle': 5},
+                'vehicles': [...]
+            }
+        """
+```
+
+**演算法流程：**
+```
+1. YOLOv8 偵測車輛
+2. 過濾 ROI 區域內車輛 (無 ROI 則全景)
+3. 計算車輛佔用面積
+4. 佔用率 = 車輛面積 / ROI 面積
+5. 歷史平滑 (10 幀移動平均)
+6. 判定壅塞等級
+```
+
+---
+
+### 3. 車牌辨識模組 `recognition/plate_recognizer.py`
+```python
+class PlateRecognizer:
+    """台灣車牌辨識器 - 多重預處理 + Tesseract OCR"""
+    
+    PLATE_PATTERNS = [
+        r'^[A-Z]{3}-\d{4}$',    # ABC-1234 (新式)
+        r'^[A-Z]{2}-\d{4}$',    # AB-1234 (舊式)
+        r'^\d{4}-[A-Z]{2}$',    # 1234-AB
+        r'^[A-Z]{3}-\d{3}$',    # ABC-123 (機車)
+        # ... 更多格式
+    ]
+    
+    def recognize(self, img) -> Dict:
+        """
+        辨識車牌
+        
+        Returns:
+            {
+                'plate_number': 'ABC-1234',
+                'confidence': 0.92,
+                'valid': True,
+                'type': '一般'
+            }
+        """
+        
+    def preprocess(self, img) -> List[ndarray]:
+        """多重預處理 (6 種方式)"""
+        # 1. 原圖灰階
+        # 2. CLAHE 增強
+        # 3. Otsu 二值化
+        # 4. 反轉二值化
+        # 5. 自適應二值化
+        # 6. 銳化
+        
+    def perspective_transform(self, img) -> ndarray:
+        """透視變換校正傾斜車牌"""
+        
+    def _validate(self, plate) -> bool:
+        """驗證台灣車牌格式"""
+```
+
+**LPR 處理流程：**
+```
+RTSP 輸入
+    │
+    ▼
+YOLOv8n (車輛偵測)
+    │ car, motorcycle, bus, truck
+    ▼
+ROI 裁切 (車牌區域定位)
+    │
+    ▼
+多重預處理 (6 種方式)
+    │
+    ▼
+Tesseract OCR
+    │
+    ▼
+格式驗證 (台灣車牌)
+    │
+    ▼
+輸出結果
+```
+
+---
+
+### 4. 違規偵測模組 `detection/violation_detector.py`
+```python
+class ViolationType(Enum):
+    """違規類型"""
+    RED_LIGHT = "闖紅燈"
+    SPEEDING = "超速"
+    ILLEGAL_PARKING = "違規停車"
+    WRONG_WAY = "逆向行駛"
+    NO_HELMET = "未戴安全帽"
+    SIDEWALK = "騎樓違停"
+
+class ViolationEvent:
+    """違規事件"""
+    violation_type: ViolationType
+    vehicle_type: str
+    license_plate: str
+    confidence: float
+    bbox: Dict
+    timestamp: datetime
+    
+class VehicleTracker:
+    """車輛追蹤器 (簡易版)"""
+    
+class ViolationDetector:
+    """違規偵測器"""
+    
+    def detect_violations(self, frame, detections, zones) -> List[ViolationEvent]:
+        """偵測違規行為"""
+```
+
+---
+
+### 5. 系統日誌模組 `api/routes/logs.py`
+```python
+def add_log(level: str, message: str, source: str = "system"):
+    """
+    新增日誌 (供其他模組呼叫)
+    
+    Args:
+        level: info / warning / error / success
+        message: 日誌訊息
+        source: 來源 (system / camera / lpr / congestion)
+    """
+
+# 使用範例
+from api.routes.logs import add_log
+
+add_log("info", "開始測試攝影機連線", "camera")
+add_log("success", "連線成功: 前門攝影機 (1920x1080)", "camera")
+add_log("error", "無法連線: 後門攝影機", "camera")
+```
+
+---
+
+## 📖 使用指南
+
+### 新增攝影機
+
+1. 進入「攝影機管理」頁面
+2. 點擊「新增」按鈕
+3. 填寫資訊：
+   - 名稱：攝影機識別名稱
+   - IP：攝影機 IP 位址
+   - 帳號/密碼：RTSP 認證資訊
+   - 埠號：RTSP 埠號 (預設 554)
+   - 路徑：串流路徑
+4. 點擊「測試」確認連線
+5. 點擊「儲存」
+
+### 設定 ROI 區域
+
+1. 在攝影機管理點擊「設定」
+2. 切換到「偵測區域」分頁
+3. 在預覽畫面點擊設定多邊形頂點
+4. 選擇區域類型（偵測區域/排除區域）
+5. 點擊「儲存區域」
+
+### 啟動壅塞偵測
+
+1. 進入「即時監控」頁面
+2. 找到目標攝影機
+3. 點擊「🚦壅塞」按鈕
+4. 進入「系統日誌」查看分析結果
+
+### 查看系統日誌
+
+1. 點擊左側選單「系統監控日誌」
+2. 日誌會即時更新
+3. 可依等級過濾 (info/warning/error/success)
+4. 點擊「清除」清空日誌
+
+---
+
+## 🛠️ 開發指南
+
+### 新增 API 路由
+```python
+# api/routes/my_feature.py
+from fastapi import APIRouter
+from api.routes.logs import add_log
+
+router = APIRouter(prefix="/api/my-feature", tags=["我的功能"])
+
+@router.get("/status")
+async def get_status():
+    add_log("info", "查詢狀態", "my-feature")
+    return {"status": "ok"}
+```
+```python
+# api/main.py 註冊路由
+from api.routes import my_feature
+app.include_router(my_feature.router)
+```
+
+### 新增偵測模組
+```python
+# detection/my_detector.py
+class MyDetector:
+    def __init__(self):
+        print("✅ MyDetector 初始化完成")
+        
+    def detect(self, frame):
+        # 實作偵測邏輯
+        return results
+```
+
+### 資料庫模型
+```python
+# api/models.py
+class MyModel(Base):
+    __tablename__ = "my_table"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100))
+    created_at = Column(DateTime, default=datetime.utcnow)
+```
+
+---
+
+## 📝 環境變數
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `DATABASE_URL` | `sqlite:///./data/violations.db` | 資料庫連線 |
+| `FRIGATE_HOST` | `frigate` | Frigate 主機 |
+| `FRIGATE_PORT` | `5000` | Frigate 埠號 |
+| `MODEL_DIR` | `/workspace/models` | 模型目錄 |
+| `DETECT_MODEL_ENGINE` | `yolov8n.engine` | 偵測 engine 模型（可填絕對路徑或檔名） |
+| `DETECT_MODEL_PT` | `yolov8n.pt` | 偵測 pt 模型（可填絕對路徑或檔名） |
+| `TZ` | `Asia/Taipei` | 時區 |
+
+### 模型路徑規則
+
+- 所有偵測模型統一放置於容器 `/workspace/models`（主機端 `./models`）。
+- `DETECT_MODEL_ENGINE` / `DETECT_MODEL_PT` 若為絕對路徑（`/` 開頭）則直接使用。
+- 若為檔名或相對路徑，程式會自動拼成 `${MODEL_DIR}/${值}`。
+
+範例 `.env`：
+```env
+MODEL_DIR=/workspace/models
+DETECT_MODEL_ENGINE=yolov8n.engine
+DETECT_MODEL_PT=yolov8n.pt
+```
+
+---
+
+## 🔍 故障排除
+
+### 攝影機連線失敗
+```bash
+# 測試 RTSP 連線
+docker exec traffic-api python3 -c "
+import cv2
+cap = cv2.VideoCapture('rtsp://user:pass@ip:port/path')
+print('Connected:', cap.isOpened())
+cap.release()
+"
+```
+
+### 查看 API 日誌
+```bash
+docker logs -f traffic-api
+```
+
+### 重啟服務
+```bash
+docker restart traffic-api
+```
+
+---
+
+## 📄 授權
+
+MIT License
+
+---
+
+## 👥 貢獻
+
+歡迎提交 Issue 和 Pull Request！
+
+---
+
+*最後更新: 2026-02-10*
