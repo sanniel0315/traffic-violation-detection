@@ -232,6 +232,42 @@ python3 scripts/smoke_check.py --base-url http://127.0.0.1:8000 --timeout 60
 ./scripts/restart_and_verify.sh http://127.0.0.1:8000 60
 ```
 
+### 現場上板部署（無網路 Jetson）
+1. 開發機打包映像
+```bash
+docker compose build api
+docker save -o traffic-api_latest.tar traffic-api:latest
+python3 scripts/settings_backup.py export
+```
+
+2. 將檔案複製到板端（可用 `scp` / 隨身碟）
+```bash
+scp traffic-api_latest.tar <board_user>@<board_ip>:/home/<board_user>/deploy/
+scp config/settings_backup.json <board_user>@<board_ip>:/home/<board_user>/deploy/
+```
+
+3. 板端套版（進入專案根目錄）
+```bash
+# 可選：先備份板端設定
+python3 scripts/settings_backup.py export
+
+# 載入新映像
+docker load -i /home/<board_user>/deploy/traffic-api_latest.tar
+
+# 套用設定（不含辨識資料）
+python3 scripts/settings_backup.py import --file /home/<board_user>/deploy/settings_backup.json
+
+# 重啟並驗證
+./scripts/restart_and_verify.sh http://127.0.0.1:8000 60
+```
+
+4. 回滾（若新版本異常）
+```bash
+docker images | rg traffic-api
+docker tag traffic-api:<old_tag> traffic-api:latest
+./scripts/restart_and_verify.sh http://127.0.0.1:8000 60
+```
+
 ---
 
 ## 📤 推送流程
