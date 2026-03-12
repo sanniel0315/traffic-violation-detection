@@ -4,9 +4,10 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from ultralytics import YOLO
+from model_paths import get_detect_model_pt
 
 # 載入模型
-model = YOLO('yolov8n.pt')
+model = YOLO(get_detect_model_pt())
 
 # 偵測目標類別 (交通相關)
 VEHICLE_CLASSES = ['car', 'motorcycle', 'bus', 'truck', 'bicycle', 'person']

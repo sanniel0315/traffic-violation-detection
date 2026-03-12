@@ -2,10 +2,10 @@
 body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
 .layout { display: flex; min-height: 100vh; }
 .sidebar { width: 200px; background: #1e222d; color: #fff; flex-shrink: 0; }
-.sidebar-header { padding: 16px; background: #c9302c; text-align: center; font-weight: bold; }
+.sidebar-header { padding: 16px; background: #0d6e9f; text-align: center; font-weight: bold; }
 .menu-item { display: flex; align-items: center; padding: 12px 16px; color: #aaa; cursor: pointer; }
 .menu-item:hover { background: #2a2f3a; color: #fff; }
-.menu-item.active { background: #c9302c; color: #fff; }
+.menu-item.active { background: #0d6e9f; color: #fff; }
 .menu-item span { margin-left: 8px; }
 .main { flex: 1; background: #f5f5f5; overflow-x: hidden; }
 .header { background: #fff; padding: 12px 20px; border-bottom: 1px solid #e5e5e5; display: flex; justify-content: space-between; }
@@ -14,7 +14,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
 .stat-card { background: #fff; border-radius: 8px; padding: 20px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
 .stat-card .value { font-size: 32px; font-weight: bold; }
 .stat-card .label { color: #666; margin-top: 4px; }
-.stat-card.red .value { color: #e74c3c; }
+.stat-card.red .value { color: #0f766e; }
 .stat-card.yellow .value { color: #f39c12; }
 .stat-card.green .value { color: #27ae60; }
 .stat-card.blue .value { color: #3498db; }
@@ -64,7 +64,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
 .detail-body { display: grid; grid-template-columns: 1fr 1fr; }
 .detail-video-section, .detail-photo-section { padding: 16px; }
 .detail-video-section { border-right: 1px solid #eee; }
-.section-header { display: flex; justify-content: space-between; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid #c9302c; }
+.section-header { display: flex; justify-content: space-between; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid #0d6e9f; }
 .video-container { background: #000; border-radius: 8px; display: flex; align-items: center; justify-content: center; min-height: 350px; }
 .video-container img { max-width: 100%; max-height: 100%; }
 .photo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -73,5 +73,5 @@ body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
 .photo-overlay { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: #fff; padding: 6px; font-size: 11px; }
 .detail-footer { padding: 16px 20px; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 12px; background: #fafafa; }
 .btn-reject { background: #6c757d; color: #fff; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; }
-.btn-confirm { background: #c9302c; color: #fff; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; }
+.btn-confirm { background: #0d6e9f; color: #fff; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; }
 .rtsp-preview { background: #f5f5f5; padding: 10px; border-radius: 4px; margin-top: 10px; font-family: monospace; font-size: 12px; word-break: break-all; }

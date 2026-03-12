@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "servers": [
+    "time.stdtime.gov.tw",
+    "time.google.com"
+  ],
+  "sync_interval_minutes": 10,
+  "updated_at": "2026-03-05T09:30:42.826545+08:00"
+}

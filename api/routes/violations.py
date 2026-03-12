@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel
 
 from api.models import get_db, Violation
+from api.routes.logs import add_log
 
 router = APIRouter(prefix="/api/violations", tags=["違規事件"])
 
@@ -25,6 +26,11 @@ class ViolationCreate(BaseModel):
     image_path: Optional[str] = None
     fine_amount: Optional[int] = None
     points: Optional[int] = None
+    speed_kmh: Optional[float] = None
+    speed_limit_kmh: Optional[float] = None
+    overspeed_kmh: Optional[float] = None
+    flow_roi_hit: Optional[bool] = None
+    speed_roi_hit: Optional[bool] = None
 
 
 class ViolationReview(BaseModel):
@@ -141,11 +147,21 @@ async def create_violation(data: ViolationCreate, db: Session = Depends(get_db))
         image_path=data.image_path,
         fine_amount=data.fine_amount,
         points=data.points,
+        speed_kmh=data.speed_kmh,
+        speed_limit_kmh=data.speed_limit_kmh,
+        overspeed_kmh=data.overspeed_kmh,
+        flow_roi_hit=bool(data.flow_roi_hit),
+        speed_roi_hit=bool(data.speed_roi_hit),
         violation_time=datetime.utcnow()
     )
     db.add(v)
     db.commit()
     db.refresh(v)
+    add_log(
+        "warning",
+        f"新增違規紀錄: {v.violation_name} | 車牌 {v.license_plate or '未知'} | 攝影機 ID={v.camera_id}",
+        "violation",
+    )
     return _to_dict(v)
 
 
@@ -195,5 +211,10 @@ def _to_dict(v: Violation) -> dict:
         "status": v.status,
         "fine_amount": v.fine_amount,
         "points": v.points,
+        "speed_kmh": v.speed_kmh,
+        "speed_limit_kmh": v.speed_limit_kmh,
+        "overspeed_kmh": v.overspeed_kmh,
+        "flow_roi_hit": bool(v.flow_roi_hit),
+        "speed_roi_hit": bool(v.speed_roi_hit),
         "created_at": v.created_at.isoformat() if v.created_at else None
     }

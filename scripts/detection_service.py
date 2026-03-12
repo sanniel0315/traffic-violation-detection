@@ -22,7 +22,7 @@ class DetectionService:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         print("🚀 初始化偵測服務...")
-        self.detector = VehicleDetector(model_path="yolov8n.pt", conf_threshold=0.5)
+        self.detector = VehicleDetector(conf_threshold=0.5)
         print("✅ 偵測服務初始化完成")
     
     def process_video(self, source: str, camera_id: int = 1, location: str = "測試路口"):

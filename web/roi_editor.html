@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>ROI 編輯器</title>
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="icon" href="/favicon.ico">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://unpkg.com/element-plus"></script>
     <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
     <style>
@@ -14,9 +15,13 @@
         .roi-wrapper canvas { position: absolute; top: 0; left: 0; cursor: crosshair; }
         .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
         .zone-list { margin-top: 20px; }
-        .zone-item { display: flex; align-items: center; gap: 12px; padding: 10px; background: #f5f5f5; border-radius: 4px; margin-bottom: 8px; }
+        .zone-item { display: flex; align-items: center; gap: 12px; padding: 10px; background: #f5f5f5; border-radius: 4px; margin-bottom: 8px; flex-wrap: wrap; }
         .zone-color { width: 24px; height: 24px; border-radius: 4px; }
         .instructions { background: #e6f7ff; padding: 12px; border-radius: 4px; margin-bottom: 16px; }
+        .coord-box { margin-top: 12px; background: #fafafa; border: 1px solid #e8e8e8; border-radius: 6px; padding: 10px; }
+        .coord-list { max-height: 120px; overflow: auto; font-family: monospace; font-size: 13px; white-space: pre-wrap; }
+        .lane-dir-panel { background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:10px; margin:10px 0; }
+        .lane-dir-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:6px 0; }
     </style>
 </head>
 <body>
@@ -27,24 +32,66 @@
         <div class="instructions">
             <strong>操作說明：</strong>
             <ul style="margin:8px 0 0 20px">
-                <li>在影像上<strong>點擊</strong>來繪製多邊形頂點（至少 3 點）</li>
+                <li>在影像上<strong>點擊</strong>來繪製區域頂點（多邊形至少 3 點、線段至少 2 點）</li>
                 <li><strong>右鍵點擊</strong>可取消上一個點</li>
+                <li>車流設定頁只編輯「車流區」</li>
+                <li>車速設定頁編輯「車速區 + 速度起始線 + 速度結束線」並設定方向</li>
+                <li>壅塞設定使用「車流區」多邊形，不需起始/結束線</li>
+                <li>左轉/直行/右轉請在車流區列表中綁定（可複選，不需另畫車道框）</li>
                 <li>完成後點擊「儲存區域」按鈕</li>
             </ul>
         </div>
         
         <div class="toolbar">
+            <span>功能設定：</span>
+            <el-select v-model="functionType" style="width:160px">
+                <el-option
+                    v-for="opt in functionTypeOptions"
+                    :key="opt.value"
+                    :label="opt.label"
+                    :value="opt.value"
+                />
+            </el-select>
             <span>區域類型：</span>
-            <el-radio-group v-model="zoneType">
-                <el-radio-button value="detection">偵測區</el-radio-button>
-                <el-radio-button value="stop_line">停止線</el-radio-button>
-                <el-radio-button value="crosswalk">斑馬線</el-radio-button>
-                <el-radio-button value="no_parking">禁停區</el-radio-button>
-            </el-radio-group>
+            <el-select v-model="zoneType" style="width:180px">
+                <el-option
+                    v-for="opt in zoneTypeOptions"
+                    :key="opt.value"
+                    :label="opt.label"
+                    :value="opt.value"
+                    :disabled="isZoneTypeDisabledInCreate(opt.value)"
+                />
+            </el-select>
             <el-input v-model="zoneName" placeholder="區域名稱" style="width:150px"/>
-            <el-button type="primary" @click="saveZone" :disabled="points.length < 3">💾 儲存區域</el-button>
+            <el-select v-if="showDirectionByType(zoneType)" v-model="zoneDirection" placeholder="方向" style="width:140px">
+                <el-option v-for="opt in directionOptions" :key="`main-dir-${opt.value}`" :label="opt.label" :value="opt.value"/>
+            </el-select>
+            <el-select v-if="isFlowZoneType(zoneType)" v-model="zoneLaneTags" multiple collapse-tags collapse-tags-tooltip placeholder="車道(可複選)" style="width:220px">
+                <el-option v-for="opt in laneTagOptions" :key="`lane-tag-main-${opt.value}`" :label="opt.label" :value="opt.value"/>
+            </el-select>
+            <span v-if="isFlowZoneType(zoneType)" style="font-size:12px;color:#64748b">車道編號</span>
+            <el-input-number v-if="isFlowZoneType(zoneType)" v-model="zoneLaneNo" :min="1" :step="1" size="small" style="width:120px"/>
+            <span v-if="isSpeedZoneType(zoneType)" style="font-size:12px;color:#64748b">速限(km/h)</span>
+            <el-input-number v-if="isSpeedZoneType(zoneType)" v-model="zoneSpeedLimit" :min="20" :max="180" :step="5" size="small" style="width:130px"/>
+            <span v-if="isSpeedZoneType(zoneType)" style="font-size:12px;color:#64748b">超速門檻</span>
+            <el-input-number v-if="isSpeedZoneType(zoneType)" v-model="zoneOverSpeedKmh" :min="1" :max="80" :step="1" size="small" style="width:130px"/>
+            <el-select v-if="isSpeedZoneType(zoneType)" v-model="zoneDirection" placeholder="方向" style="width:140px">
+                <el-option v-for="opt in directionOptions" :key="`main-speed-dir-${opt.value}`" :label="opt.label" :value="opt.value"/>
+            </el-select>
+        </div>
+        <div class="toolbar">
+            <el-button type="primary" size="large" @click="saveZone" :disabled="points.length < minPointsForCurrentType">💾 儲存區域</el-button>
+            <el-button type="success" size="large" @click="saveAllEdits">✅ 儲存全部修改</el-button>
             <el-button @click="clearPoints">🗑️ 清除繪製</el-button>
             <el-button @click="undoPoint" :disabled="!points.length">↩️ 取消上一點</el-button>
+            <span v-if="points.length" style="color:#409eff;font-weight:bold">已繪製 {{ points.length }} 個點（{{ isLineType(zoneType) ? '線段需2點' : '多邊形需3點' }}）</span>
+        </div>
+        <div class="coord-box" v-if="points.length">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                <strong>目前座標</strong>
+                <el-button size="small" @click="copyPoints">複製座標</el-button>
+            </div>
+            <div class="coord-list">{{ pointsText }}</div>
         </div>
         
         <div class="roi-wrapper">
@@ -54,12 +101,67 @@
         
         <div class="zone-list" v-if="zones.length">
             <h3>已設定的區域 ({{ zones.length }})</h3>
-            <div class="zone-item" v-for="(zone, idx) in zones" :key="idx">
-                <div class="zone-color" :style="{background: colors[zone.type]}"></div>
-                <span style="flex:1">{{ zone.name }} ({{ typeNames[zone.type] }})</span>
-                <span style="color:#999">{{ zone.points.length }} 點</span>
-                <el-button size="small" type="danger" @click="deleteZone(idx)">刪除</el-button>
+            <h4 style="margin:12px 0 8px">🟩 車流區 ({{ flowZones.length }})</h4>
+            <div class="zone-item" v-for="item in flowZones" :key="'flow-'+item.idx">
+                <div class="zone-color" :style="{background: colors[item.zone.type]}"></div>
+                <el-tag size="small" type="info">#{{ item.idx + 1 }}</el-tag>
+                <el-input v-model="item.zone.name" size="small" style="width:180px" placeholder="區域名稱"/>
+                <el-select v-model="item.zone.type" size="small" style="width:150px">
+                    <el-option label="車流區" value="flow_detection"/>
+                </el-select>
+                <el-select v-model="item.zone.direction" size="small" style="width:120px">
+                    <el-option v-for="opt in directionOptions" :key="`flow-dir-${item.idx}-${opt.value}`" :label="opt.label" :value="opt.value"/>
+                </el-select>
+                <el-select v-model="item.zone.lane_tags" multiple collapse-tags collapse-tags-tooltip size="small" style="width:220px" placeholder="車道(可複選)">
+                    <el-option v-for="opt in laneTagOptions" :key="`flow-lane-${item.idx}-${opt.value}`" :label="opt.label" :value="opt.value"/>
+                </el-select>
+                <span style="font-size:12px;color:#64748b">編號</span>
+                <el-input-number v-model="item.zone.lane_no" :min="1" :step="1" size="small" style="width:120px"/>
+                <span style="color:#999">{{ item.zone.points.length }} 點</span>
+                <el-button size="small" type="primary" @click="updateZone(item.idx)">儲存</el-button>
+                <el-button size="small" type="danger" @click="deleteZone(item.idx)">刪除</el-button>
             </div>
+            <div v-if="!flowZones.length" style="color:#999;font-size:12px;padding:4px 0 10px">尚未設定車流區</div>
+            <h4 style="margin:12px 0 8px">⚡ 車速區 ({{ speedZones.length }})</h4>
+            <div class="zone-item" v-for="item in speedZones" :key="'speed-'+item.idx">
+                <div class="zone-color" :style="{background: colors[item.zone.type]}"></div>
+                <el-tag size="small" type="info">#{{ item.idx + 1 }}</el-tag>
+                <el-input v-model="item.zone.name" size="small" style="width:160px" placeholder="區域名稱"/>
+                <el-select v-model="item.zone.type" size="small" style="width:150px">
+                    <el-option label="車速區" value="speed_roi"/>
+                </el-select>
+                <span style="font-size:12px;color:#64748b">速限(km/h)</span>
+                <el-input-number v-model="item.zone.speed_limit" :min="20" :max="180" :step="5" size="small" style="width:130px"/>
+                <span style="font-size:12px;color:#64748b">超速門檻</span>
+                <el-input-number v-model="item.zone.overspeed_kmh" :min="1" :max="80" :step="1" size="small" style="width:130px"/>
+                <el-select v-model="item.zone.direction" size="small" style="width:120px">
+                    <el-option v-for="opt in directionOptions" :key="`speed-dir-${item.idx}-${opt.value}`" :label="opt.label" :value="opt.value"/>
+                </el-select>
+                <span style="color:#999">{{ item.zone.points.length }} 點</span>
+                <el-button size="small" type="primary" @click="updateZone(item.idx)">儲存</el-button>
+                <el-button size="small" type="danger" @click="deleteZone(item.idx)">刪除</el-button>
+            </div>
+            <div v-if="!speedZones.length" style="color:#999;font-size:12px;padding:4px 0 10px">尚未設定車速區</div>
+
+            <h4 style="margin:12px 0 8px">🧩 其他區域 ({{ otherZones.length }})</h4>
+            <div class="zone-item" v-for="item in otherZones" :key="'other-'+item.idx">
+                <div class="zone-color" :style="{background: colors[item.zone.type]}"></div>
+                <el-tag size="small" type="info">#{{ item.idx + 1 }}</el-tag>
+                <el-input v-model="item.zone.name" size="small" style="width:160px" placeholder="區域名稱"/>
+                <el-select v-model="item.zone.type" size="small" style="width:150px">
+                    <el-option label="車流區" value="flow_detection"/>
+                    <el-option label="車速區" value="speed_roi"/>
+                    <el-option label="車速進入線" value="speed_line_in"/>
+                    <el-option label="車速離開線" value="speed_line_out"/>
+                </el-select>
+                <el-select v-model="item.zone.direction" size="small" style="width:120px">
+                    <el-option v-for="opt in directionOptions" :key="`other-dir-${item.idx}-${opt.value}`" :label="opt.label" :value="opt.value"/>
+                </el-select>
+                <span style="color:#999">{{ item.zone.points.length }} 點</span>
+                <el-button size="small" type="primary" @click="updateZone(item.idx)">儲存</el-button>
+                <el-button size="small" type="danger" @click="deleteZone(item.idx)">刪除</el-button>
+            </div>
+            <div v-if="!otherZones.length" style="color:#999;font-size:12px;padding:4px 0 10px">無其他區域</div>
         </div>
         
         <div style="margin-top:20px">
@@ -69,31 +171,238 @@
 </div>
 
 <script>
-const { createApp, ref, onMounted, nextTick } = Vue;
+const { createApp, ref, onMounted, nextTick, computed, watch } = Vue;
 
 createApp({
     setup() {
-        const cameraId = new URLSearchParams(location.search).get('id') || 1;
+        const query = new URLSearchParams(location.search);
+        const cameraId = query.get('id') || 1;
+        const entryMode = query.get('mode') || '';
         const cameraName = ref('攝影機');
         const imageUrl = ref('');
         const imgRef = ref(null);
         const canvasRef = ref(null);
         const points = ref([]);
+        const allZones = ref([]);
         const zones = ref([]);
-        const zoneType = ref('detection');
+        const zoneType = ref('flow_detection');
+        const functionType = ref('flow');
         const zoneName = ref('');
+        const zoneLaneTags = ref([]);
+        const zoneLaneNo = ref(null);
+        const zoneDirection = ref('');
+        const zoneSpeedLimit = ref(60);
+        const zoneOverSpeedKmh = ref(10);
+        const directionOptions = [
+            { label: '未指定', value: '' },
+            { label: '左轉', value: 'left' },
+            { label: '直行', value: 'straight' },
+            { label: '右轉', value: 'right' }
+        ];
+        const laneTagOptions = [
+            { label: '左轉', value: 'left' },
+            { label: '直行', value: 'straight' },
+            { label: '右轉', value: 'right' }
+        ];
+        const sourceSize = ref({ width: 0, height: 0 });
+        const pointsText = computed(() => points.value.map((p, i) => `${i + 1}. [${p[0]}, ${p[1]}]`).join('\n'));
+        const lineTypes = ['speed_line_in', 'speed_line_out', 'stop_line'];
+        const isLineType = (t) => lineTypes.includes(String(t || ''));
+        const minPointsForCurrentType = computed(() => isLineType(zoneType.value) ? 2 : 3);
+        const speedLineTypes = ['speed_line_in', 'speed_line_out'];
+        const isFlowZoneType = (t) => String(t || '') === 'flow_detection';
+        const isSpeedZoneType = (t) => String(t || '') === 'speed_roi';
+        const showDirectionByType = (t) => isFlowZoneType(t) || isSpeedZoneType(t) || speedLineTypes.includes(String(t || ''));
+        const modeFunctionOptions = {
+            speed_detection: [
+                { label: '車速偵測', value: 'speed' }
+            ],
+            traffic_flow_settings: [
+                { label: '車流偵測', value: 'flow' }
+            ],
+            congestion_detection: [
+                { label: '車流偵測', value: 'flow' }
+            ]
+        };
+        const functionTypeOptions = computed(() => modeFunctionOptions[entryMode] || [
+            { label: '車流偵測', value: 'flow' },
+            { label: '車速偵測', value: 'speed' },
+            { label: '車道方向', value: 'lane' }
+        ]);
+        const functionTypeMap = {
+            flow: [
+                { label: '車流區', value: 'flow_detection' }
+            ],
+            speed: [
+                { label: '車速區', value: 'speed_roi' },
+                { label: '車速進入線', value: 'speed_line_in' },
+                { label: '車速離開線', value: 'speed_line_out' }
+            ]
+        };
+        const zoneTypeOptions = computed(() => functionTypeMap[functionType.value] || []);
+        const flowZones = computed(() => zones.value.map((zone, idx) => ({ zone, idx })).filter(x => String(x.zone.type || '') === 'flow_detection'));
+        const speedZones = computed(() => zones.value.map((zone, idx) => ({ zone, idx })).filter(x => String(x.zone.type || '') === 'speed_roi'));
+        const otherZones = computed(() => zones.value.map((zone, idx) => ({ zone, idx })).filter(x => !isFlowZoneType(x.zone.type) && !isSpeedZoneType(x.zone.type)));
+        const directionLabelOf = (v) => {
+            const key = String(v || '');
+            const hit = directionOptions.find(opt => String(opt.value) === key);
+            return hit?.label || '未指定';
+        };
+        const flowZoneOptions = computed(() => {
+            return flowZones.value.map(item => {
+                const name = item.zone.name || `車流區 ${item.idx + 1}`;
+                const dirLabel = directionLabelOf(item.zone.direction);
+                return {
+                    label: `${name}（${dirLabel}）`,
+                    value: String(item.zone.id || `flow_${item.idx + 1}`)
+                };
+            });
+        });
+        const zoneTypeToFunction = {
+            flow_detection: 'flow',
+            speed_roi: 'speed',
+            speed_line_in: 'speed',
+            speed_line_out: 'speed'
+        };
+        const modeToFunction = {
+            speed_detection: 'speed',
+            traffic_flow_settings: 'flow',
+            congestion_detection: 'flow'
+        };
+        const currentScope = String(entryMode || 'traffic_flow_settings');
+        const notifyOpenerZonesUpdated = () => {
+            try {
+                if (window.opener && !window.opener.closed) {
+                    window.opener.postMessage({
+                        source: 'roi_editor',
+                        type: 'zones_updated',
+                        cameraId: String(cameraId || ''),
+                        scope: currentScope,
+                        ts: Date.now()
+                    }, window.location.origin);
+                }
+            } catch (_) {}
+        };
+        const scopeAllowedTypes = {
+            traffic_flow_settings: ['flow_detection'],
+            speed_detection: ['speed_roi', 'speed_line_in', 'speed_line_out'],
+            congestion_detection: ['flow_detection']
+        };
+        const zoneTypeAlias = {
+            detection: 'flow_detection',
+            speed: 'speed_roi',
+            lane_left: 'flow_detection',
+            lane_straight: 'flow_detection',
+            lane_right: 'flow_detection'
+        };
+        const laneTagFromType = (t) => {
+            const raw = String(t || '');
+            if (raw === 'lane_left') return 'left';
+            if (raw === 'lane_straight') return 'straight';
+            if (raw === 'lane_right') return 'right';
+            return '';
+        };
+        const normalizeZoneType = (t) => zoneTypeAlias[String(t || '')] || String(t || '');
+        const isTypeAllowedInScope = (t, scope = currentScope) => {
+            const allow = scopeAllowedTypes[String(scope || '')] || [];
+            return allow.includes(normalizeZoneType(t));
+        };
+        const selectScopedZones = (zoneList = [], scope = currentScope) => {
+            const normalized = zoneList.map((z, idx) => {
+                const mappedType = normalizeZoneType(z.type);
+                return {
+                    ...z,
+                    id: String(z.id || `zone_${idx + 1}`),
+                    type: mappedType,
+                    scope: z.scope ? String(z.scope) : '',
+                    name: z.name || '',
+                    lane_tags: (() => {
+                        const tags = normalizeLaneTags(z.lane_tags || z.lanes || []);
+                        if (tags.length) return tags;
+                        const fallback = laneTagFromType(z.type);
+                        return fallback ? [fallback] : [];
+                    })(),
+                    lane_no: normalizeLaneNo(z.lane_no ?? z.lane_id ?? z.laneNo ?? z.lane),
+                    direction: z.direction || '',
+                    speed_limit: Number(z.speed_limit || 60),
+                    overspeed_kmh: Number(z.overspeed_kmh || z.speed_margin || 10)
+                };
+            });
+            const scoped = normalized.filter(z => z.scope === scope && isTypeAllowedInScope(z.type, scope));
+            const legacy = normalized.filter(z => !z.scope && isTypeAllowedInScope(z.type, scope));
+            if (!scoped.length) return { normalized, scoped: legacy };
+            // 兼容舊資料：同時帶入 legacy 區域，避免下拉選單 No data
+            const scopedIds = new Set(scoped.map(z => String(z.id || '')));
+            const merged = [...scoped];
+            legacy.forEach(z => {
+                const zid = String(z.id || '');
+                if (!scopedIds.has(zid)) merged.push(z);
+            });
+            return { normalized, scoped: merged };
+        };
+        if (modeToFunction[entryMode]) {
+            functionType.value = modeToFunction[entryMode];
+            const defaults = functionTypeMap[functionType.value] || [];
+            zoneType.value = defaults[0]?.value || 'flow_detection';
+        }
+
+        watch(functionTypeOptions, (opts) => {
+            const allowedFunctions = opts.map(opt => opt.value);
+            if (!allowedFunctions.includes(functionType.value)) {
+                functionType.value = allowedFunctions[0] || 'flow';
+            }
+        }, { immediate: true });
+        watch(functionType, (nextType) => {
+            const allowed = (functionTypeMap[nextType] || []).map(opt => opt.value);
+            if (!allowed.includes(zoneType.value)) {
+                zoneType.value = allowed[0] || 'flow_detection';
+            }
+        });
+        watch(zoneType, (nextZoneType) => {
+            const mappedType = zoneTypeToFunction[nextZoneType];
+            if (mappedType && mappedType !== functionType.value) {
+                functionType.value = mappedType;
+            }
+        });
         
         const colors = {
             detection: '#67c23a',
+            flow_detection: '#67c23a',
+            speed: '#f97316',
+            speed_roi: '#f97316',
+            speed_line_in: '#2563eb',
+            speed_line_out: '#8b5cf6',
+            lane_left: '#e11d48',
+            lane_straight: '#0ea5e9',
+            lane_right: '#f59e0b',
             stop_line: '#e6a23c', 
             crosswalk: '#409eff',
             no_parking: '#f56c6c'
         };
         const typeNames = {
             detection: '偵測區',
+            flow_detection: '車流區',
+            speed: '車速區',
+            speed_roi: '車速區',
+            speed_line_in: '車速進入線',
+            speed_line_out: '車速離開線',
             stop_line: '停止線',
             crosswalk: '斑馬線',
             no_parking: '禁停區'
+        };
+        const ensureZoneId = (z, idx) => String(z?.id || `zone_${idx + 1}`);
+        const normalizeLaneTags = (tags) => {
+            if (!Array.isArray(tags)) return [];
+            const allow = new Set(['left', 'straight', 'right']);
+            return tags.map(v => String(v || '')).filter(v => allow.has(v));
+        };
+        const normalizeLaneNo = (val) => {
+            if (val === null || val === undefined || val === '') return null;
+            const m = String(val).trim().match(/(\d+)/);
+            if (!m) return null;
+            const n = Number(m[1]);
+            if (!Number.isFinite(n) || n < 1) return null;
+            return Math.floor(n);
         };
         
         const loadCamera = async () => {
@@ -101,12 +410,60 @@ createApp({
                 const res = await fetch(`/api/cameras/${cameraId}`);
                 const data = await res.json();
                 cameraName.value = data.name;
-                zones.value = data.zones || [];
+                const selected = selectScopedZones(data.zones || [], currentScope);
+                allZones.value = selected.normalized;
+                zones.value = selected.scoped;
                 imageUrl.value = `/api/stream/${cameraId}/snapshot?t=${Date.now()}`;
             } catch (e) {
                 console.error(e);
             }
         };
+        
+        const mergeScopedZones = (localZones) => {
+            const normalizedLocal = (localZones || []).map((z, i) => ({
+                ...z,
+                id: ensureZoneId(z, i),
+                type: normalizeZoneType(z.type),
+                scope: currentScope,
+                name: z.name || `${typeNames[normalizeZoneType(z.type)] || '區域'} ${i + 1}`,
+                lane_tags: isFlowZoneType(z.type) ? normalizeLaneTags(z.lane_tags || []) : [],
+                lane_no: isFlowZoneType(z.type) ? normalizeLaneNo(z.lane_no) : null,
+                direction: z.direction || null,
+                speed_limit: isSpeedZoneType(z.type) ? Number(z.speed_limit || 60) : null,
+                overspeed_kmh: isSpeedZoneType(z.type) ? Number(z.overspeed_kmh || 10) : null
+            }));
+            const others = (allZones.value || []).filter(z => {
+                const zScope = String(z.scope || '');
+                if (zScope === currentScope) return false;
+                if (!zScope && isTypeAllowedInScope(z.type, currentScope)) return false;
+                return true;
+            });
+            return [...others, ...normalizedLocal];
+        };
+        
+        const persistScopedZones = async (localZones) => {
+            const merged = mergeScopedZones(localZones);
+            const r = await fetch(`/api/cameras/${cameraId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ zones: merged })
+            });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) {
+                throw new Error(d?.detail || d?.message || `HTTP ${r.status}`);
+            }
+            const savedZones = Array.isArray(d?.zones) ? d.zones : merged;
+            allZones.value = savedZones;
+            const selected = selectScopedZones(savedZones, currentScope);
+            zones.value = selected.scoped.map((z, i) => ({
+                ...z,
+                id: ensureZoneId(z, i),
+                type: normalizeZoneType(z.type),
+                scope: currentScope
+            }));
+            notifyOpenerZonesUpdated();
+        };
+        const isZoneTypeDisabledInCreate = () => false;
         
         const initCanvas = () => {
             nextTick(() => {
@@ -115,9 +472,34 @@ createApp({
                 if (img && canvas) {
                     canvas.width = img.clientWidth;
                     canvas.height = img.clientHeight;
+                    sourceSize.value = {
+                        width: img.naturalWidth || img.clientWidth || 1,
+                        height: img.naturalHeight || img.clientHeight || 1
+                    };
                     draw();
                 }
             });
+        };
+
+        const toCanvasPoint = (point, zone = null) => {
+            const canvas = canvasRef.value;
+            const img = imgRef.value;
+            if (!canvas) return point;
+            const zx = point[0] || 0;
+            const zy = point[1] || 0;
+            if (zone && zone.coord_space === 'natural' && zone.source_width && zone.source_height) {
+                return [
+                    Math.round(zx * canvas.width / zone.source_width),
+                    Math.round(zy * canvas.height / zone.source_height)
+                ];
+            }
+            if (img && img.naturalWidth && img.naturalHeight && (zx > canvas.width + 1 || zy > canvas.height + 1)) {
+                return [
+                    Math.round(zx * canvas.width / img.naturalWidth),
+                    Math.round(zy * canvas.height / img.naturalHeight)
+                ];
+            }
+            return [zx, zy];
         };
         
         const draw = () => {
@@ -128,45 +510,67 @@ createApp({
             
             // 畫已儲存的區域
             zones.value.forEach(zone => {
-                ctx.fillStyle = colors[zone.type] + '40';
-                ctx.strokeStyle = colors[zone.type];
+                const zPoints = (zone.points || []).map(p => toCanvasPoint(p, zone));
+                if (!zPoints.length) return;
+                const zColor = colors[zone.type] || '#64748b';
+                const zIsLine = isLineType(zone.type);
+                ctx.fillStyle = zColor + '40';
+                ctx.strokeStyle = zColor;
                 ctx.lineWidth = 2;
                 ctx.beginPath();
-                zone.points.forEach((p, i) => {
+                zPoints.forEach((p, i) => {
                     if (i === 0) ctx.moveTo(p[0], p[1]);
                     else ctx.lineTo(p[0], p[1]);
                 });
-                ctx.closePath();
-                ctx.fill();
+                if (!zIsLine && zPoints.length > 2) {
+                    ctx.closePath();
+                    ctx.fill();
+                }
                 ctx.stroke();
                 
                 // 標籤
-                if (zone.points.length > 0) {
+                if (zPoints.length > 0) {
                     ctx.fillStyle = colors[zone.type];
                     ctx.font = '14px sans-serif';
-                    ctx.fillText(zone.name, zone.points[0][0] + 5, zone.points[0][1] - 5);
+                    const laneNoTag = isFlowZoneType(zone.type) && Number(zone.lane_no) >= 1
+                        ? ` [車道${Number(zone.lane_no)}]` : '';
+                    const laneTag = isFlowZoneType(zone.type) && Array.isArray(zone.lane_tags) && zone.lane_tags.length
+                        ? ` [${zone.lane_tags.join('/')}]` : '';
+                    const speedTag = isSpeedZoneType(zone.type)
+                        ? ` [${Number(zone.speed_limit || 0)}km/h +${Number(zone.overspeed_kmh || 0)}]` : '';
+                    ctx.fillText(`${zone.name}${laneNoTag}${laneTag}${speedTag}`, zPoints[0][0] + 5, zPoints[0][1] - 5);
                 }
             });
             
             // 畫正在繪製的點
             if (points.value.length) {
-                ctx.fillStyle = colors[zoneType.value] + '40';
-                ctx.strokeStyle = colors[zoneType.value];
+                const draftZone = {
+                    coord_space: 'natural',
+                    source_width: sourceSize.value.width,
+                    source_height: sourceSize.value.height
+                };
+                const drawPoints = points.value.map(p => toCanvasPoint(p, draftZone));
+                const dColor = colors[zoneType.value] || '#64748b';
+                const dIsLine = isLineType(zoneType.value);
+                ctx.fillStyle = dColor + '40';
+                ctx.strokeStyle = dColor;
                 ctx.lineWidth = 2;
                 ctx.beginPath();
-                points.value.forEach((p, i) => {
+                drawPoints.forEach((p, i) => {
                     if (i === 0) ctx.moveTo(p[0], p[1]);
                     else ctx.lineTo(p[0], p[1]);
                 });
-                if (points.value.length > 2) ctx.closePath();
-                ctx.fill();
+                if (!dIsLine && drawPoints.length > 2) {
+                    ctx.closePath();
+                    ctx.fill();
+                }
                 ctx.stroke();
                 
                 // 畫頂點
-                points.value.forEach((p, i) => {
+                drawPoints.forEach((p, i) => {
                     ctx.beginPath();
                     ctx.arc(p[0], p[1], 6, 0, Math.PI * 2);
-                    ctx.fillStyle = colors[zoneType.value];
+                    ctx.fillStyle = dColor;
                     ctx.fill();
                     ctx.fillStyle = '#fff';
                     ctx.font = '10px sans-serif';
@@ -177,10 +581,13 @@ createApp({
         };
         
         const addPoint = (e) => {
-            const rect = canvasRef.value.getBoundingClientRect();
+            const canvas = canvasRef.value;
+            const rect = canvas.getBoundingClientRect();
             const x = Math.round(e.clientX - rect.left);
             const y = Math.round(e.clientY - rect.top);
-            points.value.push([x, y]);
+            const sx = Math.round(x * sourceSize.value.width / (canvas.width || 1));
+            const sy = Math.round(y * sourceSize.value.height / (canvas.height || 1));
+            points.value.push([sx, sy]);
             draw();
         };
         
@@ -193,55 +600,160 @@ createApp({
             points.value = [];
             draw();
         };
+        const validateZones = (zoneList, contextType = '') => {
+            if (entryMode !== 'traffic_flow_settings') return true;
+            const dirAllow = new Set(['left', 'straight', 'right']);
+            const flowIssues = [];
+            zoneList.forEach((z, i) => {
+                if (!isFlowZoneType(z?.type)) return;
+                const laneNo = normalizeLaneNo(z?.lane_no);
+                const dir = String(z?.direction || '').trim().toUpperCase();
+                const name = String(z?.name || `車流區 ${i + 1}`);
+                if (!laneNo) flowIssues.push(`${name} 缺少車道編號`);
+                if (!dirAllow.has(dir)) flowIssues.push(`${name} 缺少行車方向`);
+            });
+            if (flowIssues.length) {
+                ElementPlus.ElMessage.warning(flowIssues.join('；'));
+                return false;
+            }
+            const hasFlow = zoneList.some(z => String(z?.type || '') === 'flow_detection');
+            const hasSpeed = zoneList.some(z => String(z?.type || '') === 'speed_roi');
+            if (!hasFlow && hasSpeed) {
+                ElementPlus.ElMessage.warning('有車速區時，建議至少設定一個車流區');
+            }
+            return true;
+        };
         
         const saveZone = async () => {
-            if (points.value.length < 3) {
-                ElementPlus.ElMessage.warning('至少需要 3 個點');
+            if (points.value.length < minPointsForCurrentType.value) {
+                ElementPlus.ElMessage.warning(isLineType(zoneType.value) ? '線段至少需要 2 個點' : '多邊形至少需要 3 個點');
+                return;
+            }
+            if (speedLineTypes.includes(zoneType.value) && !zoneDirection.value) {
+                ElementPlus.ElMessage.warning('車速進出線請設定方向（左/直/右）');
                 return;
             }
             
             const newZone = {
+                id: `zone_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 type: zoneType.value,
                 name: zoneName.value || `${typeNames[zoneType.value]} ${zones.value.length + 1}`,
-                points: [...points.value]
+                points: [...points.value],
+                lane_tags: isFlowZoneType(zoneType.value) ? normalizeLaneTags(zoneLaneTags.value) : [],
+                lane_no: isFlowZoneType(zoneType.value) ? normalizeLaneNo(zoneLaneNo.value) : null,
+                direction: zoneDirection.value || null,
+                speed_limit: isSpeedZoneType(zoneType.value) ? Number(zoneSpeedLimit.value || 60) : null,
+                overspeed_kmh: isSpeedZoneType(zoneType.value) ? Number(zoneOverSpeedKmh.value || 10) : null,
+                scope: currentScope,
+                coord_space: 'natural',
+                source_width: sourceSize.value.width,
+                source_height: sourceSize.value.height
             };
             
             const newZones = [...zones.value, newZone];
+            if (!validateZones(newZones, zoneType.value)) return;
             
             try {
-                await fetch(`/api/cameras/${cameraId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ zones: newZones })
-                });
-                
-                zones.value = newZones;
+                await ElementPlus.ElMessageBox.confirm(
+                    `請確認以下 ROI 座標：\n${pointsText.value}`,
+                    '座標確認',
+                    {
+                        confirmButtonText: '確認儲存',
+                        cancelButtonText: '取消',
+                        type: 'warning'
+                    }
+                );
+                await persistScopedZones(newZones);
                 points.value = [];
                 zoneName.value = '';
+                zoneLaneTags.value = [];
+                zoneLaneNo.value = null;
+                zoneDirection.value = '';
+                zoneSpeedLimit.value = 60;
+                zoneOverSpeedKmh.value = 10;
                 draw();
                 ElementPlus.ElMessage.success('區域已儲存');
             } catch (e) {
-                ElementPlus.ElMessage.error('儲存失敗');
+                if (e !== 'cancel') {
+                    ElementPlus.ElMessage.error('儲存失敗');
+                }
+            }
+        };
+
+        const copyPoints = async () => {
+            try {
+                await navigator.clipboard.writeText(pointsText.value);
+                ElementPlus.ElMessage.success('座標已複製');
+            } catch (e) {
+                ElementPlus.ElMessage.error('無法複製座標');
             }
         };
         
         const deleteZone = async (idx) => {
             const newZones = zones.value.filter((_, i) => i !== idx);
             try {
-                await fetch(`/api/cameras/${cameraId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ zones: newZones })
-                });
-                zones.value = newZones;
+                await persistScopedZones(newZones);
                 draw();
                 ElementPlus.ElMessage.success('已刪除');
             } catch (e) {
                 ElementPlus.ElMessage.error('刪除失敗');
             }
         };
+
+        const updateZone = async (idx) => {
+            const current = zones.value[idx] || {};
+            if (speedLineTypes.includes(String(current.type || '')) && !current.direction) {
+                ElementPlus.ElMessage.warning('車速進出線請設定方向（左/直/右）');
+                return;
+            }
+            const updatedZones = zones.value.map((z, i) => i === idx ? {
+                ...z,
+                id: ensureZoneId(z, i),
+                scope: currentScope,
+                name: z.name || `${typeNames[z.type] || '區域'} ${i + 1}`,
+                lane_tags: isFlowZoneType(z.type) ? normalizeLaneTags(z.lane_tags || []) : [],
+                lane_no: isFlowZoneType(z.type) ? normalizeLaneNo(z.lane_no) : null,
+                direction: z.direction || null,
+                speed_limit: isSpeedZoneType(z.type) ? Number(z.speed_limit || 60) : null,
+                overspeed_kmh: isSpeedZoneType(z.type) ? Number(z.overspeed_kmh || 10) : null
+            } : z);
+            if (!validateZones(updatedZones, current.type)) return;
+            try {
+                await persistScopedZones(updatedZones);
+                draw();
+                ElementPlus.ElMessage.success('區域已更新');
+            } catch (e) {
+                ElementPlus.ElMessage.error('更新失敗');
+            }
+        };
+
+        const saveAllEdits = async () => {
+            try {
+                if (!validateZones(zones.value, '')) return;
+                await persistScopedZones(zones.value);
+                draw();
+                ElementPlus.ElMessage.success('所有修改已儲存');
+            } catch (e) {
+                ElementPlus.ElMessage.error('儲存失敗');
+            }
+        };
         
         const goBack = () => {
+            try {
+                if (window.opener && !window.opener.closed) {
+                    window.opener.focus();
+                    window.close();
+                    return;
+                }
+            } catch (e) {}
+            if (document.referrer && document.referrer.includes('/web/')) {
+                window.location.href = document.referrer;
+                return;
+            }
+            if (window.history.length > 1) {
+                window.history.back();
+                return;
+            }
             window.location.href = '/web/';
         };
         
@@ -251,8 +763,9 @@ createApp({
         
         return {
             cameraId, cameraName, imageUrl, imgRef, canvasRef,
-            points, zones, zoneType, zoneName, colors, typeNames,
-            initCanvas, addPoint, undoPoint, clearPoints, saveZone, deleteZone, goBack
+            points, zones, functionType, functionTypeOptions, zoneType, zoneTypeOptions, zoneName, zoneLaneTags, zoneLaneNo, zoneDirection, zoneSpeedLimit, zoneOverSpeedKmh, directionOptions, laneTagOptions, flowZoneOptions, flowZones, speedZones, otherZones, pointsText, colors, typeNames, isLineType, minPointsForCurrentType, isFlowZoneType, isSpeedZoneType, showDirectionByType,
+            isZoneTypeDisabledInCreate,
+            initCanvas, addPoint, undoPoint, clearPoints, saveZone, saveAllEdits, deleteZone, updateZone, copyPoints, goBack
         };
     }
 }).use(ElementPlus).mount('#app');
