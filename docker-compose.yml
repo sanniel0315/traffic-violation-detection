@@ -1,5 +1,5 @@
 # =============================================================================
-# 交通違規影像分析系統 - Docker Compose
+# 交通影像分析系統 - Docker Compose
 # =============================================================================
 
 services:
@@ -22,7 +22,10 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=all
       - FRIGATE_HOST=frigate
       - FRIGATE_PORT=5000
-    command: python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+      - MODEL_DIR=/workspace/models
+      - DETECT_MODEL_ENGINE=yolov8n.engine
+      - DETECT_MODEL_PT=yolov8n.pt
+    command: python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8000
     restart: unless-stopped
     depends_on:
       - frigate
@@ -35,10 +38,11 @@ services:
 
   # Frigate NVR 服務
   frigate:
-    image: ghcr.io/blakeblackshear/frigate:stable
+    image: ghcr.io/blakeblackshear/frigate:stable-tensorrt-jp6
     container_name: frigate
+    runtime: nvidia
     privileged: true
-    shm_size: "256mb"
+    shm_size: "512mb"
     volumes:
       - ./config/frigate:/config
       - ./storage/frigate:/media/frigate
@@ -60,10 +64,14 @@ services:
     runtime: nvidia
     volumes:
       - ./:/workspace
+      - ./models:/workspace/models
     working_dir: /workspace
     environment:
       - TZ=Asia/Taipei
       - NVIDIA_VISIBLE_DEVICES=all
+      - MODEL_DIR=/workspace/models
+      - DETECT_MODEL_ENGINE=yolov8n.engine
+      - DETECT_MODEL_PT=yolov8n.pt
     stdin_open: true
     tty: true
     profiles:

@@ -6,6 +6,8 @@ warnings.filterwarnings('ignore')
 from ultralytics import YOLO
 from typing import List, Dict, Any
 import numpy as np
+import os
+from model_paths import get_detect_model_pt
 
 
 class VehicleDetector:
@@ -21,7 +23,7 @@ class VehicleDetector:
         7: 'truck'
     }
     
-    def __init__(self, model_path: str = 'yolov8n.pt', conf_threshold: float = 0.5):
+    def __init__(self, model_path: str = None, conf_threshold: float = 0.5):
         """
         初始化偵測器
         
@@ -29,9 +31,17 @@ class VehicleDetector:
             model_path: YOLOv8 模型路徑
             conf_threshold: 信心度閾值
         """
+        model_path = model_path or get_detect_model_pt()
         self.model = YOLO(model_path)
         self.conf_threshold = conf_threshold
-        print(f"✅ 車輛偵測器初始化完成 (模型: {model_path})")
+        self.device = os.getenv("DEVICE", "cuda:0")
+        self.runtime_device = "cpu"
+        try:
+            self.model.to(self.device)
+            self.runtime_device = self.device
+        except Exception:
+            self.runtime_device = "cpu"
+        print(f"✅ 車輛偵測器初始化完成 (模型: {model_path}, device: {self.runtime_device})")
     
     def detect(self, frame: np.ndarray) -> List[Dict[str, Any]]:
         """
@@ -44,7 +54,12 @@ class VehicleDetector:
             偵測結果列表
         """
         # 執行推論
-        results = self.model(frame, conf=self.conf_threshold, verbose=False)
+        results = self.model(
+            frame,
+            conf=self.conf_threshold,
+            verbose=False,
+            device=self.runtime_device,
+        )
         
         detections = []
         for result in results:

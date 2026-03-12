@@ -139,9 +139,10 @@
         .analysis-setting-tip { font-size:12px; color:#64748b; margin-top:6px; line-height:1.5; }
         .analysis-kpi-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
         .analysis-zone-list { display:flex; flex-direction:column; gap:8px; }
-        .analysis-zone-row { display:flex; justify-content:space-between; gap:8px; border:1px solid #e2e8f0; border-radius:8px; padding:8px; background:#f8fafc; }
+        .analysis-zone-row { display:flex; justify-content:space-between; gap:8px; border:1px solid #e2e8f0; border-radius:8px; padding:8px; background:#f8fafc; flex-wrap:wrap; align-items:flex-start; }
         .analysis-zone-name { font-size:13px; font-weight:600; color:#0f172a; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .analysis-zone-meta { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; }
+        .analysis-zone-meta { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; margin-left:auto; }
+        .analysis-speed-fields { width:100%; display:flex; align-items:center; gap:6px; justify-content:flex-start; margin-top:6px; padding-top:6px; border-top:1px dashed #dbe3ef; }
         
         /* 違規詳情 */
         .detail-box { max-width: 1400px; }
@@ -2601,7 +2602,7 @@
                             <el-button type="warning" size="small" style="width:100%" @click="openRoiEditor(previewCamera.id)">開啟 ROI 編輯器</el-button>
                             <div class="analysis-setting-tip">
                                 {{ page==='speed_detection'
-                                    ? '車速頁顯示車速區/進入線/離開線，方向與速限在 ROI 編輯器調整。'
+                                    ? '車速頁可在下方列表直接綁定車道並調整速限/超速門檻。'
                                     : '車流頁僅設定車流區，並在列表綁定車道方向與車道編號。' }}
                             </div>
                             <div class="analysis-kpi-row">
@@ -2638,7 +2639,10 @@
                                         <el-tag v-if="(item.zone.lane_tags||[]).length" size="small" type="info">{{ laneTagsLabel(item.zone.lane_tags) }}</el-tag>
                                         <el-tag v-if="item.zone.direction" size="small" type="success">{{ directionLabel(item.zone.direction) }}</el-tag>
                                         <el-tag v-if="speedLineDirectionLabel(item.zone)" size="small" type="primary">{{ speedLineDirectionLabel(item.zone) }}</el-tag>
-                                        <el-tag v-if="page==='speed_detection' && Number(item.zone.speed_limit)" size="small" type="warning">{{ Number(item.zone.speed_limit) }} km/h (+{{ Number(item.zone.overspeed_kmh||10) }})</el-tag>
+                                        <el-tag
+                                            v-if="page==='speed_detection' && ['speed','speed_roi'].includes(String(item.zone.type||''))"
+                                            size="small"
+                                            type="warning">目前值 {{ Number(item.zone.speed_limit||60) }} km/h (+{{ Number(item.zone.overspeed_kmh||10) }})</el-tag>
                                         <span v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')" style="font-size:12px;color:#64748b">左直右</span>
                                         <el-checkbox-group
                                             v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')"
@@ -2684,7 +2688,34 @@
                                             type="success"
                                             plain
                                             @click="saveZoneBinding(item.index)">儲存綁定</el-button>
+                                        <el-button
+                                            v-if="page==='speed_detection' && ['speed','speed_roi','speed_line_in','speed_line_out'].includes(String(item.zone.type||''))"
+                                            size="small"
+                                            type="success"
+                                            plain
+                                            @click="saveZoneBinding(item.index)">儲存設定</el-button>
                                         <el-button size="small" type="primary" plain @click="openRoiEditor(previewCamera.id)">更新</el-button>
+                                    </div>
+                                    <div
+                                        v-if="page==='speed_detection' && ['speed','speed_roi'].includes(String(item.zone.type||''))"
+                                        class="analysis-speed-fields">
+                                        <span style="font-size:12px;color:#334155;font-weight:600">可編輯</span>
+                                        <span style="font-size:12px;color:#64748b">速限(km/h)</span>
+                                        <el-input-number
+                                            v-model="item.zone.speed_limit"
+                                            :min="20"
+                                            :max="220"
+                                            :step="1"
+                                            size="small"
+                                            style="width:120px"/>
+                                        <span style="font-size:12px;color:#64748b">超速門檻</span>
+                                        <el-input-number
+                                            v-model="item.zone.overspeed_kmh"
+                                            :min="1"
+                                            :max="120"
+                                            :step="1"
+                                            size="small"
+                                            style="width:120px"/>
                                     </div>
                                 </div>
                             </div>
@@ -3637,6 +3668,9 @@ createApp({
                     return t;
                 }
                 const l=t.toLowerCase();
+                if(l.includes('left') || l.includes('左'))return 'left';
+                if(l.includes('straight') || l.includes('middle') || l.includes('mid') || l.includes('直'))return 'straight';
+                if(l.includes('right') || l.includes('右'))return 'right';
                 if(l.includes('in') || l.includes('進') || l.includes('入口'))return 'IN';
                 if(l.includes('out') || l.includes('出') || l.includes('出口'))return 'OUT';
                 if(l.includes('n2s')||l.includes('北向南'))return 'N2S';
@@ -3809,8 +3843,22 @@ createApp({
             return v||'unknown';
         };
         const laneLabelMap={left:'左轉車道',middle:'直行車道',right:'右轉車道',unknown:'未知'};
-        const directionLabelMap={IN:'IN',OUT:'OUT',N2S:'北向南',S2N:'南向北',E2W:'東向西',W2E:'西向東',unknown:'未知'};
+        const directionLabelMap={
+            left:'左轉',
+            straight:'直行',
+            right:'右轉',
+            IN:'IN',
+            OUT:'OUT',
+            N2S:'北向南',
+            S2N:'南向北',
+            E2W:'東向西',
+            W2E:'西向東',
+            unknown:'未知'
+        };
         const defaultDirectionOptions=[
+            {value:'left',label:'左轉'},
+            {value:'straight',label:'直行'},
+            {value:'right',label:'右轉'},
             {value:'IN',label:'IN'},
             {value:'OUT',label:'OUT'},
             {value:'N2S',label:'北向南'},
@@ -4220,12 +4268,25 @@ createApp({
         });
         const statsVdLikeRows=computed(()=>{
             const buckets={};
-            const dirText=(d)=>({IN:'IN',OUT:'OUT',N2S:'北向南',S2N:'南向北',E2W:'東向西',W2E:'西向東'}[String(d||'')]||'未知');
+            const dirText=(d)=>({
+                left:'左轉',
+                straight:'直行',
+                right:'右轉',
+                IN:'IN',
+                OUT:'OUT',
+                N2S:'北向南',
+                S2N:'南向北',
+                E2W:'東向西',
+                W2E:'西向東'
+            }[String(d||'')]||'未知');
             const normalizeVdDirection=(raw)=>{
                 const t=String(raw||'').trim().toUpperCase();
                 if(!t)return 'unknown';
                 if(['IN','OUT','N2S','S2N','E2W','W2E'].includes(t))return t;
                 const l=String(raw||'').trim().toLowerCase();
+                if(l.includes('left') || l.includes('左'))return 'left';
+                if(l.includes('straight') || l.includes('middle') || l.includes('mid') || l.includes('直'))return 'straight';
+                if(l.includes('right') || l.includes('右'))return 'right';
                 if(l.includes('in') || l.includes('進') || l.includes('入口'))return 'IN';
                 if(l.includes('out') || l.includes('出') || l.includes('出口'))return 'OUT';
                 if(l.includes('n2s') || l.includes('北向南'))return 'N2S';
@@ -4904,7 +4965,13 @@ createApp({
         const zoneColors={detection:'#67c23a',flow_detection:'#67c23a',speed:'#f97316',speed_roi:'#f97316',speed_line_in:'#2563eb',speed_line_out:'#8b5cf6',lane_left:'#e11d48',lane_straight:'#0ea5e9',lane_right:'#f59e0b',stop_line:'#e6a23c',crosswalk:'#409eff',no_parking:'#2563eb'};
         const flowZoneTypes=['detection','flow_detection'];
         const speedZoneTypes=['speed','speed_roi','speed_line_in','speed_line_out'];
-        const baseDirectionOptions=[
+        const flowDirectionOptions=[
+            {label:'未指定',value:''},
+            {label:'左轉',value:'left'},
+            {label:'直行',value:'straight'},
+            {label:'右轉',value:'right'}
+        ];
+        const travelDirectionOptions=[
             {label:'未指定',value:''},
             {label:'IN',value:'IN'},
             {label:'OUT',value:'OUT'},
@@ -4933,6 +5000,9 @@ createApp({
             return `車道${idx}`;
         };
         const directionLabel=(dir)=>({
+            left:'左轉',
+            straight:'直行',
+            right:'右轉',
             IN:'IN',
             OUT:'OUT',
             N2S:'北向南',
@@ -4943,6 +5013,9 @@ createApp({
         const directionArrowLabel=(dir)=>{
             const k=String(dir||'');
             const map={
+                left:'↰ 左轉',
+                straight:'↑ 直行',
+                right:'↱ 右轉',
                 N2S:'↓ 北向南',
                 S2N:'↑ 南向北',
                 E2W:'← 東向西',
@@ -4953,7 +5026,11 @@ createApp({
             return map[k] || directionLabel(k);
         };
         const directionOptionsForZone=(zone)=>{
-            return baseDirectionOptions;
+            const type=String(zone?.type||'');
+            if(type==='flow_detection' || type==='detection' || type==='lane_left' || type==='lane_straight' || type==='lane_right'){
+                return flowDirectionOptions;
+            }
+            return travelDirectionOptions;
         };
         const zoneTypeLabel=(t)=>({
             detection:'偵測區',
@@ -4982,6 +5059,27 @@ createApp({
             const dir=String(zone?.direction||'');
             if(!['speed_line_in','speed_line_out'].includes(type) || !dir)return '';
             return `${type==='speed_line_in'?'起始線':'結束線'} ${directionArrowLabel(dir)}`;
+        };
+        const isSpeedLimitEditableZone=(zone)=>{
+            const type=String(zone?.type||'');
+            return type==='speed' || type==='speed_roi';
+        };
+        const normalizeSpeedZoneBinding=(zone={})=>{
+            const next={...zone};
+            if(isSpeedLimitEditableZone(next)){
+                const speedLimit=Number(next?.speed_limit);
+                const overspeedKmh=Number(next?.overspeed_kmh);
+                next.speed_limit=(Number.isFinite(speedLimit) && speedLimit>=20 && speedLimit<=220)
+                    ? Math.round(speedLimit*10)/10
+                    : 60;
+                next.overspeed_kmh=(Number.isFinite(overspeedKmh) && overspeedKmh>=1 && overspeedKmh<=120)
+                    ? Math.round(overspeedKmh*10)/10
+                    : 10;
+            }else{
+                next.speed_limit=null;
+                next.overspeed_kmh=null;
+            }
+            return next;
         };
         const pickScopedZones=(zones=[], targetScope='', typeAllowSet=null)=>{
             const list=(zones||[]).map((zone,index)=>({zone,index}));
@@ -5063,6 +5161,7 @@ createApp({
         const normalizeZoneType=(t)=>{
             const raw=String(t||'').trim();
             if(raw==='detection')return 'flow_detection';
+            if(raw==='lane_left' || raw==='lane_straight' || raw==='lane_right')return 'flow_detection';
             if(raw==='flow' || raw==='flow_detection')return 'flow_detection';
             if(raw==='speed' || raw==='speed_detection' || raw==='speed_roi')return 'speed_roi';
             if(raw==='speed_line_in' || raw==='speed_line_out')return raw;
@@ -5521,7 +5620,7 @@ createApp({
                 const now=Date.now();
                 cameras.value.forEach(c=>{
                     if(!c?.showStream)return;
-                    if(!c.monitorSnapshotMode && now-Number(c.lastFrameAt||0)>7000){
+                    if(!c.monitorSnapshotMode && now-Number(c.lastFrameAt||0)>25000){
                         c.monitorSnapshotMode=true;
                         c.thumbKey=now;
                         c.snapshotTickAt=now;
@@ -6570,6 +6669,9 @@ createApp({
             const dirAllow=new Set(['IN','OUT','N2S','S2N','E2W','W2E']);
             if(dirAllow.has(t))return t;
             const l=String(raw||'').trim().toLowerCase();
+            if(l.includes('left') || l.includes('左'))return 'left';
+            if(l.includes('straight') || l.includes('middle') || l.includes('mid') || l.includes('直'))return 'straight';
+            if(l.includes('right') || l.includes('右'))return 'right';
             if(l.includes('in') || l.includes('進') || l.includes('入口'))return 'IN';
             if(l.includes('out') || l.includes('出') || l.includes('出口'))return 'OUT';
             if(l.includes('n2s') || l.includes('北向南'))return 'N2S';
@@ -6589,7 +6691,7 @@ createApp({
             const conflicts=[];
             (zones||[]).forEach(z=>{
                 const type=String(z?.type||'');
-                if(type!=='flow_detection' && type!=='detection')return;
+                if(type!=='flow_detection' && type!=='detection' && type!=='lane_left' && type!=='lane_straight' && type!=='lane_right')return;
                 const scope=String(z?.scope||'').trim();
                 if(scope && scope!=='traffic_flow_settings')return;
                 const laneNo=normalizeLaneNo(z?.lane_no);
@@ -6629,6 +6731,9 @@ createApp({
                 const type=String(z?.type||'');
                 if(!['speed','speed_roi','speed_line_in','speed_line_out'].includes(type))return;
                 z.scope='speed_detection';
+                const normalizedSpeed=normalizeSpeedZoneBinding(z);
+                z.speed_limit=normalizedSpeed.speed_limit;
+                z.overspeed_kmh=normalizedSpeed.overspeed_kmh;
                 const laneNo=normalizeLaneNo(z?.lane_no);
                 z.lane_no=laneNo;
                 if(!laneNo){
@@ -6795,6 +6900,9 @@ createApp({
                         throw new Error(`車流同車道方向衝突：${conflicts.join('；')}`);
                     }
                 }else if(isSpeedZone){
+                    const normalizedSpeed=normalizeSpeedZoneBinding(z);
+                    z.speed_limit=normalizedSpeed.speed_limit;
+                    z.overspeed_kmh=normalizedSpeed.overspeed_kmh;
                     z.lane_no=normalizeLaneNo(z.lane_no);
                     if(!z.lane_no){
                         throw new Error('車速區需先綁定車道編號');
@@ -6823,7 +6931,7 @@ createApp({
                 }
                 previewCamera.value.zones=normalizeZones(d?.zones||zones);
                 drawRoi();
-                ElementPlus.ElMessage.success('車道綁定已儲存');
+                ElementPlus.ElMessage.success(isSpeedZone?'車速設定已儲存':'車道綁定已儲存');
             }catch(e){
                 ElementPlus.ElMessage.error(`儲存失敗: ${e?.message||e}`);
             }
@@ -7405,7 +7513,7 @@ createApp({
         });
         
         return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,congestionParamsForm,streamKey,monitorMode,monitorUpdatedAt,hourlyStats,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdTimeScale,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackQuickRange,nvrPlaybackSummary,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprHistory,lprHistoryPure,lprHistoryRows,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistory,resetLprHistoryFilters,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
-            showPreviewModal,previewCamera,previewImageUrl,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,directionLabel,directionArrowLabel,directionOptionsForZone,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,laneOptions,laneTagsLabel,laneGroupLabel,
+            showPreviewModal,previewCamera,previewImageUrl,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,directionLabel,directionArrowLabel,directionOptionsForZone,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,showCameraDialog,cameraForm,filters,rtspUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,getMonitorStreamUrl,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,reloadMonitorStreams,
             showDetail,review,newCamera,editCamera,saveCamera,testCamera,testCameraForm,deleteCamera,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,

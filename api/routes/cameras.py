@@ -5,8 +5,10 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel
+import asyncio
 import cv2
 
+from api.routes.logs import add_log
 from api.models import get_db, Camera
 
 router = APIRouter(prefix="/api/cameras", tags=["攝影機"])
@@ -37,6 +39,8 @@ class CameraUpdate(BaseModel):
     detection_config: Optional[dict] = None
     enabled: Optional[bool] = None
     detection_enabled: Optional[bool] = None
+    zones: Optional[list] = None
+    zones: Optional[list] = None
     status: Optional[str] = None
 
 
@@ -123,7 +127,15 @@ async def test_camera(camera_id: int, db: Session = Depends(get_db)):
     if not c:
         raise HTTPException(status_code=404, detail="攝影機不存在")
     
-    result = _test_rtsp(c.source)
+    try:
+        # Avoid UI blocking when RTSP source is very slow to open.
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_test_rtsp, c.source, c.name),
+            timeout=8.0,
+        )
+    except asyncio.TimeoutError:
+        add_log("error", f"連線逾時: {c.name}", "camera")
+        result = {"status": "error", "message": "連線逾時（來源回應過慢）"}
     if result["status"] == "success":
         c.status = "online"
         c.last_seen = datetime.utcnow()
@@ -139,29 +151,33 @@ async def test_url(data: TestUrlRequest):
     return _test_rtsp(data.url)
 
 
-def _test_rtsp(url: str) -> dict:
+def _test_rtsp(url: str, camera_name: str = None) -> dict:
     """測試 RTSP 連線"""
+    name = camera_name or url[:40] if url else "unknown"
+    add_log("info", f"開始測試: {name}", "camera")
     if not url:
+        add_log("error", f"URL 為空: {name}", "camera")
         return {"status": "error", "message": "URL 為空"}
-    
     try:
         cap = cv2.VideoCapture(url)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        
         if not cap.isOpened():
+            add_log("error", f"無法連線: {name}", "camera")
             return {"status": "error", "message": "無法連線到攝影機"}
-        
         ret, frame = cap.read()
         cap.release()
-        
         if ret and frame is not None:
             h, w = frame.shape[:2]
+            add_log("success", f"連線成功: {name} ({w}x{h})", "camera")
             return {"status": "success", "message": f"連線成功 ({w}x{h})"}
         else:
+            add_log("error", f"無法讀取影像: {name}", "camera")
             return {"status": "error", "message": "無法讀取影像"}
     except Exception as e:
+        add_log("error", f"連線錯誤: {name} - {str(e)}", "camera")
         return {"status": "error", "message": f"連線錯誤: {str(e)}"}
 
+        return {"status": "error", "message": f"連線錯誤: {str(e)}"}
 
 def _to_dict(c: Camera) -> dict:
     return {

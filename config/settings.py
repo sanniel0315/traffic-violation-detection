@@ -5,6 +5,14 @@ from typing import List, Optional
 import os
 
 
+def _resolve_detect_model_pt() -> str:
+    value = os.getenv("DETECT_MODEL_PT", "yolov8n.pt")
+    if os.path.isabs(value):
+        return value
+    model_dir = os.getenv("MODEL_DIR", "/workspace/models")
+    return f"{model_dir}/{value}"
+
+
 class Settings(BaseSettings):
     """應用程式設定"""
     
@@ -21,9 +29,13 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./data/violations.db"
     
     # AI 模型
-    YOLO_MODEL: str = "yolov8n.pt"
+    MODEL_DIR: str = "/workspace/models"
+    DETECT_MODEL_ENGINE: str = "yolov8n.engine"
+    DETECT_MODEL_PT: str = "yolov8n.pt"
+    YOLO_MODEL: str = _resolve_detect_model_pt()
     YOLO_CONFIDENCE: float = 0.5
     DEVICE: str = "cuda:0"
+    FORCE_GPU: bool = True
     
     # 檔案儲存
     UPLOAD_DIR: str = "./output"

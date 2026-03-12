@@ -1,1 +1,1 @@
-from . import violations, cameras, stream
+from . import auth, violations, cameras, stream
