@@ -22,6 +22,9 @@ from api.routes.logs import add_log
 
 router = APIRouter(prefix="/api/system", tags=["系統監測"])
 NTP_SETTINGS_PATH = "/workspace/config/system/ntp_settings.json"
+NX_SETTINGS_PATH = "/workspace/config/system/nx_settings.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+FALLBACK_SYSTEM_CONFIG_DIR = PROJECT_ROOT / "config" / "system"
 TZ_TAIPEI = ZoneInfo("Asia/Taipei")
 _ntp_worker_lock = threading.Lock()
 _ntp_worker_started = False
@@ -35,6 +38,61 @@ class NtpSettings(BaseModel):
     enabled: bool = True
     servers: List[str] = Field(default_factory=lambda: ["time.google.com"])
     sync_interval_minutes: int = 15
+
+
+class NxSettings(BaseModel):
+    proxy_base_url: str = ""
+    server_base_url: str = ""
+    username: str = ""
+    password: str = ""
+    devices_path: str = "/rest/v2/devices"
+    media_path_template: str = "/media/{device_id}.{format}"
+    timeout_sec: float = 12.0
+    verify_ssl: bool = False
+
+
+def _settings_candidates(path_str: str) -> List[Path]:
+    filename = Path(path_str).name
+    candidates: List[Path] = []
+    env_dir = str(os.getenv("SYSTEM_CONFIG_DIR", "") or "").strip()
+    if env_dir:
+        candidates.append(Path(env_dir) / filename)
+    candidates.append(Path(path_str))
+    candidates.append(FALLBACK_SYSTEM_CONFIG_DIR / filename)
+    seen = set()
+    uniq: List[Path] = []
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(path)
+    return uniq
+
+
+def _load_settings_json(path_str: str) -> Any:
+    for path in _settings_candidates(path_str):
+        try:
+            if path.exists():
+                return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+    raise FileNotFoundError(path_str)
+
+
+def _save_settings_json(path_str: str, data: Dict[str, Any]) -> None:
+    last_error: Exception | None = None
+    for path in _settings_candidates(path_str):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            return
+        except Exception as e:
+            last_error = e
+            continue
+    if last_error:
+        raise last_error
+    raise RuntimeError(f"unable to save settings: {path_str}")
 
 
 def _default_ntp_settings() -> Dict[str, Any]:
@@ -67,18 +125,78 @@ def _normalize_ntp_settings(raw: Any) -> Dict[str, Any]:
 
 def _load_ntp_settings() -> Dict[str, Any]:
     try:
-        p = Path(NTP_SETTINGS_PATH)
-        if p.exists():
-            return _normalize_ntp_settings(json.loads(p.read_text(encoding="utf-8")))
+        return _normalize_ntp_settings(_load_settings_json(NTP_SETTINGS_PATH))
     except Exception:
         pass
     return _default_ntp_settings()
 
 
 def _save_ntp_settings(data: Dict[str, Any]) -> None:
-    p = Path(NTP_SETTINGS_PATH)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _save_settings_json(NTP_SETTINGS_PATH, data)
+
+
+def _default_nx_settings() -> Dict[str, Any]:
+    verify_ssl = str(os.getenv("NX_VERIFY_SSL", "false")).strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        timeout_sec = max(3.0, min(120.0, float(os.getenv("NX_HTTP_TIMEOUT", "12"))))
+    except Exception:
+        timeout_sec = 12.0
+    return {
+        "proxy_base_url": str(os.getenv("NX_PROXY_BASE_URL", "") or "").strip().rstrip("/"),
+        "server_base_url": str(os.getenv("NX_SERVER_BASE_URL", "") or "").strip().rstrip("/"),
+        "username": str(os.getenv("NX_USERNAME", "") or "").strip(),
+        "password": str(os.getenv("NX_PASSWORD", "") or ""),
+        "devices_path": str(os.getenv("NX_DEVICES_PATH", "/rest/v2/devices") or "/rest/v2/devices").strip(),
+        "media_path_template": str(
+            os.getenv("NX_MEDIA_PATH_TEMPLATE", "/media/{device_id}.{format}") or "/media/{device_id}.{format}"
+        ).strip(),
+        "timeout_sec": timeout_sec,
+        "verify_ssl": verify_ssl,
+        "updated_at": None,
+    }
+
+
+def _normalize_nx_path(value: Any, default: str, allow_blank: bool = False) -> str:
+    text = str(value if value is not None else default).strip()
+    if not text:
+        return "" if allow_blank else default
+    if text.startswith("http://") or text.startswith("https://"):
+        return text
+    return text if text.startswith("/") else f"/{text}"
+
+
+def _normalize_nx_settings(raw: Any) -> Dict[str, Any]:
+    data = _default_nx_settings()
+    if not isinstance(raw, dict):
+        return data
+    data["proxy_base_url"] = str(raw.get("proxy_base_url", data["proxy_base_url"]) or "").strip().rstrip("/")
+    data["server_base_url"] = str(raw.get("server_base_url", data["server_base_url"]) or "").strip().rstrip("/")
+    data["username"] = str(raw.get("username", data["username"]) or "").strip()
+    data["password"] = str(raw.get("password", data["password"]) or "")
+    data["devices_path"] = _normalize_nx_path(raw.get("devices_path", data["devices_path"]), data["devices_path"])
+    media_path = str(raw.get("media_path_template", data["media_path_template"]) or "").strip()
+    data["media_path_template"] = media_path or data["media_path_template"]
+    try:
+        timeout_sec = float(raw.get("timeout_sec", data["timeout_sec"]))
+        data["timeout_sec"] = max(3.0, min(120.0, timeout_sec))
+    except Exception:
+        pass
+    data["verify_ssl"] = bool(raw.get("verify_ssl", data["verify_ssl"]))
+    if raw.get("updated_at"):
+        data["updated_at"] = str(raw["updated_at"])
+    return data
+
+
+def load_nx_settings() -> Dict[str, Any]:
+    try:
+        return _normalize_nx_settings(_load_settings_json(NX_SETTINGS_PATH))
+    except Exception:
+        pass
+    return _default_nx_settings()
+
+
+def _save_nx_settings(data: Dict[str, Any]) -> None:
+    _save_settings_json(NX_SETTINGS_PATH, data)
 
 
 def _query_ntp_server(server: str, timeout_sec: float = 1.5) -> Dict[str, Any]:
@@ -295,6 +413,43 @@ async def update_ntp_settings(data: NtpSettings):
         **settings,
         "runtime": _get_ntp_runtime_status(settings.get("servers", [])),
         "last_sync": sync_result,
+    }
+
+
+@router.get("/nx/settings")
+async def get_nx_settings():
+    settings = load_nx_settings()
+    mode = "proxy" if settings.get("proxy_base_url") else ("direct" if settings.get("server_base_url") else "unconfigured")
+    return {
+        **settings,
+        "mode": mode,
+        "configured": bool(settings.get("proxy_base_url") or settings.get("server_base_url")),
+    }
+
+
+@router.put("/nx/settings")
+async def update_nx_settings(data: NxSettings):
+    settings = _normalize_nx_settings(data.dict())
+    settings["updated_at"] = datetime.now(TZ_TAIPEI).isoformat()
+    _save_nx_settings(settings)
+    mode = "proxy" if settings.get("proxy_base_url") else ("direct" if settings.get("server_base_url") else "unconfigured")
+    add_log(
+        "info",
+        (
+            "NX 設定更新: "
+            f"mode={mode} "
+            f"proxy={settings['proxy_base_url'] or '-'} "
+            f"server={settings['server_base_url'] or '-'} "
+            f"verify_ssl={settings['verify_ssl']} timeout={settings['timeout_sec']}"
+        ),
+        "system",
+    )
+    return {
+        "status": "success",
+        "message": "NX 設定已儲存",
+        **settings,
+        "mode": mode,
+        "configured": bool(settings.get("proxy_base_url") or settings.get("server_base_url")),
     }
 
 

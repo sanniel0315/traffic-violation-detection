@@ -1,0 +1,1591 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MP4 來源測試</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/element-plus"></script>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+  <style>
+    :root {
+      --bg: #f3f6fb;
+      --panel: #ffffff;
+      --line: #d8e1ec;
+      --text: #152033;
+      --muted: #5f6f86;
+      --accent: #0f766e;
+      --warn: #b45309;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #eef4fb 0%, #f8fafc 100%);
+      color: var(--text);
+      font-family: "Noto Sans TC", "Segoe UI", sans-serif;
+    }
+    .wrap {
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .hero h1 {
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: 0.02em;
+    }
+    .hero p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 18px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+      overflow: hidden;
+    }
+    .panel-head {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .panel-body {
+      padding: 18px;
+    }
+    .video-box {
+      background: #0b1220;
+      border-radius: 14px;
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .preview-split {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .preview-pane-title {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 0 0 8px;
+      font-weight: 700;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+    .analysis-base-image {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      z-index: 1;
+      background: #000;
+    }
+    .det-overlay {
+      position: absolute;
+      z-index: 2;
+      pointer-events: none;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .roi-layer {
+      position: absolute;
+      z-index: 3;
+      pointer-events: none;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .roi-hit-area {
+      position: absolute;
+      z-index: 4;
+      cursor: crosshair;
+      background: transparent;
+    }
+    .roi-toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .roi-list {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .roi-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      background: #fbfdff;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+    .empty {
+      color: #cbd5e1;
+      text-align: center;
+      font-size: 14px;
+      line-height: 1.8;
+      padding: 24px;
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .summary-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: #fbfdff;
+    }
+    .summary-card .label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+    .summary-card .value {
+      font-size: 24px;
+      font-weight: 800;
+      line-height: 1.1;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      word-break: break-all;
+      font-size: 12px;
+    }
+    .result-block {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: #fbfdff;
+      margin-bottom: 14px;
+    }
+    .result-title {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 10px;
+      font-weight: 700;
+    }
+    .plate-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .footer-note {
+      color: var(--warn);
+      font-size: 12px;
+      margin-top: 10px;
+    }
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: 1fr; }
+      .summary-grid { grid-template-columns: 1fr 1fr; }
+      .preview-split { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app" class="wrap">
+    <div class="hero">
+      <div>
+        <h1>MP4 來源獨立測試頁</h1>
+        <p>預設固定讀取主機 MP4 `/workspace/host_downloads/國8東9K+768新市交流道-20260317100000.mp4`，同頁可做來源測試、預覽播放、快速分析。</p>
+      </div>
+      <el-tag type="success" size="large">Standalone Test</el-tag>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <div class="panel-head">來源設定</div>
+        <div class="panel-body">
+          <el-form label-position="top">
+            <el-form-item label="上傳 MP4">
+              <input type="file" accept="video/mp4,.mp4" @change="handleFile">
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="uploading" :disabled="!selectedFile" @click="uploadFile">上傳 MP4</el-button>
+            </el-form-item>
+            <el-form-item label="伺服器 MP4">
+              <div style="display:flex;gap:8px;width:100%">
+                <el-select v-model="serverFilePath" filterable placeholder="選擇伺服器既有 MP4" style="flex:1" :loading="serverFilesLoading">
+                  <el-option v-for="item in serverFiles" :key="item.path" :label="item.label" :value="item.path"></el-option>
+                </el-select>
+                <el-button @click="loadServerFiles" :loading="serverFilesLoading">載入</el-button>
+              </div>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" plain :disabled="!serverFilePath" :loading="importingServerFile" @click="importServerFile">使用伺服器 MP4</el-button>
+            </el-form-item>
+            <el-form-item label="來源 URL">
+              <el-input v-model="sourceUrl" placeholder="/files/camera_sources/..."></el-input>
+            </el-form-item>
+            <el-alert
+              v-if="videoLoadError"
+              :title="videoLoadError"
+              type="error"
+              :closable="false"
+              style="margin-bottom:14px"></el-alert>
+            <el-form-item label="分析抽樣幀數">
+              <el-input-number v-model="sampleCount" :min="1" :max="12"></el-input-number>
+            </el-form-item>
+            <el-form-item label="ROI 名稱">
+              <el-input v-model="roiName" placeholder="例如 車道 1"></el-input>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="success" :loading="testing" :disabled="!sourceUrl" @click="runSourceTest">來源測試</el-button>
+              <el-button type="warning" :loading="analyzing" :disabled="!sourceUrl" @click="runAnalysis">快速分析</el-button>
+              <el-button
+                :type="liveAnalysisEnabled ? 'danger' : 'primary'"
+                :disabled="!sourceUrl || analyzing"
+                @click="toggleLiveAnalysis">
+                {{ liveAnalysisEnabled ? '停止即時分析' : '開始即時分析' }}
+              </el-button>
+            </el-form-item>
+            <div v-if="liveAnalysisStatus" style="margin-top:-6px;margin-bottom:12px;color:#475569;font-size:12px">
+              {{ liveAnalysisStatus }}
+            </div>
+          </el-form>
+
+          <div class="result-block" v-if="sourceUrl">
+            <div class="result-title">目前來源</div>
+            <div class="mono">{{ sourceUrl }}</div>
+          </div>
+
+          <div class="result-block" v-if="serverRoots.length">
+            <div class="result-title">可掃描資料夾</div>
+            <div class="mono">{{ serverRoots.join('\n') }}</div>
+          </div>
+
+          <div class="result-block" v-if="testResult">
+            <div class="result-title">來源測試結果</div>
+            <el-tag :type="testResult.status==='success'?'success':'danger'">{{ testResult.status }}</el-tag>
+            <div style="margin-top:10px">{{ testResult.message }}</div>
+          </div>
+
+          <div class="footer-note">
+            這頁只做單一來源測試，不會改正式攝影機設定。ROI 也只存在這頁測試用。
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel" style="margin-bottom:18px">
+          <div class="panel-head">播放視窗</div>
+          <div class="panel-body">
+            <div class="video-box" ref="videoBoxRef">
+              <video
+                v-if="sourceUrl"
+                ref="videoElRef"
+                :src="videoUrl"
+                controls
+                autoplay
+                muted
+                playsinline
+                @loadedmetadata="onVideoLoadedMetadata"
+                @canplay="onVideoCanPlay"
+                @error="onVideoError"></video>
+              <canvas
+                v-if="sourceUrl"
+                ref="playbackOverlayCanvasRef"
+                class="det-overlay"
+                :style="roiLayerStyle"></canvas>
+              <div
+                v-if="sourceUrl && roiDrawingMode"
+                class="roi-hit-area"
+                :style="roiLayerStyle"
+                @click.stop="addRoiPoint"></div>
+              <svg v-if="sourceUrl" class="roi-layer" :style="roiLayerStyle" viewBox="0 0 100 100" preserveAspectRatio="none">
+                <polygon
+                  v-for="(roi, idx) in rois"
+                  :key="`roi-${idx}`"
+                  :points="roi.points.map(p => `${p.x*100},${p.y*100}`).join(' ')"
+                  fill="rgba(15,118,110,0.18)"
+                  stroke="#14b8a6"
+                  stroke-width="0.8"
+                />
+                <polyline
+                  v-if="draftRoiPoints.length"
+                  :points="draftRoiPoints.map(p => `${p.x*100},${p.y*100}`).join(' ')"
+                  fill="rgba(245,158,11,0.18)"
+                  stroke="#f59e0b"
+                  stroke-width="0.8"
+                />
+                <circle
+                  v-for="(pt, idx) in draftRoiPoints"
+                  :key="`draft-${idx}`"
+                  :cx="pt.x*100"
+                  :cy="pt.y*100"
+                  r="1.2"
+                  fill="#f59e0b"
+                />
+              </svg>
+              <div v-else class="empty">
+                預設會讀取主機 MP4 `/workspace/host_downloads/國8東9K+768新市交流道-20260317100000.mp4`。<br>
+                播放和分析已分開顯示。
+              </div>
+            </div>
+            <div class="roi-toolbar">
+              <el-button size="small" :type="roiDrawingMode ? 'primary' : 'default'" @click="toggleRoiDrawingMode">
+                {{ roiDrawingMode ? '切到播放模式' : '切到繪製模式' }}
+              </el-button>
+              <el-select v-model="playbackRate" size="small" style="width:120px">
+                <el-option label="0.5x" :value="0.5"></el-option>
+                <el-option label="0.75x" :value="0.75"></el-option>
+                <el-option label="1.0x" :value="1"></el-option>
+                <el-option label="1.25x" :value="1.25"></el-option>
+                <el-option label="1.5x" :value="1.5"></el-option>
+                <el-option label="2.0x" :value="2"></el-option>
+              </el-select>
+              <el-button size="small" type="primary" :disabled="draftRoiPoints.length<3" @click="saveRoi">儲存 ROI</el-button>
+              <el-button size="small" @click="undoRoiPoint" :disabled="!draftRoiPoints.length">復原一點</el-button>
+              <el-button size="small" @click="clearDraftRoi" :disabled="!draftRoiPoints.length">清空草稿</el-button>
+              <el-button size="small" type="danger" @click="clearAllRois" :disabled="!rois.length">清空全部 ROI</el-button>
+            </div>
+            <div style="margin-top:8px;color:#475569;font-size:12px">
+              {{ roiDrawingMode ? '目前是繪製模式，影片控制列已關閉，整個畫面都可點選 ROI。' : '目前是播放模式，可直接播放 MP4；要畫 ROI 請切到繪製模式。' }}
+            </div>
+            <div v-if="liveAnalysisEnabled || liveAnalysisStatus" style="margin-top:8px;color:#0f172a;font-size:12px;background:#eef6ff;border:1px solid #bfdbfe;border-radius:10px;padding:8px 10px">
+              {{ liveAnalysisStatus || '即時分析待命中' }}
+            </div>
+            <div class="roi-list" v-if="rois.length">
+              <div class="roi-chip" v-for="(roi, idx) in rois" :key="roi.name + idx">
+                <span>{{ roi.name }}</span>
+                <el-button text type="danger" @click="removeRoi(idx)">刪除</el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:18px">
+          <div class="panel-head">分析視窗</div>
+          <div class="panel-body">
+            <div class="video-box">
+              <img
+                v-if="analyzedFrameUrl"
+                :src="analyzedFrameUrl"
+                class="analysis-base-image"
+                alt="分析影像">
+              <svg v-if="analyzedFrameUrl" class="roi-layer" viewBox="0 0 100 100" preserveAspectRatio="none">
+                <polygon
+                  v-for="(roi, idx) in rois"
+                  :key="`analysis-roi-${idx}`"
+                  :points="roi.points.map(p => `${p.x*100},${p.y*100}`).join(' ')"
+                  fill="rgba(15,118,110,0.18)"
+                  stroke="#14b8a6"
+                  stroke-width="0.8"
+                />
+              </svg>
+              <canvas
+                v-if="analyzedFrameUrl"
+                ref="analysisOverlayCanvasRef"
+                class="det-overlay"></canvas>
+              <div v-else class="empty">
+                分析畫面待命中
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">分析結果</div>
+          <div class="panel-body">
+            <div v-if="analysisResult">
+              <div class="summary-grid">
+                <div class="summary-card">
+                  <div class="label">解析度</div>
+                  <div class="value">{{ analysisResult.media.width }}x{{ analysisResult.media.height }}</div>
+                </div>
+                <div class="summary-card">
+                  <div class="label">Detections</div>
+                  <div class="value">{{ rawDetectionCount }}</div>
+                </div>
+                <div class="summary-card">
+                  <div class="label">Active Tracks</div>
+                  <div class="value">{{ activeTrackCount }}</div>
+                </div>
+                <div class="summary-card">
+                  <div class="label">ROI 命中</div>
+                  <div class="value">{{ roiHitCount }}</div>
+                </div>
+                <div class="summary-card">
+                  <div class="label">壅塞率</div>
+                  <div class="value" style="font-size:20px">{{ Number(congestionRate).toFixed(0) }}%</div>
+                </div>
+              </div>
+
+              <div class="result-block">
+                <div class="result-title">媒體資訊</div>
+                <div>分析模式: {{ analysisResult.mode === 'current_frame' ? '目前畫面' : '抽樣幀' }}</div>
+                <div v-if="analysisResult.requested_time != null">請求時間: {{ Number(analysisResult.requested_time).toFixed(2) }}s</div>
+                <div>FPS: {{ analysisResult.media.fps || 0 }}</div>
+                <div>總幀數: {{ analysisResult.media.total_frames || 0 }}</div>
+                <div>實際分析樣本: {{ analysisResult.media.sample_count || 0 }}</div>
+              </div>
+
+              <div class="result-block">
+                <div class="result-title">分析摘要</div>
+                <div>壅塞等級: <el-tag size="small" :type="congestionLevelMeta.tagType">{{ congestionLevelMeta.label }}</el-tag></div>
+                <div>ROI 容量基準: {{ congestionCapacity }}</div>
+                <div>Raw detections: {{ rawDetectionCount }}</div>
+                <div>Active tracks: {{ activeTrackCount }}</div>
+                <div>ROI 命中: {{ roiHitCount }}</div>
+                <div>有車幀數: {{ analysisResult.analysis.frames_with_vehicles }}</div>
+                <div>偵測門檻: {{ Number(analysisResult.analysis.detector_threshold || 0).toFixed(2) }}</div>
+                <div>偵測 fallback: {{ analysisResult.analysis.detector_fallback_used ? '是' : '否' }}</div>
+                <div>偵測裝置: {{ analysisResult.analysis.detector_runtime || '-' }}</div>
+                <div>ROI 數量: {{ analysisResult.roi_report?.length || 0 }}</div>
+              </div>
+
+              <div class="result-block" v-if="analysisResult.roi_report && analysisResult.roi_report.length">
+                <div class="result-title">ROI 整合報表</div>
+                <el-table :data="analysisResult.roi_report" stripe size="small">
+                  <el-table-column prop="name" label="ROI"></el-table-column>
+                  <el-table-column prop="frames_hit" label="命中幀數" width="120"></el-table-column>
+                  <el-table-column prop="vehicle_total" label="車輛總數" width="120"></el-table-column>
+                  <el-table-column prop="max_vehicle_count" label="單幀最高車輛" width="140"></el-table-column>
+                </el-table>
+              </div>
+
+              <div class="result-block">
+                <div class="result-title">逐樣本結果</div>
+                <el-table :data="analysisResult.samples" stripe size="small">
+                  <el-table-column prop="frame_index" label="幀" width="100"></el-table-column>
+                  <el-table-column prop="vehicle_count" label="車輛數" width="110"></el-table-column>
+                  <el-table-column label="壅塞率" width="120">
+                    <template #default="scope">
+                      {{ Number(((Number(scope.row.vehicle_count || 0) / congestionCapacity) * 100) || 0).toFixed(0) }}%
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="等級" width="110">
+                    <template #default="scope">
+                      <el-tag
+                        size="small"
+                        :type="((Number(scope.row.vehicle_count || 0) / congestionCapacity) * 100) >= 70 ? 'danger' : (((Number(scope.row.vehicle_count || 0) / congestionCapacity) * 100) >= 40 ? 'warning' : 'success')">
+                        {{ ((Number(scope.row.vehicle_count || 0) / congestionCapacity) * 100) >= 70 ? '壅塞' : (((Number(scope.row.vehicle_count || 0) / congestionCapacity) * 100) >= 40 ? '偏壅塞' : '順暢') }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="ROI 統計">
+                    <template #default="scope">
+                      <div v-if="scope.row.roi_stats && scope.row.roi_stats.length" style="display:flex;gap:6px;flex-wrap:wrap">
+                        <el-tag v-for="roi in scope.row.roi_stats" :key="roi.name" size="small" type="warning">
+                          {{ roi.name }} 車 {{ roi.vehicle_count }}
+                        </el-tag>
+                      </div>
+                      <span v-else>-</span>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+            </div>
+            <div v-else class="empty" style="color:#64748b;background:#fbfdff;border-radius:14px">
+              按「快速分析」後，車輛數、車牌框、最佳 OCR 結果會直接顯示在這裡。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { createApp, ref, computed, onMounted, onBeforeUnmount, nextTick, watch } = Vue;
+
+    createApp({
+      setup() {
+        const HARDCODED_SERVER_SOURCE_PATH = '/workspace/host_downloads/國8東9K+768新市交流道-20260317100000.mp4';
+        const selectedFile = ref(null);
+        const sourceUrl = ref('');
+        const sampleCount = ref(6);
+        const uploading = ref(false);
+        const testing = ref(false);
+        const analyzing = ref(false);
+        const serverFilesLoading = ref(false);
+        const importingServerFile = ref(false);
+        const testResult = ref(null);
+        const analysisResult = ref(null);
+        const serverFiles = ref([]);
+        const serverRoots = ref([]);
+        const serverFilePath = ref('');
+        const videoBoxRef = ref(null);
+        const videoElRef = ref(null);
+        const playbackOverlayCanvasRef = ref(null);
+        const analysisOverlayCanvasRef = ref(null);
+        const roiDrawingMode = ref(false);
+        const playbackRate = ref(1);
+        const videoLoadError = ref('');
+        const liveAnalysisEnabled = ref(false);
+        const liveAnalysisStatus = ref('');
+        const roiName = ref('');
+        const draftRoiPoints = ref([]);
+        const rois = ref([]);
+        const trackedDetections = ref([]);
+        const videoDisplayRect = ref({ left: 0, top: 0, width: 0, height: 0 });
+        let liveAnalysisTimer = null;
+        let liveAnalysisBusy = false;
+        let overlayAnimationFrame = null;
+        let analysisSessionId = '';
+        let liveTrackerResetPending = false;
+        const analyzedFrameUrl = ref('');
+        let analyzedFrameImage = null;
+        const trackTrailHistory = new Map();
+        const trackerState = {
+          nextId: 1,
+          tracks: new Map(),
+        };
+        const LIVE_ANALYSIS_INTERVAL_MS = 420;
+        const CONGESTION_CAPACITY_PER_ROI = 6;
+        const TRACK_TRAIL_MAX_POINTS = 20;
+        const TRACK_MAX_MISSES = 4;
+        const TRACK_MAX_STALE_MS = 2600;
+        const TRACK_IOU_THRESHOLD = 0.15;
+        const TRACK_MAX_CENTER_DISTANCE = 180;
+
+        const videoUrl = computed(() => {
+          if (!sourceUrl.value) return '';
+          try {
+            const url = new URL(sourceUrl.value, window.location.origin);
+            url.searchParams.set('t', String(Date.now()));
+            return url.toString();
+          } catch (_e) {
+            return sourceUrl.value;
+          }
+        });
+
+        const makeAnalysisSessionId = () => `live-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+
+        const currentRoiStats = computed(() => {
+          const stats = analysisResult.value?.overlay?.roi_stats;
+          return Array.isArray(stats) ? stats : [];
+        });
+
+        const rawDetectionCount = computed(() => {
+          const count = Number(
+            analysisResult.value?.analysis?.raw_detection_count
+            ?? analysisResult.value?.overlay?.raw_detections?.length
+            ?? 0
+          );
+          return Number.isFinite(count) ? count : 0;
+        });
+
+        const activeTrackCount = computed(() => {
+          const count = Number(
+            analysisResult.value?.analysis?.active_track_count
+            ?? analysisResult.value?.tracking?.tracked_count
+            ?? analysisResult.value?.overlay?.detections?.length
+            ?? 0
+          );
+          return Number.isFinite(count) ? count : 0;
+        });
+
+        const roiHitCount = computed(() => {
+          const count = Number(
+            analysisResult.value?.analysis?.roi_detection_count
+            ?? currentRoiStats.value.reduce((sum, item) => sum + Number(item?.vehicle_count || 0), 0)
+            ?? 0
+          );
+          return Number.isFinite(count) ? count : 0;
+        });
+
+        const congestionVehicleCount = computed(() => {
+          return roiHitCount.value;
+        });
+
+        const congestionCapacity = computed(() => {
+          const roiCount = currentRoiStats.value.length || rois.value.length || 1;
+          return Math.max(1, roiCount * CONGESTION_CAPACITY_PER_ROI);
+        });
+
+        const congestionRate = computed(() => {
+          const rate = (Number(congestionVehicleCount.value || 0) / Number(congestionCapacity.value || 1)) * 100;
+          return Math.max(0, Math.min(100, rate));
+        });
+
+        const congestionLevelMeta = computed(() => {
+          const rate = Number(congestionRate.value || 0);
+          if (rate >= 70) {
+            return { label: '壅塞', color: '#ef4444', tagType: 'danger' };
+          }
+          if (rate >= 40) {
+            return { label: '偏壅塞', color: '#eab308', tagType: 'warning' };
+          }
+          return { label: '順暢', color: '#22c55e', tagType: 'success' };
+        });
+
+        const setAnalyzedFrameImage = async (dataUrl) => {
+          const nextUrl = String(dataUrl || '').trim();
+          if (!nextUrl) {
+            analyzedFrameUrl.value = '';
+            analyzedFrameImage = null;
+            return;
+          }
+          if (nextUrl === analyzedFrameUrl.value && analyzedFrameImage) return;
+          const img = new Image();
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            img.src = nextUrl;
+          });
+          analyzedFrameUrl.value = nextUrl;
+          analyzedFrameImage = img;
+        };
+
+        const roiLayerStyle = computed(() => {
+          const rect = videoDisplayRect.value;
+          if (!rect.width || !rect.height) {
+            return { display: 'none' };
+          }
+          return {
+            left: `${rect.left}px`,
+            top: `${rect.top}px`,
+            width: `${rect.width}px`,
+            height: `${rect.height}px`,
+          };
+        });
+
+        const updateVideoDisplayRect = () => {
+          const box = videoBoxRef.value;
+          const video = videoElRef.value;
+          if (!box || !video) {
+            videoDisplayRect.value = { left: 0, top: 0, width: 0, height: 0 };
+            return;
+          }
+          const boxRect = box.getBoundingClientRect();
+          const videoWidth = Number(video.videoWidth || 0);
+          const videoHeight = Number(video.videoHeight || 0);
+          if (!boxRect.width || !boxRect.height || !videoWidth || !videoHeight) {
+            videoDisplayRect.value = { left: 0, top: 0, width: 0, height: 0 };
+            return;
+          }
+
+          const scale = Math.min(boxRect.width / videoWidth, boxRect.height / videoHeight);
+          const width = videoWidth * scale;
+          const height = videoHeight * scale;
+          videoDisplayRect.value = {
+            left: (boxRect.width - width) / 2,
+            top: (boxRect.height - height) / 2,
+            width,
+            height,
+          };
+        };
+
+        const getOverlayCanvasContext = (canvas) => {
+          if (!canvas) return null;
+          const mediaWidth = Number(
+            analysisResult.value?.media?.width
+            || analyzedFrameImage?.naturalWidth
+            || videoElRef.value?.videoWidth
+            || 0
+          );
+          const mediaHeight = Number(
+            analysisResult.value?.media?.height
+            || analyzedFrameImage?.naturalHeight
+            || videoElRef.value?.videoHeight
+            || 0
+          );
+          if (!mediaWidth || !mediaHeight) return null;
+          if (canvas.width !== mediaWidth) canvas.width = mediaWidth;
+          if (canvas.height !== mediaHeight) canvas.height = mediaHeight;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return null;
+          return { canvas, ctx, mediaWidth, mediaHeight };
+        };
+
+        const normalizeBbox = (bbox) => {
+          const x1 = Number(bbox?.x1 || 0);
+          const y1 = Number(bbox?.y1 || 0);
+          const x2 = Number(bbox?.x2 || 0);
+          const y2 = Number(bbox?.y2 || 0);
+          return {
+            x1,
+            y1,
+            x2,
+            y2,
+            width: Math.max(0, x2 - x1),
+            height: Math.max(0, y2 - y1),
+          };
+        };
+
+        const bboxCenter = (bbox) => ({
+          x: (Number(bbox?.x1 || 0) + Number(bbox?.x2 || 0)) / 2,
+          y: (Number(bbox?.y1 || 0) + Number(bbox?.y2 || 0)) / 2,
+        });
+
+        const bboxIou = (a, b) => {
+          const x1 = Math.max(Number(a?.x1 || 0), Number(b?.x1 || 0));
+          const y1 = Math.max(Number(a?.y1 || 0), Number(b?.y1 || 0));
+          const x2 = Math.min(Number(a?.x2 || 0), Number(b?.x2 || 0));
+          const y2 = Math.min(Number(a?.y2 || 0), Number(b?.y2 || 0));
+          if (x2 <= x1 || y2 <= y1) return 0;
+          const intersection = (x2 - x1) * (y2 - y1);
+          const areaA = Math.max(0, Number(a?.width || 0)) * Math.max(0, Number(a?.height || 0));
+          const areaB = Math.max(0, Number(b?.width || 0)) * Math.max(0, Number(b?.height || 0));
+          const union = areaA + areaB - intersection;
+          return union > 0 ? intersection / union : 0;
+        };
+
+        const bboxCenterDistance = (a, b) => {
+          const ca = bboxCenter(a);
+          const cb = bboxCenter(b);
+          return Math.hypot(ca.x - cb.x, ca.y - cb.y);
+        };
+
+        const cloneDetection = (det, extra = {}) => ({
+          ...det,
+          bbox: normalizeBbox(det?.bbox || {}),
+          ...extra,
+        });
+
+        const resetTrackingState = () => {
+          trackerState.nextId = 1;
+          trackerState.tracks.clear();
+          trackedDetections.value = [];
+          trackTrailHistory.clear();
+          analyzedFrameUrl.value = '';
+          analyzedFrameImage = null;
+        };
+
+        const updateTrackTrailHistory = (detections) => {
+          const activeTrackIds = new Set();
+          (Array.isArray(detections) ? detections : []).forEach((det) => {
+            const trackId = Number(det?.track_id || 0);
+            if (!trackId) return;
+            if (det?.stale) return;
+            const bbox = normalizeBbox(det?.bbox || {});
+            if (!bbox.width || !bbox.height) return;
+            activeTrackIds.add(trackId);
+            const point = {
+              x: (bbox.x1 + bbox.x2) / 2,
+              y: (bbox.y1 + bbox.y2) / 2,
+            };
+            const history = trackTrailHistory.get(trackId) || [];
+            const prev = history[history.length - 1];
+            if (!prev || Math.hypot(prev.x - point.x, prev.y - point.y) >= 3) {
+              history.push(point);
+            }
+            trackTrailHistory.set(trackId, history.slice(-TRACK_TRAIL_MAX_POINTS));
+          });
+          Array.from(trackTrailHistory.keys()).forEach((trackId) => {
+            if (!activeTrackIds.has(trackId)) {
+              trackTrailHistory.delete(trackId);
+            }
+          });
+        };
+
+        const tracerColor = (trackId) => {
+          const palette = ['#22c55e', '#f97316', '#38bdf8', '#eab308', '#ef4444', '#a855f7', '#14b8a6', '#f43f5e'];
+          const id = Math.abs(Number(trackId || 0));
+          return palette[id % palette.length];
+        };
+
+        const removeExpiredTracks = (nowMs, mediaWidth, mediaHeight) => {
+          const staleIds = [];
+          trackerState.tracks.forEach((track, trackId) => {
+            const ageMs = nowMs - Number(track?.lastSeenMs || 0);
+            const bbox = normalizeBbox(track?.bbox || {});
+            const outside = bbox.x2 < 0 || bbox.y2 < 0 || bbox.x1 > mediaWidth || bbox.y1 > mediaHeight;
+            if (Number(track?.missed || 0) > TRACK_MAX_MISSES || ageMs > TRACK_MAX_STALE_MS || outside) {
+              staleIds.push(trackId);
+            }
+          });
+          staleIds.forEach((trackId) => trackerState.tracks.delete(trackId));
+        };
+
+        const collectTrackedDetections = (nowMs, mediaWidth, mediaHeight) => {
+          const items = [];
+          trackerState.tracks.forEach((track, trackId) => {
+            const bbox = normalizeBbox(track?.bbox || {});
+            const dtSec = Math.max(0, nowMs - Number(track?.lastSeenMs || nowMs)) / 1000;
+            const dx = Number(track?.vx || 0) * dtSec;
+            const dy = Number(track?.vy || 0) * dtSec;
+            const predicted = normalizeBbox({
+              x1: bbox.x1 + dx,
+              y1: bbox.y1 + dy,
+              x2: bbox.x2 + dx,
+              y2: bbox.y2 + dy,
+            });
+            const visible = predicted.x2 >= 0 && predicted.y2 >= 0 && predicted.x1 <= mediaWidth && predicted.y1 <= mediaHeight;
+            if (!visible) return;
+            items.push({
+              ...track,
+              track_id: trackId,
+              bbox: predicted,
+              stale: nowMs - Number(track?.lastSeenMs || 0) > LIVE_ANALYSIS_INTERVAL_MS,
+            });
+          });
+          return items;
+        };
+
+        const updateTrackedDetections = (rawDetections, nowMs, mediaWidth, mediaHeight) => {
+          const detections = Array.isArray(rawDetections) ? rawDetections.map((det) => cloneDetection(det)) : [];
+          const matchedTrackIds = new Set();
+
+          detections.forEach((det) => {
+            let bestTrackId = null;
+            let bestScore = -Infinity;
+
+            trackerState.tracks.forEach((track, trackId) => {
+              if (matchedTrackIds.has(trackId)) return;
+              if (String(track?.class_name || '') !== String(det?.class_name || '')) return;
+              const iou = bboxIou(det.bbox, track.bbox);
+              const centerDistance = bboxCenterDistance(det.bbox, track.bbox);
+              if (iou < TRACK_IOU_THRESHOLD && centerDistance > TRACK_MAX_CENTER_DISTANCE) return;
+              const score = iou * 1000 - centerDistance;
+              if (score > bestScore) {
+                bestScore = score;
+                bestTrackId = trackId;
+              }
+            });
+
+            const center = bboxCenter(det.bbox);
+            if (bestTrackId != null) {
+              const prevTrack = trackerState.tracks.get(bestTrackId) || {};
+              const prevCenter = bboxCenter(prevTrack.bbox || det.bbox);
+              const elapsedMs = Math.max(1, nowMs - Number(prevTrack.lastSeenMs || nowMs));
+              trackerState.tracks.set(bestTrackId, {
+                ...prevTrack,
+                ...det,
+                track_id: bestTrackId,
+                bbox: det.bbox,
+                lastSeenMs: nowMs,
+                missed: 0,
+                vx: ((center.x - prevCenter.x) / elapsedMs) * 1000,
+                vy: ((center.y - prevCenter.y) / elapsedMs) * 1000,
+              });
+              matchedTrackIds.add(bestTrackId);
+              det.track_id = bestTrackId;
+              return;
+            }
+
+            const newTrackId = trackerState.nextId++;
+            trackerState.tracks.set(newTrackId, {
+              ...det,
+              track_id: newTrackId,
+              bbox: det.bbox,
+              lastSeenMs: nowMs,
+              missed: 0,
+              vx: 0,
+              vy: 0,
+            });
+            matchedTrackIds.add(newTrackId);
+            det.track_id = newTrackId;
+          });
+
+          trackerState.tracks.forEach((track, trackId) => {
+            if (matchedTrackIds.has(trackId)) return;
+            trackerState.tracks.set(trackId, {
+              ...track,
+              missed: Number(track?.missed || 0) + 1,
+            });
+          });
+
+          removeExpiredTracks(nowMs, mediaWidth, mediaHeight);
+          trackedDetections.value = collectTrackedDetections(nowMs, mediaWidth, mediaHeight);
+        };
+
+        const syncTrackedDetections = (data, nowMs = Date.now()) => {
+          const mediaWidth = Number(data?.media?.width || videoElRef.value?.videoWidth || 0);
+          const mediaHeight = Number(data?.media?.height || videoElRef.value?.videoHeight || 0);
+          const rawDetections = Array.isArray(data?.overlay?.detections) ? data.overlay.detections : [];
+          if (!mediaWidth || !mediaHeight) {
+            trackedDetections.value = rawDetections.map((det) => cloneDetection(det));
+            return;
+          }
+          updateTrackedDetections(rawDetections, nowMs, mediaWidth, mediaHeight);
+        };
+
+        const stopOverlayAnimation = () => {
+          if (overlayAnimationFrame) {
+            cancelAnimationFrame(overlayAnimationFrame);
+            overlayAnimationFrame = null;
+          }
+        };
+
+        const startOverlayAnimation = () => {
+          stopOverlayAnimation();
+          const loop = () => {
+            drawOverlayCanvas();
+            if (liveAnalysisEnabled.value) {
+              overlayAnimationFrame = requestAnimationFrame(loop);
+            }
+          };
+          overlayAnimationFrame = requestAnimationFrame(loop);
+        };
+
+        const drawOverlayLabel = (ctx, text, x, y, color) => {
+          if (!text) return;
+          ctx.save();
+          ctx.font = 'bold 24px sans-serif';
+          const metrics = ctx.measureText(text);
+          const textWidth = Math.ceil(metrics.width);
+          const boxHeight = 30;
+          const boxX = Math.max(0, x);
+          const boxY = Math.max(0, y - boxHeight);
+          ctx.fillStyle = color;
+          ctx.fillRect(boxX, boxY, textWidth + 16, boxHeight);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(text, boxX + 8, boxY + 22);
+          ctx.restore();
+        };
+
+        const paintOverlayCanvas = (canvas, options = {}) => {
+          const {
+            showRoi = true,
+            showDetections = true,
+            showTracks = true,
+            showPlateBoxes = true,
+            showTrace = true,
+          } = options;
+          const overlay = analysisResult.value?.overlay || {};
+          const rawDetections = Array.isArray(overlay.raw_detections) ? overlay.raw_detections : [];
+          const trackedDetections = Array.isArray(overlay.detections) ? overlay.detections : [];
+          const plateBoxes = Array.isArray(overlay.plate_boxes) ? overlay.plate_boxes : [];
+          const roiPolygons = Array.isArray(overlay.roi_polygons) ? overlay.roi_polygons : [];
+          const payload = getOverlayCanvasContext(canvas);
+          if (!payload) return;
+          const { ctx, mediaWidth, mediaHeight } = payload;
+          ctx.clearRect(0, 0, mediaWidth, mediaHeight);
+          const detections = rawDetections.map((det) => cloneDetection(det));
+          const tracks = trackedDetections.map((det) => cloneDetection(det));
+          if (
+            (!showDetections || !detections.length)
+            && (!showTracks || !tracks.length)
+            && (!showPlateBoxes || !plateBoxes.length)
+            && (!showRoi || !roiPolygons.length)
+            && (!showTrace || !tracks.length)
+          ) return;
+
+          const lineWidth = Math.max(2, Math.round(Math.min(mediaWidth, mediaHeight) / 320));
+          ctx.lineJoin = 'round';
+          ctx.lineCap = 'round';
+
+          if (showRoi) roiPolygons.forEach((roi) => {
+            const points = Array.isArray(roi?.points) ? roi.points : [];
+            if (points.length < 3) return;
+            ctx.save();
+            ctx.strokeStyle = '#14b8a6';
+            ctx.lineWidth = Math.max(2, lineWidth - 1);
+            ctx.setLineDash([10, 6]);
+            ctx.beginPath();
+            points.forEach((point, index) => {
+              const x = Number(point?.[0] || 0);
+              const y = Number(point?.[1] || 0);
+              if (index === 0) {
+                ctx.moveTo(x, y);
+                return;
+              }
+              ctx.lineTo(x, y);
+            });
+            ctx.closePath();
+            ctx.stroke();
+            ctx.restore();
+            const first = points[0] || [0, 0];
+            drawOverlayLabel(ctx, String(roi?.name || 'ROI'), Number(first[0] || 0), Number(first[1] || 0), '#0f766e');
+          });
+
+          if (showTrace) tracks.forEach((det) => {
+            const trackId = Number(det?.track_id || 0);
+            const history = trackTrailHistory.get(trackId) || [];
+            if (history.length < 2) return;
+            const color = tracerColor(trackId);
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = Math.max(4, Math.round(lineWidth * 1.5));
+            ctx.beginPath();
+            history.forEach((point, index) => {
+              if (index === 0) {
+                ctx.moveTo(point.x, point.y);
+                return;
+              }
+              ctx.lineTo(point.x, point.y);
+            });
+            ctx.stroke();
+            const lastPoint = history[history.length - 1];
+            if (lastPoint) {
+              ctx.fillStyle = color;
+              ctx.beginPath();
+              ctx.arc(lastPoint.x, lastPoint.y, Math.max(4, lineWidth + 1), 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.restore();
+          });
+
+          if (showDetections) detections.forEach((det) => {
+            const bbox = det?.bbox || {};
+            const x1 = Number(bbox.x1 || 0);
+            const y1 = Number(bbox.y1 || 0);
+            const x2 = Number(bbox.x2 || 0);
+            const y2 = Number(bbox.y2 || 0);
+            const width = Math.max(0, x2 - x1);
+            const height = Math.max(0, y2 - y1);
+            if (!width || !height) return;
+            const roiHit = !!det?.roi_hit;
+            const boxColor = roiHit ? '#f59e0b' : '#ef4444';
+            const conf = Number(det?.confidence);
+            const confText = Number.isFinite(conf) ? ` ${(conf * 100).toFixed(0)}%` : '';
+            ctx.save();
+            ctx.strokeStyle = boxColor;
+            ctx.lineWidth = Math.max(1, lineWidth - 1);
+            ctx.setLineDash([8, 6]);
+            ctx.strokeRect(x1, y1, width, height);
+            ctx.restore();
+            drawOverlayLabel(ctx, `DET ${String(det?.class_name || 'vehicle')}${confText}`, x1, y1, boxColor);
+          });
+
+          if (showTracks) tracks.forEach((det) => {
+            const bbox = det?.bbox || {};
+            const x1 = Number(bbox.x1 || 0);
+            const y1 = Number(bbox.y1 || 0);
+            const x2 = Number(bbox.x2 || 0);
+            const y2 = Number(bbox.y2 || 0);
+            const width = Math.max(0, x2 - x1);
+            const height = Math.max(0, y2 - y1);
+            if (!width || !height) return;
+            const trackId = Number(det?.track_id || 0);
+            const boxColor = trackId ? tracerColor(trackId) : '#22c55e';
+            ctx.save();
+            ctx.strokeStyle = boxColor;
+            ctx.lineWidth = lineWidth;
+            ctx.strokeRect(x1, y1, width, height);
+            ctx.restore();
+            const roiTag = det?.roi_hit ? ' ROI' : '';
+            drawOverlayLabel(ctx, `TRK ${overlayLabel(det)}${roiTag}`, x1, y1, boxColor);
+          });
+          if (showPlateBoxes) plateBoxes.forEach((det) => {
+            const bbox = det?.bbox || {};
+            const x1 = Number(bbox.x1 || 0);
+            const y1 = Number(bbox.y1 || 0);
+            const x2 = Number(bbox.x2 || 0);
+            const y2 = Number(bbox.y2 || 0);
+            const width = Math.max(0, x2 - x1);
+            const height = Math.max(0, y2 - y1);
+            if (!width || !height) return;
+            ctx.save();
+            ctx.strokeStyle = '#fde047';
+            ctx.lineWidth = Math.max(2, lineWidth - 1);
+            ctx.strokeRect(x1, y1, width, height);
+            ctx.restore();
+            drawOverlayLabel(ctx, 'PLATE', x1, y1, '#ca8a04');
+          });
+        };
+
+        const drawOverlayCanvas = () => {
+          paintOverlayCanvas(playbackOverlayCanvasRef.value, {
+            showRoi: true,
+            showDetections: true,
+            showTracks: true,
+            showPlateBoxes: true,
+            showTrace: true,
+          });
+          paintOverlayCanvas(analysisOverlayCanvasRef.value, {
+            showRoi: false,
+            showDetections: false,
+            showTracks: false,
+            showPlateBoxes: false,
+            showTrace: true,
+          });
+        };
+
+        const onVideoLoadedMetadata = () => {
+          videoLoadError.value = '';
+          updateVideoDisplayRect();
+          drawOverlayCanvas();
+        };
+
+        const tryPlayVideo = async () => {
+          await nextTick();
+          const video = videoElRef.value;
+          if (!video) return;
+          video.playbackRate = Number(playbackRate.value || 1) || 1;
+          try {
+            await video.play();
+          } catch (_error) {
+          }
+        };
+
+        const onVideoCanPlay = () => {
+          videoLoadError.value = '';
+          updateVideoDisplayRect();
+          drawOverlayCanvas();
+          tryPlayVideo();
+        };
+        const overlayLabel = (det) => {
+          return String(det?.class_name || 'vehicle');
+        };
+
+        const captureCurrentFrame = () => {
+          const video = videoElRef.value;
+          if (!video) return '';
+          const width = Number(video.videoWidth || 0);
+          const height = Number(video.videoHeight || 0);
+          if (!width || !height) return '';
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return '';
+          ctx.drawImage(video, 0, 0, width, height);
+          return canvas.toDataURL('image/jpeg', 0.92);
+        };
+
+        const onVideoError = () => {
+          videoLoadError.value = `MP4 載入失敗: ${sourceUrl.value || '未指定來源'}`;
+          stopLiveAnalysis();
+          resetTrackingState();
+          analysisSessionId = makeAnalysisSessionId();
+          liveTrackerResetPending = true;
+        };
+
+        const applySource = async (nextSource, options = {}) => {
+          const text = String(nextSource || '').trim();
+          stopLiveAnalysis();
+          resetTrackingState();
+          analysisResult.value = null;
+          analysisSessionId = makeAnalysisSessionId();
+          liveTrackerResetPending = true;
+          sourceUrl.value = text;
+          videoLoadError.value = '';
+          if (options.resetRoi) {
+            draftRoiPoints.value = [];
+            rois.value = [];
+          }
+          roiDrawingMode.value = false;
+          await nextTick();
+          updateVideoDisplayRect();
+          drawOverlayCanvas();
+          tryPlayVideo();
+        };
+
+        const importServerSourcePath = async (pathText, options = {}) => {
+          const serverPath = String(pathText || '').trim();
+          if (!serverPath) {
+            throw new Error('來源路徑不得為空');
+          }
+          const res = await fetch('/api/cameras/import-source-file', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: serverPath })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data?.detail || data?.message || `HTTP ${res.status}`);
+          await applySource(String(data.source || '').trim(), options);
+          return data;
+        };
+
+        const stopLiveAnalysis = (message = '即時分析已停止') => {
+          liveAnalysisEnabled.value = false;
+          liveAnalysisStatus.value = message;
+          if (liveAnalysisTimer) {
+            clearTimeout(liveAnalysisTimer);
+            liveAnalysisTimer = null;
+          }
+          stopOverlayAnimation();
+        };
+
+        const handleFile = (event) => {
+          selectedFile.value = event?.target?.files?.[0] || null;
+        };
+
+        const uploadFile = async () => {
+          if (!selectedFile.value) {
+            ElementPlus.ElMessage.warning('請先選擇 MP4 檔案');
+            return;
+          }
+          try {
+            uploading.value = true;
+            const fd = new FormData();
+            fd.append('file', selectedFile.value);
+            const res = await fetch('/api/cameras/upload-source', { method: 'POST', body: fd });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.detail || data?.message || `HTTP ${res.status}`);
+            await applySource(String(data.source || '').trim(), { resetRoi: true });
+            testResult.value = null;
+            analysisResult.value = null;
+            ElementPlus.ElMessage.success('MP4 上傳完成');
+          } catch (error) {
+            ElementPlus.ElMessage.error(`上傳失敗: ${error?.message || error}`);
+          } finally {
+            uploading.value = false;
+          }
+        };
+
+        const loadServerFiles = async () => {
+          try {
+            serverFilesLoading.value = true;
+            const res = await fetch('/api/cameras/source-files');
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.detail || data?.message || `HTTP ${res.status}`);
+            serverFiles.value = Array.isArray(data.files) ? data.files : [];
+            serverRoots.value = Array.isArray(data.roots) ? data.roots : [];
+            return data;
+          } catch (error) {
+            ElementPlus.ElMessage.error(`載入伺服器 MP4 失敗: ${error?.message || error}`);
+            return null;
+          } finally {
+            serverFilesLoading.value = false;
+          }
+        };
+
+        const initializeSource = async () => {
+          const data = await loadServerFiles();
+          const files = Array.isArray(data?.files) ? data.files : [];
+          const usableFiles = files.filter(item => Number(item?.size || 0) > 0);
+          const preferred = usableFiles.find(item => String(item?.path || '').trim() === HARDCODED_SERVER_SOURCE_PATH);
+          if (preferred) {
+            await importServerSourcePath(HARDCODED_SERVER_SOURCE_PATH);
+            return;
+          }
+          if (usableFiles.length) {
+            try {
+              await importServerSourcePath(HARDCODED_SERVER_SOURCE_PATH);
+              return;
+            } catch (_error) {
+            }
+          }
+          if (usableFiles.length) {
+            const fallbackPath = String(usableFiles[0]?.path || '').trim();
+            await importServerSourcePath(fallbackPath);
+            ElementPlus.ElMessage.warning(`找不到指定主機 MP4，已改用 ${fallbackPath}`);
+            return;
+          }
+          sourceUrl.value = '';
+          videoLoadError.value = `找不到可用 MP4。預設來源 ${HARDCODED_SERVER_SOURCE_PATH} 不存在或檔案大小為 0。`;
+          stopLiveAnalysis();
+        };
+
+        const importServerFile = async () => {
+          if (!serverFilePath.value) {
+            ElementPlus.ElMessage.warning('請先選擇伺服器 MP4');
+            return;
+          }
+          try {
+            importingServerFile.value = true;
+            await importServerSourcePath(serverFilePath.value, { resetRoi: true });
+            testResult.value = null;
+            analysisResult.value = null;
+            ElementPlus.ElMessage.success('已載入伺服器 MP4');
+          } catch (error) {
+            ElementPlus.ElMessage.error(`載入失敗: ${error?.message || error}`);
+          } finally {
+            importingServerFile.value = false;
+          }
+        };
+
+        const runSourceTest = async () => {
+          if (!sourceUrl.value) return;
+          try {
+            testing.value = true;
+            const res = await fetch('/api/cameras/test-url', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: sourceUrl.value })
+            });
+            const data = await res.json().catch(() => ({}));
+            testResult.value = data;
+            if (!res.ok) throw new Error(data?.detail || data?.message || `HTTP ${res.status}`);
+            ElementPlus.ElMessage[data.status === 'success' ? 'success' : 'error'](data.message || '完成');
+          } catch (error) {
+            ElementPlus.ElMessage.error(`測試失敗: ${error?.message || error}`);
+          } finally {
+            testing.value = false;
+          }
+        };
+
+        const runAnalysis = async () => {
+          if (!sourceUrl.value) return;
+          try {
+            analyzing.value = true;
+            const currentTime = Number(videoElRef.value?.currentTime ?? 0);
+            await requestAnalysis(currentTime);
+          } catch (error) {
+            analysisResult.value = null;
+            ElementPlus.ElMessage.error(String(error?.message || error || '無法分析來源'));
+          } finally {
+            analyzing.value = false;
+          }
+        };
+
+        const requestAnalysis = async (currentTime, options = {}) => {
+          const frameDataUrl = captureCurrentFrame();
+          const endpoint = frameDataUrl ? '/api/cameras/analyze-frame' : '/api/cameras/analyze-source';
+          if (!analysisSessionId) {
+            analysisSessionId = makeAnalysisSessionId();
+            liveTrackerResetPending = true;
+          }
+          const shouldResetTracker = Boolean(options.resetTracker || liveTrackerResetPending);
+          const payload = frameDataUrl ? {
+            image_base64: frameDataUrl,
+            rois: rois.value,
+            current_time: Number.isFinite(currentTime) ? currentTime : null,
+            session_id: analysisSessionId,
+            reset_tracker: shouldResetTracker,
+          } : {
+            url: sourceUrl.value,
+            sample_count: sampleCount.value,
+            rois: rois.value,
+            current_time: Number.isFinite(currentTime) ? currentTime : null,
+          };
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data?.detail || data?.message || `HTTP ${res.status}`);
+          analysisResult.value = data;
+          try {
+            await setAnalyzedFrameImage(data?.preview_image || frameDataUrl || '');
+          } catch (_error) {
+            analyzedFrameUrl.value = '';
+            analyzedFrameImage = null;
+          }
+          if (frameDataUrl) {
+            analysisSessionId = String(data?.tracking?.session_id || data?.overlay?.session_id || analysisSessionId);
+            liveTrackerResetPending = false;
+            updateTrackTrailHistory(data?.overlay?.detections);
+          }
+          await nextTick();
+          drawOverlayCanvas();
+          const rawVehicleCount = Number(data?.analysis?.raw_detection_count ?? data?.overlay?.raw_detections?.length ?? 0);
+          const activeTrackCount = Number(data?.analysis?.active_track_count ?? data?.tracking?.tracked_count ?? data?.overlay?.detections?.length ?? 0);
+          const roiVehicleCount = Number(data?.analysis?.roi_detection_count ?? data?.analysis?.max_vehicle_count ?? 0);
+          const plateCount = Number(data?.analysis?.total_plate_boxes ?? data?.overlay?.plate_boxes?.length ?? 0);
+          liveAnalysisStatus.value = `最新分析 ${Number.isFinite(currentTime) ? currentTime.toFixed(2) : '0.00'}s，Detections ${rawVehicleCount}，Active Tracks ${activeTrackCount}，ROI 命中 ${roiVehicleCount}，車牌框 ${plateCount}`;
+          if (!options.silent) {
+            ElementPlus.ElMessage.success('分析完成');
+          }
+          return data;
+        };
+
+        const runLiveAnalysisCycle = async () => {
+          if (!liveAnalysisEnabled.value) return;
+          if (liveAnalysisBusy || analyzing.value) return;
+          liveAnalysisBusy = true;
+          const currentTime = Number(videoElRef.value?.currentTime ?? 0);
+          liveAnalysisStatus.value = `即時分析中 ${Number.isFinite(currentTime) ? currentTime.toFixed(2) : '0.00'}s`;
+          try {
+            await requestAnalysis(currentTime, { silent: true });
+          } catch (error) {
+            analysisResult.value = null;
+            stopLiveAnalysis(`即時分析失敗: ${String(error?.message || error || '未知錯誤')}`);
+            ElementPlus.ElMessage.error(String(error?.message || error || '無法分析來源'));
+            return;
+          } finally {
+            liveAnalysisBusy = false;
+          }
+        };
+
+        const queueLiveAnalysis = () => {
+          if (!liveAnalysisEnabled.value) return;
+          if (liveAnalysisTimer) {
+            clearTimeout(liveAnalysisTimer);
+          }
+          liveAnalysisTimer = setTimeout(async () => {
+            if (!liveAnalysisEnabled.value) return;
+            if (liveAnalysisBusy || analyzing.value) {
+              queueLiveAnalysis();
+              return;
+            }
+            await runLiveAnalysisCycle();
+            if (liveAnalysisEnabled.value) {
+              queueLiveAnalysis();
+            }
+          }, LIVE_ANALYSIS_INTERVAL_MS);
+        };
+
+        const toggleLiveAnalysis = async () => {
+          if (liveAnalysisEnabled.value) {
+            stopLiveAnalysis();
+            return;
+          }
+          if (!sourceUrl.value) return;
+          liveAnalysisEnabled.value = true;
+          liveAnalysisStatus.value = '準備即時分析...';
+          resetTrackingState();
+          analysisSessionId = makeAnalysisSessionId();
+          liveTrackerResetPending = true;
+          startOverlayAnimation();
+          if (liveAnalysisTimer) {
+            clearTimeout(liveAnalysisTimer);
+            liveAnalysisTimer = null;
+          }
+          await requestAnalysis(Number(videoElRef.value?.currentTime ?? 0), { silent: true, resetTracker: true });
+          queueLiveAnalysis();
+        };
+
+        const addRoiPoint = (event) => {
+          if (!sourceUrl.value || !videoBoxRef.value || !roiDrawingMode.value) return;
+          const rect = videoBoxRef.value.getBoundingClientRect();
+          const displayRect = videoDisplayRect.value;
+          if (!displayRect.width || !displayRect.height) return;
+          const x = (event.clientX - rect.left - displayRect.left) / displayRect.width;
+          const y = (event.clientY - rect.top - displayRect.top) / displayRect.height;
+          if (x < 0 || x > 1 || y < 0 || y > 1) return;
+          draftRoiPoints.value = [...draftRoiPoints.value, { x, y }];
+        };
+
+        const toggleRoiDrawingMode = () => {
+          roiDrawingMode.value = !roiDrawingMode.value;
+          if (!roiDrawingMode.value) {
+            nextTick(() => tryPlayVideo());
+          }
+        };
+
+        const undoRoiPoint = () => {
+          if (!draftRoiPoints.value.length) return;
+          draftRoiPoints.value = draftRoiPoints.value.slice(0, -1);
+        };
+
+        const clearDraftRoi = () => {
+          draftRoiPoints.value = [];
+        };
+
+        const saveRoi = () => {
+          if (draftRoiPoints.value.length < 3) {
+            ElementPlus.ElMessage.warning('ROI 至少需要 3 個點');
+            return;
+          }
+          const name = String(roiName.value || '').trim() || `ROI ${rois.value.length + 1}`;
+          rois.value = [...rois.value, { name, points: draftRoiPoints.value.map(p => ({ x: p.x, y: p.y })) }];
+          analysisSessionId = makeAnalysisSessionId();
+          liveTrackerResetPending = true;
+          draftRoiPoints.value = [];
+          roiName.value = '';
+          ElementPlus.ElMessage.success(`已新增 ${name}`);
+        };
+
+        const removeRoi = (index) => {
+          rois.value = rois.value.filter((_, idx) => idx !== index);
+          analysisSessionId = makeAnalysisSessionId();
+          liveTrackerResetPending = true;
+        };
+
+        const clearAllRois = () => {
+          rois.value = [];
+          draftRoiPoints.value = [];
+          analysisSessionId = makeAnalysisSessionId();
+          liveTrackerResetPending = true;
+        };
+
+        onMounted(() => {
+          initializeSource();
+          nextTick(() => updateVideoDisplayRect());
+          window.addEventListener('resize', updateVideoDisplayRect);
+        });
+
+        onBeforeUnmount(() => {
+          stopLiveAnalysis();
+          stopOverlayAnimation();
+          window.removeEventListener('resize', updateVideoDisplayRect);
+        });
+
+        watch(
+          () => [
+            roiLayerStyle.value.left,
+            roiLayerStyle.value.top,
+            roiLayerStyle.value.width,
+            roiLayerStyle.value.height,
+            analysisResult.value?.media?.width,
+            analysisResult.value?.media?.height,
+            analysisResult.value?.overlay?.detections?.length,
+            analysisResult.value?.overlay?.plate_boxes?.length,
+          ],
+          async () => {
+            await nextTick();
+            drawOverlayCanvas();
+          }
+        );
+
+        watch(playbackRate, (value) => {
+          const video = videoElRef.value;
+          if (!video) return;
+          video.playbackRate = Number(value || 1) || 1;
+        });
+
+        return {
+          selectedFile,
+          sourceUrl,
+          sampleCount,
+          uploading,
+          testing,
+          analyzing,
+          serverFilesLoading,
+          importingServerFile,
+          testResult,
+          analysisResult,
+          serverFiles,
+          serverRoots,
+          serverFilePath,
+          videoBoxRef,
+          videoElRef,
+          playbackOverlayCanvasRef,
+          analysisOverlayCanvasRef,
+          analyzedFrameUrl,
+          roiDrawingMode,
+          playbackRate,
+          videoLoadError,
+          liveAnalysisEnabled,
+          liveAnalysisStatus,
+          roiName,
+          draftRoiPoints,
+          rois,
+          videoUrl,
+          roiLayerStyle,
+          currentRoiStats,
+          rawDetectionCount,
+          activeTrackCount,
+          roiHitCount,
+          congestionVehicleCount,
+          congestionCapacity,
+          congestionRate,
+          congestionLevelMeta,
+          handleFile,
+          uploadFile,
+          loadServerFiles,
+          importServerFile,
+          runSourceTest,
+          runAnalysis,
+          toggleLiveAnalysis,
+          addRoiPoint,
+          toggleRoiDrawingMode,
+          onVideoLoadedMetadata,
+          onVideoCanPlay,
+          onVideoError,
+          undoRoiPoint,
+          clearDraftRoi,
+          saveRoi,
+          removeRoi,
+          clearAllRois,
+        };
+      }
+    }).use(ElementPlus).mount('#app');
+  </script>
+</body>
+</html>

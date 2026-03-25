@@ -1,20 +1,26 @@
 {
-  "updated_at": "2026-03-12T03:09:21.005367",
+  "updated_at": "2026-03-25T03:59:37.382001",
   "features": {
     "detection": {
-      "3": true,
+      "3": false,
       "1": true,
-      "2": true
+      "2": true,
+      "4": false,
+      "5": false
     },
     "congestion": {
       "1": true,
       "2": true,
-      "3": true
+      "3": false,
+      "4": false,
+      "5": false
     },
     "lpr": {
       "2": true,
       "1": false,
-      "3": false
+      "3": false,
+      "4": false,
+      "5": false
     }
   }
 }

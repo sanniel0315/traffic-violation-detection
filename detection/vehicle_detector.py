@@ -4,7 +4,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from ultralytics import YOLO
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import numpy as np
 import os
 from model_paths import get_detect_model_pt
@@ -13,14 +13,22 @@ from model_paths import get_detect_model_pt
 class VehicleDetector:
     """車輛偵測器"""
     
-    # 交通相關類別
-    VEHICLE_CLASSES = {
+    # COCO 預設類別對照；若模型有自帶 names，會動態覆蓋。
+    DEFAULT_VEHICLE_CLASSES = {
         0: 'person',
         1: 'bicycle', 
         2: 'car',
         3: 'motorcycle',
         5: 'bus',
         7: 'truck'
+    }
+    CLASS_NAME_ALIASES = {
+        'person': {'person', 'pedestrian', 'people'},
+        'bicycle': {'bicycle', 'cycle'},
+        'car': {'car', 'vehicle', 'sedan', 'suv', 'van', 'auto', 'automobile', 'taxi', 'jeep'},
+        'motorcycle': {'motorcycle', 'motorbike', 'scooter', 'moped'},
+        'bus': {'bus', 'coach', 'minibus'},
+        'truck': {'truck', 'lorry', 'pickup', 'pickup truck', 'pickup_truck', 'trailer'},
     }
     
     def __init__(self, model_path: str = None, conf_threshold: float = 0.5):
@@ -41,7 +49,48 @@ class VehicleDetector:
             self.runtime_device = self.device
         except Exception:
             self.runtime_device = "cpu"
+        self.vehicle_classes = self._resolve_vehicle_classes()
         print(f"✅ 車輛偵測器初始化完成 (模型: {model_path}, device: {self.runtime_device})")
+        print(f"✅ 車種類別映射: {self.vehicle_classes}")
+
+    @classmethod
+    def _normalize_label(cls, value: str) -> str:
+        text = str(value or "").strip().lower()
+        for ch in ("_", "-"):
+            text = text.replace(ch, " ")
+        return " ".join(text.split())
+
+    @classmethod
+    def _match_canonical_label(cls, raw_name: str) -> Optional[str]:
+        name = cls._normalize_label(raw_name)
+        compact = name.replace(" ", "")
+        for canonical, aliases in cls.CLASS_NAME_ALIASES.items():
+            for alias in aliases:
+                alias_norm = cls._normalize_label(alias)
+                alias_compact = alias_norm.replace(" ", "")
+                if name == alias_norm or compact == alias_compact:
+                    return canonical
+                if alias_norm and alias_norm in name:
+                    return canonical
+        return None
+
+    def _resolve_vehicle_classes(self) -> Dict[int, str]:
+        names = getattr(self.model, "names", None)
+        items = []
+        if isinstance(names, dict):
+            items = list(names.items())
+        elif isinstance(names, (list, tuple)):
+            items = list(enumerate(names))
+
+        resolved: Dict[int, str] = {}
+        for class_id, class_name in items:
+            canonical = self._match_canonical_label(str(class_name))
+            if canonical:
+                resolved[int(class_id)] = canonical
+
+        if resolved:
+            return resolved
+        return dict(self.DEFAULT_VEHICLE_CLASSES)
     
     def detect(self, frame: np.ndarray) -> List[Dict[str, Any]]:
         """
@@ -68,7 +117,7 @@ class VehicleDetector:
                 class_id = int(box.cls[0])
                 
                 # 只保留交通相關類別
-                if class_id not in self.VEHICLE_CLASSES:
+                if class_id not in self.vehicle_classes:
                     continue
                 
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
@@ -76,7 +125,7 @@ class VehicleDetector:
                 
                 detections.append({
                     'class_id': class_id,
-                    'class_name': self.VEHICLE_CLASSES[class_id],
+                    'class_name': self.vehicle_classes[class_id],
                     'confidence': confidence,
                     'bbox': {
                         'x1': int(x1),

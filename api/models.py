@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 """資料庫模型"""
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, JSON, text
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    Float,
+    Boolean,
+    DateTime,
+    Text,
+    JSON,
+    text,
+    Index,
+    UniqueConstraint,
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
@@ -89,18 +102,138 @@ class LPRRecord(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class LPRCameraStat(Base):
+    __tablename__ = "lpr_camera_stats"
+    camera_id = Column(Integer, primary_key=True, index=True)
+    camera_name = Column(String(100))
+    total_frames = Column(Integer, default=0)
+    vehicles_detected = Column(Integer, default=0)
+    plate_boxes_detected = Column(Integer, default=0)
+    ocr_candidates_detected = Column(Integer, default=0)
+    vote_candidates_detected = Column(Integer, default=0)
+    confirmed_candidates = Column(Integer, default=0)
+    committed_candidates = Column(Integer, default=0)
+    last_history_at = Column(DateTime)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class TrafficEvent(Base):
     __tablename__ = "traffic_events"
     id = Column(Integer, primary_key=True, index=True)
     camera_id = Column(Integer, index=True)
     label = Column(String(50), index=True)
     speed_kmh = Column(Float)
+    occupancy = Column(Float)
     lane_no = Column(Integer, index=True)
     direction = Column(String(20), index=True)
     entered_zones = Column(JSON)
     bbox = Column(JSON)
     source = Column(String(32), default="roi_detection", index=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CongestionSample(Base):
+    __tablename__ = "congestion_samples"
+    id = Column(Integer, primary_key=True, index=True)
+    camera_id = Column(Integer, index=True)
+    camera_name = Column(String(100), index=True)
+    zone_name = Column(String(100), index=True)
+    lane_no = Column(Integer, index=True)
+    movement = Column(String(20), index=True)
+    direction = Column(String(20), index=True)
+    is_overall = Column(Boolean, default=False, index=True)
+    vehicle_count = Column(Integer, default=0)
+    stopped_vehicle_count = Column(Integer, default=0)
+    occupancy = Column(Float)
+    raw_occupancy = Column(Float)
+    queue_score = Column(Float)
+    estimated_queue_length_m = Column(Float)
+    queue_duration_sec = Column(Float)
+    sample_interval_sec = Column(Float)
+    queue_active = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class TrafficReportAgg(Base):
+    __tablename__ = "traffic_report_aggs"
+    __table_args__ = (
+        UniqueConstraint("bucket_start", "bucket_size", "camera_id", "direction", "lane_no", name="uq_traffic_report_aggs_bucket"),
+        Index("ix_traffic_report_aggs_camera_bucket", "camera_id", "bucket_start"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    bucket_start = Column(DateTime, index=True, nullable=False)
+    bucket_size = Column(String(8), index=True, nullable=False)
+    camera_id = Column(Integer, index=True, nullable=False)
+    camera_name = Column(String(100), index=True)
+    road_name = Column(String(200))
+    direction = Column(String(20), index=True, default="unknown")
+    lane_no = Column(Integer, index=True)
+    total_flow = Column(Integer, default=0)
+    avg_speed = Column(Float)
+    max_speed = Column(Float)
+    avg_occupancy = Column(Float)
+    small_vehicle_flow = Column(Integer, default=0)
+    large_vehicle_flow = Column(Integer, default=0)
+    other_vehicle_flow = Column(Integer, default=0)
+    event_count = Column(Integer, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CongestionReportAgg(Base):
+    __tablename__ = "congestion_report_aggs"
+    __table_args__ = (
+        UniqueConstraint("bucket_start", "bucket_size", "camera_id", "zone_name", "lane_no", name="uq_congestion_report_aggs_bucket"),
+        Index("ix_congestion_report_aggs_camera_bucket", "camera_id", "bucket_start"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    bucket_start = Column(DateTime, index=True, nullable=False)
+    bucket_size = Column(String(8), index=True, nullable=False)
+    camera_id = Column(Integer, index=True, nullable=False)
+    camera_name = Column(String(100), index=True)
+    zone_name = Column(String(100), index=True, default="")
+    lane_no = Column(Integer, index=True)
+    direction = Column(String(20), index=True, default="unknown")
+    movement = Column(String(20), index=True, default="")
+    is_overall = Column(Boolean, default=False, index=True)
+    avg_occupancy = Column(Float)
+    max_occupancy = Column(Float)
+    avg_vehicle_count = Column(Float)
+    avg_stopped_vehicle_count = Column(Float)
+    avg_queue_length_m = Column(Float)
+    max_queue_length_m = Column(Float)
+    queue_active_duration_sec = Column(Float)
+    max_queue_duration_sec = Column(Float)
+    sample_count = Column(Integer, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class LprReportAgg(Base):
+    __tablename__ = "lpr_report_aggs"
+    __table_args__ = (
+        UniqueConstraint("bucket_start", "bucket_size", "camera_id", name="uq_lpr_report_aggs_bucket"),
+        Index("ix_lpr_report_aggs_camera_bucket", "camera_id", "bucket_start"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    bucket_start = Column(DateTime, index=True, nullable=False)
+    bucket_size = Column(String(8), index=True, nullable=False)
+    camera_id = Column(Integer, index=True, nullable=False)
+    camera_name = Column(String(100), index=True)
+    total_records = Column(Integer, default=0)
+    confirmed_records = Column(Integer, default=0)
+    unknown_records = Column(Integer, default=0)
+    avg_confidence = Column(Float)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AggregationJobState(Base):
+    __tablename__ = "aggregation_job_state"
+
+    job_name = Column(String(64), primary_key=True, index=True)
+    last_processed_at = Column(DateTime, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class User(Base):
@@ -137,6 +270,8 @@ def init_db():
     os.makedirs("./data", exist_ok=True)
     Base.metadata.create_all(bind=engine)
     _migrate_violation_columns()
+    _migrate_traffic_event_columns()
+    _migrate_report_indexes()
     db = SessionLocal()
     try:
         if db.query(User).count() == 0:
@@ -175,6 +310,39 @@ def _migrate_violation_columns():
                 conn.execute(text("ALTER TABLE violations ADD COLUMN speed_roi_hit BOOLEAN DEFAULT 0"))
     except Exception:
         # 非 sqlite 或 migration 失敗時忽略，不阻斷啟動
+        pass
+
+
+def _migrate_traffic_event_columns():
+    """為既有 traffic_events 表補上 occupancy 欄位。"""
+    try:
+        with engine.begin() as conn:
+            cols = conn.execute(text("PRAGMA table_info(traffic_events)")).fetchall()
+            col_names = {str(c[1]) for c in cols}
+            if "occupancy" not in col_names:
+                conn.execute(text("ALTER TABLE traffic_events ADD COLUMN occupancy FLOAT"))
+    except Exception:
+        pass
+
+
+def _migrate_report_indexes():
+    """補齊報表查詢用索引。"""
+    statements = [
+        "CREATE INDEX IF NOT EXISTS ix_traffic_events_camera_created_at ON traffic_events(camera_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_traffic_events_camera_direction_lane_created_at ON traffic_events(camera_id, direction, lane_no, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_congestion_samples_camera_created_at ON congestion_samples(camera_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_congestion_samples_camera_lane_created_at ON congestion_samples(camera_id, lane_no, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_lpr_records_camera_created_at ON lpr_records(camera_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_lpr_records_plate_created_at ON lpr_records(plate_number, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_traffic_report_aggs_bucket_size_bucket_start ON traffic_report_aggs(bucket_size, bucket_start)",
+        "CREATE INDEX IF NOT EXISTS ix_congestion_report_aggs_bucket_size_bucket_start ON congestion_report_aggs(bucket_size, bucket_start)",
+        "CREATE INDEX IF NOT EXISTS ix_lpr_report_aggs_bucket_size_bucket_start ON lpr_report_aggs(bucket_size, bucket_start)",
+    ]
+    try:
+        with engine.begin() as conn:
+            for stmt in statements:
+                conn.execute(text(stmt))
+    except Exception:
         pass
 
 
