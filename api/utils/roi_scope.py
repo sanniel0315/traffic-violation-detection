@@ -25,6 +25,7 @@ def select_zones(
     *,
     scope: str,
     allowed_types: Optional[Iterable[str]] = None,
+    fallback_scopes: Optional[Iterable[str]] = None,
 ) -> List[dict]:
     """Select zones by scope with legacy fallback.
 
@@ -43,4 +44,8 @@ def select_zones(
     scoped = [z for z in items if _norm_scope(z.get("scope")) == scope and _ok_type(z)]
     if scoped:
         return scoped
+    for fallback_scope in (fallback_scopes or []):
+        fallback = [z for z in items if _norm_scope(z.get("scope")) == _norm_scope(fallback_scope) and _ok_type(z)]
+        if fallback:
+            return fallback
     return [z for z in items if not _norm_scope(z.get("scope")) and _ok_type(z)]

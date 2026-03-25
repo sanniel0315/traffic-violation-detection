@@ -1,0 +1,11 @@
+{
+  "proxy_base_url": "",
+  "server_base_url": "https://10.26.4.123:7001",
+  "username": "admin",
+  "password": "1qaz@WSX",
+  "devices_path": "/rest/v2/devices",
+  "media_path_template": "/media/{device_id}.{format}",
+  "timeout_sec": 12.0,
+  "verify_ssl": false,
+  "updated_at": "2026-03-16T18:55:19.322904+08:00"
+}

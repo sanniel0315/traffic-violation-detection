@@ -11,10 +11,9 @@ cameras:
       - path: rtsp://root:root@111.70.33.189:554/axis-media/media.amp
         roles:
         - detect
-        - record
     motion:
       contour_area: 20
-      enabled: true
+      enabled: false
       mask: 0.008333,0.009259,0.339583,0.032407,0.776042,0.952778,0.015625,0.988889
       threshold: 25
     objects:
@@ -31,13 +30,13 @@ cameras:
       - bicycle
       - person
     record:
-      enabled: true
+      enabled: false
       retain:
         days: 3
         mode: all
     snapshots:
       bounding_box: true
-      enabled: true
+      enabled: false
       retain:
         default: 14
       timestamp: true
@@ -54,7 +53,7 @@ cameras:
         - motorcycle
   cam_2:
     detect:
-      enabled: false
+      enabled: true
       fps: 10
       height: 1080
       width: 1920
@@ -68,7 +67,7 @@ cameras:
     motion:
       contour_area: 20
       enabled: true
-      mask: 0.001042,0.012963,0.367708,0.024074,0.302083,0.983333,0.012500,0.983333
+      mask: 0.008333,0.007407,0.309896,0.005556,0.305729,0.430556,0.000000,0.405556
       threshold: 25
     objects:
       filters:

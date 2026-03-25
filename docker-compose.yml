@@ -13,6 +13,7 @@ services:
       - ./:/workspace
       - ./models:/workspace/models
       - ./storage:/workspace/storage
+      - /home/mic-711/Downloads:/workspace/host_downloads:ro
     working_dir: /workspace
     ports:
       - "8000:8000"
@@ -65,6 +66,7 @@ services:
     volumes:
       - ./:/workspace
       - ./models:/workspace/models
+      - /home/mic-711/Downloads:/workspace/host_downloads:ro
     working_dir: /workspace
     environment:
       - TZ=Asia/Taipei

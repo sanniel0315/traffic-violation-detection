@@ -10,12 +10,29 @@ from fastapi.responses import Response
 from contextlib import asynccontextmanager
 from datetime import datetime
 import os
+import threading
 from zoneinfo import ZoneInfo
 from api.models import init_db
-from api.routes import auth, frigate, lpr, lpr_stream, lpr_visual, violations, cameras, stream, traffic
+from api.routes import auth, frigate, lpr, lpr_stream, lpr_visual, violations, cameras, stream, traffic, nx
 from api.routes import congestion
 from api.routes import logs, system
 TZ_TAIPEI = ZoneInfo("Asia/Taipei")
+
+
+def _resume_services_in_background():
+    try:
+        det = stream.resume_detection_services()
+        cong = congestion.resume_congestion_services()
+        lpr_resume = lpr_stream.resume_lpr_streams()
+        logs.add_log(
+            "info",
+            f"服務狀態恢復完成: detection={det.get('resumed',0)}/{det.get('total',0)} "
+            f"congestion={cong.get('resumed',0)}/{cong.get('total',0)} "
+            f"lpr={lpr_resume.get('resumed',0)}/{lpr_resume.get('total',0)}",
+            "system",
+        )
+    except Exception as e:
+        logs.add_log("error", f"服務狀態恢復失敗: {e}", "system")
 
 
 def _assert_gpu_ready():
@@ -60,16 +77,7 @@ async def lifespan(app: FastAPI):
     init_db()
     logs.add_log("info", "系統日誌服務啟動", "system")
     os.makedirs("./output/violations", exist_ok=True)
-    det = stream.resume_detection_services()
-    cong = congestion.resume_congestion_services()
-    lpr_resume = lpr_stream.resume_lpr_streams()
-    logs.add_log(
-        "info",
-        f"服務狀態恢復完成: detection={det.get('resumed',0)}/{det.get('total',0)} "
-        f"congestion={cong.get('resumed',0)}/{cong.get('total',0)} "
-        f"lpr={lpr_resume.get('resumed',0)}/{lpr_resume.get('total',0)}",
-        "system",
-    )
+    threading.Thread(target=_resume_services_in_background, daemon=True, name="resume-services").start()
     print("✅ 系統初始化完成")
     yield
     print("👋 系統關閉")
@@ -109,6 +117,7 @@ app.include_router(stream.router)
 app.include_router(traffic.router)
 app.include_router(auth.router)
 app.include_router(frigate.router)
+app.include_router(nx.router)
 app.include_router(lpr.router)
 app.include_router(lpr_stream.router)
 app.include_router(lpr_visual.router)

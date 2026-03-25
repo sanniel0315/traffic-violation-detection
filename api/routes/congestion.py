@@ -9,11 +9,12 @@ from pydantic import BaseModel, Field
 import cv2
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 
-from api.models import get_db, Camera, SessionLocal
-from api.utils.roi_scope import SCOPE_CONGESTION, select_zones
+from api.models import CongestionSample, get_db, Camera, SessionLocal
+from api.utils.roi_scope import SCOPE_CONGESTION, SCOPE_TRAFFIC, select_zones
 from api.utils.feature_state import get_feature_state, set_feature_state
+from api.utils.camera_stream import resolve_analysis_source
 
 router = APIRouter(prefix="/api/congestion", tags=["壅塞偵測"])
 
@@ -29,6 +30,15 @@ DEFAULT_CONGESTION_PARAMS = {
     "smoothing_window": 10,
     "analyze_interval_sec": 1.0,
 }
+
+
+def _congestion_zones(camera: Camera):
+    return select_zones(
+        camera.zones or [],
+        scope=SCOPE_CONGESTION,
+        fallback_scopes=(SCOPE_TRAFFIC,),
+        allowed_types=("detection", "flow_detection"),
+    )
 
 
 def _normalize_params(params: dict):
@@ -85,16 +95,78 @@ def analyze_with_lock(frame, zones, camera_id: int):
         return detector.analyze(frame, zones, camera_key=str(camera_id), params=params)
 
 
+def _to_utc_naive(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _store_congestion_samples(camera_id: int, camera_name: str, result: dict, sample_interval_sec: float):
+    db = SessionLocal()
+    try:
+        created_at = datetime.utcnow()
+        base_items = [{
+            "camera_id": camera_id,
+            "camera_name": camera_name,
+            "zone_name": "",
+            "lane_no": None,
+            "movement": "",
+            "direction": "",
+            "is_overall": True,
+            "vehicle_count": int(result.get("vehicle_count") or 0),
+            "stopped_vehicle_count": int(result.get("stopped_vehicle_count") or 0),
+            "occupancy": float(result.get("occupancy") or 0.0),
+            "raw_occupancy": float(result.get("raw_occupancy") or 0.0),
+            "queue_score": float(result.get("queue_score") or 0.0),
+            "estimated_queue_length_m": float(result.get("estimated_queue_length_m") or 0.0),
+            "queue_duration_sec": float(result.get("queue_duration_sec") or 0.0),
+            "sample_interval_sec": float(sample_interval_sec or 0.0),
+            "queue_active": bool(result.get("queue_active")),
+            "created_at": created_at,
+        }]
+        for zr in result.get("zone_results") or []:
+            base_items.append({
+                "camera_id": camera_id,
+                "camera_name": camera_name,
+                "zone_name": str(zr.get("name") or ""),
+                "lane_no": zr.get("lane_no"),
+                "movement": str(zr.get("movement") or ""),
+                "direction": str(zr.get("direction") or ""),
+                "is_overall": False,
+                "vehicle_count": int(zr.get("vehicle_count") or 0),
+                "stopped_vehicle_count": int(zr.get("stopped_vehicle_count") or 0),
+                "occupancy": float(zr.get("occupancy") or 0.0),
+                "raw_occupancy": float(zr.get("raw_occupancy") or 0.0),
+                "queue_score": float(zr.get("queue_score") or 0.0),
+                "estimated_queue_length_m": float(zr.get("estimated_queue_length_m") or 0.0),
+                "queue_duration_sec": float(zr.get("queue_duration_sec") or 0.0),
+                "sample_interval_sec": float(sample_interval_sec or 0.0),
+                "queue_active": bool(zr.get("queue_active")),
+                "created_at": created_at,
+            })
+        db.bulk_insert_mappings(CongestionSample, base_items)
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 @router.post("/{camera_id}/start")
 async def start_congestion(camera_id: int, db: Session = Depends(get_db)):
     """啟動壅塞偵測"""
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:
         raise HTTPException(status_code=404, detail="攝影機不存在")
-    
+    if not bool(camera.enabled):
+        raise HTTPException(status_code=409, detail="攝影機已關閉")
     if camera_id in congestion_services and congestion_services[camera_id].get('running'):
         return {"status": "already_running", "message": "壅塞偵測已在執行中"}
-    _start_congestion_service(camera)
+    started = _start_congestion_service(camera)
+    if not started:
+        raise HTTPException(status_code=409, detail="壅塞偵測啟動失敗")
     set_feature_state("congestion", camera_id, True)
     
     return {"status": "started", "message": f"壅塞偵測已啟動: {camera.name}"}
@@ -152,14 +224,67 @@ async def all_congestion_status():
     }
 
 
+@router.get("/samples")
+async def get_congestion_samples(
+    camera_id: int | None = None,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    is_overall: bool | None = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(CongestionSample)
+    if camera_id is not None:
+        query = query.filter(CongestionSample.camera_id == camera_id)
+    start_time = _to_utc_naive(start_time)
+    end_time = _to_utc_naive(end_time)
+    if start_time is not None:
+        query = query.filter(CongestionSample.created_at >= start_time)
+    if end_time is not None:
+        query = query.filter(CongestionSample.created_at <= end_time)
+    if is_overall is not None:
+        query = query.filter(CongestionSample.is_overall == bool(is_overall))
+    items = query.order_by(CongestionSample.created_at.desc()).limit(200000).all()
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "camera_id": row.camera_id,
+                "camera_name": row.camera_name,
+                "zone_name": row.zone_name,
+                "lane_no": row.lane_no,
+                "movement": row.movement,
+                "direction": row.direction,
+                "is_overall": bool(row.is_overall),
+                "vehicle_count": row.vehicle_count,
+                "stopped_vehicle_count": row.stopped_vehicle_count,
+                "occupancy": row.occupancy,
+                "raw_occupancy": row.raw_occupancy,
+                "queue_score": row.queue_score,
+                "estimated_queue_length_m": row.estimated_queue_length_m,
+                "queue_duration_sec": row.queue_duration_sec,
+                "sample_interval_sec": row.sample_interval_sec,
+                "queue_active": bool(row.queue_active),
+                "created_at": (
+                    row.created_at.replace(tzinfo=timezone.utc).isoformat()
+                    if row.created_at
+                    else None
+                ),
+            }
+            for row in items
+        ]
+    }
+
+
 @router.get("/{camera_id}/snapshot")
 async def congestion_snapshot(camera_id: int, db: Session = Depends(get_db)):
     """取得單次壅塞分析截圖"""
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:
         raise HTTPException(status_code=404, detail="攝影機不存在")
+    if not bool(camera.enabled):
+        raise HTTPException(status_code=409, detail="攝影機已關閉")
     
-    cap = cv2.VideoCapture(camera.source)
+    cap = cv2.VideoCapture(resolve_analysis_source(camera))
     ret, frame = cap.read()
     cap.release()
     
@@ -167,7 +292,7 @@ async def congestion_snapshot(camera_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=503, detail="無法取得影像")
     
     congestion_params[camera_id] = _load_params_from_camera(camera)
-    zones = select_zones(camera.zones or [], scope=SCOPE_CONGESTION, allowed_types=("detection", "flow_detection"))
+    zones = _congestion_zones(camera)
     result = analyze_with_lock(frame, zones, camera_id)
     
     # 繪製結果
@@ -183,11 +308,13 @@ async def congestion_stream(camera_id: int, db: Session = Depends(get_db)):
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:
         raise HTTPException(status_code=404, detail="攝影機不存在")
+    if not bool(camera.enabled):
+        raise HTTPException(status_code=409, detail="攝影機已關閉")
     
     congestion_params[camera_id] = _load_params_from_camera(camera)
-    zones = select_zones(camera.zones or [], scope=SCOPE_CONGESTION, allowed_types=("detection", "flow_detection"))
+    zones = _congestion_zones(camera)
     return StreamingResponse(
-        generate_congestion_stream(camera_id, camera.source, zones),
+        generate_congestion_stream(camera_id, resolve_analysis_source(camera), zones),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
 
@@ -232,7 +359,13 @@ def draw_congestion(frame, result):
     # 狀態列
     cv2.rectangle(annotated, (0, 0), (w, 35), (0,0,0), -1)
     level_color = level_colors.get(result.get('level', 'low'), (255,255,255))
-    text = f"壅塞: {result.get('level_name', '-')} | 車輛: {result.get('vehicle_count', 0)} | 佔用率: {result.get('occupancy', 0)*100:.1f}%"
+    text = (
+        f"壅塞: {result.get('level_name', '-')} | "
+        f"車輛: {result.get('vehicle_count', 0)} | "
+        f"停滯: {result.get('stopped_vehicle_count', 0)} | "
+        f"排隊: {result.get('estimated_queue_length_m', 0):.1f}m | "
+        f"分數: {result.get('occupancy', 0)*100:.1f}%"
+    )
     cv2.putText(annotated, text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, level_color, 2)
     
     # 底部進度條
@@ -243,7 +376,7 @@ def draw_congestion(frame, result):
     return annotated
 
 
-def run_congestion_detection(camera_id: int, source: str, zones: list):
+def run_congestion_detection(camera_id: int, camera_name: str, source: str, zones: list):
     """背景壅塞偵測任務"""
     cap = cv2.VideoCapture(source)
     
@@ -264,7 +397,9 @@ def run_congestion_detection(camera_id: int, source: str, zones: list):
             result = analyze_with_lock(frame, zones, camera_id)
             congestion_results[camera_id] = result
             congestion_services[camera_id]['last_update'] = datetime.now().isoformat()
-            time.sleep(get_effective_params(camera_id).get("analyze_interval_sec", 1.0))
+            sample_interval_sec = float(get_effective_params(camera_id).get("analyze_interval_sec", 1.0))
+            _store_congestion_samples(camera_id, camera_name, result, sample_interval_sec)
+            time.sleep(sample_interval_sec)
     except Exception as e:
         congestion_services[camera_id]["error"] = str(e)
     finally:
@@ -284,10 +419,10 @@ def _start_congestion_service(camera: Camera) -> bool:
         "started_at": datetime.now().isoformat(),
         "camera_name": camera.name,
     }
-    zones = select_zones(camera.zones or [], scope=SCOPE_CONGESTION, allowed_types=("detection", "flow_detection"))
+    zones = _congestion_zones(camera)
     worker = threading.Thread(
         target=run_congestion_detection,
-        args=(camera_id, camera.source, zones),
+        args=(camera_id, camera.name, resolve_analysis_source(camera), zones),
         daemon=True,
         name=f"congestion-{camera_id}",
     )

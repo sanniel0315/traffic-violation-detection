@@ -286,6 +286,7 @@ class NvrCameraSwitch(BaseModel):
     """單台攝影機錄影/偵測切換"""
     record_enabled: Optional[bool] = None
     detect_enabled: Optional[bool] = None
+    motion_enabled: Optional[bool] = None
     snapshots_enabled: Optional[bool] = None
 
 
@@ -646,7 +647,7 @@ async def get_nvr_events(
     end_time: Optional[str] = None,
     all_pages: bool = Query(False),
     limit: int = Query(2000, ge=1, le=50000),
-    batch_size: int = Query(500, ge=100, le=5000),
+    batch_size: int = Query(300, ge=50, le=1000),
 ):
     """取得偵測事件"""
     try:
@@ -666,16 +667,16 @@ async def get_nvr_events(
             common_params["before"] = int(before)
 
         if not all_pages:
-            params = {**common_params, "limit": min(int(limit), 5000)}
+            params = {**common_params, "limit": min(int(limit), 1000)}
             response, _url, err = _get_frigate("/api/events", timeout=10, params=params)
             if response is not None and response.status_code == 200:
                 events = response.json() or []
                 return {"events": events, "total": len(events), "truncated": False}
             raise RuntimeError(str(err or "Frigate events query failed"))
 
-        # Frigate 單次最多 5000，分批往前翻頁直到滿足 limit 或資料取完
-        target = int(limit)
-        page_size = max(100, min(int(batch_size), 5000))
+        # 分批往前翻頁直到滿足限制或資料取完，避免一次查太大拖垮 API
+        target = min(int(limit), 1000)
+        page_size = max(50, min(int(batch_size), 1000))
         events: List[Dict[str, Any]] = []
         seen = set()
         cursor_before = int(before) if before is not None else None
@@ -807,16 +808,33 @@ async def get_nvr_recordings(
     camera: Optional[str] = None,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
-    limit: int = Query(500, ge=1, le=5000),
+    limit: int = Query(100, ge=1, le=500),
 ):
     """查詢 NVR 錄影片段（全時錄影回放用）"""
     try:
+        def _to_epoch_sec(v: Any) -> int:
+            if v is None or v == "":
+                return 0
+            try:
+                n = float(v)
+                if n > 1e12:
+                    return int(n / 1000)
+                if n > 0:
+                    return int(n)
+            except Exception:
+                pass
+            try:
+                dt = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+                return int(dt.timestamp())
+            except Exception:
+                return 0
+
         after = _parse_time_to_epoch(start_time)
         before = _parse_time_to_epoch(end_time)
         if after and before and after > before:
             raise HTTPException(status_code=400, detail="start_time 不可晚於 end_time")
 
-        params: Dict[str, Any] = {"limit": int(limit)}
+        params: Dict[str, Any] = {"limit": min(int(limit), 500)}
         if camera:
             params["camera"] = camera
         if after is not None:
@@ -847,6 +865,15 @@ async def get_nvr_recordings(
                 start = row.get("start_time") or row.get("start") or row.get("segment_start")
                 end = row.get("end_time") or row.get("end") or row.get("segment_end")
                 cam = row.get("camera") or camera or ""
+                # 新版 Frigate /api/recordings 可能不回傳 path/url，
+                # 改以 camera + start/end 動態組 clip 播放來源。
+                if not src and cam:
+                    s_sec = _to_epoch_sec(start)
+                    e_sec = _to_epoch_sec(end)
+                    if s_sec > 0:
+                        if e_sec <= s_sec:
+                            e_sec = s_sec + max(1, int(float(row.get("duration") or 10)))
+                        src = f"/api/{cam}/start/{s_sec}/end/{e_sec}/clip.mp4"
                 play_url = f"/api/frigate/recordings/play?src={quote(str(src), safe='')}" if src else ""
                 items.append({
                     "id": row.get("id") or f"rec-{cam}-{idx}",
@@ -1290,8 +1317,25 @@ async def switch_nvr_camera_features(name: str, data: NvrCameraSwitch):
                 roles.remove("record")
 
         if data.detect_enabled is not None:
+            detect_on = bool(data.detect_enabled)
+            detect_cfg = cam.get("detect", {}) or {}
+            detect_cfg["enabled"] = detect_on
+            detect_cfg["fps"] = int(detect_cfg.get("fps", 10) or 10)
+            detect_cfg["width"] = int(detect_cfg.get("width", 1920) or 1920)
+            detect_cfg["height"] = int(detect_cfg.get("height", 1080) or 1080)
+            cam["detect"] = detect_cfg
+
+            # 相容舊版 UI：detect 開關同時帶動 motion.enabled
             motion_cfg = cam.get("motion", {}) or {}
-            motion_cfg["enabled"] = bool(data.detect_enabled)
+            motion_cfg["enabled"] = detect_on
+            motion_cfg["threshold"] = int(motion_cfg.get("threshold", 25))
+            motion_cfg["contour_area"] = int(motion_cfg.get("contour_area", 20))
+            cam["motion"] = motion_cfg
+
+        if data.motion_enabled is not None:
+            motion_on = bool(data.motion_enabled)
+            motion_cfg = cam.get("motion", {}) or {}
+            motion_cfg["enabled"] = motion_on
             motion_cfg["threshold"] = int(motion_cfg.get("threshold", 25))
             motion_cfg["contour_area"] = int(motion_cfg.get("contour_area", 20))
             cam["motion"] = motion_cfg
@@ -1314,7 +1358,9 @@ async def switch_nvr_camera_features(name: str, data: NvrCameraSwitch):
         if data.record_enabled is not None:
             add_log("info", f"{name} 錄影已{'開啟' if data.record_enabled else '關閉'}", "nvr")
         if data.detect_enabled is not None:
-            add_log("info", f"{name} Motion 偵測已{'開啟' if data.detect_enabled else '關閉'}", "nvr")
+            add_log("info", f"{name} 偵測已{'開啟' if data.detect_enabled else '關閉'}", "nvr")
+        if data.motion_enabled is not None:
+            add_log("info", f"{name} Motion 已{'開啟' if data.motion_enabled else '關閉'}", "nvr")
         if data.snapshots_enabled is not None:
             add_log("info", f"{name} Snapshots 已{'開啟' if data.snapshots_enabled else '關閉'}", "nvr")
 
@@ -1322,7 +1368,8 @@ async def switch_nvr_camera_features(name: str, data: NvrCameraSwitch):
             "status": "success",
             "message": f"{name} 設定已更新，請重啟 NVR 生效",
             "record_enabled": bool(cam.get("record", {}).get("enabled", False)),
-            "detect_enabled": bool(cam.get("motion", {}).get("enabled", True)),
+            "detect_enabled": bool(cam.get("detect", {}).get("enabled", True)),
+            "motion_enabled": bool(cam.get("motion", {}).get("enabled", True)),
             "snapshots_enabled": bool(cam.get("snapshots", {}).get("enabled", False)),
         }
     except HTTPException:
