@@ -2222,8 +2222,9 @@
                 <div v-if="page==='frigate'">
                     <div class="card">
                         <div class="card-header">
-                            <span>🎬 NVR NVR 設定</span>
+                            <span>🎬 NVR 設定</span>
                             <div style="display:flex;gap:8px;align-items:center">
+                                <el-button type="warning" size="small" @click="window.open('/web/nvr_playback.html','_blank')">⏯️ 開啟 NVR 回放</el-button>
                                 <span>連線狀態</span>
                                 <el-tag :type="frigateStatus.status==='online'?'success':'primary'" size="small">
                                     {{ frigateStatus.status==='online'?'已連線':'離線' }}

@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NVR Playback - EZ Pro</title>
 <link rel="icon" href="/favicon.ico">
-<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-<script src="https://unpkg.com/element-plus"></script>
-<script src="https://unpkg.com/@element-plus/icons-vue"></script>
-<link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
-<link rel="stylesheet" href="https://unpkg.com/element-plus/theme-chalk/dark/css-vars.css">
+<script src="/web/lib/vue.global.prod.js"></script>
+<script src="/web/lib/element-plus.min.js"></script>
+<script src="/web/lib/element-plus-icons.min.js"></script>
+<link rel="stylesheet" href="/web/lib/element-plus.css">
+<link rel="stylesheet" href="/web/lib/element-plus-dark.css">
 <style>
 /* ── EZ Pro Dark Theme ── */
 :root {
@@ -183,6 +183,14 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
   pointer-events:all;
 }
 .grid-cell:hover .grid-cell-close { display:flex; }
+.grid-cell-info-overlay {
+  position:absolute; bottom:28px; left:8px; right:8px;
+  display:flex; justify-content:space-between; align-items:center;
+  font-size:12px; color:#fff; text-shadow:0 1px 4px rgba(0,0,0,.9);
+  pointer-events:none; z-index:5;
+}
+.overlay-camera { font-weight:600; }
+.overlay-time { font-variant-numeric:tabular-nums; opacity:.85; }
 .grid-cell-mode-tag {
   position:absolute; bottom:5px; right:5px;
   font-size:9px; padding:2px 6px; border-radius:3px;
@@ -413,6 +421,7 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
       <span>{{nvrOnline?'NVR 已連線':'NVR 離線'}}</span>
     </div>
     <div class="top-clock">{{clock}}</div>
+    <button class="top-btn" :class="{active:showOverlay}" @click="showOverlay=!showOverlay" title="顯示/隱藏 OSD 疊加">OSD</button>
     <button class="top-btn" :class="{active:showRight}" @click="showRight=!showRight" title="事件面板">&#9881;</button>
     <a href="/web/index.html" class="top-nav-link">&larr; 返回主頁</a>
   </div>
@@ -481,6 +490,10 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
           <div class="grid-cell-overlay">
             <span class="grid-cell-name">{{cell.camera||''}}</span>
             <span class="grid-cell-time">{{formatClock(cell.currentSec)}} / {{formatClock(cell.durationSec)}}</span>
+          </div>
+          <div v-if="showOverlay && cell.camera" class="grid-cell-info-overlay">
+            <span class="overlay-camera">{{cameraDisplayName(cell.camera)}}</span>
+            <span class="overlay-time">{{clock}} | {{cameraDisplayName(cell.camera)}}</span>
           </div>
           <button class="grid-cell-close" @click.stop="clearCell(idx)">&times;</button>
           <span class="grid-cell-mode-tag" v-if="cell.label">{{cell.label}}</span>
@@ -657,6 +670,7 @@ setup(){
   const nvrOnline=ref(false);
   const showLeft=ref(true);
   const showRight=ref(true);
+  const showOverlay=ref(true);
   const rightTab=ref('events');
   const deviceSearch=ref('');
   const loading=ref(false);
@@ -1070,7 +1084,7 @@ setup(){
   });
 
   return {
-    clock,nvrOnline,showLeft,showRight,rightTab,deviceSearch,loading,
+    clock,nvrOnline,showLeft,showRight,showOverlay,rightTab,deviceSearch,loading,
     rows,current,page,pageSize,totalPages,pagedRows,
     playbackRate,currentSec,durationSec,isPlaying,
     quickRange,quickRanges,bookmarks,filter,
@@ -1085,6 +1099,7 @@ setup(){
     onDragStartDevice,onDropCell,clearCell,
     addBookmark,jumpToBookmark,
     setQuickRange,loadPlayback,
+    cameraDisplayName,
   };
 }
 });
