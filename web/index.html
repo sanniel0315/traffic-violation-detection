@@ -2220,67 +2220,174 @@
                 </div>
                 <!-- NVR 設定 -->
                 <div v-if="page==='frigate'">
-                    <!-- 快捷操作列 -->
-                    <div class="card" style="margin-bottom:12px">
-                        <div class="card-body" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                            <div style="display:flex;align-items:center;gap:12px">
-                                <span style="font-weight:700;font-size:16px">🎬 NVR 管理</span>
-                                <el-tag :type="frigateStatus.status==='online'?'success':'danger'" size="small" effect="dark">
-                                    {{ frigateStatus.status==='online'?'已連線':'離線' }}
-                                </el-tag>
-                                <span v-if="frigateStatus.status==='online'" style="font-size:12px;color:#64748b">
-                                    v{{ frigateStatus.version }} · {{ frigateStatus.cameras?.length || 0 }} 台攝影機
-                                </span>
-                            </div>
-                            <div style="display:flex;gap:8px">
-                                <a href="/web/nvr_playback.html" target="_blank" style="text-decoration:none"><el-button type="warning">⏯️ NVR 回放</el-button></a>
-                                <el-button type="primary" :disabled="nvrRestarting" @click="syncCamerasToNVR">🔄 同步攝影機</el-button>
-                                <el-button :loading="nvrRestarting" @click="restartNVR">⟳ 重啟</el-button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 連線 + 系統資訊 -->
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-                        <div class="card">
-                            <div class="card-header"><span>🌐 連線設定</span></div>
-                            <div class="card-body">
-                                <div class="config-item"><span>主機</span><el-input v-model="frigateConfig.host" placeholder="localhost" style="width:160px" size="small"/></div>
-                                <div class="config-item"><span>端口</span><el-input-number v-model="frigateConfig.port" :min="1" :max="65535" size="small"/></div>
-                                <el-button type="primary" size="small" style="width:100%;margin-top:8px" @click="testNVRConnection">測試連線</el-button>
-                            </div>
-                        </div>
-                        <div class="card">
-                            <div class="card-header"><span>🎥 錄影保留</span></div>
-                            <div class="card-body">
-                                <div class="config-item"><span>全時錄影</span><el-select v-model="frigateConfig.retain_days" size="small" style="width:120px"><el-option v-for="d in retainDayOptions" :key="'retain-'+d" :value="d" :label="d+' 天'"/></el-select></div>
-                                <div class="config-item"><span>Motion 錄影</span><el-select v-model="motionRetainSelections" multiple collapse-tags size="small" style="width:180px" placeholder="天數"><el-option v-for="d in retainDayOptions" :key="'m-retain-'+d" :value="d" :label="d+' 天'"/></el-select></div>
-                                <div class="config-item"><span>事件保留</span><el-input-number v-model="frigateConfig.event_retain_days" :min="1" :max="120" size="small"/> 天</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Motion 參數 -->
-                    <div class="card" style="margin-bottom:12px">
-                        <div class="card-header">
-                            <span>🏃 Motion 偵測參數</span>
-                            <el-button type="success" size="small" :disabled="nvrRestarting" @click="saveNVRSettings">儲存所有設定</el-button>
-                        </div>
-                        <div class="card-body" style="display:flex;gap:24px;flex-wrap:wrap;align-items:center">
-                            <div class="config-item" style="margin:0"><span>Threshold</span><el-input-number v-model="frigateConfig.motion_threshold" :min="1" :max="255" size="small"/></div>
-                            <div class="config-item" style="margin:0"><span>Contour</span><el-input-number v-model="frigateConfig.motion_contour_area" :min="1" :max="500" size="small"/></div>
-                            <div class="config-item" style="margin:0"><span>Detect FPS</span><el-input-number v-model="frigateConfig.detect_fps" :min="1" :max="30" size="small"/></div>
-                            <div class="config-item" style="margin:0"><span>解析度</span><el-select v-model="frigateConfig.detect_resolution" size="small" style="width:130px"><el-option label="640x360" value="640x360"/><el-option label="1280x720" value="1280x720"/><el-option label="1920x1080" value="1920x1080"/></el-select></div>
-                        </div>
-                    </div>
-
-                    <!-- 攝影機列表（系統攝影機 + NVR 狀態合併） -->
                     <div class="card">
                         <div class="card-header">
-                            <span>📹 攝影機管理</span>
+                            <span>🎬 NVR 設定</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <a href="/web/nvr_playback.html" target="_blank" style="text-decoration:none"><el-button type="warning" size="small">⏯️ NVR 回放</el-button></a>
+                                <span>連線狀態</span>
+                                <el-tag :type="frigateStatus.status==='online'?'success':'primary'" size="small">
+                                    {{ frigateStatus.status==='online'?'已連線':'離線' }}
+                                </el-tag>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- 連線資訊 -->
+                            <div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap">
+                                <div style="flex:1;min-width:200px">
+                                    <div style="font-weight:bold;margin-bottom:8px">🌐 連線設定</div>
+                                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+                                        <span style="width:80px">主機:</span>
+                                        <el-input v-model="frigateConfig.host" placeholder="nvr" style="width:150px" size="small"/>
+                                    </div>
+                                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+                                        <span style="width:80px">端口:</span>
+                                        <el-input-number v-model="frigateConfig.port" :min="1" :max="65535" size="small"/>
+                                    </div>
+                                    <el-button type="primary" size="small" @click="testNVRConnection">測試連線</el-button>
+                                </div>
+                                <div style="flex:1;min-width:200px" v-if="frigateStatus.status==='online'">
+                                    <div style="font-weight:bold;margin-bottom:8px">📊 系統資訊</div>
+                                    <p style="font-size:13px;color:#666">版本: {{ frigateStatus.version }}</p>
+                                    <p style="font-size:13px;color:#666">攝影機: {{ frigateStatus.cameras?.length || 0 }} 台</p>
+                                    <p style="font-size:13px;color:#666">偵測器: TensorRT</p>
+                                </div>
+                            </div>
+
+                            <!-- 錄影設定 -->
+                            <div style="border-top:1px solid #eee;padding-top:16px;margin-bottom:20px">
+                                <div style="font-weight:bold;margin-bottom:12px">🎥 錄影設定</div>
+                                <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>錄影模式:</span>
+                                        <el-radio-group v-model="frigateConfig.record_mode" size="small">
+                                            <el-radio-button label="motion">動態錄影</el-radio-button>
+                                            <el-radio-button label="all">全時錄影</el-radio-button>
+                                        </el-radio-group>
+                                    </div>
+                                    <div v-if="frigateConfig.record_mode==='motion'" style="display:flex;gap:8px;align-items:center">
+                                        <span>錄影週期:</span>
+                                        <el-select v-model="motionRetainSelections" multiple collapse-tags collapse-tags-tooltip size="small" style="width:260px" placeholder="可複選">
+                                            <el-option v-for="d in retainDayOptions" :key="'m-retain-'+d" :value="d" :label="d+' 天'"/>
+                                        </el-select>
+                                    </div>
+                                    <div v-else style="display:flex;gap:8px;align-items:center">
+                                        <span>錄影週期:</span>
+                                        <el-select v-model="frigateConfig.retain_days" size="small" style="width:130px">
+                                            <el-option v-for="d in retainDayOptions" :key="'retain-'+d" :value="d" :label="d+' 天'"/>
+                                        </el-select>
+                                    </div>
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>事件保留:</span>
+                                        <el-input-number v-model="frigateConfig.event_retain_days" :min="1" :max="120" size="small"/>
+                                    </div>
+                                    <el-button type="success" size="small" @click="saveNVRSettings">儲存錄影設定</el-button>
+                                </div>
+                                <div v-if="frigateConfig.record_mode==='all'" style="margin-top:12px">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                                        <span style="font-size:12px;color:#64748b">全時錄影週期（可拖拉 24hr）</span>
+                                        <div style="display:flex;gap:8px">
+                                            <el-button size="small" @click="setRecordScheduleAll">全開</el-button>
+                                            <el-button size="small" @click="setRecordScheduleWeekdays">平日</el-button>
+                                            <el-button size="small" @click="setRecordScheduleWeekend">假日</el-button>
+                                            <el-button size="small" @click="setRecordScheduleClear">全關</el-button>
+                                        </div>
+                                    </div>
+                                    <div class="schedule-grid-wrap" @mouseup="stopRecordScheduleDrag" @mouseleave="stopRecordScheduleDrag">
+                                        <table class="schedule-grid">
+                                            <thead>
+                                                <tr>
+                                                    <th class="schedule-day">星期/時</th>
+                                                    <th v-for="h in 24" :key="'h-'+h">{{ h-1 }}</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr v-for="(dayLabel,dayIdx) in recordScheduleDayLabels" :key="'d-'+dayIdx">
+                                                    <td class="schedule-day">{{ dayLabel }}</td>
+                                                    <td v-for="hourIdx in 24"
+                                                        :key="'c-'+dayIdx+'-'+hourIdx"
+                                                        class="schedule-cell"
+                                                        :class="{active:frigateConfig.record_schedule?.[dayIdx]?.[hourIdx-1]}"
+                                                        @mousedown.prevent="startRecordScheduleDrag(dayIdx,hourIdx-1)"
+                                                        @mouseenter="paintRecordSchedule(dayIdx,hourIdx-1)">
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Motion / 偵測設定 -->
+                            <div style="border-top:1px solid #eee;padding-top:16px;margin-bottom:20px">
+                                <div style="font-weight:bold;margin-bottom:12px">🏃 Motion / 偵測設定</div>
+                                <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>Threshold:</span>
+                                        <el-input-number v-model="frigateConfig.motion_threshold" :min="1" :max="255" size="small"/>
+                                    </div>
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>Contour:</span>
+                                        <el-input-number v-model="frigateConfig.motion_contour_area" :min="1" :max="500" size="small"/>
+                                    </div>
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>Detect FPS:</span>
+                                        <el-input-number v-model="frigateConfig.detect_fps" :min="1" :max="30" size="small"/>
+                                    </div>
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>解析度:</span>
+                                        <el-select v-model="frigateConfig.detect_resolution" size="small" style="width:130px">
+                                            <el-option label="640x360" value="640x360"/>
+                                            <el-option label="1280x720" value="1280x720"/>
+                                            <el-option label="1920x1080" value="1920x1080"/>
+                                        </el-select>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- MQTT 設定 -->
+                            <div style="border-top:1px solid #eee;padding-top:16px;margin-bottom:20px">
+                                <div style="font-weight:bold;margin-bottom:12px">
+                                    📡 MQTT 設定 (Home Assistant 整合)
+                                    <el-switch v-model="frigateConfig.mqtt_enabled" style="margin-left:12px"/>
+                                </div>
+                                <div v-if="frigateConfig.mqtt_enabled" style="display:flex;gap:16px;flex-wrap:wrap">
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>主機:</span>
+                                        <el-input v-model="frigateConfig.mqtt_host" placeholder="192.168.0.1" style="width:150px" size="small"/>
+                                    </div>
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>端口:</span>
+                                        <el-input-number v-model="frigateConfig.mqtt_port" :min="1" :max="65535" size="small"/>
+                                    </div>
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>帳號:</span>
+                                        <el-input v-model="frigateConfig.mqtt_user" placeholder="mqtt_user" style="width:120px" size="small"/>
+                                    </div>
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <span>密碼:</span>
+                                        <el-input v-model="frigateConfig.mqtt_password" type="password" placeholder="******" style="width:120px" size="small"/>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 操作按鈕 -->
                             <div style="display:flex;gap:8px">
+                                <el-button type="success" :disabled="nvrRestarting" @click="saveNVRSettings">儲存設定</el-button>
+                                <el-button type="primary" :disabled="nvrRestarting" @click="syncCamerasToNVR">同步攝影機</el-button>
+                                <el-button type="warning" :loading="nvrRestarting" @click="restartNVR">重啟 NVR</el-button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- NVR 攝影機列表 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span>📹 NVR 攝影機</span>
+                            <div style="display:flex;gap:8px">
+                                <el-button type="warning" size="small" :disabled="nvrRestarting" @click="showAddNVRCamera">➕ 新增</el-button>
                                 <el-button type="success" size="small" :disabled="nvrRestarting" @click="syncCamerasToNVR">🔄 同步攝影機</el-button>
-                                <el-button type="primary" size="small" :disabled="nvrRestarting" @click="loadNVRStatus">重新載入</el-button>
+                                <el-button type="primary" size="small" :disabled="nvrRestarting" @click="loadNVRCameras">重新載入</el-button>
                             </div>
                         </div>
                         <div class="card-body" style="padding:0">
@@ -2288,57 +2395,59 @@
                                 <thead>
                                     <tr>
                                         <th>名稱</th>
-                                        <th>來源</th>
                                         <th>狀態</th>
                                         <th>FPS</th>
+                                        <th>偵測 FPS</th>
                                         <th>錄影</th>
                                         <th>Motion</th>
-                                        <th>Snapshot</th>
+                                        <th>Motion 截圖</th>
                                         <th>操作</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr v-for="c in cameras" :key="c.id">
+                                    <tr v-for="cam in frigateCameras" :key="cam.name">
                                         <td>
-                                            <div style="font-weight:600">{{ c.name }}</div>
-                                            <div style="font-size:11px;color:#94a3b8">cam_{{ c.id }}</div>
+                                            <div style="font-weight:600">{{ nvrCameraDisplayName(cam) }}</div>
+                                            <div v-if="nvrCameraDisplayName(cam)!==cam.name" style="font-size:11px;color:#94a3b8">{{ cam.name }}</div>
+                                            <el-tag v-if="cam.config?.motion?.mask" size="small" type="warning" style="margin-top:4px">Motion ROI</el-tag>
                                         </td>
                                         <td>
-                                            <el-tag v-if="c.source && c.source.includes('/api/nx/')" size="small" type="warning">NX Witness</el-tag>
-                                            <el-tag v-else size="small" type="info">RTSP</el-tag>
-                                        </td>
-                                        <td>
-                                            <el-tag :type="nvrCamFps(c)>0?'success':c.status==='online'?'warning':'info'" size="small">
-                                                {{ nvrCamFps(c)>0?'串流中 '+nvrCamFps(c)+'fps':c.status==='online'?'線上':'離線' }}
+                                            <el-tag :type="cam.fps>0?'success':cam.enabled!==false?'warning':'info'" size="small">
+                                                {{ cam.fps>0?'串流中':cam.enabled!==false?'等待中':'停用' }}
                                             </el-tag>
                                         </td>
-                                        <td>{{ nvrCamFps(c) || '-' }}</td>
+                                        <td>{{ cam.fps || '-' }}</td>
+                                        <td>{{ cam.detection_fps || '-' }}</td>
                                         <td>
-                                            <template v-if="isNxCamera(c)">
-                                                <el-tag size="small" type="warning">NX 錄影</el-tag>
-                                            </template>
-                                            <el-switch v-else
-                                                :model-value="nvrCamFeature(c,'record')"
+                                            <el-switch
+                                                :model-value="camRecordEnabled(cam)"
                                                 :disabled="nvrRestarting"
-                                                @change="(v)=>switchNvrCamFeature(c,'record',v)"/>
+                                                :loading="cameraSwitchLoading[cam.name]?.record===true"
+                                                @change="(v)=>switchNVRCameraFeature(cam,'record',v)"/>
                                         </td>
                                         <td>
                                             <el-switch
-                                                :model-value="isNxCamera(c)?detectionStatus[c.id]?.running:nvrCamFeature(c,'detect')"
+                                                :model-value="camDetectEnabled(cam)"
                                                 :disabled="nvrRestarting"
-                                                @change="(v)=>isNxCamera(c)?(v?startDetection(c.id):stopDetection(c.id)):switchNvrCamFeature(c,'detect',v)"/>
-                                            <el-tag v-if="isNxCamera(c) && detectionStatus[c.id]?.running" size="small" type="success" style="margin-left:4px">API</el-tag>
+                                                :loading="cameraSwitchLoading[cam.name]?.detect===true"
+                                                @change="(v)=>switchNVRCameraFeature(cam,'detect',v)"/>
                                         </td>
                                         <td>
-                                            <el-switch v-if="!isNxCamera(c)"
-                                                :model-value="nvrCamFeature(c,'snapshot')"
+                                            <el-switch
+                                                :model-value="camSnapshotEnabled(cam)"
                                                 :disabled="nvrRestarting"
-                                                @change="(v)=>switchNvrCamFeature(c,'snapshot',v)"/>
-                                            <el-button v-else size="small" @click="captureNxSnapshot(c.id)">截圖</el-button>
+                                                :loading="cameraSwitchLoading[cam.name]?.snapshot===true"
+                                                @change="(v)=>toggleNvrMotionSnapshot(cam,v)"/>
                                         </td>
                                         <td style="display:flex;gap:4px">
-                                            <el-button v-if="!isNxCamera(c)" size="small" type="warning" @click="openNvrMotionRoiEditor(nvrCamObj(c))">Motion ROI</el-button>
-                                            <el-button size="small" @click="openPreview(c)">查看</el-button>
+                                            <el-button size="small" type="warning" @click="openNvrMotionRoiEditor(cam)">Motion ROI</el-button>
+                                            <el-button size="small" @click="viewNVRCamera(cam)">查看</el-button>
+                                            <el-button size="small" type="primary" @click="deleteNVRCamera(cam.name)">刪除</el-button>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="!frigateCameras.length">
+                                        <td colspan="8" style="text-align:center;color:#999;padding:30px">
+                                            {{ frigateStatus.status==='online'?'尚無攝影機，請點「同步攝影機」':'請先連線 NVR' }}
                                         </td>
                                     </tr>
                                 </tbody>
@@ -2346,6 +2455,441 @@
                         </div>
                     </div>
 
+                    <!-- NVR 回放（全時錄影 + Motion） -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span>⏯️ NVR 回放（全時錄影 + Motion）</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <el-button size="small" @click="clearNVRPlaybackFilters">清除篩選</el-button>
+                                <el-button type="primary" size="small" :loading="nvrPlaybackLoading" @click="loadNVRPlayback()">
+                                    {{ nvrPlaybackLoading ? '查詢中...' : '查詢回放' }}
+                                </el-button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="nvr-wireframe-shell">
+                                <div class="nvr-wireframe-toolbar">
+                                    <div class="nvr-wireframe-toolbar-intro">
+                                        <div>
+                                            <div class="nvr-wireframe-toolbar-kicker">Playback Console</div>
+                                            <div class="nvr-wireframe-toolbar-title">NVR 回放中控台</div>
+                                            <div class="nvr-wireframe-toolbar-copy">
+                                                將設備選擇、主播放與事件時間軸集中成同一個工作台，
+                                                讓查詢、預覽與回放切換都維持在一個視角內完成。
+                                            </div>
+                                        </div>
+                                        <div class="nvr-wireframe-toolbar-stats">
+                                            <div class="nvr-wireframe-toolbar-stat">
+                                                <div class="k">在線設備</div>
+                                                <div class="v">{{ nvrPlaybackCameraOptions.length }}</div>
+                                            </div>
+                                            <div class="nvr-wireframe-toolbar-stat">
+                                                <div class="k">查詢片段</div>
+                                                <div class="v">{{ nvrPlaybackSummary.total }}</div>
+                                            </div>
+                                            <div class="nvr-wireframe-toolbar-stat">
+                                                <div class="k">Motion 事件</div>
+                                                <div class="v">{{ nvrPlaybackSummary.motion }}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="nvr-wireframe-toolbar-controls">
+                                        <div class="nvr-wireframe-filter-grid">
+                                            <div class="nvr-wireframe-field">
+                                                <div class="nvr-playback-field-label">來源</div>
+                                                <el-select v-model="nvrPlaybackFilter.source" size="small" style="width:100%" popper-class="stats-select-popper">
+                                                    <el-option label="全部（全時+Motion）" value="all"/>
+                                                    <el-option label="全時錄影" value="recording"/>
+                                                    <el-option label="Motion 事件" value="motion"/>
+                                                </el-select>
+                                            </div>
+                                            <div class="nvr-wireframe-field">
+                                                <div class="nvr-playback-field-label">攝影機</div>
+                                                <el-select v-model="nvrPlaybackFilter.camera" placeholder="全部攝影機" size="small" style="width:100%" popper-class="stats-select-popper">
+                                                    <el-option label="全部攝影機" value=""/>
+                                                    <el-option v-for="cam in nvrPlaybackCameraOptions" :key="'play-cam-'+cam" :label="nvrCameraDisplayName({name:cam}) || cam" :value="cam"/>
+                                                </el-select>
+                                            </div>
+                                            <div class="nvr-wireframe-field">
+                                                <div class="nvr-playback-field-label">開始時間</div>
+                                                <input v-model="nvrPlaybackFilter.timeFrom" type="datetime-local" class="input"/>
+                                            </div>
+                                            <div class="nvr-wireframe-field">
+                                                <div class="nvr-playback-field-label">結束時間</div>
+                                                <input v-model="nvrPlaybackFilter.timeTo" type="datetime-local" class="input"/>
+                                            </div>
+                                            <div class="nvr-wireframe-field">
+                                                <div class="nvr-playback-field-label">回傳上限</div>
+                                                <el-select v-model.number="nvrPlaybackFilter.limit" size="small" style="width:100%" popper-class="stats-select-popper">
+                                                    <el-option :value="50" label="50"/>
+                                                    <el-option :value="100" label="100"/>
+                                                    <el-option :value="200" label="200"/>
+                                                    <el-option :value="500" label="500"/>
+                                                </el-select>
+                                            </div>
+                                        </div>
+                                        <div class="nvr-wireframe-quick">
+                                            <div class="nvr-wireframe-quick-cluster">
+                                                <el-button size="small" class="stats-quick-btn" :class="{active:nvrPlaybackQuickRange==='today'}" @click="setNVRPlaybackQuickRange('today')">今日</el-button>
+                                                <el-button size="small" class="stats-quick-btn" :class="{active:nvrPlaybackQuickRange==='1h'}" @click="setNVRPlaybackQuickRange('1h')">近1h</el-button>
+                                                <el-button size="small" class="stats-quick-btn" :class="{active:nvrPlaybackQuickRange==='24h'}" @click="setNVRPlaybackQuickRange('24h')">近24h</el-button>
+                                                <el-button size="small" class="stats-quick-btn" :class="{active:nvrPlaybackQuickRange==='7d'}" @click="setNVRPlaybackQuickRange('7d')">近7天</el-button>
+                                            </div>
+                                            <div class="nvr-wireframe-quick-cluster">
+                                                <el-select v-model.number="nvrPlaybackPageSize" size="small" style="width:90px" popper-class="stats-select-popper">
+                                                    <el-option :value="10" label="10/頁"/>
+                                                    <el-option :value="20" label="20/頁"/>
+                                                    <el-option :value="50" label="50/頁"/>
+                                                </el-select>
+                                                <el-button size="small" @click="clearNVRPlaybackFilters">清除</el-button>
+                                                <el-button type="primary" size="small" :loading="nvrPlaybackLoading" @click="loadNVRPlayback()">
+                                                    {{ nvrPlaybackLoading ? '查詢中...' : '查詢回放' }}
+                                                </el-button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="nvr-wireframe-main">
+                                    <div class="nvr-wireframe-pane">
+                                        <div class="nvr-wireframe-pane-head">
+                                            <div>
+                                                <div style="font-weight:700">設備樹</div>
+                                                <div class="nvr-wireframe-pane-sub">選擇攝影機後直接套用回放條件</div>
+                                            </div>
+                                            <el-tag size="small" type="info">{{ nvrPlaybackCameraOptions.length }} 台</el-tag>
+                                        </div>
+                                        <div class="nvr-device-search">
+                                            <input v-model="nvrPlaybackDeviceSearch" type="text" class="input" placeholder="搜尋設備 / Camera">
+                                            <div class="nvr-device-search-summary">
+                                                <span class="nvr-device-search-pill">來源 {{ nvrPlaybackFilter.source==='all' ? '全部' : (nvrPlaybackFilter.source==='motion' ? 'Motion' : '全時') }}</span>
+                                                <span class="nvr-device-search-pill">片段 {{ nvrPlaybackSummary.total }}</span>
+                                            </div>
+                                        </div>
+                                        <div class="nvr-device-tree">
+                                            <div v-for="group in nvrPlaybackDeviceTree" :key="group.key" class="nvr-device-group">
+                                                <div class="nvr-device-group-title">
+                                                    <span>{{ group.label }}</span>
+                                                    <span class="nvr-device-group-badge">{{ group.items.length }}</span>
+                                                </div>
+                                                <div
+                                                    v-for="item in group.items"
+                                                    :key="item.key"
+                                                    :class="['nvr-device-item',{active:item.selected}]"
+                                                    @click="selectNvrPlaybackCamera(item.key)">
+                                                    <div class="nvr-device-item-top">
+                                                        <div class="nvr-device-item-name">{{ item.label }}</div>
+                                                        <span class="nvr-device-item-source">{{ item.sourceLabel }}</span>
+                                                    </div>
+                                                    <div class="nvr-device-item-meta">
+                                                        <span>{{ item.key }}</span>
+                                                        <span>{{ item.count }} 筆</span>
+                                                    </div>
+                                                </div>
+                                                <div v-if="!group.items.length" style="font-size:12px;color:#94a3b8;padding:6px 2px">沒有符合的設備</div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="nvr-wireframe-pane nvr-main-stage">
+                                        <div class="nvr-main-video-head">
+                                            <div>
+                                                <div class="nvr-main-title">{{ nvrPlaybackCurrent ? (nvrEventCameraDisplayName({camera:nvrPlaybackCurrent.camera}) || nvrPlaybackCurrent.camera || '-') : '主播放區' }}</div>
+                                                <div class="nvr-main-subtitle">
+                                                    {{ nvrPlaybackCurrent ? `${formatNVRTime(nvrPlaybackCurrent.start_time)}${nvrPlaybackCurrent.end_time ? ' ~ ' + formatNVRTime(nvrPlaybackCurrent.end_time) : ''}` : '請從左側或右側選擇回放片段' }}
+                                                </div>
+                                                <div class="nvr-main-badge-grid">
+                                                    <div class="nvr-main-badge">
+                                                        <div class="k">查詢筆數</div>
+                                                        <div class="v">{{ nvrPlaybackSummary.total }}</div>
+                                                    </div>
+                                                    <div class="nvr-main-badge">
+                                                        <div class="k">片段總長</div>
+                                                        <div class="v">{{ formatPlaybackDuration(nvrPlaybackSummary.totalSec) }}</div>
+                                                    </div>
+                                                    <div class="nvr-main-badge">
+                                                        <div class="k">已選攝影機</div>
+                                                        <div class="v">{{ nvrPlaybackFilter.camera ? (nvrCameraDisplayName({name:nvrPlaybackFilter.camera}) || nvrPlaybackFilter.camera) : '全部' }}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="nvr-main-tags">
+                                                <el-tag size="small" type="info">總筆數 {{ nvrPlaybackSummary.total }}</el-tag>
+                                                <el-tag size="small" type="success">全時 {{ nvrPlaybackSummary.recording }}</el-tag>
+                                                <el-tag size="small" type="warning">Motion {{ nvrPlaybackSummary.motion }}</el-tag>
+                                                <el-tag v-if="nvrPlaybackCurrent" size="small" :type="nvrPlaybackCurrent.source==='motion'?'warning':'success'">
+                                                    {{ nvrPlaybackCurrent.source==='motion'?'Motion 事件':'全時錄影' }}
+                                                </el-tag>
+                                            </div>
+                                        </div>
+                                        <div class="nvr-main-video-wrap">
+                                            <div class="nvr-main-overlay-tools">
+                                                <el-button size="small" :disabled="nvrPlaybackCurrentIndex<=0" @click="selectPrevNvrPlayback">⏮️</el-button>
+                                                <el-button size="small" :disabled="!nvrPlaybackPlayerUrl" @click="seekNvrPlaybackBy(-10)">⏪</el-button>
+                                                <el-button size="small" type="primary" :disabled="!nvrPlaybackPlayerUrl" @click="toggleNvrPlaybackPlay">
+                                                    {{ nvrPlaybackPlaying ? '⏸️' : '▶️' }}
+                                                </el-button>
+                                                <el-button size="small" :disabled="!nvrPlaybackPlayerUrl" @click="seekNvrPlaybackBy(10)">⏩</el-button>
+                                                <el-button size="small" :disabled="nvrPlaybackCurrentIndex<0 || nvrPlaybackCurrentIndex>=nvrPlaybackRows.length-1" @click="selectNextNvrPlayback">⏭️</el-button>
+                                            </div>
+                                            <video
+                                                v-if="nvrPlaybackPlayerUrl"
+                                                ref="nvrPlaybackVideoRef"
+                                                :key="nvrPlaybackCurrent?.key || nvrPlaybackPlayerUrl"
+                                                :src="nvrPlaybackPlayerUrl"
+                                                class="nvr-replay-video"
+                                                controls
+                                                autoplay
+                                                preload="metadata"
+                                                @loadedmetadata="onNvrPlaybackVideoLoaded"
+                                                @timeupdate="onNvrPlaybackVideoTimeUpdate"
+                                                @play="onNvrPlaybackVideoPlay"
+                                                @pause="onNvrPlaybackVideoPause"></video>
+                                            <div v-else-if="nvrPlaybackCurrent" class="nvr-playback-empty">
+                                                <strong>此片段無可用影像</strong>
+                                                可能為舊事件或來源尚未保留 clip
+                                            </div>
+                                            <div v-else class="nvr-playback-empty">
+                                                <strong>請先選擇回放片段</strong>
+                                                從左側設備或右側事件開始
+                                            </div>
+                                        </div>
+                                        <div class="nvr-thumb-track">
+                                            <div class="nvr-thumb-track-head">
+                                                <span style="font-size:12px;color:#e2e8f0;font-weight:700">縮圖軌道 / 片段捷徑</span>
+                                                <span style="font-size:11px;color:#94a3b8">片段總長 {{ formatPlaybackDuration(nvrPlaybackSummary.totalSec) }}</span>
+                                            </div>
+                                            <div class="nvr-thumb-track-list">
+                                                <div
+                                                    v-for="row in nvrPlaybackThumbRows"
+                                                    :key="'thumb-'+row.key"
+                                                    :class="['nvr-thumb-card',{active:(nvrPlaybackCurrent&&nvrPlaybackCurrent.key===row.key)}]"
+                                                    @click="selectNvrPlaybackRow(row)">
+                                                    <div class="nvr-thumb-card-time">{{ formatNVRTime(row.start_time) }}</div>
+                                                    <div class="nvr-thumb-card-meta">{{ nvrEventCameraDisplayName({camera:row.camera}) || row.camera || '-' }}</div>
+                                                    <div class="nvr-thumb-card-meta">{{ row.label || '-' }} · {{ formatPlaybackDuration(row.duration_sec) }}</div>
+                                                </div>
+                                                <div v-if="!nvrPlaybackThumbRows.length" class="nvr-thumb-card" style="cursor:default">
+                                                    <div class="nvr-thumb-card-time">尚無縮圖片段</div>
+                                                    <div class="nvr-thumb-card-meta">先執行回放查詢</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="nvr-main-timeline-wrap">
+                                            <div class="nvr-replay-timeline" @click="seekNvrPlaybackTimeline">
+                                                <div class="nvr-replay-wave">
+                                                    <div
+                                                        v-for="bar in nvrPlaybackTimelineBars"
+                                                        :key="'tl-bar-'+bar.idx"
+                                                        class="nvr-replay-wave-bar"
+                                                        :style="{height:`${bar.height}%`}"
+                                                        :title="`${bar.count} 段`"></div>
+                                                </div>
+                                                <button
+                                                    v-for="marker in nvrPlaybackTimelineMarkers"
+                                                    :key="'tl-marker-'+marker.row.key"
+                                                    class="nvr-replay-marker"
+                                                    :style="{left:`${marker.left}%`}"
+                                                    :title="`${formatNVRTime(marker.row.start_time)} ${marker.row.label||'motion'}`"
+                                                    @click.stop="selectNvrPlaybackRow(marker.row)"></button>
+                                                <div class="nvr-replay-ticks">
+                                                    <span
+                                                        v-for="tick in nvrPlaybackTimelineTicks"
+                                                        :key="'tl-tick-'+tick.left"
+                                                        class="nvr-replay-tick"
+                                                        :style="{left:`${tick.left}%`}">{{ tick.label }}</span>
+                                                </div>
+                                            </div>
+                                            <div class="nvr-replay-controls" style="margin-top:10px;border-top:0;padding:0;background:transparent">
+                                                <div class="nvr-replay-control-group">
+                                                    <el-select v-model.number="nvrPlaybackRate" size="small" style="width:90px" @change="applyNvrPlaybackRate">
+                                                        <el-option :value="0.5" label="0.5x"/>
+                                                        <el-option :value="1" label="1x"/>
+                                                        <el-option :value="1.5" label="1.5x"/>
+                                                        <el-option :value="2" label="2x"/>
+                                                    </el-select>
+                                                    <el-button size="small" :disabled="!nvrPlaybackPlayerUrl" @click="captureNvrPlaybackFrame">📷 快照</el-button>
+                                                </div>
+                                                <div class="nvr-replay-control-group">
+                                                    <span class="nvr-replay-time-text">{{ formatPlaybackClock(nvrPlaybackCurrentSec) }} / {{ formatPlaybackClock(nvrPlaybackDurationSec) }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="nvr-wireframe-pane nvr-right-shell">
+                                        <div class="nvr-wireframe-pane-head">
+                                            <div>
+                                                <div style="font-weight:700">事件 / 通知面板</div>
+                                                <div class="nvr-wireframe-pane-sub">點擊事件可直接跳轉回放</div>
+                                            </div>
+                                            <span style="font-size:12px;color:#cbd5e1">{{ nvrPlaybackRows.length }} 筆</span>
+                                        </div>
+                                        <div class="nvr-right-tabs">
+                                            <button type="button" :class="['nvr-right-tab',{active:nvrPlaybackPanelTab==='events'}]" @click="nvrPlaybackPanelTab='events'">事件</button>
+                                            <button type="button" :class="['nvr-right-tab',{active:nvrPlaybackPanelTab==='notifications'}]" @click="nvrPlaybackPanelTab='notifications'">通知</button>
+                                        </div>
+                                        <div class="nvr-right-summary">
+                                            <div class="nvr-right-summary-card">
+                                                <div class="nvr-right-summary-k">總片段</div>
+                                                <div class="nvr-right-summary-v">{{ nvrPlaybackSummary.total }}</div>
+                                            </div>
+                                            <div class="nvr-right-summary-card">
+                                                <div class="nvr-right-summary-k">片段總長</div>
+                                                <div class="nvr-right-summary-v">{{ formatPlaybackDuration(nvrPlaybackSummary.totalSec) }}</div>
+                                            </div>
+                                            <div class="nvr-right-summary-card">
+                                                <div class="nvr-right-summary-k">全時錄影</div>
+                                                <div class="nvr-right-summary-v">{{ nvrPlaybackSummary.recording }}</div>
+                                            </div>
+                                            <div class="nvr-right-summary-card">
+                                                <div class="nvr-right-summary-k">Motion 事件</div>
+                                                <div class="nvr-right-summary-v">{{ nvrPlaybackSummary.motion }}</div>
+                                            </div>
+                                        </div>
+                                        <div v-if="nvrPlaybackPanelTab==='events'" class="nvr-right-events">
+                                            <div
+                                                v-for="row in pagedNvrPlaybackRows"
+                                                :key="'play-'+row.key"
+                                                @click="selectNvrPlaybackRow(row)"
+                                                :class="['nvr-playback-item',{active:(nvrPlaybackCurrent&&nvrPlaybackCurrent.key===row.key)}]">
+                                                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">
+                                                    <el-tag size="small" :type="row.source==='motion'?'warning':'success'">
+                                                        {{ row.source==='motion'?'Motion':'全時錄影' }}
+                                                    </el-tag>
+                                                    <span style="font-size:11px;color:#64748b">{{ formatNVRTime(row.start_time) }}</span>
+                                                </div>
+                                                <div class="nvr-playback-item-title">
+                                                    {{ nvrEventCameraDisplayName({camera:row.camera}) || row.camera || '-' }}
+                                                </div>
+                                                <div class="nvr-playback-item-sub">
+                                                    {{ row.label || '-' }}
+                                                </div>
+                                                <div class="nvr-playback-item-meta">
+                                                    <span>{{ row.end_time ? `${formatNVRTime(row.start_time)} ~ ${formatNVRTime(row.end_time)}` : formatNVRTime(row.start_time) }}</span>
+                                                    <span>{{ formatPlaybackDuration(row.duration_sec) }}</span>
+                                                </div>
+                                            </div>
+                                            <div v-if="!nvrPlaybackRows.length" class="nvr-playback-empty">
+                                                <strong>暫無可回放資料</strong>
+                                                調整時間範圍後重新查詢
+                                            </div>
+                                        </div>
+                                        <div v-else class="nvr-notify-list">
+                                            <div v-for="item in nvrPlaybackNotifications" :key="item.key" :class="['nvr-notify-item', item.tone]">
+                                                <div class="nvr-notify-icon">{{ item.icon }}</div>
+                                                <div style="min-width:0">
+                                                    <div class="nvr-notify-title">{{ item.title }}</div>
+                                                    <div class="nvr-notify-text">{{ item.text }}</div>
+                                                    <div class="nvr-notify-meta">{{ item.meta }}</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="nvr-replay-events-foot">
+                                            <template v-if="nvrPlaybackPanelTab==='events'">
+                                                <el-button size="small" :disabled="nvrPlaybackPage<=1" @click="nvrPlaybackPage=Math.max(1,nvrPlaybackPage-1)">上一頁</el-button>
+                                                <span style="font-size:12px;color:#64748b">{{ nvrPlaybackPage }} / {{ nvrPlaybackTotalPages }}</span>
+                                                <el-button size="small" :disabled="nvrPlaybackPage>=nvrPlaybackTotalPages" @click="nvrPlaybackPage=Math.min(nvrPlaybackTotalPages,nvrPlaybackPage+1)">下一頁</el-button>
+                                            </template>
+                                            <template v-else>
+                                                <span style="font-size:12px;color:#64748b">系統通知 {{ nvrPlaybackNotifications.length }} 則</span>
+                                                <el-button size="small" @click="nvrPlaybackPanelTab='events'">回事件</el-button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- NVR Motion 事件（獨立於違規事件查詢） -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span>📝 NVR Motion 事件列表</span>
+                            <el-button type="primary" size="small" :loading="nvrEventsLoading" @click="loadNVREvents()">
+                                {{ nvrEventsLoading ? '查詢中...' : '查詢' }}
+                            </el-button>
+                        </div>
+                        <div class="card-body">
+                            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
+                                <div style="min-width:160px">
+                                    <div style="font-size:12px;color:#64748b;margin-bottom:4px">攝影機</div>
+                                    <el-select v-model="frigateFilter.camera" placeholder="全部攝影機" size="small" style="width:100%">
+                                        <el-option label="全部攝影機" value=""/>
+                                        <el-option v-for="cam in frigateCameraOptions" :key="'cam-'+cam" :label="nvrCameraDisplayName({name:cam}) || cam" :value="cam"/>
+                                    </el-select>
+                                </div>
+                                <div style="min-width:140px">
+                                    <div style="font-size:12px;color:#64748b;margin-bottom:4px">物件</div>
+                                    <el-select v-model="frigateFilter.label" placeholder="全部物件" size="small" style="width:100%">
+                                        <el-option label="全部物件" value=""/>
+                                        <el-option v-for="lb in frigateLabelOptions" :key="'label-'+lb" :label="lb" :value="lb"/>
+                                    </el-select>
+                                </div>
+                                <div>
+                                    <div style="font-size:12px;color:#64748b;margin-bottom:4px">開始時間</div>
+                                    <input v-model="frigateFilter.timeFrom" type="datetime-local" class="input"/>
+                                </div>
+                                <div>
+                                    <div style="font-size:12px;color:#64748b;margin-bottom:4px">結束時間</div>
+                                    <input v-model="frigateFilter.timeTo" type="datetime-local" class="input"/>
+                                </div>
+                                <div style="min-width:120px">
+                                    <div style="font-size:12px;color:#64748b;margin-bottom:4px">每頁筆數</div>
+                                    <el-select v-model="frigatePageSize" size="small" style="width:100%">
+                                        <el-option :value="10" label="10"/>
+                                        <el-option :value="20" label="20"/>
+                                        <el-option :value="50" label="50"/>
+                                    </el-select>
+                                </div>
+                                <el-button type="primary" size="small" :loading="nvrEventsLoading" @click="loadNVREvents()">查詢</el-button>
+                                <el-button size="small" @click="clearNVRFilters">清除篩選</el-button>
+                            </div>
+                        </div>
+                        <div class="card-body" style="padding:0">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>時間</th>
+                                        <th>攝影機</th>
+                                        <th>物件</th>
+                                        <th>區域</th>
+                                        <th>快照</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="evt in pagedNVREvents" :key="'frigate-'+evt.id">
+                                        <td>{{ formatNVRTime(evt.start_time) }}</td>
+                                        <td>
+                                            <div style="font-weight:600">{{ nvrEventCameraDisplayName(evt) }}</div>
+                                            <div v-if="nvrEventCameraDisplayName(evt)!==evt.camera" style="font-size:11px;color:#94a3b8">{{ evt.camera }}</div>
+                                        </td>
+                                        <td><el-tag size="small">{{ evt.label }}</el-tag></td>
+                                        <td>{{ evt.zones?.join(', ') || '-' }}</td>
+                                        <td>
+                                            <img v-if="evt.has_snapshot"
+                                                 :src="'/api/frigate/events/'+evt.id+'/snapshot'"
+                                                 style="width:96px;height:64px;object-fit:cover;cursor:pointer;border-radius:4px"
+                                                 @click="viewNVREvent(evt)">
+                                            <span v-else>-</span>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="!filteredNVREvents.length">
+                                        <td colspan="5" style="text-align:center;color:#999;padding:30px">暫無 NVR 事件</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-top:1px solid #eef2f7">
+                                <span style="font-size:12px;color:#64748b">
+                                    共 {{ filteredNVREvents.length }} 筆，第 {{ frigatePage }} / {{ frigateEventTotalPages }} 頁
+                                </span>
+                                <div style="display:flex;gap:8px">
+                                    <el-button size="small" :disabled="frigatePage<=1" @click="frigatePage=Math.max(1,frigatePage-1)">上一頁</el-button>
+                                    <el-button size="small" :disabled="frigatePage>=frigateEventTotalPages" @click="frigatePage=Math.min(frigateEventTotalPages,frigatePage+1)">下一頁</el-button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <!-- 車牌辨識 -->
                 <div v-if="page==='lpr'">
@@ -7650,44 +8194,6 @@ const app=createApp({
             const direct=cameras.value.find(c=>String(c.name||'')===String(evt?.camera||''));
             return direct?.name||evt?.camera||'';
         };
-        const isNxCamera=(c)=>!!(c.source && c.source.includes('/api/nx/'));
-        const captureNxSnapshot=async(camId)=>{
-            try{
-                const r=await fetch(`/api/stream/${camId}/snapshot`);
-                if(!r.ok)throw new Error('截圖失敗');
-                const blob=await r.blob();
-                const url=URL.createObjectURL(blob);
-                const a=document.createElement('a');
-                a.href=url;
-                a.download=`cam_${camId}_${Date.now()}.jpg`;
-                a.click();
-                URL.revokeObjectURL(url);
-                ElementPlus.ElMessage.success('截圖已下載');
-            }catch(e){ElementPlus.ElMessage.error(e.message);}
-        };
-        const nvrCamFps=(c)=>{
-            const key='cam_'+c.id;
-            const fc=frigateCameras.value.find(f=>f.name===key);
-            return fc?.fps||0;
-        };
-        const nvrCamFeature=(c,feature)=>{
-            const key='cam_'+c.id;
-            const fc=frigateCameras.value.find(f=>f.name===key);
-            if(!fc)return false;
-            if(feature==='record')return fc.config?.record?.enabled===true;
-            if(feature==='detect')return fc.config?.detect?.enabled===true||fc.config?.motion?.enabled!==false;
-            if(feature==='snapshot')return fc.config?.snapshots?.enabled===true;
-            return false;
-        };
-        const switchNvrCamFeature=async(c,feature,val)=>{
-            const key='cam_'+c.id;
-            const fc=frigateCameras.value.find(f=>f.name===key);
-            if(fc)return switchNVRCameraFeature(fc,feature,val);
-        };
-        const nvrCamObj=(c)=>{
-            const key='cam_'+c.id;
-            return frigateCameras.value.find(f=>f.name===key)||{name:key};
-        };
         const camRecordEnabled=(cam)=>cam?.config?.record?.enabled===true;
         const camDetectEnabled=(cam)=>{
             const detectVal=cam?.config?.detect?.enabled;
@@ -9915,7 +10421,7 @@ const app=createApp({
         return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
-            load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,isNxCamera,captureNxSnapshot,nvrCamFps,nvrCamFeature,switchNvrCamFeature,nvrCamObj,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow};
     }
