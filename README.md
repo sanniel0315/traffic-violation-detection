@@ -29,10 +29,12 @@
 | 功能 | 說明 | 技術 |
 |------|------|------|
 | 🚗 **車輛偵測** | 偵測汽車、機車、公車、卡車、自行車、行人 | YOLOv8n + TensorRT |
+| 🚛 **大型車分類** | 大貨車/小貨車/大客車二階段細分類 (Top-1 97.7%) | YOLO26s-cls |
 | 🔢 **車牌辨識** | 台灣車牌格式辨識，多重預處理提升準確率 | Tesseract OCR |
 | 🚨 **違規偵測** | 闖紅燈、超速、違規停車、逆向行駛 | ROI + 規則引擎 |
 | 🚦 **壅塞偵測** | 即時車流密度分析，四級壅塞等級判定 | 佔用率演算法 |
 | 📹 **NVR 整合** | Frigate NVR 整合，支援動態偵測與錄影 | Frigate + MQTT |
+| 🖥️ **NVR 回放** | EZ Pro 深色主題回放介面，多格分割、時間軸、書籤 | Vue 3 + EZ Pro UI |
 | 🔐 **登入與權限** | 帳密登入、角色管理、前台權限勾選派放 | Cookie Session + RBAC UI |
 | 🌐 **Web 介面** | 響應式 SPA 管理介面 | Vue 3 + Element Plus |
 | 📊 **系統日誌** | 即時監控與連線狀態記錄 | FastAPI + WebSocket |
@@ -84,7 +86,8 @@ traffic-violation-detection/
 │       └── 📄 logs.py               # 系統日誌服務
 │
 ├── 📂 detection/                    # 偵測模組
-│   ├── 📄 vehicle_detector.py       # YOLOv8 車輛偵測
+│   ├── 📄 vehicle_detector.py       # YOLOv8 車輛偵測 (含大型車分類整合)
+│   ├── 📄 truck_classifier.py       # YOLO26s 大型車細分類器
 │   ├── 📄 violation_detector.py     # 違規偵測邏輯
 │   └── 📄 congestion_detector.py    # 壅塞偵測器
 │
@@ -94,6 +97,7 @@ traffic-violation-detection/
 │
 ├── 📂 web/                          # 前端介面
 │   ├── 📄 index.html                # Vue 3 SPA 主頁
+│   ├── 📄 nvr_playback.html         # NVR 回放介面 (EZ Pro 深色主題)
 │   ├── 📄 roi_editor.html           # ROI 編輯器
 │   └── 📂 fonts/                    # 字型檔（含 CJK 疊加字型）
 │
@@ -102,8 +106,9 @@ traffic-violation-detection/
 │       └── 📄 config.yml            # Frigate NVR 設定
 │
 ├── 📂 models/                       # AI 模型 (不納入版控)
-│   ├── 📄 yolov8n.pt                # YOLOv8 PyTorch 模型
-│   └── 📄 yolov8n.engine            # TensorRT 加速模型
+│   ├── 📄 yolov8n.pt                # YOLOv8 PyTorch 偵測模型
+│   ├── 📄 yolov8n.engine            # TensorRT 加速模型
+│   └── 📄 truck_cls_yolo26s.pt      # YOLO26s 大型車分類模型
 │
 ├── 📂 storage/                      # 資料儲存 (不納入版控)
 │   ├── 📂 violations/               # 違規截圖
@@ -138,6 +143,8 @@ traffic-violation-detection/
 │  │ /api/lpr          車牌辨識 (單張/串流/視覺化)                        │   │
 │  │ /api/congestion   壅塞偵測 (啟停/狀態/串流)                          │   │
 │  │ /api/frigate      NVR 整合 (設定/事件/錄影)                          │   │
+│  │ /api/traffic      交通報表 (VD 報表/事件查詢)                        │   │
+│  │ /api/system       系統管理 (NTP/NX/硬體狀態)                        │   │
 │  │ /api/logs         系統日誌 (即時/查詢/清除)                          │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -214,7 +221,9 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 | 服務 | URL | 說明 |
 |------|-----|------|
 | Web 介面 | http://localhost:8000/web/ | 管理介面 |
+| NVR 回放 | http://localhost:8000/web/nvr_playback.html | EZ Pro 風格回放介面 |
 | API 文件 | http://localhost:8000/docs | Swagger UI |
+| API Reference | [docs/API_REFERENCE.md](./docs/API_REFERENCE.md) | 完整 API 文件 (95+ 端點) |
 | Frigate NVR | http://localhost:5000 | NVR 介面 |
 
 **預設登入帳號（首次初始化）**
@@ -307,6 +316,10 @@ docker tag traffic-api:<old_tag> traffic-api:latest
 ---
 
 ## 📡 API 文件
+
+> 完整 API 文件（含 Request/Response 範例）請參閱 **[docs/API_REFERENCE.md](./docs/API_REFERENCE.md)**
+
+以下為各模組端點摘要：
 
 ### 認證 `/api/auth`
 
@@ -477,14 +490,33 @@ curl -X POST http://localhost:8000/api/lpr/recognize-upload \
 | 方法 | 端點 | 說明 |
 |------|------|------|
 | `GET` | `/api/logs` | 取得日誌 |
+| `GET` | `/api/logs/query` | 查詢日誌 (含篩選與分頁) |
 | `DELETE` | `/api/logs` | 清除日誌 |
 
-**查詢參數：**
-```
-?limit=100        # 數量限制
-&level=error      # 等級過濾 (info/warning/error/success)
-&source=camera    # 來源過濾
-```
+### 交通報表 `/api/traffic`
+
+| 方法 | 端點 | 說明 |
+|------|------|------|
+| `GET` | `/api/traffic/vd-report` | 車輛偵測報表 (含聚合) |
+| `GET` | `/api/traffic/events` | 列出交通事件 |
+
+### 系統管理 `/api/system`
+
+| 方法 | 端點 | 說明 |
+|------|------|------|
+| `GET` | `/api/system/status` | 系統硬體狀態 (CPU/GPU/Memory/Disk) |
+| `GET` | `/api/system/ntp/settings` | 取得 NTP 設定 |
+| `PUT` | `/api/system/ntp/settings` | 更新 NTP 設定 |
+| `POST` | `/api/system/ntp/sync-now` | 手動 NTP 同步 |
+| `GET` | `/api/system/nx/settings` | 取得 NX/VMS 設定 |
+| `PUT` | `/api/system/nx/settings` | 更新 NX/VMS 設定 |
+
+### NX VMS `/api/nx`
+
+| 方法 | 端點 | 說明 |
+|------|------|------|
+| `GET` | `/api/nx/devices` | 列出 NX VMS 設備 |
+| `GET` | `/api/nx/stream/{device_id}` | 從 NX 設備串流 |
 
 ---
 
@@ -493,7 +525,7 @@ curl -X POST http://localhost:8000/api/lpr/recognize-upload \
 ### 1. 車輛偵測模組 `detection/vehicle_detector.py`
 ```python
 class VehicleDetector:
-    """YOLOv8 車輛偵測器"""
+    """YOLOv8 車輛偵測器 + 大型車二階段分類"""
     
     VEHICLE_CLASSES = {
         0: 'person',      # 行人
@@ -504,20 +536,55 @@ class VehicleDetector:
         7: 'truck'        # 卡車
     }
     
-    def __init__(self, model_path=None, conf_threshold=0.5):
-        """初始化偵測器"""
+    def __init__(self, model_path=None, conf_threshold=0.5, enable_truck_cls=True):
+        """初始化偵測器，自動載入 TruckClassifier"""
         
     def detect(self, frame) -> List[Dict]:
         """
         偵測影像中的車輛
+        偵測到 truck/bus 時自動觸發二階段分類
         
         Returns:
-            [{'class_name': 'car', 'confidence': 0.85, 'bbox': {...}}, ...]
+            [{'class_name': 'heavy_truck', 'confidence': 0.85, 'bbox': {...},
+              'truck_cls': {'label': '大貨車', 'confidence': 0.92, 'group': 'large'}}, ...]
         """
         
     def detect_with_draw(self, frame) -> Tuple[ndarray, List]:
-        """偵測並繪製標註框"""
+        """偵測並繪製標註框（含大型車分類標籤）"""
 ```
+
+### 1.1 大型車分類模組 `detection/truck_classifier.py`
+
+YOLO26s-cls 二階段細分類器，對偵測出的 truck/bus 做精細分類。
+
+```python
+class TruckClassifier:
+    """大型車輛細分類器 (YOLO26s-cls, Top-1 Acc: 97.7%)"""
+    
+    def classify(self, frame, bbox) -> Dict:
+        """
+        對 bounding box 區域做分類
+        
+        Returns:
+            {'class_name': 'heavy_truck', 'label': '大貨車',
+             'confidence': 0.92, 'group': 'large', 'length_m': 12.0}
+        """
+```
+
+**分類類別：**
+
+| 類別 | 中文 | 等效長度 | 分組 |
+|------|------|---------|------|
+| `heavy_truck` | 大貨車 | 12.0m | large |
+| `light_truck` | 小貨車 | 6.0m | small |
+| `bus` | 大客車 | 12.0m | large |
+| `non_truck` | 非目標 | 6.0m | other |
+
+**模型訓練結果：**
+- 訓練資料：8,648 張標註圖片 (train 6,723 / val 840 / test 846)
+- **Val Top-1 Accuracy: 97.74%** | Test Top-1: 96.93%
+- 推論速度：1.7ms/張 (GTX 1660 SUPER)
+- 模型大小：11MB (`truck_cls_yolo26s.pt`)
 
 ---
 
@@ -689,6 +756,29 @@ add_log("error", "無法連線: 後門攝影機", "camera")
 
 ---
 
+### 6. NVR 回放介面 `web/nvr_playback.html`
+
+參考 EZ Pro NVR 設計的深色主題回放頁面。
+
+**功能特色：**
+
+| 區域 | 功能 |
+|------|------|
+| 左側 Resource Tree | 攝影機搜尋、Server/NVR/歷史三層分組、拖放到 Grid |
+| 中央 Viewing Grid | 1x1 / 2x2 / 3x3 分割、Camera name + 時間疊圖 |
+| 右側 Panel | 事件/通知/書籤三分頁、統計摘要、事件跳轉 |
+| 底部 Timeline | 分布圖、事件標記、Playhead、時間刻度 |
+| 底部 Controls | 播放/暫停、速度 0.5x-8x、截圖、書籤、時間篩選 |
+
+**快捷鍵：**
+- `Space` — 播放/暫停
+- `B` — 加入書籤
+- `←` / `→` — 快進/後退 5 秒
+
+訪問：`http://localhost:8000/web/nvr_playback.html`
+
+---
+
 ## 📖 使用指南
 
 ### 新增攝影機
@@ -780,9 +870,11 @@ class MyModel(Base):
 | `DATABASE_URL` | `sqlite:///./data/violations.db` | 資料庫連線 |
 | `FRIGATE_HOST` | `frigate` | Frigate 主機 |
 | `FRIGATE_PORT` | `5000` | Frigate 埠號 |
-| `MODEL_DIR` | `/workspace/models` | 模型目錄 |
+| `MODEL_DIR` | `/home/ubuntu/traffic-violation-detection/models` | 模型目錄 |
 | `DETECT_MODEL_ENGINE` | `yolov8n.engine` | 偵測 engine 模型（可填絕對路徑或檔名） |
 | `DETECT_MODEL_PT` | `yolov8n.pt` | 偵測 pt 模型（可填絕對路徑或檔名） |
+| `TRUCK_CLS_MODEL` | `truck_cls_yolo26s.pt` | 大型車分類模型（可填絕對路徑或檔名） |
+| `DEVICE` | `cuda:0` | 推論裝置 |
 | `TZ` | `Asia/Taipei` | 時區 |
 
 ### 模型路徑規則
@@ -837,4 +929,4 @@ MIT License
 
 ---
 
-*最後更新: 2026-02-10*
+*最後更新: 2026-04-09*
