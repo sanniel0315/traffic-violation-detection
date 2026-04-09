@@ -1,7 +1,7 @@
 cameras:
   cam_1:
     detect:
-      enabled: true
+      enabled: false
       fps: 10
       height: 1080
       width: 1920
@@ -29,9 +29,6 @@ cameras:
       - person
     record:
       enabled: true
-      retain:
-        days: 7
-        mode: motion
     snapshots:
       bounding_box: true
       enabled: true
@@ -59,14 +56,14 @@ cameras:
         - motorcycle
   cam_2:
     detect:
-      enabled: true
+      enabled: false
       fps: 10
       height: 1080
       width: 1920
     enabled: true
     ffmpeg:
       inputs:
-      - path: rtsp://admin:1qaz%40WSX@111.70.34.183:6554/profile2/media.smp
+      - path: rtsp://admin:{FRIGATE_CAM2_PASSWORD}@111.70.34.183:6554/profile2/media.smp
         roles:
         - detect
         - record
@@ -116,7 +113,7 @@ cameras:
         - motorcycle
   cam_3:
     detect:
-      enabled: true
+      enabled: false
       fps: 10
       height: 1080
       width: 1920
@@ -143,9 +140,6 @@ cameras:
       - person
     record:
       enabled: true
-      retain:
-        days: 7
-        mode: motion
     snapshots:
       bounding_box: true
       enabled: true
@@ -193,7 +187,7 @@ cameras:
         - motorcycle
   cam_4:
     detect:
-      enabled: true
+      enabled: false
       fps: 10
       height: 1080
       width: 1920
@@ -220,9 +214,6 @@ cameras:
       - person
     record:
       enabled: true
-      retain:
-        days: 7
-        mode: motion
     snapshots:
       bounding_box: true
       enabled: true
