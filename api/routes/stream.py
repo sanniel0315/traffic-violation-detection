@@ -562,6 +562,12 @@ def generate_frames_overlay(
         had_frame = True
 
         frame = cv2.resize(frame, (640, 360))
+        if not render_overlay:
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+            time.sleep(0.1)
+            continue
         if render_roi_labels:
             _draw_roi_labels(frame, zones)
         if detector is not None:

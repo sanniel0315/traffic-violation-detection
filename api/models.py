@@ -247,6 +247,21 @@ class User(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    key_prefix = Column(String(12), index=True)
+    key_hash = Column(String(512), nullable=False)
+    scopes = Column(JSON, default=["vd_report", "congestion_report"])
+    enabled = Column(Boolean, default=True, index=True)
+    expires_at = Column(DateTime, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
+    created_by = Column(String(64))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    rate_limit_per_min = Column(Integer, default=60)
+
+
 def hash_password(password: str, salt: str | None = None) -> str:
     s = salt or secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac(
