@@ -561,15 +561,14 @@ def generate_frames_overlay(
         last_ok = time.time()
         had_frame = True
 
-        frame = cv2.resize(frame, (640, 360))
         if not render_overlay:
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            out = cv2.resize(frame, (640, 360))
+            _, buffer = cv2.imencode('.jpg', out, [cv2.IMWRITE_JPEG_QUALITY, 70])
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
             time.sleep(0.1)
             continue
-        if render_roi_labels:
-            _draw_roi_labels(frame, zones)
+        # 用原始解析度偵測，提高遠端小車辨識率
         if detector is not None:
             try:
                 detections = detector.detect(frame)
@@ -577,7 +576,7 @@ def generate_frames_overlay(
                 now_ts = time.time()
                 valid_dets = []
                 for det in detections:
-                    if det.get("class_name") not in ["car", "motorcycle", "truck", "bus"]:
+                    if det.get("class_name") not in ["car", "motorcycle", "truck", "bus", "heavy_truck", "light_truck"]:
                         continue
                     b = det["bbox"]
                     cx = (b["x1"] + b["x2"]) // 2
@@ -640,7 +639,9 @@ def generate_frames_overlay(
                         )
             except Exception:
                 pass
-        
+        if render_roi_labels:
+            _draw_roi_labels(frame, zones)
+        frame = cv2.resize(frame, (640, 360))
         _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
