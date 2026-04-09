@@ -25,7 +25,7 @@ except Exception:
 
 from api.models import get_db, Camera, SessionLocal, TrafficEvent
 from api.routes.logs import add_log
-from api.utils.roi_scope import SCOPE_TRAFFIC, SCOPE_SPEED, select_zones
+from api.utils.roi_scope import SCOPE_TRAFFIC, SCOPE_SPEED, SCOPE_CONGESTION, select_zones
 from api.utils.feature_state import get_feature_enabled, set_feature_state
 from api.utils.camera_stream import resolve_analysis_source, resolve_capture_source, resolve_local_api_source
 
@@ -507,7 +507,7 @@ def generate_frames_overlay(
             pass
     zones = zones or []
     detection_config = detection_config or {}
-    det_zones = select_zones(zones, scope=SCOPE_TRAFFIC, allowed_types=("detection", "flow_detection"))
+    det_zones = select_zones(zones, scope=SCOPE_TRAFFIC, allowed_types=("detection", "flow_detection"), fallback_scopes=(SCOPE_CONGESTION,))
     speed_zones = select_zones(zones, scope=SCOPE_SPEED, allowed_types=("speed", "speed_roi"))
     # 粗略像素速度轉換係數（可在 detection_config.speed_kmh_per_pxps 調整）
     speed_kmh_per_pxps = float(detection_config.get("speed_kmh_per_pxps", 0.12))
@@ -925,7 +925,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     if detection_config.get('illegal_parking'): enabled_types.append(('ILLEGAL_PARKING', '違規停車', 600))
     if detection_config.get('wrong_way'): enabled_types.append(('WRONG_WAY', '逆向行駛', 900))
     
-    det_zones = select_zones(zones, scope=SCOPE_TRAFFIC, allowed_types=("detection", "flow_detection"))
+    det_zones = select_zones(zones, scope=SCOPE_TRAFFIC, allowed_types=("detection", "flow_detection"), fallback_scopes=(SCOPE_CONGESTION,))
     speed_zones = select_zones(zones, scope=SCOPE_SPEED, allowed_types=("speed", "speed_roi"))
     print(
         f"🚀 偵測服務啟動: camera_id={camera_id}, 啟用類型={[t[1] for t in enabled_types]}, "

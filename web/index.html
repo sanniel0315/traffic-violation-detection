@@ -8817,6 +8817,7 @@ const app=createApp({
                 params.set('limit', String(pageSize));
                 params.set('offset', String((pageNo - 1) * pageSize));
                 params.set('min_confidence', String(Math.max(0,Math.min(100,Number(lprHistoryMinConfidence.value||0)))/100));
+                params.set('include_unknown', 'true');
                 const q=String(lprHistoryQuery.value||'').trim();
                 if(q)params.set('q', q);
                 if(lprHistoryCameraFilter.value!=='' && lprHistoryCameraFilter.value!==null && lprHistoryCameraFilter.value!==undefined){
