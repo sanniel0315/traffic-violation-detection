@@ -17,6 +17,82 @@ router = APIRouter(prefix="/api/frigate", tags=["NVR"])
 
 # NVR 設定檔路徑
 FRIGATE_CONFIG_PATH = "/workspace/config/frigate/config.yml"
+
+# NX 串流路徑前綴（Frigate 無法直接讀取）
+_NX_STREAM_PREFIX = "/api/nx/stream/"
+
+
+def _sanitize_frigate_config(config: dict) -> dict:
+    """修正 Frigate 0.17 相容性問題，避免 safe mode。"""
+    cameras = config.get("cameras")
+    if not isinstance(cameras, dict):
+        return config
+
+    nx_cams_to_remove = []
+    for name, cam in cameras.items():
+        if not isinstance(cam, dict):
+            continue
+
+        # NX 串流攝影機無法由 Frigate 錄影，移除
+        inputs = cam.get("ffmpeg", {}).get("inputs", [])
+        is_nx = any(_NX_STREAM_PREFIX in str(inp.get("path", "")) for inp in inputs) if inputs else False
+        if is_nx:
+            nx_cams_to_remove.append(name)
+            continue
+
+        # 關閉 detect（避免 onnxruntime crash）
+        if "detect" in cam:
+            cam["detect"]["enabled"] = False
+
+        # 移除 camera 層級的 retain（0.17 不支援）
+        rec = cam.get("record", {})
+        if isinstance(rec, dict) and "retain" in rec:
+            del rec["retain"]
+
+        # 移除 snapshots 層級的 retain
+        snap = cam.get("snapshots", {})
+        if isinstance(snap, dict) and "retain" in snap:
+            del snap["retain"]
+
+        # record 預設啟用
+        if "record" not in cam:
+            cam["record"] = {"enabled": True}
+        elif not cam["record"].get("enabled"):
+            cam["record"]["enabled"] = True
+
+        # roles 確保包含 record
+        for inp in cam.get("ffmpeg", {}).get("inputs", []):
+            roles = inp.get("roles", [])
+            if "record" not in roles:
+                roles.append("record")
+            # 移除 detect role（不需要 Frigate 偵測）
+            if "detect" in roles:
+                roles.remove("detect")
+            inp["roles"] = roles
+
+    # 移除 NX 串流攝影機
+    for name in nx_cams_to_remove:
+        del cameras[name]
+
+    # 全域 detect 關閉
+    config["detect"] = {"enabled": False}
+
+    # 確保 detectors 有 cpu1（避免 labelmap 錯誤）
+    if not config.get("detectors"):
+        config["detectors"] = {"cpu1": {"type": "cpu"}}
+
+    # 修正全域 record 格式
+    rec = config.get("record", {})
+    if isinstance(rec, dict) and "retain" in rec:
+        del rec["retain"]
+    if "continuous" not in rec:
+        rec["continuous"] = {"days": 3}
+    if "motion" not in rec:
+        rec["motion"] = {"days": 7}
+    rec["enabled"] = True
+    config["record"] = rec
+
+    return config
 NVR_UI_SETTINGS_PATH = "/workspace/config/frigate/ui_settings.json"
 FRIGATE_HOST = os.getenv("FRIGATE_HOST", "frigate")
 FRIGATE_PORT = int(os.getenv("FRIGATE_PORT", "5000"))
@@ -366,7 +442,7 @@ async def save_nvr_config(config: Dict[str, Any]):
     try:
         os.makedirs(os.path.dirname(FRIGATE_CONFIG_PATH), exist_ok=True)
         with open(FRIGATE_CONFIG_PATH, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
         return {"status": "success", "message": "設定已儲存，請重啟 NVR 生效"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -513,7 +589,7 @@ async def update_nvr_settings(settings: NvrSettings):
                 inputs[0]["roles"] = roles
 
         with open(FRIGATE_CONFIG_PATH, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
 
         return {"status": "success", "message": "設定已更新，請重啟 NVR 生效"}
     except Exception as e:
@@ -605,7 +681,7 @@ async def update_nvr_camera(camera_name: str, camera: FrigateCameraConfig):
                 }
 
         with open(FRIGATE_CONFIG_PATH, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
 
         return {"status": "success", "message": f"攝影機 {camera_name} 已更新"}
     except HTTPException:
@@ -627,7 +703,7 @@ async def delete_nvr_camera(camera_name: str):
         if camera_name in config.get("cameras", {}):
             del config["cameras"][camera_name]
             with open(FRIGATE_CONFIG_PATH, 'w') as f:
-                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+                yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
             return {"status": "success", "message": f"攝影機 {camera_name} 已刪除"}
 
         raise HTTPException(status_code=404, detail="攝影機不存在")
@@ -1124,7 +1200,7 @@ async def sync_cameras_to_nvr():
         db.commit()
 
         with open(FRIGATE_CONFIG_PATH, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
 
         msgs = []
         if synced_to_nvr:
@@ -1238,7 +1314,7 @@ async def add_nvr_camera(camera: FrigateCameraAdd):
         config['cameras'][camera.name] = cam_config
 
         with open(config_path, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
 
         return {
             "status": "success",
@@ -1269,7 +1345,7 @@ async def delete_nvr_camera_by_name(name: str):
         config['cameras'] = cameras
 
         with open(config_path, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
 
         return {
             "status": "success",
@@ -1353,7 +1429,7 @@ async def switch_nvr_camera_features(name: str, data: NvrCameraSwitch):
         config["cameras"] = cameras
 
         with open(config_path, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
 
         if data.record_enabled is not None:
             add_log("info", f"{name} 錄影已{'開啟' if data.record_enabled else '關閉'}", "nvr")
@@ -1478,7 +1554,7 @@ async def update_nvr_camera_motion_roi(name: str, data: NvrMotionRoiUpdate):
         cameras[name] = cam
         config["cameras"] = cameras
         with open(config_path, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
 
         ui_settings = _load_ui_settings()
         nvr_motion_roi = ui_settings.get("nvr_motion_roi", {})
