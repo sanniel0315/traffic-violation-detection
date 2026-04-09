@@ -20,6 +20,8 @@ class CongestionDetector:
         'car': 6.0,
         'bus': 12.0,
         'truck': 12.0,
+        'heavy_truck': 12.0,
+        'light_truck': 6.0,
     }
     DEFAULT_SAFETY_GAP_M = 1.5
 

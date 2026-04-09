@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NVR Playback - EZ Pro</title>
+<link rel="icon" href="/favicon.ico">
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/element-plus"></script>
+<script src="https://unpkg.com/@element-plus/icons-vue"></script>
+<link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+<link rel="stylesheet" href="https://unpkg.com/element-plus/theme-chalk/dark/css-vars.css">
+<style>
+/* ── EZ Pro Dark Theme ── */
+:root {
+  --bg-deepest: #0a0c10;
+  --bg-primary: #0f1218;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #1c2333;
+  --bg-elevated: #232b3a;
+  --bg-hover: #2a3548;
+  --border-color: rgba(148,163,184,.15);
+  --border-active: #3b82f6;
+  --text-primary: #f0f4f8;
+  --text-secondary: #c0c8d4;
+  --text-muted: #7a8694;
+  --accent-blue: #3b82f6;
+  --accent-green: #22c55e;
+  --accent-red: #ef4444;
+  --accent-amber: #f59e0b;
+  --accent-cyan: #06b6d4;
+  --rec-continuous: #22c55e;
+  --rec-event: #ef4444;
+  --rec-bookmark: #3b82f6;
+  --rec-empty: rgba(255,255,255,.05);
+}
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; overflow:hidden; }
+body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif; background:var(--bg-deepest); color:var(--text-primary); font-size:13px; }
+::-webkit-scrollbar { width:6px; height:6px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:rgba(255,255,255,.12); border-radius:3px; }
+::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,.2); }
+
+/* ── Shell Layout ── */
+.app-shell {
+  display:grid;
+  grid-template-rows: 44px 1fr auto;
+  grid-template-columns: var(--left-w, 260px) 1fr var(--right-w, 300px);
+  height:100vh;
+  transition: grid-template-columns .25s ease;
+}
+.app-shell.left-collapsed { --left-w: 0px; }
+.app-shell.right-collapsed { --right-w: 0px; }
+
+/* ── Top Bar ── */
+.top-bar {
+  grid-column: 1 / -1;
+  display:flex; align-items:center; gap:12px;
+  padding:0 14px;
+  background:var(--bg-secondary);
+  border-bottom:1px solid var(--border-color);
+  z-index:10;
+}
+.top-logo { display:flex; align-items:center; gap:8px; font-weight:700; font-size:15px; color:var(--accent-cyan); letter-spacing:.5px; }
+.top-logo svg { width:22px; height:22px; }
+.top-spacer { flex:1; }
+.top-clock { font-size:12px; color:var(--text-muted); font-variant-numeric:tabular-nums; letter-spacing:.5px; }
+.top-status { display:flex; align-items:center; gap:5px; font-size:12px; }
+.top-status .dot { width:8px; height:8px; border-radius:50%; }
+.top-status .dot.on { background:var(--accent-green); box-shadow:0 0 6px var(--accent-green); }
+.top-status .dot.off { background:var(--accent-red); box-shadow:0 0 6px var(--accent-red); }
+.top-btn { background:none; border:1px solid var(--border-color); color:var(--text-secondary); padding:4px 10px; border-radius:5px; cursor:pointer; font-size:12px; transition:all .15s; }
+.top-btn:hover { background:var(--bg-hover); color:var(--text-primary); }
+.top-btn.active { background:var(--accent-blue); border-color:var(--accent-blue); color:#fff; }
+.top-nav-link { color:var(--text-muted); text-decoration:none; font-size:12px; transition:color .15s; }
+.top-nav-link:hover { color:var(--text-primary); }
+
+/* ── Left Panel ── */
+.left-panel {
+  grid-row:2; grid-column:1;
+  background:var(--bg-primary);
+  border-right:1px solid var(--border-color);
+  display:flex; flex-direction:column;
+  overflow:hidden;
+  transition:width .25s ease;
+}
+.left-collapsed .left-panel { width:0; overflow:hidden; }
+.panel-head { padding:10px 12px; border-bottom:1px solid var(--border-color); display:flex; align-items:center; gap:8px; }
+.panel-head-title { font-weight:700; font-size:13px; color:var(--text-secondary); }
+.device-search { flex:1; }
+.device-search input {
+  width:100%; padding:5px 8px; border:1px solid var(--border-color); border-radius:5px;
+  background:var(--bg-tertiary); color:var(--text-primary); font-size:12px; outline:none;
+}
+.device-search input::placeholder { color:var(--text-muted); }
+.device-search input:focus { border-color:var(--accent-blue); }
+.device-tree { flex:1; overflow-y:auto; padding:6px 0; }
+.device-group { margin-bottom:4px; }
+.device-group-label {
+  padding:5px 12px; font-size:11px; text-transform:uppercase; letter-spacing:1px;
+  color:var(--text-muted); cursor:pointer; display:flex; align-items:center; gap:6px;
+}
+.device-group-label:hover { color:var(--text-secondary); }
+.device-group-arrow { font-size:9px; transition:transform .15s; }
+.device-group-arrow.open { transform:rotate(90deg); }
+.device-item {
+  display:flex; align-items:center; gap:8px;
+  padding:7px 12px 7px 22px; cursor:pointer;
+  transition:background .12s;
+  border-left:2px solid transparent;
+}
+.device-item:hover { background:var(--bg-hover); }
+.device-item.active { background:rgba(59,130,246,.12); border-left-color:var(--accent-blue); }
+.device-item .dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+.device-item .dot.online { background:var(--accent-green); }
+.device-item .dot.offline { background:var(--accent-red); opacity:.5; }
+.device-item-name { flex:1; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text-primary); }
+.device-item-badge { font-size:10px; padding:1px 5px; border-radius:3px; background:var(--bg-elevated); color:var(--text-muted); }
+.device-item.active .device-item-name { color:var(--accent-blue); font-weight:600; }
+
+/* ── Center (Viewing Grid) ── */
+.center-panel {
+  grid-row:2; grid-column:2;
+  display:flex; flex-direction:column;
+  background:var(--bg-deepest);
+  overflow:hidden;
+}
+.grid-toolbar {
+  display:flex; align-items:center; gap:6px;
+  padding:6px 10px;
+  background:var(--bg-secondary);
+  border-bottom:1px solid var(--border-color);
+}
+.grid-mode-btn {
+  width:28px; height:28px; border:1px solid var(--border-color); border-radius:4px;
+  background:var(--bg-tertiary); color:var(--text-muted); cursor:pointer;
+  display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700;
+  transition:all .12s;
+}
+.grid-mode-btn:hover { background:var(--bg-hover); color:var(--text-primary); }
+.grid-mode-btn.active { background:var(--accent-blue); color:#fff; border-color:var(--accent-blue); }
+.grid-toolbar-spacer { flex:1; }
+.grid-toolbar-info { font-size:11px; color:var(--text-muted); }
+
+.viewing-grid {
+  flex:1;
+  display:grid;
+  gap:2px;
+  padding:2px;
+  min-height:0;
+}
+.grid-cell {
+  position:relative;
+  background:var(--bg-primary);
+  border:1px solid var(--border-color);
+  border-radius:4px;
+  overflow:hidden;
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer;
+  transition:border-color .12s;
+}
+.grid-cell:hover { border-color:var(--bg-hover); }
+.grid-cell.active { border-color:var(--accent-blue); }
+.grid-cell.drop-target { border-color:var(--accent-cyan); border-style:dashed; border-width:2px; }
+.grid-cell-empty { color:var(--text-muted); font-size:12px; text-align:center; pointer-events:none; }
+.grid-cell-empty span { display:block; font-size:24px; margin-bottom:4px; opacity:.3; }
+.grid-cell video { width:100%; height:100%; object-fit:contain; background:#000; display:block; }
+.grid-cell-overlay {
+  position:absolute; top:0; left:0; right:0;
+  padding:5px 8px;
+  background:linear-gradient(180deg, rgba(0,0,0,.65) 0%, transparent 100%);
+  display:flex; justify-content:space-between; align-items:flex-start;
+  pointer-events:none;
+}
+.grid-cell-name { font-size:11px; font-weight:600; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.8); }
+.grid-cell-time { font-size:10px; color:rgba(255,255,255,.7); font-variant-numeric:tabular-nums; }
+.grid-cell-close {
+  position:absolute; top:4px; right:4px;
+  width:20px; height:20px; border-radius:50%;
+  background:rgba(0,0,0,.6); border:none; color:#fff; cursor:pointer;
+  display:none; align-items:center; justify-content:center; font-size:12px;
+  pointer-events:all;
+}
+.grid-cell:hover .grid-cell-close { display:flex; }
+.grid-cell-mode-tag {
+  position:absolute; bottom:5px; right:5px;
+  font-size:9px; padding:2px 6px; border-radius:3px;
+  background:rgba(0,0,0,.5); color:rgba(255,255,255,.6);
+  pointer-events:none;
+}
+
+/* ── Right Panel ── */
+.right-panel {
+  grid-row:2; grid-column:3;
+  background:var(--bg-primary);
+  border-left:1px solid var(--border-color);
+  display:flex; flex-direction:column;
+  overflow:hidden;
+  transition:width .25s ease;
+}
+.right-collapsed .right-panel { width:0; overflow:hidden; }
+.right-tabs { display:flex; border-bottom:1px solid var(--border-color); }
+.right-tab {
+  flex:1; padding:8px 4px; text-align:center; font-size:11px; font-weight:600;
+  color:var(--text-muted); cursor:pointer; border-bottom:2px solid transparent;
+  transition:all .15s;
+}
+.right-tab:hover { color:var(--text-secondary); background:var(--bg-hover); }
+.right-tab.active { color:var(--accent-blue); border-bottom-color:var(--accent-blue); }
+.right-tab .tab-badge {
+  display:inline-block; min-width:16px; padding:0 4px; font-size:9px;
+  background:var(--bg-elevated); border-radius:8px; color:var(--text-muted);
+  margin-left:3px; vertical-align:middle;
+}
+.right-tab.active .tab-badge { background:rgba(59,130,246,.2); color:var(--accent-blue); }
+
+.right-body { flex:1; overflow-y:auto; }
+.right-summary { display:grid; grid-template-columns:1fr 1fr; gap:6px; padding:8px; }
+.right-stat {
+  padding:8px 10px; border-radius:6px; background:var(--bg-secondary); border:1px solid var(--border-color);
+}
+.right-stat-label { font-size:10px; color:var(--text-muted); }
+.right-stat-value { font-size:16px; font-weight:700; margin-top:2px; font-variant-numeric:tabular-nums; }
+.right-stat-value.green { color:var(--accent-green); }
+.right-stat-value.blue { color:var(--accent-blue); }
+.right-stat-value.amber { color:var(--accent-amber); }
+.right-stat-value.red { color:var(--accent-red); }
+
+.event-list { padding:4px 0; }
+.event-item {
+  display:flex; gap:8px; padding:8px 10px; cursor:pointer;
+  border-left:3px solid transparent; transition:all .12s;
+}
+.event-item:hover { background:var(--bg-hover); }
+.event-item.active { background:rgba(59,130,246,.08); border-left-color:var(--accent-blue); }
+.event-dot { width:8px; height:8px; border-radius:50%; margin-top:4px; flex-shrink:0; }
+.event-dot.recording { background:var(--accent-green); }
+.event-dot.motion { background:var(--accent-red); }
+.event-info { flex:1; min-width:0; }
+.event-title { font-size:12px; font-weight:600; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.event-meta { font-size:11px; color:var(--text-muted); margin-top:1px; }
+.event-dur { font-size:11px; color:var(--text-muted); flex-shrink:0; margin-top:2px; }
+
+.notify-item {
+  padding:10px 12px; border-bottom:1px solid var(--border-color);
+  display:flex; gap:8px;
+}
+.notify-icon { font-size:16px; flex-shrink:0; }
+.notify-body { flex:1; min-width:0; }
+.notify-title { font-size:12px; font-weight:600; color:var(--text-primary); }
+.notify-text { font-size:11px; color:var(--text-secondary); margin-top:2px; }
+.notify-meta { font-size:10px; color:var(--text-muted); margin-top:3px; }
+
+.right-pagination {
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  padding:6px; border-top:1px solid var(--border-color);
+}
+.page-btn {
+  padding:3px 8px; border:1px solid var(--border-color); border-radius:4px;
+  background:var(--bg-secondary); color:var(--text-secondary); cursor:pointer;
+  font-size:11px; transition:all .12s;
+}
+.page-btn:hover:not(:disabled) { background:var(--bg-hover); color:var(--text-primary); }
+.page-btn:disabled { opacity:.3; cursor:default; }
+.page-info { font-size:11px; color:var(--text-muted); }
+
+/* ── Bottom Bar ── */
+.bottom-bar {
+  grid-column:1 / -1;
+  background:var(--bg-secondary);
+  border-top:1px solid var(--border-color);
+  display:flex; flex-direction:column;
+}
+
+/* Thumbnail track */
+.thumb-track {
+  display:flex; gap:4px; padding:6px 10px; overflow-x:auto;
+  background:var(--bg-primary); border-bottom:1px solid var(--border-color);
+}
+.thumb-card {
+  flex:0 0 auto; width:100px; border-radius:5px; overflow:hidden;
+  border:2px solid transparent; cursor:pointer; transition:all .15s;
+  background:var(--bg-tertiary);
+}
+.thumb-card:hover { border-color:var(--bg-hover); transform:translateY(-1px); }
+.thumb-card.active { border-color:var(--accent-blue); }
+.thumb-card-img { width:100%; height:56px; background:var(--bg-elevated); display:flex; align-items:center; justify-content:center; }
+.thumb-card-img span { font-size:18px; opacity:.3; }
+.thumb-card-info { padding:3px 5px; }
+.thumb-card-time { font-size:9px; color:var(--text-secondary); font-variant-numeric:tabular-nums; }
+.thumb-card-cam { font-size:9px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* Timeline */
+.timeline-area { padding:6px 10px 2px; }
+.timeline-bar {
+  position:relative; height:48px; border-radius:6px; overflow:hidden;
+  background:var(--bg-tertiary); border:1px solid var(--border-color);
+  cursor:pointer;
+}
+.timeline-segments { position:absolute; inset:0; display:flex; }
+.timeline-seg {
+  height:100%; transition:background .12s;
+}
+.timeline-seg.continuous { background:rgba(34,197,94,.25); }
+.timeline-seg.event { background:rgba(239,68,68,.35); }
+.timeline-seg.empty { background:transparent; }
+.timeline-seg:hover.continuous { background:rgba(34,197,94,.4); }
+.timeline-seg:hover.event { background:rgba(239,68,68,.5); }
+
+.timeline-playhead {
+  position:absolute; top:0; bottom:0; width:2px;
+  background:var(--accent-cyan); z-index:2;
+  pointer-events:none;
+}
+.timeline-playhead::before {
+  content:''; position:absolute; top:-3px; left:-4px;
+  width:10px; height:10px; border-radius:50%;
+  background:var(--accent-cyan); box-shadow:0 0 8px var(--accent-cyan);
+}
+.timeline-markers { position:absolute; inset:0; pointer-events:none; }
+.timeline-marker {
+  position:absolute; bottom:2px; width:6px; height:6px; border-radius:50%;
+  background:var(--accent-red); transform:translateX(-50%);
+  box-shadow:0 0 4px var(--accent-red);
+}
+.timeline-ticks {
+  display:flex; justify-content:space-between;
+  padding:2px 4px 0; font-size:10px; color:var(--text-muted);
+  font-variant-numeric:tabular-nums;
+}
+
+/* Playback Controls */
+.playback-controls {
+  display:flex; align-items:center; gap:6px;
+  padding:6px 10px 8px;
+}
+.ctrl-group { display:flex; align-items:center; gap:3px; }
+.ctrl-btn {
+  width:30px; height:30px; border-radius:5px; border:none;
+  background:var(--bg-tertiary); color:var(--text-secondary);
+  cursor:pointer; display:flex; align-items:center; justify-content:center;
+  font-size:14px; transition:all .12s;
+}
+.ctrl-btn:hover { background:var(--bg-hover); color:var(--text-primary); }
+.ctrl-btn.primary {
+  width:36px; height:36px; border-radius:50%;
+  background:var(--accent-blue); color:#fff; font-size:16px;
+}
+.ctrl-btn.primary:hover { background:#2563eb; }
+.ctrl-sep { width:1px; height:20px; background:var(--border-color); margin:0 4px; }
+.ctrl-speed {
+  padding:4px 8px; border:1px solid var(--border-color); border-radius:5px;
+  background:var(--bg-tertiary); color:var(--text-primary); font-size:11px; font-weight:600;
+  cursor:pointer; min-width:48px; text-align:center;
+}
+.ctrl-speed:hover { background:var(--bg-hover); }
+.ctrl-time {
+  font-size:12px; color:var(--text-secondary); font-variant-numeric:tabular-nums;
+  padding:0 6px; letter-spacing:.3px;
+}
+.ctrl-spacer { flex:1; }
+.ctrl-filter-group { display:flex; align-items:center; gap:4px; }
+.ctrl-filter-group select {
+  padding:4px 6px; border:1px solid var(--border-color); border-radius:5px;
+  background:var(--bg-tertiary); color:var(--text-primary); font-size:11px; outline:none;
+}
+.ctrl-filter-group input[type="datetime-local"] {
+  padding:4px 6px; border:1px solid var(--border-color); border-radius:5px;
+  background:var(--bg-tertiary); color:var(--text-primary); font-size:11px; outline:none;
+  color-scheme:dark;
+}
+.ctrl-quick-btn {
+  padding:3px 7px; border:1px solid var(--border-color); border-radius:4px;
+  background:var(--bg-tertiary); color:var(--text-muted); cursor:pointer;
+  font-size:10px; font-weight:600; transition:all .12s;
+}
+.ctrl-quick-btn:hover { background:var(--bg-hover); color:var(--text-primary); }
+.ctrl-quick-btn.active { background:var(--accent-blue); color:#fff; border-color:var(--accent-blue); }
+
+/* ── Empty / Loading States ── */
+.empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px; color:var(--text-muted); }
+.empty-state .icon { font-size:40px; opacity:.3; margin-bottom:8px; }
+.empty-state .title { font-size:14px; font-weight:600; color:var(--text-secondary); }
+.empty-state .desc { font-size:12px; margin-top:4px; }
+
+/* ── Responsive ── */
+@media (max-width:1200px) {
+  .app-shell { grid-template-columns:220px 1fr 260px; }
+}
+@media (max-width:900px) {
+  .app-shell { grid-template-columns:1fr; grid-template-rows:44px 1fr auto; }
+  .left-panel, .right-panel { display:none; }
+  .center-panel { grid-column:1; }
+  .bottom-bar { grid-column:1; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+<div class="app-shell" :class="{'left-collapsed':!showLeft,'right-collapsed':!showRight}">
+
+  <!-- ── Top Bar ── -->
+  <div class="top-bar">
+    <div class="top-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      NVR Playback
+    </div>
+    <button class="top-btn" :class="{active:showLeft}" @click="showLeft=!showLeft" title="裝置面板">&#9776;</button>
+    <div class="top-spacer"></div>
+    <div class="top-status">
+      <span class="dot" :class="nvrOnline?'on':'off'"></span>
+      <span>{{nvrOnline?'NVR 已連線':'NVR 離線'}}</span>
+    </div>
+    <div class="top-clock">{{clock}}</div>
+    <button class="top-btn" :class="{active:showRight}" @click="showRight=!showRight" title="事件面板">&#9881;</button>
+    <a href="/web/index.html" class="top-nav-link">&larr; 返回主頁</a>
+  </div>
+
+  <!-- ── Left Panel: Device Tree ── -->
+  <div class="left-panel" v-show="showLeft">
+    <div class="panel-head">
+      <span class="panel-head-title">Resource Tree</span>
+      <div class="device-search">
+        <input v-model="deviceSearch" placeholder="搜尋攝影機...">
+      </div>
+    </div>
+    <div class="device-tree">
+      <div class="device-group" v-for="group in deviceTree" :key="group.key">
+        <div class="device-group-label" @click="group._open=!group._open">
+          <span class="device-group-arrow" :class="{open:group._open!==false}">&#9654;</span>
+          {{group.label}} ({{group.items.length}})
+        </div>
+        <template v-if="group._open!==false">
+          <div class="device-item" v-for="d in group.items" :key="d.key"
+               :class="{active:filter.camera===d.key}"
+               draggable="true"
+               @dragstart="onDragStartDevice($event,d)"
+               @click="selectCamera(d.key)">
+            <span class="dot online"></span>
+            <span class="device-item-name">{{d.label}}</span>
+            <span class="device-item-badge" v-if="d.count">{{d.count}}</span>
+          </div>
+        </template>
+      </div>
+      <div v-if="!deviceTree.length" class="empty-state" style="padding:24px">
+        <div class="desc">無攝影機資料</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Center: Viewing Grid ── -->
+  <div class="center-panel">
+    <div class="grid-toolbar">
+      <button class="grid-mode-btn" v-for="m in gridModes" :key="m"
+              :class="{active:gridMode===m}" @click="setGridMode(m)">{{m}}</button>
+      <div class="grid-toolbar-spacer"></div>
+      <div class="grid-toolbar-info">
+        <span v-if="activeCellCamera">{{activeCellCamera}}</span>
+        <span v-else style="color:var(--text-muted)">選擇攝影機或拖放到格子</span>
+      </div>
+    </div>
+    <div class="viewing-grid" :style="gridStyle">
+      <div class="grid-cell" v-for="(cell,idx) in visibleCells" :key="idx"
+           :class="{active:activeCell===idx, 'drop-target':dropTarget===idx}"
+           @click="activeCell=idx"
+           @dragover.prevent="dropTarget=idx"
+           @dragleave="dropTarget=-1"
+           @drop="onDropCell($event,idx)">
+        <!-- Video -->
+        <template v-if="cell.url">
+          <video :ref="el=>{if(el)cellVideoRefs[idx]=el}"
+                 :key="cell.url"
+                 :src="cell.url" controls
+                 @loadedmetadata="onVideoLoaded(idx)"
+                 @timeupdate="onVideoTimeUpdate(idx)"
+                 @play="cell.playing=true"
+                 @pause="cell.playing=false"
+                 style="width:100%;height:100%;object-fit:contain;background:#000;">
+          </video>
+          <div class="grid-cell-overlay">
+            <span class="grid-cell-name">{{cell.camera||''}}</span>
+            <span class="grid-cell-time">{{formatClock(cell.currentSec)}} / {{formatClock(cell.durationSec)}}</span>
+          </div>
+          <button class="grid-cell-close" @click.stop="clearCell(idx)">&times;</button>
+          <span class="grid-cell-mode-tag" v-if="cell.label">{{cell.label}}</span>
+        </template>
+        <!-- Empty -->
+        <div v-else class="grid-cell-empty">
+          <span>&#9654;</span>
+          <div>Cell {{idx+1}}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Right Panel ── -->
+  <div class="right-panel" v-show="showRight">
+    <div class="right-tabs">
+      <div class="right-tab" :class="{active:rightTab==='events'}" @click="rightTab='events'">
+        事件 <span class="tab-badge">{{rows.length}}</span>
+      </div>
+      <div class="right-tab" :class="{active:rightTab==='notify'}" @click="rightTab='notify'">
+        通知
+      </div>
+      <div class="right-tab" :class="{active:rightTab==='bookmark'}" @click="rightTab='bookmark'">
+        書籤 <span class="tab-badge">{{bookmarks.length}}</span>
+      </div>
+    </div>
+    <!-- Summary -->
+    <div class="right-summary">
+      <div class="right-stat"><div class="right-stat-label">總片段</div><div class="right-stat-value blue">{{summary.total}}</div></div>
+      <div class="right-stat"><div class="right-stat-label">總時長</div><div class="right-stat-value green">{{formatDuration(summary.totalSec)}}</div></div>
+      <div class="right-stat"><div class="right-stat-label">錄影</div><div class="right-stat-value">{{summary.recording}}</div></div>
+      <div class="right-stat"><div class="right-stat-label">Motion</div><div class="right-stat-value red">{{summary.motion}}</div></div>
+    </div>
+    <!-- Events Tab -->
+    <div class="right-body" v-show="rightTab==='events'">
+      <div class="event-list">
+        <div class="event-item" v-for="row in pagedRows" :key="row.key"
+             :class="{active:current?.key===row.key}"
+             @click="selectRow(row)">
+          <span class="event-dot" :class="row.source"></span>
+          <div class="event-info">
+            <div class="event-title">{{row.camera}} &middot; {{row.label}}</div>
+            <div class="event-meta">{{formatTime(row.start_time)}}</div>
+          </div>
+          <div class="event-dur">{{formatDuration(row.duration_sec)}}</div>
+        </div>
+        <div v-if="!pagedRows.length" class="empty-state" style="padding:20px">
+          <div class="desc">無事件資料，請查詢</div>
+        </div>
+      </div>
+    </div>
+    <!-- Notify Tab -->
+    <div class="right-body" v-show="rightTab==='notify'">
+      <div class="notify-item" v-for="n in notifications" :key="n.key">
+        <span class="notify-icon">{{n.icon}}</span>
+        <div class="notify-body">
+          <div class="notify-title">{{n.title}}</div>
+          <div class="notify-text">{{n.text}}</div>
+          <div class="notify-meta">{{n.meta}}</div>
+        </div>
+      </div>
+    </div>
+    <!-- Bookmark Tab -->
+    <div class="right-body" v-show="rightTab==='bookmark'">
+      <div v-if="!bookmarks.length" class="empty-state" style="padding:20px">
+        <div class="desc">播放時按 B 建立書籤</div>
+      </div>
+      <div class="event-list">
+        <div class="event-item" v-for="(bm,bi) in bookmarks" :key="bi" @click="jumpToBookmark(bm)">
+          <span class="event-dot" style="background:var(--accent-blue)"></span>
+          <div class="event-info">
+            <div class="event-title">{{bm.name}}</div>
+            <div class="event-meta">{{bm.camera}} &middot; {{formatTime(bm.time)}}</div>
+          </div>
+          <button class="page-btn" @click.stop="bookmarks.splice(bi,1)" style="padding:1px 5px;font-size:10px">&times;</button>
+        </div>
+      </div>
+    </div>
+    <!-- Pagination -->
+    <div class="right-pagination" v-show="rightTab==='events'">
+      <button class="page-btn" :disabled="page<=1" @click="page--">&laquo;</button>
+      <span class="page-info">{{page}} / {{totalPages}}</span>
+      <button class="page-btn" :disabled="page>=totalPages" @click="page++">&raquo;</button>
+    </div>
+  </div>
+
+  <!-- ── Bottom Bar ── -->
+  <div class="bottom-bar">
+    <!-- Thumbnail Track -->
+    <div class="thumb-track">
+      <div class="thumb-card" v-for="row in thumbRows" :key="row.key"
+           :class="{active:current?.key===row.key}" @click="selectRow(row)">
+        <div class="thumb-card-img"><span>&#9654;</span></div>
+        <div class="thumb-card-info">
+          <div class="thumb-card-time">{{formatClock(row.start_time ? new Date(row.start_time*1000).getHours()*3600+new Date(row.start_time*1000).getMinutes()*60+new Date(row.start_time*1000).getSeconds() : 0)}}</div>
+          <div class="thumb-card-cam">{{row.camera}}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Timeline -->
+    <div class="timeline-area">
+      <div class="timeline-bar" @click="seekTimeline($event)">
+        <div class="timeline-segments">
+          <div class="timeline-seg" v-for="bar in timelineBars" :key="bar.idx"
+               :class="bar.count>0 ? (bar.hasMotion?'event':'continuous') : 'empty'"
+               :style="{flex:'1 1 0'}">
+          </div>
+        </div>
+        <div class="timeline-playhead" v-if="playheadLeft>=0" :style="{left:playheadLeft+'%'}"></div>
+        <div class="timeline-markers">
+          <div class="timeline-marker" v-for="(m,mi) in timelineMarkers" :key="mi"
+               :style="{left:m.left+'%'}"></div>
+        </div>
+      </div>
+      <div class="timeline-ticks">
+        <span v-for="t in timelineTicks" :key="t.left">{{t.label}}</span>
+      </div>
+    </div>
+
+    <!-- Playback Controls -->
+    <div class="playback-controls">
+      <div class="ctrl-group">
+        <button class="ctrl-btn" @click="selectPrev" title="上一段">&#9198;</button>
+        <button class="ctrl-btn" @click="seekBy(-10)" title="-10s">&#9194;</button>
+        <button class="ctrl-btn primary" @click="togglePlay" :title="isPlaying?'暫停':'播放'">
+          {{isPlaying ? '&#9646;&#9646;' : '&#9654;'}}
+        </button>
+        <button class="ctrl-btn" @click="seekBy(10)" title="+10s">&#9193;</button>
+        <button class="ctrl-btn" @click="selectNext" title="下一段">&#9197;</button>
+      </div>
+      <div class="ctrl-sep"></div>
+      <select class="ctrl-speed" v-model.number="playbackRate" @change="applyRate" title="播放速度">
+        <option :value="0.5">0.5x</option>
+        <option :value="1">1x</option>
+        <option :value="1.5">1.5x</option>
+        <option :value="2">2x</option>
+        <option :value="4">4x</option>
+        <option :value="8">8x</option>
+      </select>
+      <div class="ctrl-time">{{formatClock(currentSec)}} / {{formatClock(durationSec)}}</div>
+      <div class="ctrl-sep"></div>
+      <button class="ctrl-btn" @click="captureFrame" title="截圖">&#128247;</button>
+      <button class="ctrl-btn" @click="addBookmark" title="加入書籤 (B)">&#128278;</button>
+      <div class="ctrl-spacer"></div>
+      <!-- Filters -->
+      <div class="ctrl-filter-group">
+        <select v-model="filter.source" @change="loadPlayback()">
+          <option value="all">全部</option>
+          <option value="recording">錄影</option>
+          <option value="motion">Motion</option>
+        </select>
+        <input type="datetime-local" v-model="filter.timeFrom">
+        <span style="color:var(--text-muted)">~</span>
+        <input type="datetime-local" v-model="filter.timeTo">
+        <button class="ctrl-quick-btn" v-for="qr in quickRanges" :key="qr.key"
+                :class="{active:quickRange===qr.key}"
+                @click="setQuickRange(qr.key)">{{qr.label}}</button>
+        <button class="top-btn" @click="loadPlayback()" style="padding:4px 10px">查詢</button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- app-shell -->
+</div>
+
+<script>
+const {createApp,ref,reactive,computed,onMounted,onUnmounted,nextTick,watch}=Vue;
+
+const app=createApp({
+setup(){
+  // ── State ──
+  const clock=ref('');
+  const nvrOnline=ref(false);
+  const showLeft=ref(true);
+  const showRight=ref(true);
+  const rightTab=ref('events');
+  const deviceSearch=ref('');
+  const loading=ref(false);
+  const rows=ref([]);
+  const current=ref(null);
+  const page=ref(1);
+  const pageSize=ref(20);
+  const playbackRate=ref(1);
+  const currentSec=ref(0);
+  const durationSec=ref(0);
+  const isPlaying=ref(false);
+  const quickRange=ref('24h');
+  const bookmarks=reactive([]);
+  const filter=reactive({source:'all',camera:'',timeFrom:'',timeTo:'',limit:200});
+
+  // Grid
+  const gridModes=['1x1','2x2','3x3'];
+  const gridMode=ref('1x1');
+  const activeCell=ref(0);
+  const dropTarget=ref(-1);
+  const cells=reactive(Array.from({length:9},()=>({camera:'',url:'',label:'',playing:false,currentSec:0,durationSec:0,key:''})));
+  const cellVideoRefs=reactive({});
+
+  // Cameras (from API)
+  const cameras=ref([]);
+  const frigateCameras=ref([]);
+  const frigateStatus=reactive({status:'offline',version:'',cameras:[]});
+
+  // ── Helpers ──
+  const pad=(v)=>String(v).padStart(2,'0');
+  const formatClock=(sec)=>{
+    const t=Math.max(0,Math.floor(Number(sec||0)));
+    return `${pad(Math.floor(t/3600))}:${pad(Math.floor((t%3600)/60))}:${pad(t%60)}`;
+  };
+  const formatDuration=(sec)=>{
+    const n=Math.max(0,Math.floor(Number(sec||0)));
+    if(!n)return '-';
+    const h=Math.floor(n/3600), m=Math.floor((n%3600)/60), s=n%60;
+    if(h>0)return `${h}h ${pad(m)}m`;
+    if(m>0)return `${m}m ${pad(s)}s`;
+    return `${s}s`;
+  };
+  const formatTime=(ts)=>{
+    if(!ts)return '-';
+    const dt=new Date(ts*1000);
+    if(isNaN(dt.getTime()))return '-';
+    return `${pad(dt.getMonth()+1)}/${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+  };
+  const parseTs=(raw)=>{
+    if(raw===null||raw===undefined||raw==='')return 0;
+    const n=Number(raw);
+    if(Number.isFinite(n)){if(n>1e12)return Math.floor(n/1000);if(n>1e9)return Math.floor(n);}
+    const ms=new Date(raw).getTime();
+    return Number.isFinite(ms)&&ms>0?Math.floor(ms/1000):0;
+  };
+  const toLocalInput=(dt)=>{
+    if(!(dt instanceof Date)||isNaN(dt.getTime()))return '';
+    return `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+  };
+  const cameraDisplayName=(key)=>{
+    if(!key)return '';
+    const cam=cameras.value.find(c=>`cam_${c.id}`===key);
+    if(cam)return cam.name||cam.location||key;
+    return String(key).replace(/_/g,' ');
+  };
+
+  // ── Grid ──
+  const gridCols=computed(()=>{const m=gridMode.value;return m==='2x2'?2:m==='3x3'?3:1;});
+  const gridStyle=computed(()=>{const n=gridCols.value;return {gridTemplateColumns:`repeat(${n},1fr)`,gridTemplateRows:`repeat(${n},1fr)`};});
+  const visibleCells=computed(()=>cells.slice(0,gridCols.value*gridCols.value));
+  const activeCellCamera=computed(()=>{const c=cells[activeCell.value];return c?cameraDisplayName(c.camera)||c.camera:'';});
+  const setGridMode=(m)=>{gridMode.value=m;if(activeCell.value>=gridCols.value*gridCols.value)activeCell.value=0;};
+
+  // ── Device Tree ──
+  const cameraOptions=computed(()=>{
+    const set=new Set();
+    (cameras.value||[]).forEach(c=>{const id=Number(c?.id);if(Number.isFinite(id)&&id>0)set.add(`cam_${id}`);});
+    (frigateCameras.value||[]).forEach(c=>{if(c?.name)set.add(String(c.name));});
+    (rows.value||[]).forEach(r=>{if(r?.camera)set.add(String(r.camera));});
+    return Array.from(set).sort();
+  });
+  const deviceTree=computed(()=>{
+    const kw=String(deviceSearch.value||'').trim().toLowerCase();
+    const sysKeys=new Set((cameras.value||[]).map(c=>{const id=Number(c?.id);return Number.isFinite(id)&&id>0?`cam_${id}`:null;}).filter(Boolean));
+    const nvrKeys=new Set((frigateCameras.value||[]).map(c=>String(c?.name||'')).filter(Boolean));
+    const makeItem=(key,src)=>{
+      const label=cameraDisplayName(key)||key;
+      const count=(rows.value||[]).filter(r=>String(r?.camera||'')===key).length;
+      return {key,label,count,src,selected:filter.camera===key};
+    };
+    return [
+      {key:'system',label:'系統攝影機',items:Array.from(sysKeys).map(k=>makeItem(k,'系統')),_open:true},
+      {key:'nvr',label:'NVR 設備',items:Array.from(nvrKeys).filter(k=>!sysKeys.has(k)).map(k=>makeItem(k,'NVR')),_open:true},
+      {key:'history',label:'歷史片段',items:cameraOptions.value.filter(k=>!sysKeys.has(k)&&!nvrKeys.has(k)).map(k=>makeItem(k,'歷史')),_open:true},
+    ].map(g=>{
+      if(kw)g.items=g.items.filter(i=>String(i.label||'').toLowerCase().includes(kw)||String(i.key||'').toLowerCase().includes(kw));
+      return g;
+    }).filter(g=>g.items.length||!kw);
+  });
+
+  // ── Computed ──
+  const summary=computed(()=>{
+    let recording=0,motion=0,totalSec=0;
+    (rows.value||[]).forEach(r=>{
+      if(r?.source==='motion')motion++;else recording++;
+      const d=Number(r?.duration_sec||0);if(d>0)totalSec+=d;
+    });
+    return {total:rows.value.length,recording,motion,totalSec};
+  });
+  const totalPages=computed(()=>Math.max(1,Math.ceil(rows.value.length/pageSize.value)));
+  const pagedRows=computed(()=>{
+    const start=(Math.min(page.value,totalPages.value)-1)*pageSize.value;
+    return rows.value.slice(start,start+pageSize.value);
+  });
+  const currentIndex=computed(()=>{
+    if(!current.value)return -1;
+    return rows.value.findIndex(r=>r?.key===current.value?.key);
+  });
+  const thumbRows=computed(()=>{
+    if(!rows.value.length)return [];
+    const ci=Math.max(0,currentIndex.value);
+    const start=Math.max(0,ci-2);
+    return rows.value.slice(start,start+10);
+  });
+  const notifications=computed(()=>{
+    const list=[];
+    list.push({key:'status',icon:nvrOnline.value?'📡':'⚠️',title:nvrOnline.value?'NVR 已連線':'NVR 離線',
+      text:nvrOnline.value?`${frigateStatus.cameras?.length||0} 台攝影機在線`:'無法連到 NVR',meta:'系統狀態'});
+    list.push({key:'filter',icon:'🧭',title:'查詢視角',
+      text:`${filter.camera?cameraDisplayName(filter.camera):'全部攝影機'} · ${filter.source==='motion'?'Motion':filter.source==='recording'?'錄影':'全部'}`,
+      meta:`${filter.timeFrom||'-'} ~ ${filter.timeTo||'-'}`});
+    if(current.value){
+      list.push({key:'current',icon:'🎬',title:'目前片段',
+        text:`${current.value.camera} · ${current.value.label}`,
+        meta:`${formatTime(current.value.start_time)} · ${formatDuration(current.value.duration_sec)}`});
+    }
+    return list;
+  });
+
+  // Timeline
+  const timelineRange=computed(()=>{
+    const vals=rows.value.map(r=>Number(r?.start_time||0)).filter(v=>v>0);
+    let from=parseTs(filter.timeFrom), to=parseTs(filter.timeTo);
+    if(!from)from=vals.length?Math.min(...vals):0;
+    if(!to)to=vals.length?Math.max(...vals):from+3600;
+    if(to<=from)to=from+3600;
+    return {from,to,span:Math.max(1,to-from)};
+  });
+  const timelineBars=computed(()=>{
+    const bins=80, {from,span}=timelineRange.value;
+    const counts=Array.from({length:bins},()=>({count:0,hasMotion:false}));
+    rows.value.forEach(r=>{
+      const ts=Number(r?.start_time||0);if(ts<=0)return;
+      const pos=Math.max(0,Math.min(bins-1,Math.floor(((ts-from)/span)*bins)));
+      counts[pos].count++;
+      if(r?.source==='motion')counts[pos].hasMotion=true;
+    });
+    return counts.map((c,i)=>({idx:i,...c}));
+  });
+  const timelineMarkers=computed(()=>{
+    const {from,span}=timelineRange.value;
+    return rows.value.filter(r=>r?.source==='motion').map(r=>{
+      const ts=Number(r?.start_time||0);if(ts<=0)return null;
+      return {left:Math.max(0,Math.min(100,((ts-from)/span)*100)),row:r};
+    }).filter(Boolean);
+  });
+  const timelineTicks=computed(()=>{
+    const {from,span}=timelineRange.value;
+    const steps=6, out=[];
+    for(let i=0;i<=steps;i++){
+      const sec=Math.floor(from+(span*(i/steps)));
+      const dt=new Date(sec*1000);
+      const label=span>=86400?`${pad(dt.getMonth()+1)}/${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`:`${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+      out.push({left:Math.round((i/steps)*1000)/10,label});
+    }
+    return out;
+  });
+  const playheadLeft=computed(()=>{
+    if(!current.value)return -1;
+    const {from,span}=timelineRange.value;
+    const ts=Number(current.value.start_time||0);
+    if(ts<=0)return -1;
+    return Math.max(0,Math.min(100,((ts-from)/span)*100));
+  });
+
+  // ── Methods ──
+  const selectRow=(row)=>{
+    if(!row)return;
+    current.value=row;
+    const cell=cells[activeCell.value];
+    cell.url=String(row.play_url||'');
+    cell.camera=String(row.camera||'');
+    cell.label=String(row.label||'');
+    cell.key=row.key;
+    cell.currentSec=0;
+    cell.durationSec=Math.max(0,Math.floor(Number(row?.duration_sec||0)));
+    cell.playing=false;
+    isPlaying.value=false;
+    currentSec.value=0;
+    durationSec.value=cell.durationSec;
+  };
+  const selectCamera=(key)=>{
+    filter.camera=key===filter.camera?'':key;
+    page.value=1;
+    loadPlayback({silent:true});
+  };
+  const selectPrev=()=>{const i=currentIndex.value;if(i>0)selectRow(rows.value[i-1]);};
+  const selectNext=()=>{const i=currentIndex.value;if(i>=0&&i<rows.value.length-1)selectRow(rows.value[i+1]);};
+
+  const togglePlay=async()=>{
+    const video=cellVideoRefs[activeCell.value];
+    if(!video)return;
+    try{if(video.paused)await video.play();else video.pause();}catch(_){}
+  };
+  const seekBy=(sec)=>{
+    const video=cellVideoRefs[activeCell.value];
+    if(!video||!Number.isFinite(video.currentTime))return;
+    const dur=Number.isFinite(video.duration)?video.duration:durationSec.value;
+    video.currentTime=Math.max(0,Math.min(dur||Infinity,video.currentTime+sec));
+  };
+  const applyRate=()=>{
+    const video=cellVideoRefs[activeCell.value];
+    if(video)video.playbackRate=Math.max(0.25,Math.min(8,playbackRate.value));
+  };
+  const onVideoLoaded=(idx)=>{
+    const video=cellVideoRefs[idx];if(!video)return;
+    const dur=Number.isFinite(video.duration)?Math.floor(video.duration):cells[idx].durationSec;
+    cells[idx].durationSec=dur;
+    if(idx===activeCell.value)durationSec.value=dur;
+    video.playbackRate=playbackRate.value;
+  };
+  const onVideoTimeUpdate=(idx)=>{
+    const video=cellVideoRefs[idx];if(!video)return;
+    if(Number.isFinite(video.currentTime))cells[idx].currentSec=Math.floor(video.currentTime);
+    if(Number.isFinite(video.duration)&&video.duration>0)cells[idx].durationSec=Math.floor(video.duration);
+    if(idx===activeCell.value){
+      currentSec.value=cells[idx].currentSec;
+      durationSec.value=cells[idx].durationSec;
+      isPlaying.value=!video.paused;
+    }
+  };
+  const captureFrame=()=>{
+    const video=cellVideoRefs[activeCell.value];
+    if(!video||!video.videoWidth){ElementPlus.ElMessage.warning('無可擷取畫面');return;}
+    const canvas=document.createElement('canvas');
+    canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+    canvas.getContext('2d').drawImage(video,0,0);
+    const a=document.createElement('a');
+    a.href=canvas.toDataURL('image/png');
+    a.download=`nvr-capture-${Date.now()}.png`;
+    a.click();
+    ElementPlus.ElMessage.success('已擷取畫面');
+  };
+  const seekTimeline=(evt)=>{
+    if(!rows.value.length)return;
+    const {from,span}=timelineRange.value;
+    const rect=evt.currentTarget.getBoundingClientRect();
+    if(!rect||rect.width<=0)return;
+    const ratio=Math.max(0,Math.min(1,(evt.clientX-rect.left)/rect.width));
+    const targetTs=Math.floor(from+ratio*span);
+    let best=rows.value[0], gap=Math.abs(Number(best?.start_time||0)-targetTs);
+    rows.value.forEach(r=>{const g=Math.abs(Number(r?.start_time||0)-targetTs);if(g<gap){best=r;gap=g;}});
+    selectRow(best);
+  };
+
+  // Drag & Drop
+  const onDragStartDevice=(evt,device)=>{evt.dataTransfer.setData('text/plain',device.key);};
+  const onDropCell=(evt,idx)=>{
+    dropTarget.value=-1;
+    const key=evt.dataTransfer.getData('text/plain');
+    if(!key)return;
+    activeCell.value=idx;
+    filter.camera=key;
+    loadPlayback({silent:true});
+  };
+  const clearCell=(idx)=>{
+    cells[idx].url='';cells[idx].camera='';cells[idx].label='';cells[idx].key='';
+    cells[idx].currentSec=0;cells[idx].durationSec=0;
+  };
+
+  // Bookmarks
+  const addBookmark=()=>{
+    const cell=cells[activeCell.value];
+    if(!cell.url){ElementPlus.ElMessage.warning('無播放中片段');return;}
+    const name=`書籤 ${bookmarks.length+1}`;
+    bookmarks.push({name,camera:cell.camera,time:current.value?.start_time||0,url:cell.url});
+    ElementPlus.ElMessage.success(`已新增${name}`);
+  };
+  const jumpToBookmark=(bm)=>{
+    const cell=cells[activeCell.value];
+    cell.url=bm.url;cell.camera=bm.camera;
+  };
+
+  // Quick range
+  const quickRanges=[{key:'today',label:'今天'},{key:'1h',label:'1h'},{key:'6h',label:'6h'},{key:'24h',label:'24h'},{key:'7d',label:'7d'}];
+  const setQuickRange=(mode)=>{
+    const now=new Date();
+    let from;
+    if(mode==='today'){from=new Date(now);from.setHours(0,0,0,0);}
+    else if(mode==='1h')from=new Date(now.getTime()-3600*1000);
+    else if(mode==='6h')from=new Date(now.getTime()-6*3600*1000);
+    else if(mode==='7d')from=new Date(now.getTime()-7*86400*1000);
+    else from=new Date(now.getTime()-86400*1000);
+    quickRange.value=mode;
+    filter.timeFrom=toLocalInput(from);
+    filter.timeTo=toLocalInput(now);
+    loadPlayback();
+  };
+
+  // ── API ──
+  const loadPlayback=async({silent=false}={})=>{
+    if(loading.value)return;
+    try{
+      loading.value=true;
+      const src=filter.source, cam=String(filter.camera||'').trim();
+      const from=filter.timeFrom, to=filter.timeTo;
+      const limit=Math.max(20,Math.min(500,Number(filter.limit||200)));
+      const result=[];
+
+      if(src!=='motion'){
+        const p=new URLSearchParams({limit:String(limit)});
+        if(cam)p.set('camera',cam);if(from)p.set('start_time',from);if(to)p.set('end_time',to);
+        const r=await fetch(`/api/frigate/recordings?${p}`);
+        const d=await r.json().catch(()=>({}));
+        if(r.ok&&!d?.error){
+          (Array.isArray(d?.items)?d.items:[]).forEach((rec,i)=>{
+            const ts=parseTs(rec?.start_time), endTs=parseTs(rec?.end_time);
+            const dur=Number(rec?.duration||0);
+            result.push({key:`rec-${rec?.id||i}`,source:'recording',camera:String(rec?.camera||cam||''),
+              start_time:ts,end_time:endTs,duration_sec:(dur>0?Math.floor(dur):Math.max(0,endTs-ts)),
+              label:'全時錄影',play_url:String(rec?.play_url||''),raw:rec});
+          });
+        }
+      }
+      if(src!=='recording'){
+        const p=new URLSearchParams({all_pages:'1',limit:String(Math.min(1000,limit*3)),batch_size:'500'});
+        if(cam)p.set('camera',cam);if(from)p.set('start_time',from);if(to)p.set('end_time',to);
+        const r=await fetch(`/api/frigate/events?${p}`);
+        const d=await r.json().catch(()=>({}));
+        if(r.ok&&!d?.error){
+          (Array.isArray(d?.events)?d.events:[]).forEach((e,i)=>{
+            const ts=parseTs(e?.start_time), endTs=parseTs(e?.end_time);
+            const rangeClip=`/api/frigate/recordings/play?src=${encodeURIComponent(`/api/${encodeURIComponent(String(e?.camera||''))}/start/${Math.max(0,Math.floor(Number(e?.start_time||0))-8)}/end/${Math.max(Math.floor(Number(e?.start_time||0))+20,Math.floor(Number(e?.end_time||0))+8)}/clip.mp4`)}`;
+            result.push({key:`evt-${e?.id||i}`,source:'motion',camera:String(e?.camera||cam||''),
+              start_time:ts,end_time:endTs,duration_sec:Math.max(1,endTs>ts?(endTs-ts):15),
+              label:String(e?.label||'motion'),
+              play_url:String(e?.camera||'').trim()&&Number(e?.start_time||0)>0?rangeClip:(e?.has_clip===false?'':`/api/frigate/events/${encodeURIComponent(e?.id||'')}/clip.mp4`),
+              raw:e});
+          });
+        }
+      }
+      result.sort((a,b)=>(Number(b.start_time)||0)-(Number(a.start_time)||0));
+      rows.value=result;
+      page.value=1;
+      if(result.length)selectRow(result[0]);
+      else{current.value=null;cells[activeCell.value].url='';}
+      if(!silent)ElementPlus.ElMessage.success(`查詢完成，共 ${result.length} 筆`);
+    }catch(e){
+      if(!silent)ElementPlus.ElMessage.error(`查詢失敗: ${e?.message||e}`);
+    }finally{loading.value=false;}
+  };
+
+  const loadStatus=async()=>{
+    try{
+      const r=await fetch('/api/frigate/status');
+      const d=await r.json();
+      if(r.ok&&d){
+        frigateStatus.status=d.status||'offline';
+        frigateStatus.version=d.version||'';
+        frigateStatus.cameras=d.cameras||[];
+        nvrOnline.value=d.status==='online';
+        frigateCameras.value=d.cameras||[];
+      }
+    }catch(_){nvrOnline.value=false;}
+  };
+  const loadCameras=async()=>{
+    try{
+      const r=await fetch('/api/cameras');
+      const d=await r.json();
+      if(Array.isArray(d))cameras.value=d;
+      else if(Array.isArray(d?.data))cameras.value=d.data;
+    }catch(_){}
+  };
+
+  // ── Keyboard shortcuts ──
+  const onKeydown=(e)=>{
+    if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA')return;
+    if(e.key==='b'||e.key==='B'){addBookmark();e.preventDefault();}
+    if(e.key===' '){togglePlay();e.preventDefault();}
+    if(e.key==='ArrowLeft'){seekBy(-5);e.preventDefault();}
+    if(e.key==='ArrowRight'){seekBy(5);e.preventDefault();}
+  };
+
+  // ── Lifecycle ──
+  let clockTimer;
+  onMounted(async()=>{
+    // Clock
+    const updateClock=()=>{const d=new Date();clock.value=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;};
+    updateClock();
+    clockTimer=setInterval(updateClock,1000);
+
+    document.addEventListener('keydown',onKeydown);
+
+    // Load data
+    await Promise.all([loadStatus(),loadCameras()]);
+    setQuickRange('24h');
+  });
+  onUnmounted(()=>{
+    clearInterval(clockTimer);
+    document.removeEventListener('keydown',onKeydown);
+  });
+
+  return {
+    clock,nvrOnline,showLeft,showRight,rightTab,deviceSearch,loading,
+    rows,current,page,pageSize,totalPages,pagedRows,
+    playbackRate,currentSec,durationSec,isPlaying,
+    quickRange,quickRanges,bookmarks,filter,
+    gridModes,gridMode,gridStyle,activeCell,dropTarget,
+    visibleCells:visibleCells,activeCellCamera,cellVideoRefs,
+    cells,deviceTree,summary,notifications,thumbRows,
+    timelineBars,timelineMarkers,timelineTicks,playheadLeft,
+    formatClock,formatDuration,formatTime,
+    setGridMode,selectRow,selectCamera,selectPrev,selectNext,
+    togglePlay,seekBy,applyRate,captureFrame,seekTimeline,
+    onVideoLoaded,onVideoTimeUpdate,
+    onDragStartDevice,onDropCell,clearCell,
+    addBookmark,jumpToBookmark,
+    setQuickRange,loadPlayback,
+  };
+}
+});
+app.use(ElementPlus);
+for(const [key,component] of Object.entries(ElementPlusIconsVue)){app.component(key,component);}
+app.mount('#app');
+</script>
+</body>
+</html>
