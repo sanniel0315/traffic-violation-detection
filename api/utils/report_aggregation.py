@@ -131,10 +131,18 @@ def normalize_direction(value: str | None) -> str:
 
 def classify_vehicle_group(label: str | None) -> str:
     text = str(label or "").lower()
-    if any(token in text for token in ("trailer", "tractor", "聯結", "truck", "bus", "大車")):
+    if any(token in text for token in (
+        "heavy_truck", "trailer", "tractor", "聯結", "bus", "大車", "大貨車", "大客車",
+    )):
         return "large"
-    if any(token in text for token in ("car", "motorcycle", "bicycle", "小車")):
+    if any(token in text for token in (
+        "light_truck", "小貨車",
+        "car", "motorcycle", "bicycle", "小車",
+    )):
         return "small"
+    # 未細分的 truck 仍歸 large
+    if "truck" in text:
+        return "large"
     return "other"
 
 

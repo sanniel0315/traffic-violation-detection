@@ -11,7 +11,7 @@ def _resolve_path(value: str, model_dir: str) -> str:
 
 
 def get_model_dir() -> str:
-    return os.getenv("MODEL_DIR", "/workspace/models")
+    return os.getenv("MODEL_DIR", "/home/ubuntu/traffic-violation-detection/models")
 
 
 def get_lpr_model_dir() -> str:
@@ -39,4 +39,10 @@ def get_plate_model_engine() -> str:
 def get_plate_model_pt() -> str:
     model_dir = get_lpr_model_dir()
     value = os.getenv("LPR_PLATE_MODEL_PT", "plate_yolov8n.pt")
+    return _resolve_path(value, model_dir)
+
+
+def get_truck_cls_model_pt() -> str:
+    model_dir = get_model_dir()
+    value = os.getenv("TRUCK_CLS_MODEL", "truck_cls_yolo26s.pt")
     return _resolve_path(value, model_dir)
