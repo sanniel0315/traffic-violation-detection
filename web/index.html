@@ -2220,166 +2220,60 @@
                 </div>
                 <!-- NVR 設定 -->
                 <div v-if="page==='frigate'">
-                    <div class="card">
-                        <div class="card-header">
-                            <span>🎬 NVR 設定</span>
-                            <div style="display:flex;gap:8px;align-items:center">
-                                <el-button type="warning" size="small" @click="window.open('/web/nvr_playback.html','_blank')">⏯️ 開啟 NVR 回放</el-button>
-                                <span>連線狀態</span>
-                                <el-tag :type="frigateStatus.status==='online'?'success':'primary'" size="small">
+                    <!-- 快捷操作列 -->
+                    <div class="card" style="margin-bottom:12px">
+                        <div class="card-body" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                            <div style="display:flex;align-items:center;gap:12px">
+                                <span style="font-weight:700;font-size:16px">🎬 NVR 管理</span>
+                                <el-tag :type="frigateStatus.status==='online'?'success':'danger'" size="small" effect="dark">
                                     {{ frigateStatus.status==='online'?'已連線':'離線' }}
                                 </el-tag>
+                                <span v-if="frigateStatus.status==='online'" style="font-size:12px;color:#64748b">
+                                    v{{ frigateStatus.version }} · {{ frigateStatus.cameras?.length || 0 }} 台攝影機
+                                </span>
                             </div>
-                        </div>
-                        <div class="card-body">
-                            <!-- 連線資訊 -->
-                            <div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap">
-                                <div style="flex:1;min-width:200px">
-                                    <div style="font-weight:bold;margin-bottom:8px">🌐 連線設定</div>
-                                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-                                        <span style="width:80px">主機:</span>
-                                        <el-input v-model="frigateConfig.host" placeholder="nvr" style="width:150px" size="small"/>
-                                    </div>
-                                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-                                        <span style="width:80px">端口:</span>
-                                        <el-input-number v-model="frigateConfig.port" :min="1" :max="65535" size="small"/>
-                                    </div>
-                                    <el-button type="primary" size="small" @click="testNVRConnection">測試連線</el-button>
-                                </div>
-                                <div style="flex:1;min-width:200px" v-if="frigateStatus.status==='online'">
-                                    <div style="font-weight:bold;margin-bottom:8px">📊 系統資訊</div>
-                                    <p style="font-size:13px;color:#666">版本: {{ frigateStatus.version }}</p>
-                                    <p style="font-size:13px;color:#666">攝影機: {{ frigateStatus.cameras?.length || 0 }} 台</p>
-                                    <p style="font-size:13px;color:#666">偵測器: TensorRT</p>
-                                </div>
-                            </div>
-
-                            <!-- 錄影設定 -->
-                            <div style="border-top:1px solid #eee;padding-top:16px;margin-bottom:20px">
-                                <div style="font-weight:bold;margin-bottom:12px">🎥 錄影設定</div>
-                                <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
-                                    <div style="display:flex;gap:8px;align-items:center">
-                                        <span>錄影模式:</span>
-                                        <el-radio-group v-model="frigateConfig.record_mode" size="small">
-                                            <el-radio-button label="motion">動態錄影</el-radio-button>
-                                            <el-radio-button label="all">全時錄影</el-radio-button>
-                                        </el-radio-group>
-                                    </div>
-                                    <div v-if="frigateConfig.record_mode==='motion'" style="display:flex;gap:8px;align-items:center">
-                                        <span>錄影週期:</span>
-                                        <el-select v-model="motionRetainSelections" multiple collapse-tags collapse-tags-tooltip size="small" style="width:260px" placeholder="可複選">
-                                            <el-option v-for="d in retainDayOptions" :key="'m-retain-'+d" :value="d" :label="d+' 天'"/>
-                                        </el-select>
-                                    </div>
-                                    <div v-else style="display:flex;gap:8px;align-items:center">
-                                        <span>錄影週期:</span>
-                                        <el-select v-model="frigateConfig.retain_days" size="small" style="width:130px">
-                                            <el-option v-for="d in retainDayOptions" :key="'retain-'+d" :value="d" :label="d+' 天'"/>
-                                        </el-select>
-                                    </div>
-                                    <div style="display:flex;gap:8px;align-items:center">
-                                        <span>事件保留:</span>
-                                        <el-input-number v-model="frigateConfig.event_retain_days" :min="1" :max="120" size="small"/>
-                                    </div>
-                                    <el-button type="success" size="small" @click="saveNVRSettings">儲存錄影設定</el-button>
-                                </div>
-                                <div v-if="frigateConfig.record_mode==='all'" style="margin-top:12px">
-                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                                        <span style="font-size:12px;color:#64748b">全時錄影週期（可拖拉 24hr）</span>
-                                        <div style="display:flex;gap:8px">
-                                            <el-button size="small" @click="setRecordScheduleAll">全開</el-button>
-                                            <el-button size="small" @click="setRecordScheduleWeekdays">平日</el-button>
-                                            <el-button size="small" @click="setRecordScheduleWeekend">假日</el-button>
-                                            <el-button size="small" @click="setRecordScheduleClear">全關</el-button>
-                                        </div>
-                                    </div>
-                                    <div class="schedule-grid-wrap" @mouseup="stopRecordScheduleDrag" @mouseleave="stopRecordScheduleDrag">
-                                        <table class="schedule-grid">
-                                            <thead>
-                                                <tr>
-                                                    <th class="schedule-day">星期/時</th>
-                                                    <th v-for="h in 24" :key="'h-'+h">{{ h-1 }}</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <tr v-for="(dayLabel,dayIdx) in recordScheduleDayLabels" :key="'d-'+dayIdx">
-                                                    <td class="schedule-day">{{ dayLabel }}</td>
-                                                    <td v-for="hourIdx in 24"
-                                                        :key="'c-'+dayIdx+'-'+hourIdx"
-                                                        class="schedule-cell"
-                                                        :class="{active:frigateConfig.record_schedule?.[dayIdx]?.[hourIdx-1]}"
-                                                        @mousedown.prevent="startRecordScheduleDrag(dayIdx,hourIdx-1)"
-                                                        @mouseenter="paintRecordSchedule(dayIdx,hourIdx-1)">
-                                                    </td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Motion / 偵測設定 -->
-                            <div style="border-top:1px solid #eee;padding-top:16px;margin-bottom:20px">
-                                <div style="font-weight:bold;margin-bottom:12px">🏃 Motion / 偵測設定</div>
-                                <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
-                                    <div style="display:flex;gap:8px;align-items:center">
-                                        <span>Threshold:</span>
-                                        <el-input-number v-model="frigateConfig.motion_threshold" :min="1" :max="255" size="small"/>
-                                    </div>
-                                    <div style="display:flex;gap:8px;align-items:center">
-                                        <span>Contour:</span>
-                                        <el-input-number v-model="frigateConfig.motion_contour_area" :min="1" :max="500" size="small"/>
-                                    </div>
-                                    <div style="display:flex;gap:8px;align-items:center">
-                                        <span>Detect FPS:</span>
-                                        <el-input-number v-model="frigateConfig.detect_fps" :min="1" :max="30" size="small"/>
-                                    </div>
-                                    <div style="display:flex;gap:8px;align-items:center">
-                                        <span>解析度:</span>
-                                        <el-select v-model="frigateConfig.detect_resolution" size="small" style="width:130px">
-                                            <el-option label="640x360" value="640x360"/>
-                                            <el-option label="1280x720" value="1280x720"/>
-                                            <el-option label="1920x1080" value="1920x1080"/>
-                                        </el-select>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- MQTT 設定 -->
-                            <div style="border-top:1px solid #eee;padding-top:16px;margin-bottom:20px">
-                                <div style="font-weight:bold;margin-bottom:12px">
-                                    📡 MQTT 設定 (Home Assistant 整合)
-                                    <el-switch v-model="frigateConfig.mqtt_enabled" style="margin-left:12px"/>
-                                </div>
-                                <div v-if="frigateConfig.mqtt_enabled" style="display:flex;gap:16px;flex-wrap:wrap">
-                                    <div style="display:flex;gap:8px;align-items:center">
-                                        <span>主機:</span>
-                                        <el-input v-model="frigateConfig.mqtt_host" placeholder="192.168.0.1" style="width:150px" size="small"/>
-                                    </div>
-                                    <div style="display:flex;gap:8px;align-items:center">
-                                        <span>端口:</span>
-                                        <el-input-number v-model="frigateConfig.mqtt_port" :min="1" :max="65535" size="small"/>
-                                    </div>
-                                    <div style="display:flex;gap:8px;align-items:center">
-                                        <span>帳號:</span>
-                                        <el-input v-model="frigateConfig.mqtt_user" placeholder="mqtt_user" style="width:120px" size="small"/>
-                                    </div>
-                                    <div style="display:flex;gap:8px;align-items:center">
-                                        <span>密碼:</span>
-                                        <el-input v-model="frigateConfig.mqtt_password" type="password" placeholder="******" style="width:120px" size="small"/>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- 操作按鈕 -->
                             <div style="display:flex;gap:8px">
-                                <el-button type="success" :disabled="nvrRestarting" @click="saveNVRSettings">儲存設定</el-button>
-                                <el-button type="primary" :disabled="nvrRestarting" @click="syncCamerasToNVR">同步攝影機</el-button>
-                                <el-button type="warning" :loading="nvrRestarting" @click="restartNVR">重啟 NVR</el-button>
+                                <el-button type="warning" @click="window.open('/web/nvr_playback.html','_blank')">⏯️ NVR 回放</el-button>
+                                <el-button type="primary" :disabled="nvrRestarting" @click="syncCamerasToNVR">🔄 同步攝影機</el-button>
+                                <el-button :loading="nvrRestarting" @click="restartNVR">⟳ 重啟</el-button>
                             </div>
                         </div>
                     </div>
-                    
+
+                    <!-- 連線 + 系統資訊 -->
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+                        <div class="card">
+                            <div class="card-header"><span>🌐 連線設定</span></div>
+                            <div class="card-body">
+                                <div class="config-item"><span>主機</span><el-input v-model="frigateConfig.host" placeholder="localhost" style="width:160px" size="small"/></div>
+                                <div class="config-item"><span>端口</span><el-input-number v-model="frigateConfig.port" :min="1" :max="65535" size="small"/></div>
+                                <el-button type="primary" size="small" style="width:100%;margin-top:8px" @click="testNVRConnection">測試連線</el-button>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header"><span>🎥 錄影保留</span></div>
+                            <div class="card-body">
+                                <div class="config-item"><span>全時錄影</span><el-select v-model="frigateConfig.retain_days" size="small" style="width:120px"><el-option v-for="d in retainDayOptions" :key="'retain-'+d" :value="d" :label="d+' 天'"/></el-select></div>
+                                <div class="config-item"><span>Motion 錄影</span><el-select v-model="motionRetainSelections" multiple collapse-tags size="small" style="width:180px" placeholder="天數"><el-option v-for="d in retainDayOptions" :key="'m-retain-'+d" :value="d" :label="d+' 天'"/></el-select></div>
+                                <div class="config-item"><span>事件保留</span><el-input-number v-model="frigateConfig.event_retain_days" :min="1" :max="120" size="small"/> 天</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Motion 參數 -->
+                    <div class="card" style="margin-bottom:12px">
+                        <div class="card-header">
+                            <span>🏃 Motion 偵測參數</span>
+                            <el-button type="success" size="small" :disabled="nvrRestarting" @click="saveNVRSettings">儲存所有設定</el-button>
+                        </div>
+                        <div class="card-body" style="display:flex;gap:24px;flex-wrap:wrap;align-items:center">
+                            <div class="config-item" style="margin:0"><span>Threshold</span><el-input-number v-model="frigateConfig.motion_threshold" :min="1" :max="255" size="small"/></div>
+                            <div class="config-item" style="margin:0"><span>Contour</span><el-input-number v-model="frigateConfig.motion_contour_area" :min="1" :max="500" size="small"/></div>
+                            <div class="config-item" style="margin:0"><span>Detect FPS</span><el-input-number v-model="frigateConfig.detect_fps" :min="1" :max="30" size="small"/></div>
+                            <div class="config-item" style="margin:0"><span>解析度</span><el-select v-model="frigateConfig.detect_resolution" size="small" style="width:130px"><el-option label="640x360" value="640x360"/><el-option label="1280x720" value="1280x720"/><el-option label="1920x1080" value="1920x1080"/></el-select></div>
+                        </div>
+                    </div>
+
                     <!-- NVR 攝影機列表 -->
                     <div class="card">
                         <div class="card-header">
