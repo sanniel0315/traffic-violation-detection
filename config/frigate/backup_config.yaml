@@ -1,83 +1,160 @@
-# Frigate NVR 配置 - Jetson Xavier NX
-mqtt:
-  enabled: false  # 先關閉，之後可整合 Home Assistant
-
-# 使用 TensorRT 偵測器 (Jetson 優化)
-detectors:
-  tensorrt:
-    type: tensorrt
-    device: 0
-
-# FFmpeg 硬體加速 (Jetson)
-ffmpeg:
-  hwaccel_args: preset-jetson-h264
-  output_args:
-    record: preset-record-generic-audio-copy
-
-# 攝影機設定
 cameras:
-  # 範例攝影機 - 請修改為實際 RTSP URL
-  cam_01:
-    enabled: true
+  cam_1:
+    detect:
+      enabled: false
+      fps: 10
+      height: 1080
+      width: 1920
+    enabled: false
     ffmpeg:
       inputs:
-        - path: rtsp://admin:admin@192.168.0.100:554/stream1
-          roles:
-            - detect
-            - record
-    detect:
-      width: 1920
-      height: 1080
-      fps: 10
+      - path: rtsp://root:root@111.70.33.189:554/axis-media/media.amp
+        roles:
+        - detect
+    motion:
+      contour_area: 20
+      enabled: false
+      mask: 0.008333,0.009259,0.339583,0.032407,0.776042,0.952778,0.015625,0.988889
+      threshold: 25
     objects:
-      track:
-        - car
-        - motorcycle
-        - bicycle
-        - person
       filters:
         car:
           min_area: 5000
-          max_area: 500000
           min_score: 0.5
         motorcycle:
           min_area: 1000
-          max_area: 100000
           min_score: 0.5
-    # 違規偵測區域
+      track:
+      - car
+      - motorcycle
+      - bicycle
+      - person
+    record:
+      enabled: false
+      retain:
+        days: 3
+        mode: all
+    snapshots:
+      bounding_box: true
+      enabled: false
+      retain:
+        default: 14
+      timestamp: true
     zones:
-      sidewalk_zone:
-        coordinates: 100,500,800,500,800,900,100,900
+      偵測區 1:
+        coordinates: 871,53,1303,219,1166,327,807,71
         objects:
-          - car
-          - motorcycle
+        - car
+        - motorcycle
+      偵測區 2:
+        coordinates: 766,75,1125,315,965,381,699,121
+        objects:
+        - car
+        - motorcycle
+  cam_2:
+    detect:
+      enabled: true
+      fps: 10
+      height: 1080
+      width: 1920
+    enabled: true
+    ffmpeg:
+      inputs:
+      - path: rtsp://admin:1qaz@WSX@111.70.34.183:6554/profile2/media.smp
+        roles:
+        - detect
+        - record
+    motion:
+      contour_area: 20
+      enabled: true
+      mask: 0.008333,0.007407,0.309896,0.005556,0.305729,0.430556,0.000000,0.405556
+      threshold: 25
+    objects:
+      filters:
+        car:
+          min_area: 5000
+          min_score: 0.5
+        motorcycle:
+          min_area: 1000
+          min_score: 0.5
+      track:
+      - car
+      - motorcycle
+      - bicycle
+      - person
     record:
       enabled: true
       retain:
-        days: 7
-        mode: motion
-      events:
-        retain:
-          default: 14
-          mode: active_objects
+        days: 3
+        mode: all
     snapshots:
-      enabled: true
-      timestamp: true
       bounding_box: true
+      enabled: true
       retain:
         default: 14
-
-# 錄影設定
+      timestamp: true
+    zones: {}
+  cam_3:
+    detect:
+      enabled: false
+      fps: 10
+      height: 1080
+      width: 1920
+    enabled: false
+    ffmpeg:
+      inputs:
+      - path: rtsp://admin:1qaz%40WSX@111.70.34.184:6554/profile2/media.smp
+        roles:
+        - detect
+    motion:
+      contour_area: 20
+      enabled: false
+      threshold: 25
+    objects:
+      filters:
+        car:
+          min_area: 5000
+          min_score: 0.5
+        motorcycle:
+          min_area: 1000
+          min_score: 0.5
+      track:
+      - car
+      - motorcycle
+      - bicycle
+      - person
+    record:
+      enabled: false
+      retain:
+        days: 3
+        mode: all
+    snapshots:
+      bounding_box: true
+      enabled: false
+      retain:
+        default: 14
+      timestamp: true
+    zones: {}
+detect:
+  enabled: false
+detectors:
+  cpu1:
+    type: cpu
+ffmpeg:
+  hwaccel_args: []
+  output_args:
+    record: preset-record-generic-audio-copy
+mqtt:
+  enabled: false
 record:
   enabled: true
   retain:
     days: 7
     mode: motion
-
-# 快照設定
 snapshots:
-  enabled: true
-  timestamp: true
   bounding_box: true
+  enabled: true
   retain:
     default: 14
+  timestamp: true
+version: 0.16-0
