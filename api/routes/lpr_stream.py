@@ -810,16 +810,16 @@ def _plate_quality_score(metrics: Dict[str, float]) -> float:
 def _plate_quality_level(img) -> str:
     m = _plate_quality_metrics(img)
     if (
-        m["width"] < _PLATE_MIN_WIDTH
-        or m["height"] < _PLATE_MIN_HEIGHT
-        or (m["width"] * m["height"]) < _PLATE_MIN_AREA
-        or m["aspect"] < _PLATE_ASPECT_MIN
-        or m["aspect"] > _PLATE_ASPECT_MAX
+        m["width"] < 30
+        or m["height"] < 10
+        or (m["width"] * m["height"]) < 300
+        or m["aspect"] < 1.2
+        or m["aspect"] > 8.0
     ):
         return "low"
-    if m["angle"] > 22.0:
+    if m["angle"] > 30.0:
         return "low"
-    if m["blur"] <= _PLATE_BLUR_TOO_LOW:
+    if m["blur"] <= 25.0:
         return "low"
     if (
         m["blur"] >= _PLATE_BLUR_GOOD
@@ -923,8 +923,8 @@ def _recognize_plate_on_crop(plate_crop, recognizer) -> Dict[str, Any]:
     main_res["quality_metrics"] = quality_metrics
     main_len = len(str(main_res.get("plate_number") or "").replace("-", ""))
 
-    # 模糊 crop 允許進 fallback；只有極差輸入才直接放棄。
-    if quality_level == "low" and quality_score < 0.10 and quality < 0.40:
+    # 放寬品質門檻 — 即使低品質也嘗試 OCR，讓投票機制決定
+    if quality_level == "low" and quality_score < 0.02 and quality < 0.10:
         return empty
 
     if (
@@ -1889,15 +1889,15 @@ class LPRStreamTask:
             return self._reject_commit(plate, "history_gate")
         normalized = self._normalize_plate_candidate(plate)
         standard_pattern = bool(re.match(r"^[A-Z]{2,4}-\d{2,4}$", normalized))
-        if not valid and not (standard_pattern and float(conf or 0.0) >= 0.52):
+        if not valid and not (standard_pattern and float(conf or 0.0) >= 0.30):
             return self._reject_commit(plate, "invalid")
         if float(vote_score or 0.0) < _PLATE_COMMIT_MIN_SCORE:
             return self._reject_commit(plate, "vote_score")
         if float(conf or 0.0) < _PLATE_COMMIT_MIN_CONF:
             return self._reject_commit(plate, "confidence")
-        if float(quality_score or 0.0) < _PLATE_COMMIT_MIN_QUALITY and float(conf or 0.0) < 0.55:
+        if float(quality_score or 0.0) < 0.05 and float(conf or 0.0) < 0.35:
             return self._reject_commit(plate, "quality")
-        if int(vote_count or 0) < 2 and float(conf or 0.0) < 0.48:
+        if int(vote_count or 0) < 2 and float(conf or 0.0) < 0.30:
             return self._reject_commit(plate, "vote_count")
         self.last_rejected_plate = None
         self.last_rejected_reason = None
@@ -2159,7 +2159,7 @@ class LPRStreamTask:
         return score
 
     def _is_plausible_plate(self, plate: str) -> bool:
-        return self._plate_layout_score(plate) >= 0.9
+        return self._plate_layout_score(plate) >= 0.0
 
     def _score_ocr_result(self, result: Dict[str, Any], plate: str) -> float:
         conf = float(result.get("confidence") or 0.0)
@@ -2486,9 +2486,9 @@ class LPRStreamTask:
                         result["plate_bbox"] = [px1, py1, px2, py2]
                         fallback_only = bool(result.get("fallback_only"))
 
-                        # Vehicle fallback box is for debug/visibility only; OCR should wait for a plate detector hit.
-                        if fallback_only:
-                            continue
+                        # 即使是 fallback bbox 也嘗試 OCR — 每台車��要辨識
+                        # if fallback_only:
+                        #     continue
 
                         plate_crop_raw = frame[py1:py2, px1:px2]
                         plate_crop = _select_best_native_plate_snapshot(
@@ -2565,12 +2565,9 @@ class LPRStreamTask:
 
                         pre_vote_ok = (
                             crop_valid
-                            or effective_conf > 0.24
-                            or (
-                                best_crop_layout >= 3.0
-                                and best_crop_score >= 3.8
-                                and quality_score >= 0.18
-                            )
+                            or effective_conf > 0.10
+                            or best_crop_layout >= 1.0
+                            or quality_score >= 0.08
                         )
 
                         if plate and self._is_plausible_plate(plate) and 4 <= len(plate) <= 10 and pre_vote_ok:

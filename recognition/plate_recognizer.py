@@ -337,9 +337,9 @@ class PlateRecognizer:
         best.pop("_score", None)
         if not best.get("plate_number"):
             return best
-        if not best.get("valid") and final_score < 2.6:
+        if not best.get("valid") and final_score < 1.2:
             return {"plate_number": None, "confidence": 0, "valid": False, "type": None, "raw": ""}
-        if float(best.get("confidence") or 0.0) < 0.22 and final_score < 3.2:
+        if float(best.get("confidence") or 0.0) < 0.10 and final_score < 1.8:
             return {"plate_number": None, "confidence": 0, "valid": False, "type": None, "raw": ""}
         return best
 
