@@ -3,14 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>AI交通影像分析</title>
     <link rel="icon" href="/favicon.ico">
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://unpkg.com/element-plus"></script>
-    <script src="https://unpkg.com/@element-plus/icons-vue"></script>
-    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/web/lib/vue.global.prod.js?v=20260407"></script>
+    <script src="/web/lib/element-plus.min.js?v=20260407"></script>
+    <script src="/web/lib/element-plus-icons.min.js?v=20260407"></script>
+    <link rel="stylesheet" href="/web/lib/element-plus.css?v=20260407">
+    <link rel="stylesheet" href="/web/lib/leaflet.css?v=20260407"/>
+    <script src="/web/lib/leaflet.js?v=20260407"></script>
     <style>
         :root{
             --gov-bg: #eef2f6;
@@ -971,7 +972,7 @@
                                 ></video>
                                 <img v-else-if="c.enabled && c.showStream" :src="getMonitorMediaUrl(c)" @load="handleMonitorStreamLoad(c)" @error="handleMonitorStreamError(c)">
                                 <div v-else style="color:#666" @click.stop="if(c.enabled){c.showStream=true;streamKey=Date.now();}">📹 {{ c.enabled?'無影像，點擊重試':'攝影機已關閉' }}</div>
-                                <svg v-if="monitorZoneOverlayItems(c).length" class="monitor-roi-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                                <svg v-if="resolveCameraStreamMode(c)==='overlay' && monitorZoneOverlayItems(c).length" class="monitor-roi-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                                     <g v-for="item in monitorZoneOverlayItems(c)" :key="`mroi-${c.id}-${item.key}`">
                                         <polygon :points="item.points" :fill="item.fill" :stroke="item.stroke" stroke-width="0.35"></polygon>
                                         <text v-if="item.label" class="monitor-roi-label" :x="item.labelX" :y="item.labelY" :fill="item.stroke">{{ item.label }}</text>
@@ -1042,7 +1043,7 @@
                                 playsinline
                             ></video>
                             <img v-else-if="monitorZoomCamera" :src="getMonitorMediaUrl(monitorZoomCamera)">
-                            <svg v-if="monitorZoneOverlayItems(monitorZoomCamera).length" class="monitor-roi-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                            <svg v-if="resolveCameraStreamMode(monitorZoomCamera)==='overlay' && monitorZoneOverlayItems(monitorZoomCamera).length" class="monitor-roi-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                                 <g v-for="item in monitorZoneOverlayItems(monitorZoomCamera)" :key="`zroi-${item.key}`">
                                     <polygon :points="item.points" :fill="item.fill" :stroke="item.stroke" stroke-width="0.35"></polygon>
                                     <text v-if="item.label" class="monitor-roi-label" :x="item.labelX" :y="item.labelY" :fill="item.stroke">{{ item.label }}</text>
@@ -2221,8 +2222,9 @@
                 <div v-if="page==='frigate'">
                     <div class="card">
                         <div class="card-header">
-                            <span>🎬 NVR NVR 設定</span>
+                            <span>🎬 NVR 設定</span>
                             <div style="display:flex;gap:8px;align-items:center">
+                                <a href="/web/nvr_playback.html" target="_blank" style="text-decoration:none"><el-button type="warning" size="small">⏯️ NVR 回放</el-button></a>
                                 <span>連線狀態</span>
                                 <el-tag :type="frigateStatus.status==='online'?'success':'primary'" size="small">
                                     {{ frigateStatus.status==='online'?'已連線':'離線' }}
@@ -3458,7 +3460,7 @@
             <div class="modal-content">
                 <div class="modal-video">
                     <video v-if="previewUsesVideo" :src="previewImageUrl" autoplay muted playsinline controls></video>
-                    <img v-else ref="previewImg" :src="previewImageUrl" @load="initRoiCanvas">
+                    <img v-else ref="previewImg" :src="previewImageUrl" @load="initRoiCanvas" @error="onPreviewImgError">
                     <canvas v-if="!previewUsesVideo" ref="roiCanvas"></canvas>
                 </div>
                 <div class="modal-sidebar">
@@ -3503,29 +3505,14 @@
                                             <span class="analysis-zone-name">{{ `#${item.index+1}` }}</span>
                                         </div>
                                         <div class="analysis-zone-meta" style="align-items:center">
-                                            <el-button size="small" plain @click="deleteZone(item.index)">刪除ROI</el-button>
                                             <el-tag size="small" :type="zoneTypeTagType(item.zone.type)">{{ zoneTypeLabel(item.zone.type) }}</el-tag>
                                             <el-tag v-if="zoneLaneNoLabel(item.zone)" size="small" type="info">{{ zoneLaneNoLabel(item.zone) }}</el-tag>
                                             <el-tag v-if="item.zone.direction" size="small" type="success">{{ directionArrowLabel(item.zone.direction) }}</el-tag>
                                             <el-tag size="small" type="warning">目前值 {{ Number(item.zone.speed_limit||60) }} km/h (+{{ Number(item.zone.overspeed_kmh||10) }})</el-tag>
                                             <span style="font-size:12px;color:#64748b">車道編號</span>
-                                            <el-input-number
-                                                v-model="item.zone.lane_no"
-                                                :min="1"
-                                                :step="1"
-                                                size="small"
-                                                style="width:110px"/>
+                                            <el-input-number v-model="item.zone.lane_no" :min="1" :step="1" size="small" style="width:110px"/>
                                             <span style="font-size:12px;color:#64748b">方向(依車流車道)</span>
-                                            <el-tag
-                                                v-if="Number(item.zone.lane_no)>0 && !item.zone.direction"
-                                                size="small"
-                                                type="danger">未綁定車流方向</el-tag>
-                                            <el-button
-                                                size="small"
-                                                type="success"
-                                                plain
-                                                @click="saveZoneBinding(item.index)">儲存設定</el-button>
-                                            <el-button size="small" type="primary" plain @click="openRoiEditor(previewCamera.id)">更新</el-button>
+                                            <el-tag v-if="Number(item.zone.lane_no)>0 && !item.zone.direction" size="small" type="danger">未綁定車流方向</el-tag>
                                         </div>
                                         <div class="analysis-speed-fields">
                                             <span style="font-size:12px;color:#334155;font-weight:600">可編輯</span>
@@ -3546,6 +3533,11 @@
                                                 size="small"
                                                 style="width:120px"/>
                                         </div>
+                                        <div style="display:flex;gap:6px;width:100%;justify-content:flex-end;padding-top:4px">
+                                            <el-button size="small" type="success" plain @click="saveZoneBinding(item.index)">儲存設定</el-button>
+                                            <el-button size="small" type="primary" plain @click="openRoiEditor(previewCamera.id)">更新</el-button>
+                                            <el-button size="small" type="danger" @click="deleteZone(item.index)">刪除</el-button>
+                                        </div>
                                     </div>
                                 </div>
                                 <p v-else style="font-size:12px;color:#999;text-align:center;padding:8px 0;margin:0 0 10px">尚未建立車速 ROI</p>
@@ -3557,28 +3549,18 @@
                                             <span class="analysis-zone-name">{{ `#${item.index+1}` }}</span>
                                         </div>
                                         <div class="analysis-zone-meta" style="align-items:center">
-                                            <el-button size="small" plain @click="deleteZone(item.index)">刪除ROI</el-button>
                                             <el-tag size="small" :type="zoneTypeTagType(item.zone.type)">{{ zoneTypeLabel(item.zone.type) }}</el-tag>
                                             <el-tag v-if="speedLineDirectionLabel(item.zone)" size="small" type="primary">{{ speedLineDirectionLabel(item.zone) }}</el-tag>
                                             <el-tag v-if="zoneLaneNoLabel(item.zone)" size="small" type="info">{{ zoneLaneNoLabel(item.zone) }}</el-tag>
                                             <span style="font-size:12px;color:#64748b">車道編號</span>
-                                            <el-input-number
-                                                v-model="item.zone.lane_no"
-                                                :min="1"
-                                                :step="1"
-                                                size="small"
-                                                style="width:110px"/>
+                                            <el-input-number v-model="item.zone.lane_no" :min="1" :step="1" size="small" style="width:110px"/>
                                             <span style="font-size:12px;color:#64748b">方向(依車流車道)</span>
-                                            <el-tag
-                                                v-if="Number(item.zone.lane_no)>0 && !item.zone.direction"
-                                                size="small"
-                                                type="danger">未綁定車流方向</el-tag>
-                                            <el-button
-                                                size="small"
-                                                type="success"
-                                                plain
-                                                @click="saveZoneBinding(item.index)">儲存設定</el-button>
+                                            <el-tag v-if="Number(item.zone.lane_no)>0 && !item.zone.direction" size="small" type="danger">未綁定車流方向</el-tag>
+                                        </div>
+                                        <div style="display:flex;gap:6px;width:100%;justify-content:flex-end;padding-top:4px">
+                                            <el-button size="small" type="success" plain @click="saveZoneBinding(item.index)">儲存設定</el-button>
                                             <el-button size="small" type="primary" plain @click="openRoiEditor(previewCamera.id)">更新</el-button>
+                                            <el-button size="small" type="danger" @click="deleteZone(item.index)">刪除</el-button>
                                         </div>
                                     </div>
                                 </div>
@@ -3591,7 +3573,6 @@
                                         <span class="analysis-zone-name">{{ `#${item.index+1}` }}</span>
                                     </div>
                                     <div class="analysis-zone-meta" style="align-items:center">
-                                        <el-button size="small" plain @click="deleteZone(item.index)">刪除ROI</el-button>
                                         <el-tag size="small" :type="zoneTypeTagType(item.zone.type)">{{ zoneTypeLabel(item.zone.type) }}</el-tag>
                                         <el-tag
                                             v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection') && Number(item.zone.lane_no)>0"
@@ -3660,6 +3641,8 @@
                                             v-if="page==='speed_detection' && ['speed','speed_roi','speed_line_in','speed_line_out'].includes(String(item.zone.type||'')) && Number(item.zone.lane_no)>0 && !item.zone.direction"
                                             size="small"
                                             type="danger">未綁定車流方向</el-tag>
+                                    </div>
+                                    <div style="display:flex;gap:6px;width:100%;justify-content:flex-end;padding-top:4px">
                                         <el-button
                                             v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')"
                                             size="small"
@@ -3673,6 +3656,7 @@
                                             plain
                                             @click="saveZoneBinding(item.index)">儲存設定</el-button>
                                         <el-button size="small" type="primary" plain @click="openRoiEditor(previewCamera.id)">更新</el-button>
+                                        <el-button size="small" type="danger" @click="deleteZone(item.index)">刪除</el-button>
                                     </div>
                                     <div
                                         v-if="page==='speed_detection' && ['speed','speed_roi'].includes(String(item.zone.type||''))"
@@ -3714,8 +3698,39 @@
                                 </el-tag>
                             </div>
                         </div>
+                        <div class="analysis-setting-group">
+                            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+                                <div class="analysis-setting-head" style="margin-bottom:0">2. ROI 區域列表</div>
+                                <el-button type="primary" plain size="small" @click="openRoiEditor(previewCamera.id)">新增</el-button>
+                            </div>
+                            <div v-if="filteredPreviewZones.length" class="analysis-zone-list">
+                                <div class="analysis-zone-row" v-for="item in filteredPreviewZones" :key="'cong-'+item.index">
+                                    <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1">
+                                        <div class="zone-color" :style="{background:zoneColors[item.zone.type]}"></div>
+                                        <span class="analysis-zone-name">{{ `#${item.index+1}` }}</span>
+                                        <el-tag size="small" :type="zoneTypeTagType(item.zone.type)">{{ zoneTypeLabel(item.zone.type) }}</el-tag>
+                                        <el-tag v-if="zoneLaneNoLabel(item.zone)" size="small" type="info">{{ zoneLaneNoLabel(item.zone) }}</el-tag>
+                                        <el-tag v-if="item.zone.direction" size="small" type="success">{{ directionArrowLabel(item.zone.direction) }}</el-tag>
+                                    </div>
+                                    <div style="display:flex;gap:6px;align-items:center">
+                                        <span style="font-size:12px;color:#64748b">車道編號</span>
+                                        <el-input-number v-model="item.zone.lane_no" :min="1" :step="1" size="small" style="width:110px"/>
+                                        <span style="font-size:12px;color:#64748b">行車方向</span>
+                                        <select v-model="item.zone.direction" class="stats-native-select" style="width:110px">
+                                            <option v-for="opt in directionOptionsForZone(item.zone)" :key="`cong-dir-${item.index}-${opt.value||'none'}`" :value="opt.value">{{ opt.label }}</option>
+                                        </select>
+                                    </div>
+                                    <div style="display:flex;gap:6px;width:100%;justify-content:flex-end;padding-top:4px">
+                                        <el-button size="small" type="success" plain @click="saveZoneBinding(item.index)">儲存</el-button>
+                                        <el-button size="small" type="primary" plain @click="openRoiEditor(previewCamera.id)">更新</el-button>
+                                        <el-button size="small" type="danger" @click="deleteZone(item.index)">刪除</el-button>
+                                    </div>
+                                </div>
+                            </div>
+                            <p v-else style="font-size:12px;color:#999;text-align:center;padding:8px 0">尚未建立車流區，請點擊「新增」開啟 ROI 編輯器</p>
+                        </div>
                         <div class="analysis-setting-group" v-if="congestionStatus[previewCamera?.id]?.result">
-                            <div class="analysis-setting-head">2. 即時壅塞結果</div>
+                            <div class="analysis-setting-head">3. 即時壅塞結果</div>
                             <div style="font-size:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px">
                                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
                                     <el-tag size="small" :type="getCongestionLevelType(congestionStatus[previewCamera?.id]?.result?.level)">
@@ -3745,7 +3760,7 @@
                             </div>
                         </div>
                         <div class="analysis-setting-group">
-                            <div class="analysis-setting-head">3. 壅塞參數</div>
+                            <div class="analysis-setting-head">4. 壅塞參數</div>
                             <div class="config-item"><span>中等門檻</span><el-input-number v-model="congestionParamsForm.medium_threshold" :min="0" :max="1" :step="0.01" :precision="2" size="small" style="width:120px"/></div>
                             <div class="config-item"><span>擁擠門檻</span><el-input-number v-model="congestionParamsForm.high_threshold" :min="0" :max="1" :step="0.01" :precision="2" size="small" style="width:120px"/></div>
                             <div class="config-item"><span>嚴重門檻</span><el-input-number v-model="congestionParamsForm.critical_threshold" :min="0" :max="1" :step="0.01" :precision="2" size="small" style="width:120px"/></div>
@@ -7818,8 +7833,19 @@ const app=createApp({
             if(isMp4Camera(camera)){
                 return `/api/stream/${camera.id}/snapshot?t=${Date.now()}`;
             }
+            const settingsPages=['traffic_flow_settings','speed_detection','congestion_detection'];
+            if(settingsPages.includes(page.value)){
+                return `/api/stream/${camera.id}/snapshot?t=${Date.now()}`;
+            }
             const route=resolveCameraStreamMode(camera)==='overlay'?'live-overlay':'live';
             return `/api/stream/${camera.id}/${route}?t=${Date.now()}`;
+        };
+        const onPreviewImgError=()=>{
+            if(!previewCamera.value?.id)return;
+            const url=previewImageUrl.value||'';
+            if(!url.includes('/snapshot')){
+                previewImageUrl.value=`/api/stream/${previewCamera.value.id}/snapshot?t=${Date.now()}`;
+            }
         };
         const previewUsesVideo=computed(()=>false);
         const isPageVisible=()=>typeof document==='undefined' || document.visibilityState!=='hidden';
@@ -8792,6 +8818,7 @@ const app=createApp({
                 params.set('limit', String(pageSize));
                 params.set('offset', String((pageNo - 1) * pageSize));
                 params.set('min_confidence', String(Math.max(0,Math.min(100,Number(lprHistoryMinConfidence.value||0)))/100));
+                params.set('include_unknown', 'true');
                 const q=String(lprHistoryQuery.value||'').trim();
                 if(q)params.set('q', q);
                 if(lprHistoryCameraFilter.value!=='' && lprHistoryCameraFilter.value!==null && lprHistoryCameraFilter.value!==undefined){
@@ -10392,7 +10419,7 @@ const app=createApp({
         });
         
         return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
-            showPreviewModal,previewCamera,previewImageUrl,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
+            showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,

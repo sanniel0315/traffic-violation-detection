@@ -65,3 +65,4 @@ recordings/
 
 # --- settings backup (track this file) ---
 !config/settings_backup.json
+data/violations.db.bak

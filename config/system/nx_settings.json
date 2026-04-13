@@ -7,5 +7,5 @@
   "media_path_template": "/media/{device_id}.{format}",
   "timeout_sec": 12.0,
   "verify_ssl": false,
-  "updated_at": "2026-03-16T18:55:19.322904+08:00"
+  "updated_at": "2026-04-07T16:47:17.343273+08:00"
 }

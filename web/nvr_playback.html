@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NVR Playback - EZ Pro</title>
 <link rel="icon" href="/favicon.ico">
-<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-<script src="https://unpkg.com/element-plus"></script>
-<script src="https://unpkg.com/@element-plus/icons-vue"></script>
-<link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
-<link rel="stylesheet" href="https://unpkg.com/element-plus/theme-chalk/dark/css-vars.css">
+<script src="/web/lib/vue.global.prod.js"></script>
+<script src="/web/lib/element-plus.min.js"></script>
+<script src="/web/lib/element-plus-icons.min.js"></script>
+<link rel="stylesheet" href="/web/lib/element-plus.css">
+<link rel="stylesheet" href="/web/lib/element-plus-dark.css">
 <style>
 /* ── EZ Pro Dark Theme ── */
 :root {
@@ -183,6 +183,14 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
   pointer-events:all;
 }
 .grid-cell:hover .grid-cell-close { display:flex; }
+.grid-cell-info-overlay {
+  position:absolute; bottom:28px; left:8px; right:8px;
+  display:flex; justify-content:space-between; align-items:center;
+  font-size:12px; color:#fff; text-shadow:0 1px 4px rgba(0,0,0,.9);
+  pointer-events:none; z-index:5;
+}
+.overlay-camera { font-weight:600; }
+.overlay-time { font-variant-numeric:tabular-nums; opacity:.85; }
 .grid-cell-mode-tag {
   position:absolute; bottom:5px; right:5px;
   font-size:9px; padding:2px 6px; border-radius:3px;
@@ -394,6 +402,22 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
   .center-panel { grid-column:1; }
   .bottom-bar { grid-column:1; }
 }
+/* ── Settings Cards ── */
+.settings-card {
+  background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:8px;
+  padding:16px; margin-bottom:12px;
+}
+.settings-card-title { font-weight:700; font-size:14px; color:var(--text-primary); margin-bottom:12px; }
+.nvr-input {
+  background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:5px;
+  color:var(--text-primary); padding:5px 8px; font-size:12px; outline:none;
+}
+.nvr-input:focus { border-color:var(--accent-blue); }
+.nvr-cam-table { width:100%; border-collapse:collapse; font-size:12px; }
+.nvr-cam-table th { text-align:left; padding:8px 6px; color:var(--text-muted); border-bottom:1px solid var(--border-color); font-weight:600; }
+.nvr-cam-table td { padding:8px 6px; border-bottom:1px solid rgba(255,255,255,.05); }
+.nvr-cam-table tr:hover td { background:var(--bg-hover); }
+.nvr-cam-table input[type=checkbox] { accent-color:var(--accent-blue); width:16px; height:16px; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -407,12 +431,17 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
       NVR Playback
     </div>
     <button class="top-btn" :class="{active:showLeft}" @click="showLeft=!showLeft" title="裝置面板">&#9776;</button>
+    <div style="display:flex;gap:2px;margin-left:8px">
+      <button class="top-btn" :class="{active:viewMode==='playback'}" @click="viewMode='playback'">&#9654; 回放</button>
+      <button class="top-btn" :class="{active:viewMode==='settings'}" @click="viewMode='settings';loadNvrSettings()">&#9881; 設定</button>
+    </div>
     <div class="top-spacer"></div>
     <div class="top-status">
       <span class="dot" :class="nvrOnline?'on':'off'"></span>
       <span>{{nvrOnline?'NVR 已連線':'NVR 離線'}}</span>
     </div>
     <div class="top-clock">{{clock}}</div>
+    <button class="top-btn" :class="{active:showOverlay}" @click="showOverlay=!showOverlay" title="顯示/隱藏 OSD 疊加">OSD</button>
     <button class="top-btn" :class="{active:showRight}" @click="showRight=!showRight" title="事件面板">&#9881;</button>
     <a href="/web/index.html" class="top-nav-link">&larr; 返回主頁</a>
   </div>
@@ -451,6 +480,113 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
 
   <!-- ── Center: Viewing Grid ── -->
   <div class="center-panel">
+
+    <!-- Settings Panel -->
+    <div v-if="viewMode==='settings'" style="flex:1;overflow-y:auto;padding:16px;background:var(--bg-primary)">
+      <div style="max-width:900px;margin:0 auto">
+
+        <!-- 連線 & 系統 -->
+        <div class="settings-card">
+          <div class="settings-card-title">🌐 連線設定</div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+            <div style="display:flex;gap:8px;align-items:center">
+              <span style="color:var(--text-muted);width:60px">主機:</span>
+              <input v-model="nvrSettings.host" class="nvr-input" style="width:140px" placeholder="localhost">
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span style="color:var(--text-muted);width:60px">端口:</span>
+              <input v-model.number="nvrSettings.port" class="nvr-input" style="width:80px" type="number">
+            </div>
+            <button class="top-btn" @click="testNvrConn">測試連線</button>
+          </div>
+          <div v-if="nvrOnline" style="margin-top:12px;display:flex;gap:16px;color:var(--text-secondary);font-size:12px">
+            <span>版本: {{nvrVersion}}</span>
+            <span>攝影機: {{nvrCameraCount}} 台</span>
+            <span>偵測器: CPU</span>
+          </div>
+        </div>
+
+        <!-- 錄影設定 -->
+        <div class="settings-card">
+          <div class="settings-card-title">🎥 錄影設定</div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+            <div style="display:flex;gap:8px;align-items:center">
+              <span style="color:var(--text-muted)">全時錄影:</span>
+              <input v-model.number="nvrSettings.continuous_days" class="nvr-input" style="width:60px" type="number" min="0" max="90"> 天
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span style="color:var(--text-muted)">Motion 錄影:</span>
+              <input v-model.number="nvrSettings.motion_days" class="nvr-input" style="width:60px" type="number" min="0" max="90"> 天
+            </div>
+            <button class="top-btn" @click="saveNvrSettings">儲存設定</button>
+          </div>
+        </div>
+
+        <!-- Motion 設定 -->
+        <div class="settings-card">
+          <div class="settings-card-title">🏃 Motion 設定</div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+            <div style="display:flex;gap:8px;align-items:center">
+              <span style="color:var(--text-muted)">Threshold:</span>
+              <input v-model.number="nvrSettings.motion_threshold" class="nvr-input" style="width:60px" type="number" min="1" max="255">
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span style="color:var(--text-muted)">Contour:</span>
+              <input v-model.number="nvrSettings.motion_contour" class="nvr-input" style="width:60px" type="number" min="1" max="500">
+            </div>
+          </div>
+        </div>
+
+        <!-- 攝影機列表 -->
+        <div class="settings-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <div class="settings-card-title" style="margin:0">📹 NVR 攝影機</div>
+            <div style="display:flex;gap:6px">
+              <button class="top-btn" @click="syncNvrCameras">🔄 同步攝影機</button>
+              <button class="top-btn" @click="loadNvrCamList">重新載入</button>
+              <button class="top-btn" style="color:var(--accent-amber)" @click="restartNvr">⟳ 重啟 NVR</button>
+            </div>
+          </div>
+          <table class="nvr-cam-table" v-if="nvrCamList.length">
+            <thead>
+              <tr>
+                <th>名稱</th>
+                <th>狀態</th>
+                <th>FPS</th>
+                <th>錄影</th>
+                <th>Motion</th>
+                <th>Snapshot</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="cam in nvrCamList" :key="cam.name">
+                <td>
+                  <div style="font-weight:600">{{cameraDisplayName(cam.name)||cam.name}}</div>
+                  <div v-if="cameraDisplayName(cam.name)!==cam.name" style="font-size:10px;color:var(--text-muted)">{{cam.name}}</div>
+                </td>
+                <td>
+                  <span :style="{color:cam.fps>0?'var(--accent-green)':cam.enabled!==false?'var(--accent-amber)':'var(--text-muted)'}">
+                    {{cam.fps>0?'串流中':cam.enabled!==false?'等待中':'停用'}}
+                  </span>
+                </td>
+                <td>{{cam.fps||'-'}}</td>
+                <td><input type="checkbox" :checked="cam.record" @change="toggleNvrCamFeature(cam,'record',$event.target.checked)"></td>
+                <td><input type="checkbox" :checked="cam.motion" @change="toggleNvrCamFeature(cam,'motion',$event.target.checked)"></td>
+                <td><input type="checkbox" :checked="cam.snapshot" @change="toggleNvrCamFeature(cam,'snapshot',$event.target.checked)"></td>
+                <td><button class="top-btn" style="color:var(--accent-red)" @click="deleteNvrCam(cam.name)">刪除</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else style="text-align:center;padding:20px;color:var(--text-muted)">
+            {{nvrOnline?'尚無攝影機，請點「同步攝影機」':'請先連線 NVR'}}
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <template v-if="viewMode==='playback'">
     <div class="grid-toolbar">
       <button class="grid-mode-btn" v-for="m in gridModes" :key="m"
               :class="{active:gridMode===m}" @click="setGridMode(m)">{{m}}</button>
@@ -482,6 +618,10 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
             <span class="grid-cell-name">{{cell.camera||''}}</span>
             <span class="grid-cell-time">{{formatClock(cell.currentSec)}} / {{formatClock(cell.durationSec)}}</span>
           </div>
+          <div v-if="showOverlay && cell.camera" class="grid-cell-info-overlay">
+            <span class="overlay-camera">{{cameraDisplayName(cell.camera)}}</span>
+            <span class="overlay-time">{{clock}} | {{cameraDisplayName(cell.camera)}}</span>
+          </div>
           <button class="grid-cell-close" @click.stop="clearCell(idx)">&times;</button>
           <span class="grid-cell-mode-tag" v-if="cell.label">{{cell.label}}</span>
         </template>
@@ -492,6 +632,7 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
         </div>
       </div>
     </div>
+    </template>
   </div>
 
   <!-- ── Right Panel ── -->
@@ -657,6 +798,106 @@ setup(){
   const nvrOnline=ref(false);
   const showLeft=ref(true);
   const showRight=ref(true);
+  const showOverlay=ref(true);
+  const viewMode=ref('playback');
+  const nvrVersion=ref('');
+  const nvrCameraCount=ref(0);
+  const nvrCamList=ref([]);
+  const nvrSettings=reactive({host:'localhost',port:5000,continuous_days:3,motion_days:7,motion_threshold:25,motion_contour:20});
+
+  const loadNvrSettings=async()=>{
+    try{
+      const r=await fetch('/api/frigate/settings');
+      if(r.ok){
+        const d=await r.json();
+        nvrSettings.host=d.host||'localhost';
+        nvrSettings.port=d.port||5000;
+        nvrSettings.continuous_days=d.continuous_days||d.retain_days||3;
+        nvrSettings.motion_days=d.motion_days||7;
+        nvrSettings.motion_threshold=d.motion_threshold||25;
+        nvrSettings.motion_contour=d.motion_contour_area||20;
+      }
+    }catch(_){}
+    await loadNvrCamList();
+  };
+  const saveNvrSettings=async()=>{
+    try{
+      const r=await fetch('/api/frigate/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        host:nvrSettings.host,port:nvrSettings.port,
+        record_mode:'all',retain_days:nvrSettings.continuous_days,
+        motion_threshold:nvrSettings.motion_threshold,
+        motion_contour_area:nvrSettings.motion_contour,
+      })});
+      if(r.ok)ElementPlus.ElMessage.success('設定已儲存');
+      else ElementPlus.ElMessage.error('儲存失敗');
+    }catch(e){ElementPlus.ElMessage.error('儲存失敗: '+e.message);}
+  };
+  const testNvrConn=async()=>{
+    try{
+      const r=await fetch('/api/frigate/status');
+      const d=await r.json();
+      if(d.status==='online'){
+        nvrOnline.value=true;
+        nvrVersion.value=d.version||'';
+        nvrCameraCount.value=(d.cameras||[]).length;
+        ElementPlus.ElMessage.success('連線成功');
+      }else{
+        ElementPlus.ElMessage.error('連線失敗');
+      }
+    }catch(e){ElementPlus.ElMessage.error('連線失敗: '+e.message);}
+  };
+  const loadNvrCamList=async()=>{
+    try{
+      const r=await fetch('/api/frigate/cameras');
+      const d=await r.json();
+      const cams=(d.cameras||d||[]);
+      nvrCamList.value=cams.map(c=>({
+        name:c.name,
+        enabled:c.enabled!==false,
+        fps:c.fps||0,
+        record:c.config?.record?.enabled||false,
+        motion:c.config?.motion?.enabled||c.config?.detect?.enabled||false,
+        snapshot:c.config?.snapshots?.enabled||false,
+      }));
+      nvrCameraCount.value=nvrCamList.value.length;
+    }catch(_){}
+  };
+  const toggleNvrCamFeature=async(cam,feature,val)=>{
+    try{
+      const body={};
+      if(feature==='record')body.record_enabled=val;
+      if(feature==='motion'){body.detect_enabled=val;body.motion_enabled=val;}
+      if(feature==='snapshot')body.snapshots_enabled=val;
+      const r=await fetch(`/api/frigate/camera/${cam.name}/switch`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(r.ok){
+        cam[feature]=val;
+        ElementPlus.ElMessage.success(`${cam.name} ${feature} ${val?'啟用':'停用'}`);
+      }
+    }catch(e){ElementPlus.ElMessage.error(e.message);}
+  };
+  const syncNvrCameras=async()=>{
+    try{
+      const r=await fetch('/api/frigate/sync-cameras',{method:'POST'});
+      const d=await r.json();
+      ElementPlus.ElMessage.success(d.message||'同步完成');
+      await loadNvrCamList();
+    }catch(e){ElementPlus.ElMessage.error('同步失敗: '+e.message);}
+  };
+  const deleteNvrCam=async(name)=>{
+    if(!confirm(`確認刪除 ${name}？`))return;
+    try{
+      await fetch(`/api/frigate/camera/${name}`,{method:'DELETE'});
+      await loadNvrCamList();
+      ElementPlus.ElMessage.success('已刪除');
+    }catch(e){ElementPlus.ElMessage.error(e.message);}
+  };
+  const restartNvr=async()=>{
+    if(!confirm('確認重啟 NVR？'))return;
+    try{
+      await fetch('/api/frigate/restart',{method:'POST'});
+      ElementPlus.ElMessage.success('NVR 重啟中...');
+    }catch(e){ElementPlus.ElMessage.error(e.message);}
+  };
   const rightTab=ref('events');
   const deviceSearch=ref('');
   const loading=ref(false);
@@ -1070,7 +1311,7 @@ setup(){
   });
 
   return {
-    clock,nvrOnline,showLeft,showRight,rightTab,deviceSearch,loading,
+    clock,nvrOnline,showLeft,showRight,showOverlay,rightTab,deviceSearch,loading,
     rows,current,page,pageSize,totalPages,pagedRows,
     playbackRate,currentSec,durationSec,isPlaying,
     quickRange,quickRanges,bookmarks,filter,
@@ -1085,6 +1326,10 @@ setup(){
     onDragStartDevice,onDropCell,clearCell,
     addBookmark,jumpToBookmark,
     setQuickRange,loadPlayback,
+    cameraDisplayName,
+    viewMode,nvrVersion,nvrCameraCount,nvrCamList,nvrSettings,
+    loadNvrSettings,saveNvrSettings,testNvrConn,loadNvrCamList,
+    toggleNvrCamFeature,syncNvrCameras,deleteNvrCam,restartNvr,
   };
 }
 });
