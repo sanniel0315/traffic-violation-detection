@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
+from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 from datetime import datetime
 import os
@@ -16,6 +17,7 @@ from api.models import init_db
 from api.routes import auth, frigate, lpr, lpr_stream, lpr_visual, violations, cameras, stream, traffic, nx
 from api.routes import congestion
 from api.routes import logs, system
+from api.routes import external, api_key_admin
 TZ_TAIPEI = ZoneInfo("Asia/Taipei")
 
 
@@ -103,8 +105,7 @@ app.add_middleware(
 async def no_cache_web_html(request: Request, call_next):
     response = await call_next(request)
     path = str(request.url.path or "")
-    is_web_html = path == "/web" or path == "/web/" or path.endswith(".html")
-    if path.startswith("/web") and is_web_html:
+    if path.startswith("/web"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -123,7 +124,9 @@ app.include_router(lpr_stream.router)
 app.include_router(lpr_visual.router)
 app.include_router(congestion.router)
 app.include_router(logs.router)
-app.include_router(system.router) 
+app.include_router(system.router)
+app.include_router(external.router)
+app.include_router(api_key_admin.router)
 # 靜態檔案
 if os.path.exists("./output"):
     app.mount("/files", StaticFiles(directory="./output"), name="files")

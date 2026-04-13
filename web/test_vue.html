@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html><head>
+<script src="/web/lib/vue.global.prod.js?v=20260407"></script>
+<script src="/web/lib/element-plus.min.js?v=20260407"></script>
+<link rel="stylesheet" href="/web/lib/element-plus.css?v=20260407">
+</head><body>
+<div id="test">
+  <h1>{{msg}}</h1>
+  <el-button type="primary">Test Button</el-button>
+</div>
+<script>
+const app=Vue.createApp({setup(){return{msg:Vue.ref('Vue + ElementPlus works!')}}});
+app.use(ElementPlus);
+app.mount('#test');
+</script>
+</body></html>

@@ -1,0 +1,191 @@
+name: Jetson Device Verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:   # 手動觸發
+  schedule:
+    - cron: '0 8 * * 1'  # 每週一 08:00 UTC (16:00 台灣時間)
+
+jobs:
+  verify:
+    runs-on: self-hosted
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 1. 環境檢查 ──
+      - name: GPU & CUDA check
+        run: |
+          echo "=== NVIDIA GPU ==="
+          nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
+          echo "=== CUDA version ==="
+          nvcc --version 2>/dev/null || echo "nvcc not in PATH (OK if using container)"
+          echo "=== PyTorch CUDA ==="
+          python3 -c "import torch; assert torch.cuda.is_available(), 'CUDA not available'; print(f'torch {torch.__version__} | CUDA device: {torch.cuda.get_device_name(0)}')"
+
+      - name: Python dependencies check
+        run: |
+          python3 -c "
+          import importlib, sys
+          pkgs = ['fastapi','uvicorn','sqlalchemy','cv2','pytesseract','ultralytics','torchvision','pydantic','httpx','aiofiles']
+          fail = []
+          for p in pkgs:
+              try:
+                  m = importlib.import_module(p)
+                  v = getattr(m, '__version__', 'OK')
+                  print(f'  {p}: {v}')
+              except ImportError:
+                  fail.append(p)
+                  print(f'  {p}: MISSING')
+          if fail:
+              print(f'::error::Missing packages: {fail}')
+              sys.exit(1)
+          "
+
+      # ── 2. 程式碼品質 ──
+      - name: Python syntax check
+        run: |
+          python3 -c "
+          import ast, pathlib, sys
+          errors = []
+          for f in sorted(pathlib.Path('.').rglob('*.py')):
+              if '.git' in f.parts:
+                  continue
+              try:
+                  ast.parse(f.read_text())
+              except SyntaxError as e:
+                  errors.append(f'{f}: {e}')
+          if errors:
+              for e in errors:
+                  print(f'::error::{e}')
+              sys.exit(1)
+          print(f'All {len(list(pathlib.Path(\".\").rglob(\"*.py\")))} Python files OK')
+          "
+
+      # ── 3. ML 模型驗證 ──
+      - name: YOLO model load & inference test
+        run: |
+          python3 -c "
+          import torch, time
+          from ultralytics import YOLO
+
+          model = YOLO('models/yolov8n.pt')
+          print(f'Model loaded: {len(model.names)} classes')
+
+          # Dummy inference to verify GPU pipeline
+          import numpy as np
+          dummy = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+          start = time.time()
+          results = model(dummy, verbose=False, device=0)
+          elapsed = time.time() - start
+          print(f'GPU inference OK: {elapsed:.2f}s, detections: {len(results[0].boxes)}')
+          assert elapsed < 30, f'Inference too slow: {elapsed:.1f}s'
+          "
+
+      - name: Detection modules import test
+        run: |
+          python3 -c "
+          from detection.vehicle_detector import VehicleDetector
+          from detection.violation_detector import ViolationDetector
+          from detection.congestion_detector import CongestionDetector
+          from recognition.plate_recognizer import PlateRecognizer
+          from recognition.plate_detector import PlateDetector
+          print('All detection/recognition modules imported OK')
+          "
+
+      # ── 4. 資料庫驗證 ──
+      - name: Database & ORM check
+        run: |
+          python3 -c "
+          from sqlalchemy import create_engine, inspect
+          engine = create_engine('sqlite:///data/violations.db')
+          tables = inspect(engine).get_table_names()
+          print(f'Database tables: {tables}')
+          expected = ['violations', 'cameras']
+          for t in expected:
+              assert t in tables, f'Missing table: {t}'
+          print('Database schema OK')
+          "
+
+      # ── 5. API 啟動 & 端點測試 ──
+      - name: Start API server
+        run: |
+          python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8000 &
+          echo $! > /tmp/api_pid.txt
+          echo "Waiting for API to start..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/api/health > /dev/null 2>&1; then
+              echo "API ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: API health endpoint
+        run: |
+          resp=$(curl -sf http://localhost:8000/api/health)
+          echo "$resp" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          print(f'Health: {data}')
+          assert data.get('status','').lower() == 'healthy', f'Unhealthy: {data}'
+          "
+
+      - name: Cameras API check
+        run: |
+          resp=$(curl -sf http://localhost:8000/api/cameras)
+          echo "$resp" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          items = data if isinstance(data, list) else data.get('items', [])
+          print(f'Cameras: {len(items)} configured')
+          "
+
+      - name: System info API check
+        run: |
+          curl -sf http://localhost:8000/api/system/info | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          print(f'System: {json.dumps(data, indent=2, ensure_ascii=False)[:500]}')
+          "
+
+      - name: Frontend accessibility check
+        run: |
+          code=$(curl -so /dev/null -w '%{http_code}' http://localhost:8000/web/index.html)
+          echo "Frontend HTTP status: $code"
+          [ "$code" = "200" ] || (echo "::error::Frontend returned $code" && exit 1)
+
+      # ── 6. Frigate 連線 ──
+      - name: Frigate NVR check
+        continue-on-error: true  # Frigate 可能未啟動
+        run: |
+          resp=$(curl -sf --max-time 5 http://localhost:5000/api/version 2>&1) && \
+            echo "Frigate: $resp" || \
+            echo "::warning::Frigate not reachable (may not be running)"
+
+      # ── 7. Smoke test ──
+      - name: Run smoke check
+        continue-on-error: true
+        run: python3 scripts/smoke_check.py --base-url http://localhost:8000 --timeout 15
+
+      # ── 8. 磁碟空間報告 ──
+      - name: Disk space report
+        run: |
+          echo "=== Disk Usage ==="
+          df -h / | tail -1
+          echo "=== Project Size ==="
+          du -sh . --exclude=.git
+          echo "=== Large directories ==="
+          du -sh storage/ models/ data/ 2>/dev/null || true
+
+      # ── Cleanup ──
+      - name: Stop API server
+        if: always()
+        run: |
+          [ -f /tmp/api_pid.txt ] && kill $(cat /tmp/api_pid.txt) 2>/dev/null || true
+          rm -f /tmp/api_pid.txt

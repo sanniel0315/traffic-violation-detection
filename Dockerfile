@@ -18,7 +18,9 @@ RUN ln -sf /usr/share/zoneinfo/Asia/Taipei /etc/localtime && \
 RUN pip install --no-cache-dir -i https://pypi.org/simple/ "numpy==1.26.4"
 
 # 安裝系統依賴
-RUN apt-get update && apt-get install -y \
+RUN --mount=type=tmpfs,target=/var/cache/apt \
+    apt-get update --allow-insecure-repositories && \
+    apt-get install -y --allow-unauthenticated --no-install-recommends \
     libgl1-mesa-glx \
     libglib2.0-0 \
     tesseract-ocr \

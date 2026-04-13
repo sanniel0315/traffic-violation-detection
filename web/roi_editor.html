@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <title>ROI 編輯器</title>
     <link rel="icon" href="/favicon.ico">
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://unpkg.com/element-plus"></script>
-    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+    <script src="/web/lib/vue.global.prod.js"></script>
+    <script src="/web/lib/element-plus.min.js"></script>
+    <link rel="stylesheet" href="/web/lib/element-plus.css">
     <style>
         body { font-family: sans-serif; padding: 20px; background: #f5f5f5; }
         .container { max-width: 1200px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; }
@@ -189,8 +189,8 @@ createApp({
         const functionType = ref('flow');
         const zoneName = ref('');
         const zoneLaneTags = ref([]);
-        const zoneLaneNo = ref(null);
-        const zoneDirection = ref('');
+        const zoneLaneNo = ref(1);
+        const zoneDirection = ref('straight');
         const zoneSpeedLimit = ref(60);
         const zoneOverSpeedKmh = ref(10);
         const directionOptions = [
@@ -600,14 +600,15 @@ createApp({
             points.value = [];
             draw();
         };
-        const validateZones = (zoneList, contextType = '') => {
+        const validateZones = (zoneList, contextType = '', targetId = '') => {
             if (entryMode !== 'traffic_flow_settings') return true;
             const dirAllow = new Set(['left', 'straight', 'right']);
             const flowIssues = [];
             zoneList.forEach((z, i) => {
                 if (!isFlowZoneType(z?.type)) return;
+                if (targetId && String(z?.id || '') !== targetId) return;
                 const laneNo = normalizeLaneNo(z?.lane_no);
-                const dir = String(z?.direction || '').trim().toUpperCase();
+                const dir = String(z?.direction || '').trim().toLowerCase();
                 const name = String(z?.name || `車流區 ${i + 1}`);
                 if (!laneNo) flowIssues.push(`${name} 缺少車道編號`);
                 if (!dirAllow.has(dir)) flowIssues.push(`${name} 缺少行車方向`);
@@ -651,7 +652,7 @@ createApp({
             };
             
             const newZones = [...zones.value, newZone];
-            if (!validateZones(newZones, zoneType.value)) return;
+            if (!validateZones(newZones, zoneType.value, newZone.id)) return;
             
             try {
                 await ElementPlus.ElMessageBox.confirm(
@@ -667,8 +668,8 @@ createApp({
                 points.value = [];
                 zoneName.value = '';
                 zoneLaneTags.value = [];
-                zoneLaneNo.value = null;
-                zoneDirection.value = '';
+                zoneLaneNo.value = 1;
+                zoneDirection.value = 'straight';
                 zoneSpeedLimit.value = 60;
                 zoneOverSpeedKmh.value = 10;
                 draw();
@@ -690,13 +691,17 @@ createApp({
         };
         
         const deleteZone = async (idx) => {
+            if (idx < 0 || idx >= zones.value.length) return;
+            const name = zones.value[idx]?.name || `區域 ${idx + 1}`;
+            if (!confirm(`確認刪除「${name}」？`)) return;
             const newZones = zones.value.filter((_, i) => i !== idx);
             try {
                 await persistScopedZones(newZones);
                 draw();
                 ElementPlus.ElMessage.success('已刪除');
             } catch (e) {
-                ElementPlus.ElMessage.error('刪除失敗');
+                console.error('deleteZone error', e);
+                ElementPlus.ElMessage.error(`刪除失敗: ${e?.message || e}`);
             }
         };
 
@@ -717,7 +722,7 @@ createApp({
                 speed_limit: isSpeedZoneType(z.type) ? Number(z.speed_limit || 60) : null,
                 overspeed_kmh: isSpeedZoneType(z.type) ? Number(z.overspeed_kmh || 10) : null
             } : z);
-            if (!validateZones(updatedZones, current.type)) return;
+            if (!validateZones(updatedZones, current.type, current.id || '')) return;
             try {
                 await persistScopedZones(updatedZones);
                 draw();

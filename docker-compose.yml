@@ -13,7 +13,6 @@ services:
       - ./:/workspace
       - ./models:/workspace/models
       - ./storage:/workspace/storage
-      - /home/mic-711/Downloads:/workspace/host_downloads:ro
     working_dir: /workspace
     ports:
       - "8000:8000"
@@ -21,7 +20,7 @@ services:
       - TZ=Asia/Taipei
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - FRIGATE_HOST=frigate
+      - FRIGATE_HOST=localhost
       - FRIGATE_PORT=5000
       - MODEL_DIR=/workspace/models
       - DETECT_MODEL_ENGINE=yolov8n.engine
@@ -43,18 +42,18 @@ services:
     container_name: frigate
     runtime: nvidia
     privileged: true
+    network_mode: host
     shm_size: "512mb"
     volumes:
       - ./config/frigate:/config
       - ./storage/frigate:/media/frigate
       - /etc/localtime:/etc/localtime:ro
-    ports:
-      - "5000:5000"
-      - "8554:8554"
-      - "8555:8555"
     environment:
       - TZ=Asia/Taipei
       - FRIGATE_RTSP_PASSWORD=${FRIGATE_RTSP_PASSWORD:-}
+      - FRIGATE_CAM2_PASSWORD=1qaz@WSX
+      - ORT_DISABLE_ALL=1
+      - ONNXRUNTIME_DISABLE=1
     restart: unless-stopped
 
   # 開發環境 (可選)
@@ -66,7 +65,6 @@ services:
     volumes:
       - ./:/workspace
       - ./models:/workspace/models
-      - /home/mic-711/Downloads:/workspace/host_downloads:ro
     working_dir: /workspace
     environment:
       - TZ=Asia/Taipei
