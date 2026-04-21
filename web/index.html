@@ -2808,7 +2808,7 @@
                     <!-- NVR Motion 事件（獨立於違規事件查詢） -->
                     <div class="card">
                         <div class="card-header">
-                            <span>📝 NVR Motion 事件列表</span>
+                            <span>📝 即時偵測事件列表（車輛通過 ROI）</span>
                             <el-button type="primary" size="small" :loading="nvrEventsLoading" @click="loadNVREvents()">
                                 {{ nvrEventsLoading ? '查詢中...' : '查詢' }}
                             </el-button>
@@ -8370,35 +8370,53 @@ const app=createApp({
             }
         };
         const loadNVREvents=async({silent=false}={})=>{
+            // 改用我方 traffic_events（Frigate detect=false 後 /events 永遠停在 4 天前）
             if(nvrEventsLoading.value)return;
             try{
                 nvrEventsLoading.value=true;
                 const params=new URLSearchParams();
-                params.set('all_pages','1');
                 params.set('limit', String(shouldAutoLoadNvrHeavyData() ? 1000 : 500));
-                params.set('batch_size','500');
-                if(String(frigateFilter.camera||'').trim())params.set('camera',String(frigateFilter.camera).trim());
-                if(String(frigateFilter.label||'').trim())params.set('label',String(frigateFilter.label).trim());
-                if(String(frigateFilter.timeFrom||'').trim())params.set('start_time',String(frigateFilter.timeFrom).trim());
-                if(String(frigateFilter.timeTo||'').trim())params.set('end_time',String(frigateFilter.timeTo).trim());
-                const r=await fetch(`/api/frigate/events?${params.toString()}`);
-                const d=await r.json();
-                if(!r.ok || d?.error){
-                    throw new Error(d?.error || `HTTP ${r.status}`);
+                // 映射 cam name (cam_2) → camera_id (2)
+                const camName=String(frigateFilter.camera||'').trim();
+                if(camName){
+                    const m=camName.match(/cam_(\d+)/);
+                    if(m)params.set('camera_id', m[1]);
                 }
-                frigateEvents.value=Array.isArray(d?.events)?d.events:[];
+                if(String(frigateFilter.timeFrom||'').trim()){
+                    try{params.set('start_time', new Date(frigateFilter.timeFrom).toISOString());}catch(_){}
+                }
+                if(String(frigateFilter.timeTo||'').trim()){
+                    try{params.set('end_time', new Date(frigateFilter.timeTo).toISOString());}catch(_){}
+                }
+                const r=await fetch(`/api/traffic/events?${params.toString()}`);
+                const d=await r.json();
+                if(!r.ok){throw new Error(`HTTP ${r.status}`);}
+                let items=Array.isArray(d?.items)?d.items:[];
+                const labelFilter=String(frigateFilter.label||'').trim().toLowerCase();
+                if(labelFilter){
+                    items=items.filter(e=>String(e.label||'').toLowerCase().includes(labelFilter));
+                }
+                // 轉成 frigate event 格式給 UI 用
+                frigateEvents.value=items.map(e=>({
+                    id: String(e.id),
+                    camera: `cam_${e.camera_id}`,
+                    camera_id: e.camera_id,
+                    label: e.label,
+                    start_time: e.created_at ? (new Date(e.created_at).getTime()/1000) : 0,
+                    end_time: e.created_at ? (new Date(e.created_at).getTime()/1000) : 0,
+                    zones: Array.isArray(e.entered_zones) ? e.entered_zones : [],
+                    has_snapshot: false,  // traffic_events 沒存 per-event 快照
+                    speed_kmh: e.speed_kmh,
+                    bbox: e.bbox,
+                }));
                 frigatePage.value=1;
                 if(!silent){
-                    const total=Number(d?.total||frigateEvents.value.length||0);
-                    if(d?.truncated){
-                        ElementPlus.ElMessage.warning(`查詢完成，已載入 ${total} 筆（達上限）`);
-                    }else{
-                        ElementPlus.ElMessage.success(`查詢完成，共 ${total} 筆`);
-                    }
+                    const total=frigateEvents.value.length;
+                    ElementPlus.ElMessage.success(`查詢完成，共 ${total} 筆 (來源: 即時偵測)`);
                 }
             }catch(e){
                 console.error(e);
-                if(!silent)ElementPlus.ElMessage.error(`NVR 事件查詢失敗: ${e?.message||e}`);
+                if(!silent)ElementPlus.ElMessage.error(`偵測事件查詢失敗: ${e?.message||e}`);
             }finally{
                 nvrEventsLoading.value=false;
             }
