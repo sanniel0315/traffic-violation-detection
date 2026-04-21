@@ -62,15 +62,24 @@ class VehicleDetector:
             enable_truck_cls: 是否啟用大型車細分類
         """
         model_path = model_path or get_detect_model_pt()
-        self.model = YOLO(model_path)
+        # 優先使用同名 .engine（TensorRT 加速 ~3-4x），存在才切換
+        engine_path = os.path.splitext(model_path)[0] + ".engine"
+        if os.path.exists(engine_path) and os.getenv("DISABLE_TRT", "").lower() not in ("1", "true", "yes"):
+            print(f"⚡ 偵測到 TensorRT engine，切換到 {engine_path}")
+            model_path = engine_path
+        self.model = YOLO(model_path, task='detect')
         self.conf_threshold = conf_threshold
         self.device = os.getenv("DEVICE", "cuda:0")
         self.runtime_device = "cpu"
-        try:
-            self.model.to(self.device)
+        # TensorRT engine 已綁定 device，不需 .to()
+        if not model_path.endswith(".engine"):
+            try:
+                self.model.to(self.device)
+                self.runtime_device = self.device
+            except Exception:
+                self.runtime_device = "cpu"
+        else:
             self.runtime_device = self.device
-        except Exception:
-            self.runtime_device = "cpu"
         self.vehicle_classes = self._resolve_vehicle_classes()
 
         # 大型車細分類器（可選）

@@ -588,23 +588,45 @@ def generate_frames_overlay(
     http_frames = None
     http_state = _ensure_http_mjpeg_worker(http_source) if use_http_mjpeg else None
     last_http_ts = 0.0
+    last_shared_ts = 0.0
+    _shared_warm = False
     while True:
-        # 自己讀 RTSP 維持流暢影像
+        # 優先用 detection worker 已解碼好的 frame（省一次 RTSP 解碼、單一時間源）；
+        # 若 detection 完全未啟動才 fallback 自己讀 RTSP。
         ret = False
         frame = None
-        if use_http_mjpeg:
-            _touch_http_mjpeg_worker(http_state)
-            ts = float(http_state.get("last_ts") or 0.0) if http_state else 0.0
-            jpg = http_state.get("last_jpeg") if http_state else None
-            if jpg and ts > 0 and ts != last_http_ts:
-                frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
-                ret = frame is not None and getattr(frame, "size", 0) > 0
-                last_http_ts = ts
-        else:
-            if cap is None and _cap_event.wait(timeout=0.05):
-                cap = _cap_holder[0]
-            if cap is not None:
-                ret, frame = cap.read()
+        _sf_early = _shared_frames.get(camera_id) if camera_id else None
+        if _sf_early and _sf_early.get("frame") is not None:
+            ts = float(_sf_early.get("ts") or 0.0)
+            age = time.time() - ts
+            if ts > 0 and age < 2.0:
+                _shared_warm = True
+                if ts != last_shared_ts:
+                    frame = _sf_early["frame"].copy() if hasattr(_sf_early["frame"], "copy") else _sf_early["frame"]
+                    ret = frame is not None and getattr(frame, "size", 0) > 0
+                    last_shared_ts = ts
+                else:
+                    # 同 ts → 沒新 frame，短暫等再 poll，避免重複送舊 frame 浪費 CPU
+                    time.sleep(0.01)
+                    continue
+        if not ret and _shared_warm:
+            # 偵測 worker 之前有 frame 但這次拿不到（短暫 stale），不要切去 RTSP，等下一輪
+            time.sleep(0.02)
+            continue
+        if not ret:
+            if use_http_mjpeg:
+                _touch_http_mjpeg_worker(http_state)
+                ts = float(http_state.get("last_ts") or 0.0) if http_state else 0.0
+                jpg = http_state.get("last_jpeg") if http_state else None
+                if jpg and ts > 0 and ts != last_http_ts:
+                    frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+                    ret = frame is not None and getattr(frame, "size", 0) > 0
+                    last_http_ts = ts
+            else:
+                if cap is None and _cap_event.wait(timeout=0.05):
+                    cap = _cap_holder[0]
+                if cap is not None:
+                    ret, frame = cap.read()
         if not ret:
             if cap is not None and time.time() - last_ok > 5.0:
                 cap.release()
@@ -638,16 +660,16 @@ def generate_frames_overlay(
                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
             time.sleep(0.1)
             continue
-        # 畫面跟 bbox 使用同一張 detection frame，確保時間戳一致、bbox 對齊、無慘影。
-        # 偵測落後 >3s 才 fallback 用 RTSP live frame（無 bbox）。
+        # 影像永遠走自己讀到的 RTSP frame（25 FPS 順暢，無殘影）。
+        # bbox 從 _shared_frames 拿最近偵測結果疊上去；detection 8 FPS → bbox 約延遲 120ms。
+        # 偵測落後 > 1.5s 用橙色細框標示「stale」，> 3s 不畫。
         _label_items = []
         _sf = _shared_frames.get(camera_id) if camera_id else None
         det_age = None
         stale_overlay = False
-        if _sf and _sf.get("frame") is not None:
+        if _sf:
             det_age = time.time() - float(_sf.get("ts", 0) or 0)
             if det_age < 3.0:
-                frame = _sf["frame"].copy()
                 detections = _sf.get("detections", [])
                 _det_last = detections
                 if det_age >= 1.5:
@@ -740,15 +762,17 @@ def generate_frames_overlay(
                 cv2.putText(frame, text, (tx, ty + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.5, fg, 1)
         if render_roi_labels:
             _draw_roi_labels(frame, zones)
+        # 縮到 1280 寬：JPEG 編碼 ~14ms vs 1080p 23ms，FPS 多 60%；對監控觀看 720p 已足夠
         fh, fw = frame.shape[:2]
-        if fw > 1920:
-            scale = 1920.0 / fw
-            frame = cv2.resize(frame, (1920, int(fh * scale)))
-        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 55])
+        if fw > 1280:
+            scale = 1280.0 / fw
+            frame = cv2.resize(frame, (1280, int(fh * scale)))
+        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        time.sleep(0.04)
-    
+        # 不主動 sleep — 由 reader thread 推進 ts，沒有新 frame 時上面早期判斷已經會等
+        time.sleep(0.005)
+
     if cap is not None:
         cap.release()
 
@@ -1152,33 +1176,42 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             return "straight"
         return "straight"
     
-    _read_fail_count = 0
-    while detection_services.get(camera_id, {}).get('running', False):
-        ret, frame = cap.read()
-        if not ret:
-            _read_fail_count += 1
-            if _read_fail_count == 1 or _read_fail_count % 100 == 0:
-                print(f"⚠️ [detection] cam{camera_id} cap.read() failed (count={_read_fail_count}), reconnecting...", flush=True)
-            cap.release()
-            time.sleep(2)
-            _src_lc2 = str(source or "").lower()
-            if _src_lc2.startswith("rtsp://"):
-                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
-            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-            continue
-        _read_fail_count = 0
+    # 拆成兩支 thread：reader 連續讀 frame，worker 跑 YOLO + DB。
+    # 關鍵：worker 把「frame 跟 bbox 綁成一組」原子寫入 _shared_frames，
+    # overlay 只讀這組綁定 → frame 跟 bbox 永遠同一時間點，bbox 必對齊車輛、無雙時間源。
+    _latest = {"frame": None, "ts": 0.0, "stop": False}
+    _read_fail_count = [0]
 
-        frame_count += 1
-        # 每幀都共享給 overlay（但只每 3 幀做一次 YOLO 偵測 → ~8 FPS 偵測頻率，畫面更順 bbox 對位更準）
-        _prev = _shared_frames.get(camera_id)
-        _shared_frames[camera_id] = {"frame": frame, "detections": _prev.get("detections", []) if _prev else [], "ts": time.time()}
-        if frame_count % 3 != 0:
-            continue
-        
-        with _shared_overlay_detector_lock:
-            detections = detector.detect(frame)
-        # 共享 frame 和偵測結果給 overlay 串流
-        _shared_frames[camera_id] = {"frame": frame.copy(), "detections": detections, "ts": time.time()}
+    def _reader_loop():
+        nonlocal cap
+        while detection_services.get(camera_id, {}).get('running', False) and not _latest["stop"]:
+            try:
+                ret, frm = cap.read()
+            except Exception:
+                ret, frm = False, None
+            if not ret:
+                _read_fail_count[0] += 1
+                if _read_fail_count[0] == 1 or _read_fail_count[0] % 100 == 0:
+                    print(f"⚠️ [detection] cam{camera_id} cap.read() failed (count={_read_fail_count[0]}), reconnecting...", flush=True)
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                time.sleep(2)
+                _src_lc2 = str(source or "").lower()
+                if _src_lc2.startswith("rtsp://"):
+                    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
+                cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                continue
+            _read_fail_count[0] = 0
+            _latest["frame"] = frm
+            _latest["ts"] = time.time()
+
+    threading.Thread(target=_reader_loop, daemon=True, name=f"reader-{camera_id}").start()
+
+    # 以下是 _process_post_yolo 函式體（原本內聯在 worker 迴圈裡，現在抽出來）
+    def _process_post_yolo(infer_frame, detections, cur_ts):
+        nonlocal next_track_id, detection_count
         vehicles = [d for d in detections if d['class_name'] in ['car', 'motorcycle', 'truck', 'bus', 'heavy_truck', 'light_truck']]
         
         # ROI 區域過濾：只保留中心點在偵測區域內的車輛
@@ -1299,7 +1332,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     if has_speed_zone and not speed_zone_vehicles:
                         candidates = [t for t in candidates if t[0] != 'SPEEDING']
                 if not candidates:
-                    continue
+                    return
                 v_type, v_name, v_fine = random.choice(candidates)
                 lpr_hit = _latest_lpr_plate(camera_id, max_age_sec=20)
                 plate = (lpr_hit or {}).get("plate", "")
@@ -1365,7 +1398,54 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 except:
                     pass
         
-        time.sleep(0.03)
+
+    # 後處理 thread：drain queue，跑 ROI/tracking/DB/violations。不阻塞 worker。
+    import queue as _queue
+    _post_q: _queue.Queue = _queue.Queue(maxsize=4)
+
+    def _post_loop():
+        while detection_services.get(camera_id, {}).get('running', False):
+            try:
+                item = _post_q.get(timeout=0.5)
+            except _queue.Empty:
+                continue
+            if item is None:
+                break
+            try:
+                _process_post_yolo(*item)
+            except Exception as _ex:
+                print(f"⚠️ [post-process] cam{camera_id}: {_ex}", flush=True)
+
+    threading.Thread(target=_post_loop, daemon=True, name=f"post-{camera_id}").start()
+
+    # worker: 拿最新 frame 跑 YOLO，把 frame + detections 一起寫入 shared_frames，後處理丟給 queue
+    _last_proc_ts = 0.0
+    while detection_services.get(camera_id, {}).get('running', False):
+        cur_ts = _latest.get("ts", 0.0)
+        frame = _latest.get("frame")
+        if frame is None or cur_ts <= _last_proc_ts:
+            time.sleep(0.01)
+            continue
+        _last_proc_ts = cur_ts
+        frame_count += 1
+        infer_frame = frame.copy()
+        with _shared_overlay_detector_lock:
+            detections = detector.detect(infer_frame)
+        # 原子綁定：frame + bbox + ts 一起寫入
+        _shared_frames[camera_id] = {
+            "frame": infer_frame,
+            "detections": detections,
+            "ts": cur_ts,
+        }
+        # 後處理丟給 queue 不阻塞（queue 滿就丟掉，避免 worker 變慢）
+        try:
+            _post_q.put_nowait((infer_frame, list(detections), cur_ts))
+        except _queue.Full:
+            pass
+        # 短暫 sleep 讓出 GIL，避免 busy loop
+        time.sleep(0.005)
+        continue
+
     
     cap.release()
     add_log("info", f"偵測背景任務結束: camera_id={camera_id}", "detection")

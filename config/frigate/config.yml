@@ -29,10 +29,13 @@ cameras:
       - bicycle
       - person
     record:
-      enabled: true
+      enabled: false
+      retain:
+        days: 7
+        mode: all
     snapshots:
       bounding_box: true
-      enabled: false
+      enabled: true
       timestamp: true
     zones:
       車流區 1:
@@ -85,6 +88,9 @@ cameras:
       - person
     record:
       enabled: false
+      retain:
+        days: 7
+        mode: all
     snapshots:
       bounding_box: true
       enabled: true
@@ -118,15 +124,13 @@ cameras:
       width: 1920
     enabled: true
     ffmpeg:
-      input_args: -avoid_negative_ts make_zero -fflags +genpts+discardcorrupt -rtsp_transport
-        tcp -timeout 5000000 -analyzeduration 20M -probesize 20M
       inputs:
       - path: rtsp://127.0.0.1:8554/cam_3
         roles:
         - record
     motion:
       contour_area: 20
-      enabled: false
+      enabled: true
       threshold: 25
     objects:
       filters:
@@ -143,9 +147,12 @@ cameras:
       - person
     record:
       enabled: true
+      retain:
+        days: 7
+        mode: all
     snapshots:
       bounding_box: true
-      enabled: false
+      enabled: true
       timestamp: true
     zones:
       車流區 1:
@@ -218,6 +225,9 @@ cameras:
       - person
     record:
       enabled: false
+      retain:
+        days: 7
+        mode: all
     snapshots:
       bounding_box: true
       enabled: true
@@ -226,9 +236,8 @@ cameras:
 detect:
   enabled: false
 detectors:
-  tensorrt:
-    device: 0
-    type: tensorrt
+  cpu1:
+    type: cpu
 ffmpeg:
   hwaccel_args: []
   output_args:
@@ -246,11 +255,10 @@ go2rtc:
 mqtt:
   enabled: false
 record:
-  continuous:
-    days: 3
   enabled: true
-  motion:
-    days: 3
+  retain:
+    days: 7
+    mode: all
 snapshots:
   enabled: false
 version: 0.17-0
