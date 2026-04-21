@@ -29,13 +29,15 @@ cameras:
       - bicycle
       - person
     record:
-      enabled: false
+      enabled: true
       retain:
         days: 7
         mode: all
     snapshots:
       bounding_box: true
-      enabled: true
+      enabled: false
+      retain:
+        default: 14
       timestamp: true
     zones:
       車流區 1:
@@ -71,7 +73,7 @@ cameras:
         roles: []
     motion:
       contour_area: 20
-      enabled: true
+      enabled: false
       threshold: 25
     objects:
       filters:
@@ -126,8 +128,7 @@ cameras:
     ffmpeg:
       inputs:
       - path: rtsp://127.0.0.1:8554/cam_3
-        roles:
-        - record
+        roles: []
     motion:
       contour_area: 20
       enabled: true
@@ -146,7 +147,7 @@ cameras:
       - bicycle
       - person
     record:
-      enabled: true
+      enabled: false
       retain:
         days: 7
         mode: all
@@ -208,7 +209,7 @@ cameras:
         roles: []
     motion:
       contour_area: 20
-      enabled: true
+      enabled: false
       threshold: 25
     objects:
       filters:

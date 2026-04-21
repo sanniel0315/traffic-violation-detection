@@ -378,33 +378,67 @@ def draw_congestion(frame, result):
 
 def run_congestion_detection(camera_id: int, camera_name: str, source: str, zones: list):
     """背景壅塞偵測任務"""
-    cap = cv2.VideoCapture(source)
-    
-    print(f"🚦 壅塞偵測啟動: camera_id={camera_id}")
-    try:
-        if not cap.isOpened():
-            congestion_services[camera_id]["running"] = False
-            congestion_services[camera_id]["error"] = "無法開啟攝影機串流"
-            return
+    import os as _os
+    # RTSP 強制走 TCP 避免封包掉包
+    if str(source).lower().startswith("rtsp://"):
+        _os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS",
+                               "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536")
+    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
 
+    print(f"🚦 壅塞偵測啟動: camera_id={camera_id}")
+    fail_count = 0
+    last_ok = time.time()
+    try:
         while congestion_services.get(camera_id, {}).get('running', False):
-            ret, frame = cap.read()
+            if not cap.isOpened() or (time.time() - last_ok) > 10.0:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                print(f"🔄 congestion cam_{camera_id} reconnect (fail={fail_count})", flush=True)
+                cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                fail_count = 0
+                last_ok = time.time()
+                time.sleep(1.0)
+                continue
+
+            try:
+                ret, frame = cap.read()
+            except Exception as e:
+                print(f"⚠️ congestion cam_{camera_id} cap.read exception: {e}", flush=True)
+                ret, frame = False, None
+
             if not ret:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                fail_count += 1
+                if fail_count >= 50:
+                    # 連續 50 次讀不到 → 強制 reconnect
+                    try: cap.release()
+                    except: pass
+                    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                    fail_count = 0
+                    last_ok = time.time()
                 time.sleep(0.2)
                 continue
 
-            result = analyze_with_lock(frame, zones, camera_id)
-            congestion_results[camera_id] = result
-            congestion_services[camera_id]['last_update'] = datetime.now().isoformat()
-            sample_interval_sec = float(get_effective_params(camera_id).get("analyze_interval_sec", 1.0))
-            _store_congestion_samples(camera_id, camera_name, result, sample_interval_sec)
-            time.sleep(sample_interval_sec)
+            fail_count = 0
+            last_ok = time.time()
+
+            try:
+                result = analyze_with_lock(frame, zones, camera_id)
+                congestion_results[camera_id] = result
+                congestion_services[camera_id]['last_update'] = datetime.now().isoformat()
+                sample_interval_sec = float(get_effective_params(camera_id).get("analyze_interval_sec", 1.0))
+                _store_congestion_samples(camera_id, camera_name, result, sample_interval_sec)
+                time.sleep(sample_interval_sec)
+            except Exception as e:
+                print(f"⚠️ congestion cam_{camera_id} analyze error: {e}", flush=True)
+                time.sleep(1.0)
     except Exception as e:
         congestion_services[camera_id]["error"] = str(e)
     finally:
         congestion_services[camera_id]["running"] = False
-        cap.release()
+        try: cap.release()
+        except: pass
         print(f"⏹️ 壅塞偵測停止: camera_id={camera_id}")
 
 
@@ -451,4 +485,53 @@ def resume_congestion_services() -> dict:
                 resumed += 1
     finally:
         db.close()
+    # 啟動 watchdog
+    _ensure_congestion_watchdog()
     return {"total": total, "resumed": resumed}
+
+
+_congestion_watchdog_started = False
+
+
+def _ensure_congestion_watchdog():
+    """監控 congestion thread：last_update 超過 60s 沒推進就重啟該 cam thread"""
+    global _congestion_watchdog_started
+    if _congestion_watchdog_started:
+        return
+    _congestion_watchdog_started = True
+
+    def _watchdog_loop():
+        while True:
+            try:
+                time.sleep(30.0)
+                now = datetime.now()
+                for camera_id, info in list(congestion_services.items()):
+                    if not info.get("running"):
+                        continue
+                    last = info.get("last_update")
+                    if not last:
+                        continue
+                    try:
+                        dt = datetime.fromisoformat(last)
+                        age = (now - dt).total_seconds()
+                    except Exception:
+                        continue
+                    if age > 60.0:
+                        print(f"🐕 [congestion watchdog] cam_{camera_id} stale {age:.0f}s，重啟", flush=True)
+                        try:
+                            info["running"] = False
+                            time.sleep(2.0)
+                            db = SessionLocal()
+                            try:
+                                cam = db.query(Camera).filter(Camera.id == camera_id).first()
+                                if cam:
+                                    _start_congestion_service(cam)
+                            finally:
+                                db.close()
+                        except Exception as e:
+                            print(f"⚠️ [congestion watchdog] 重啟 cam_{camera_id} 失敗: {e}", flush=True)
+            except Exception as e:
+                print(f"⚠️ [congestion watchdog] loop error: {e}", flush=True)
+
+    threading.Thread(target=_watchdog_loop, daemon=True, name="congestion-watchdog").start()
+    print("🐕 [congestion watchdog] 監控啟動", flush=True)

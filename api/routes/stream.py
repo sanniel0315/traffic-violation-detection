@@ -38,6 +38,26 @@ detection_services: Dict[int, dict] = {}
 _shared_frames: Dict[int, dict] = {}  # {camera_id: {"frame": ndarray, "ts": float}}
 # 事件截圖節流：每 cam 上次存截圖的 ts，limit ~1 張/2秒
 _per_cam_last_snap_ts: Dict[int, float] = {}
+# Frigate snap 設定快取：{camera_id: (enabled_bool, cached_at_ts)}，30s 過期
+_cam_snap_enabled_cache: Dict[int, tuple] = {}
+
+
+def _is_snapshot_enabled_for_cam(camera_id: int) -> bool:
+    """讀 Frigate config 看該 cam 是否啟用「事件截圖」(snapshots.enabled)。30s 快取。"""
+    cached = _cam_snap_enabled_cache.get(camera_id)
+    if cached and (time.time() - cached[1]) < 30.0:
+        return cached[0]
+    enabled = False
+    try:
+        import yaml
+        with open("/home/ubuntu/traffic-violation-detection/config/frigate/config.yml") as f:
+            cfg = yaml.safe_load(f) or {}
+        cam_cfg = (cfg.get("cameras") or {}).get(f"cam_{camera_id}") or {}
+        enabled = bool((cam_cfg.get("snapshots") or {}).get("enabled", False))
+    except Exception:
+        enabled = False
+    _cam_snap_enabled_cache[camera_id] = (enabled, time.time())
+    return enabled
 # Per-camera detector instances（每 cam 獨立 → 並行推理、無 lock 競爭）
 _per_cam_detectors: Dict[int, "object"] = {}
 _per_cam_detectors_lock = threading.Lock()
@@ -613,6 +633,10 @@ def generate_frames_overlay(
     last_http_ts = 0.0
     last_shared_ts = 0.0
     _shared_warm = False
+    # 輸出限速：避免瀏覽器同時解 4 cam × 14 FPS × 100KB = 5.6 MB/s 累積延遲導致頓
+    OUTPUT_FPS_CAP = 8.0
+    _min_yield_interval = 1.0 / OUTPUT_FPS_CAP
+    _last_yield_ts = 0.0
     while True:
         # 優先用 detection worker 已解碼好的 frame（省一次 RTSP 解碼、單一時間源）；
         # 若 detection 完全未啟動才 fallback 自己讀 RTSP。
@@ -790,11 +814,15 @@ def generate_frames_overlay(
         if fw > 1280:
             scale = 1280.0 / fw
             frame = cv2.resize(frame, (1280, int(fh * scale)))
+        # 輸出限速 8 FPS：避免瀏覽器解碼負荷累積（之前 14 FPS 連看會頓）
+        now_yt = time.time()
+        wait = _min_yield_interval - (now_yt - _last_yield_ts)
+        if wait > 0:
+            time.sleep(wait)
+        _last_yield_ts = time.time()
         _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        # 不主動 sleep — 由 reader thread 推進 ts，沒有新 frame 時上面早期判斷已經會等
-        time.sleep(0.005)
 
     if cap is not None:
         cap.release()
@@ -1342,30 +1370,32 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 if rows:
                     db.add_all(rows)
                     db.commit()
-                    # 事件截圖：每 cam 每 2 秒最多存一張，避免磁碟爆掉
-                    try:
-                        import os as _os
-                        SNAP_DIR = "/tmp/event_snapshots"
-                        _os.makedirs(SNAP_DIR, exist_ok=True)
-                        last_snap_ts = _per_cam_last_snap_ts.get(camera_id, 0.0)
-                        if (cur_ts - last_snap_ts) >= 2.0 and rows and row_to_vehicle:
-                            row = rows[0]; v = row_to_vehicle[0]
-                            eid = int(row.id)
-                            if eid > 0:
-                                path = f"{SNAP_DIR}/{eid}.jpg"
-                                snap = infer_frame.copy()
-                                fh, fw = snap.shape[:2]
-                                bbox = v.get("bbox", {}) or {}
-                                if bbox:
-                                    cv2.rectangle(snap, (int(bbox.get("x1",0)), int(bbox.get("y1",0))),
-                                                  (int(bbox.get("x2",0)), int(bbox.get("y2",0))), (0,200,0), 2)
-                                if fw > 480:
-                                    sc = 480.0/fw
-                                    snap = cv2.resize(snap, (480, int(fh*sc)))
-                                cv2.imwrite(path, snap, [cv2.IMWRITE_JPEG_QUALITY, 60])
-                                _per_cam_last_snap_ts[camera_id] = cur_ts
-                    except Exception:
-                        pass
+                    # 事件截圖：要對應 cam 在 Frigate config 開「事件截圖」(snapshots.enabled) 才存
+                    # 沒開的 cam (例如只設定全時錄影) → 不存事件截圖
+                    if _is_snapshot_enabled_for_cam(camera_id):
+                        try:
+                            import os as _os
+                            SNAP_DIR = "/tmp/event_snapshots"
+                            _os.makedirs(SNAP_DIR, exist_ok=True)
+                            last_snap_ts = _per_cam_last_snap_ts.get(camera_id, 0.0)
+                            if (cur_ts - last_snap_ts) >= 2.0 and rows and row_to_vehicle:
+                                row = rows[0]; v = row_to_vehicle[0]
+                                eid = int(row.id)
+                                if eid > 0:
+                                    path = f"{SNAP_DIR}/{eid}.jpg"
+                                    snap = infer_frame.copy()
+                                    fh, fw = snap.shape[:2]
+                                    bbox = v.get("bbox", {}) or {}
+                                    if bbox:
+                                        cv2.rectangle(snap, (int(bbox.get("x1",0)), int(bbox.get("y1",0))),
+                                                      (int(bbox.get("x2",0)), int(bbox.get("y2",0))), (0,200,0), 2)
+                                    if fw > 480:
+                                        sc = 480.0/fw
+                                        snap = cv2.resize(snap, (480, int(fh*sc)))
+                                    cv2.imwrite(path, snap, [cv2.IMWRITE_JPEG_QUALITY, 60])
+                                    _per_cam_last_snap_ts[camera_id] = cur_ts
+                        except Exception:
+                            pass
                 db.close()
             except Exception:
                 try:
