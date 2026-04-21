@@ -36,11 +36,32 @@ router = APIRouter(prefix="/api/stream", tags=["串流"])
 detection_services: Dict[int, dict] = {}
 # detection 服務共享最新 frame 給 overlay（避免 NX 串流開第二條連線）
 _shared_frames: Dict[int, dict] = {}  # {camera_id: {"frame": ndarray, "ts": float}}
-# 共用 overlay detector singleton
+# Per-camera detector instances（每 cam 獨立 → 並行推理、無 lock 競爭）
+_per_cam_detectors: Dict[int, "object"] = {}
+_per_cam_detectors_lock = threading.Lock()
+# 舊的 fallback singleton（給非 cam 上下文呼叫，例如 cameras.py 的 analyze）
 _shared_overlay_detector = None
 _shared_overlay_detector_lock = threading.Lock()
 
+def _get_per_cam_detector(camera_id: int):
+    """每個 camera 一個獨立 VehicleDetector，避免 4 cams 共享同一 detector 被 lock 序列化。"""
+    if camera_id in _per_cam_detectors:
+        return _per_cam_detectors[camera_id]
+    with _per_cam_detectors_lock:
+        if camera_id in _per_cam_detectors:
+            return _per_cam_detectors[camera_id]
+        try:
+            from detection.vehicle_detector import VehicleDetector
+            _per_cam_detectors[camera_id] = VehicleDetector(conf_threshold=0.25)
+            print(f"⚡ cam_{camera_id} 獨立 detector 初始化完成", flush=True)
+        except Exception as e:
+            add_log("warning", f"cam_{camera_id} 獨立 detector 初始化失敗: {e}", "stream")
+            _per_cam_detectors[camera_id] = None
+        return _per_cam_detectors[camera_id]
+
+
 def _get_shared_overlay_detector():
+    """非 cam 場景的 fallback singleton（cameras.py analyze 等）"""
     global _shared_overlay_detector
     if _shared_overlay_detector is not None:
         return _shared_overlay_detector
@@ -1059,10 +1080,11 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     
     # 錯開各 camera 的 RTSP/HTTP 連線，避免 FFMPEG 同時 open 互相阻塞
     time.sleep(camera_id * 3)
-    detector = _get_shared_overlay_detector()
+    # 每 cam 獨立 detector instance：避免 4 cams 共享同一 detector 被 lock 序列化
+    detector = _get_per_cam_detector(camera_id)
     if detector is None:
         detector = VehicleDetector(conf_threshold=0.5)
-    add_log("info", f"偵測器 device: {getattr(detector, 'runtime_device', 'unknown')}", "detection")
+    add_log("info", f"cam_{camera_id} 偵測器 device: {getattr(detector, 'runtime_device', 'unknown')}", "detection")
     _src_lc = str(source or "").lower()
     if _src_lc.startswith("rtsp://"):
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
@@ -1429,8 +1451,8 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         _last_proc_ts = cur_ts
         frame_count += 1
         infer_frame = frame.copy()
-        with _shared_overlay_detector_lock:
-            detections = detector.detect(infer_frame)
+        # 每 cam 獨立 detector → 不需鎖，CUDA 端可並行排程
+        detections = detector.detect(infer_frame)
         # 原子綁定：frame + bbox + ts 一起寫入
         _shared_frames[camera_id] = {
             "frame": infer_frame,
