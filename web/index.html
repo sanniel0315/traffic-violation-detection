@@ -8036,6 +8036,9 @@ const app=createApp({
             monitorUpdatedAt.value=new Date().toLocaleTimeString('zh-TW');
         };
         let monitorWatchTimer=null;
+        let monitorRecycleTimer=null;
+        // 每 60 秒自動 recycle 串流連線：解 MJPEG 在瀏覽器長連線記憶體累積/buffer 堆積導致頓
+        const RECYCLE_INTERVAL_MS=60*1000;
         const ensureMonitorWatchdog=()=>{
             if(monitorWatchTimer)return;
             monitorWatchTimer=setInterval(()=>{
@@ -8056,11 +8059,28 @@ const app=createApp({
                     }
                 });
             },2000);
+            // 串流自動 recycle (避免 MJPEG 長連線變頓)
+            if(!monitorRecycleTimer){
+                monitorRecycleTimer=setInterval(()=>{
+                    if(page.value!=='monitor' || !isPageVisible())return;
+                    const now=Date.now();
+                    cameras.value.forEach(c=>{
+                        if(!c?.showStream || c.monitorSnapshotMode)return;
+                        if(getMonitorMediaKind(c)==='video')return;
+                        // 把 _zoomReloadTick 推進 → URL 變 → <img> 重新連線（瀏覽器釋放舊 buffer）
+                        c._zoomReloadTick=now;
+                    });
+                }, RECYCLE_INTERVAL_MS);
+            }
         };
         const stopMonitorWatchdog=()=>{
             if(monitorWatchTimer){
                 clearInterval(monitorWatchTimer);
                 monitorWatchTimer=null;
+            }
+            if(monitorRecycleTimer){
+                clearInterval(monitorRecycleTimer);
+                monitorRecycleTimer=null;
             }
         };
         const loadRepeatOffenders=async()=>{const grouped={};violations.value.forEach(v=>{if(v.license_plate){grouped[v.license_plate]=grouped[v.license_plate]||{plate:v.license_plate,count:0};grouped[v.license_plate].count++;}});repeatOffenders.value=Object.values(grouped).filter(g=>g.count>=repeatThreshold.value).sort((a,b)=>b.count-a.count);ElementPlus.ElMessage.success("查詢完成");};
@@ -8454,6 +8474,24 @@ const app=createApp({
                 const labelFilter=String(frigateFilter.label||'').trim().toLowerCase();
                 if(labelFilter){
                     items=items.filter(e=>String(e.label||'').toLowerCase().includes(labelFilter));
+                }
+                // 只顯示有開「事件截圖」(snapshots.enabled) 的 cam 的事件
+                // 沒開的 cam 雖然有寫 traffic_events 給 VD 報表，但不該出現在這個列表
+                if(!camName){
+                    // 沒指定特定 cam → 撈出所有開 snap 的 cam_id 集合
+                    if(!frigateCameras.value.length){
+                        try{ await loadNVRCameras(); }catch(_){}
+                    }
+                    const snapCamIds=new Set();
+                    (frigateCameras.value||[]).forEach(c=>{
+                        if(c?.config?.snapshots?.enabled===true){
+                            const m=String(c.name||'').match(/cam_(\d+)/);
+                            if(m)snapCamIds.add(Number(m[1]));
+                        }
+                    });
+                    if(snapCamIds.size>0){
+                        items=items.filter(e=>snapCamIds.has(Number(e.camera_id)));
+                    }
                 }
                 // 轉成 frigate event 格式給 UI 用
                 frigateEvents.value=items.map(e=>({
