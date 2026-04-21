@@ -22,8 +22,56 @@ FRIGATE_CONFIG_PATH = "/workspace/config/frigate/config.yml"
 _NX_STREAM_PREFIX = "/api/nx/stream/"
 
 
+def _backup_config(config_path: str) -> str:
+    """寫入前備份 config"""
+    import shutil
+    backup_path = str(config_path) + ".bak"
+    try:
+        shutil.copy2(config_path, backup_path)
+    except Exception:
+        pass
+    return backup_path
+
+
+def _safe_write_config(config_path: str, config: dict) -> None:
+    """安全寫入 config（備份 + 驗證關鍵設定）"""
+    _backup_config(config_path)
+    try:
+        with open(config_path) as f:
+            original_text = f.read()
+    except Exception:
+        original_text = ""
+    # 寫入前修正：只保證 detect role 不存在（避免 onnxruntime crash），
+    # 不再強制回寫 record role — 尊重用戶關閉錄影的設定
+    for name, cam in (config.get("cameras") or {}).items():
+        if not isinstance(cam, dict):
+            continue
+        for inp in cam.get("ffmpeg", {}).get("inputs", []):
+            roles = inp.get("roles", []) or []
+            if "detect" in roles:
+                roles.remove("detect")
+                inp["roles"] = roles
+        # detect 強制 false（global 偵測由我方服務處理，不給 Frigate 做）
+        if "detect" in cam:
+            cam["detect"]["enabled"] = False
+    # 全域 detect 也強制 false
+    if "detect" in config:
+        config["detect"]["enabled"] = False
+    import yaml
+    with open(config_path, 'w') as f:
+        yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+    # 驗證 go2rtc 沒被刪
+    with open(config_path) as f:
+        new_text = f.read()
+    if 'go2rtc' in original_text and 'go2rtc' not in new_text:
+        import shutil
+        shutil.copy2(str(config_path) + ".bak", config_path)
+
+
 def _sanitize_frigate_config(config: dict) -> dict:
-    """修正 Frigate 0.17 相容性問題，避免 safe mode。"""
+    """不再修改 config（避免覆蓋用戶設定）"""
+    return config
+    # === 以下舊邏輯停用 ===
     cameras = config.get("cameras")
     if not isinstance(cameras, dict):
         return config
@@ -40,11 +88,11 @@ def _sanitize_frigate_config(config: dict) -> dict:
             nx_cams_to_remove.append(name)
             continue
 
-        # 關閉 detect（避免 onnxruntime crash）
+        # detect.enabled 保持 false（避免 onnxruntime crash），但不動 motion.enabled
         if "detect" in cam:
             cam["detect"]["enabled"] = False
 
-        # 移除 camera 層級的 retain（0.17 不支援）
+        # 移除 camera 層級的 retain（0.17 用 global record）
         rec = cam.get("record", {})
         if isinstance(rec, dict) and "retain" in rec:
             del rec["retain"]
@@ -54,20 +102,15 @@ def _sanitize_frigate_config(config: dict) -> dict:
         if isinstance(snap, dict) and "retain" in snap:
             del snap["retain"]
 
-        # record 預設啟用
+        # record：不強制覆寫，保留各 cam 原本設定
         if "record" not in cam:
             cam["record"] = {"enabled": True}
-        elif not cam["record"].get("enabled"):
-            cam["record"]["enabled"] = True
 
-        # roles 確保包含 record
+        # roles 確保包含 record（不加 detect，避免 onnxruntime crash）
         for inp in cam.get("ffmpeg", {}).get("inputs", []):
             roles = inp.get("roles", [])
             if "record" not in roles:
                 roles.append("record")
-            # 移除 detect role（不需要 Frigate 偵測）
-            if "detect" in roles:
-                roles.remove("detect")
             inp["roles"] = roles
 
     # 移除 NX 串流攝影機
@@ -458,20 +501,24 @@ async def get_nvr_settings():
 
             mqtt = config.get("mqtt", {})
 
-            # 從第一台攝影機讀取錄影和偵測設定
+            # 從第一台攝影機讀取偵測設定
             cameras = config.get("cameras", {})
             first_cam = next(iter(cameras.values()), {}) if cameras else {}
 
+            # 全域 record 設定（continuous + motion days）
+            global_record = config.get("record", {}) or {}
+            global_enabled = global_record.get("enabled", True)
+            continuous_days = int((global_record.get("continuous") or {}).get("days") or 0)
+            motion_days = int((global_record.get("motion") or {}).get("days") or 0)
             # 判斷錄影模式
-            record_cfg = first_cam.get("record", {})
-            record_enabled = record_cfg.get("enabled", False)
-            record_mode_str = record_cfg.get("retain", {}).get("mode", "motion")
-            if not record_enabled:
+            if not global_enabled:
                 record_mode = "off"
-            elif record_mode_str == "all":
+            elif continuous_days > 0:
                 record_mode = "all"
             else:
                 record_mode = "motion"
+            # 顯示主要保留天數（取較大者）
+            retain_days = max(continuous_days, motion_days, 1)
 
             # 偵測設定
             detect_cfg = first_cam.get("detect", {})
@@ -494,8 +541,10 @@ async def get_nvr_settings():
                 "mqtt_user": mqtt.get("user"),
                 "mqtt_password": "",
                 "record_mode": record_mode,
-                "retain_days": record_cfg.get("retain", {}).get("days", 7),
-                "event_retain_days": record_cfg.get("events", {}).get("retain", {}).get("default", 14),
+                "retain_days": retain_days,
+                "continuous_days": continuous_days,
+                "motion_days": motion_days,
+                "event_retain_days": int((global_record.get("events") or {}).get("retain", {}).get("default") or 14),
                 "record_schedule": record_schedule,
                 "motion_enabled": motion_cfg.get("enabled", True),
                 "motion_threshold": motion_cfg.get("threshold", 25),
@@ -546,47 +595,40 @@ async def update_nvr_settings(settings: NvrSettings):
 
         # 錄影模式設定
         record_enabled = settings.record_mode != "off"
-        record_retain_mode = "all" if settings.record_mode == "all" else "motion"
 
-        # 更新每台攝影機的錄影和偵測設定
+        # 全域 record 設定 — 只控制保留天數，不強制覆寫每台 enabled
+        global_record = config.get("record", {}) or {}
+        if settings.record_mode == "all":
+            global_record["continuous"] = {"days": int(settings.retain_days)}
+            global_record["motion"] = {"days": int(settings.retain_days)}
+        else:
+            global_record["continuous"] = {"days": 0}
+            global_record["motion"] = {"days": int(settings.retain_days)}
+        # 全域 enabled 維持 True，由每台 cam 個別控制
+        global_record["enabled"] = True
+        config["record"] = global_record
+
+        # 每台攝影機：只更新偵測解析度/fps + motion 參數，**不動 record.enabled / motion.enabled**
+        # 因為每台 cam 的開關由獨立的 toggle API 控制
         for cam_name, cam_config in config.get("cameras", {}).items():
-            # 錄影
-            cam_config["record"] = {
-                "enabled": record_enabled,
-                "retain": {
-                    "days": settings.retain_days,
-                    "mode": record_retain_mode,
-                },
-            }
-            # 兼容舊配置：移除 Frigate 不接受的 record.events
+            # 移除過時 retain 欄位（用 global record）
             if isinstance(cam_config.get("record"), dict):
+                cam_config["record"].pop("retain", None)
                 cam_config["record"].pop("events", None)
+                # 不動 record.enabled
 
-            # 偵測
-            detect = cam_config.get("detect", {})
+            # 偵測解析度/fps（不動 detect.enabled）
+            detect = cam_config.get("detect", {}) or {}
             detect["fps"] = settings.detect_fps
             detect["width"] = detect_width
             detect["height"] = detect_height
             cam_config["detect"] = detect
 
-            # Motion 動態偵測：保留既有 mask 等欄位，避免覆蓋 ROI
+            # Motion 參數（threshold/contour 全域，不動 motion.enabled）
             motion = cam_config.get("motion", {}) or {}
-            motion["enabled"] = bool(settings.motion_enabled)
             motion["threshold"] = int(settings.motion_threshold)
             motion["contour_area"] = int(settings.motion_contour_area)
             cam_config["motion"] = motion
-
-            # 確保 ffmpeg roles 正確
-            inputs = cam_config.get("ffmpeg", {}).get("inputs", [])
-            if inputs:
-                roles = inputs[0].get("roles", [])
-                if record_enabled and "record" not in roles:
-                    roles.append("record")
-                elif not record_enabled and "record" in roles:
-                    roles.remove("record")
-                if "detect" not in roles:
-                    roles.append("detect")
-                inputs[0]["roles"] = roles
 
         with open(FRIGATE_CONFIG_PATH, 'w') as f:
             yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
@@ -807,10 +849,13 @@ async def get_nvr_events(
 async def get_event_snapshot(event_id: str):
     """取得事件快照圖片"""
     try:
-        response = requests.get(
-            f"{FRIGATE_URL}/api/events/{event_id}/snapshot.jpg", timeout=10
-        )
-        if response.status_code == 200:
+        response, _url, _err = _get_frigate(f"/api/events/{event_id}/snapshot.jpg", timeout=10)
+        if response is not None and response.status_code == 200 and response.content:
+            media_type = response.headers.get("content-type", "image/jpeg")
+            return Response(content=response.content, media_type=media_type)
+        # 嘗試 thumbnail.jpg 作為 fallback
+        response, _url, _err = _get_frigate(f"/api/events/{event_id}/thumbnail.jpg", timeout=10)
+        if response is not None and response.status_code == 200 and response.content:
             media_type = response.headers.get("content-type", "image/jpeg")
             return Response(content=response.content, media_type=media_type)
     except Exception:
@@ -877,6 +922,30 @@ async def get_event_clip_media(event_id: str, request: Request):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/motion-clip/{camera_name}")
+async def get_motion_clip(
+    camera_name: str,
+    ts: float = Query(..., description="事件 epoch 秒"),
+    before: int = Query(3, ge=0, le=15, description="事件前 N 秒"),
+    after: int = Query(5, ge=0, le=15, description="事件後 N 秒"),
+):
+    """從 Frigate 錄影取 motion clip（以事件時間為中心 ± N 秒）"""
+    start = int(ts) - before
+    end = int(ts) + after
+    from fastapi.responses import Response as _Resp
+    for base_url in _frigate_base_urls():
+        try:
+            r = requests.get(
+                f"{base_url}/api/{camera_name}/start/{start}/end/{end}/clip.mp4",
+                timeout=20,
+            )
+            if r.status_code == 200 and len(r.content) > 500:
+                return _Resp(content=r.content, media_type="video/mp4")
+        except Exception:
+            continue
+    raise HTTPException(status_code=404, detail="該時段無錄影")
 
 
 @router.get("/recordings")
@@ -1091,8 +1160,46 @@ async def sync_cameras_to_nvr():
         global_motion = config.get("motion", {})
 
         # DB -> NVR
+        # 從 system settings 取 NX 連線資訊（用於把 NX 代理路徑轉成 RTSP URL）
+        nx_settings = {}
+        try:
+            from api.routes.system import load_nx_settings
+            nx_settings = load_nx_settings() or {}
+        except Exception:
+            nx_settings = {}
+        nx_server_url = str(nx_settings.get("server_base_url") or "").strip()
+        nx_user = str(nx_settings.get("username") or "").strip()
+        nx_pass = str(nx_settings.get("password") or "").strip()
+        nx_host = ""
+        nx_port = "7001"
+        if nx_server_url:
+            try:
+                from urllib.parse import urlparse
+                _u = urlparse(nx_server_url)
+                nx_host = _u.hostname or ""
+                if _u.port:
+                    nx_port = str(_u.port)
+            except Exception:
+                pass
+
+        def _resolve_camera_rtsp(cam):
+            """把 cam.source 轉成 Frigate 能用的 RTSP URL
+            注意：NX 攝影機不加入 Frigate（NX RTSP relay 的 auth 不相容 ffmpeg）
+            """
+            src = str(cam.source or "").strip()
+            if not src:
+                return ""
+            # 已經是直連 RTSP（非 NX relay）
+            if src.startswith("rtsp://"):
+                return src
+            # NX 代理路徑 → 跳過（NX RTSP relay auth 不相容 Frigate ffmpeg）
+            if "/api/nx/stream/" in src:
+                return ""
+            return ""
+
         for cam in db_cameras:
-            if not cam.source:
+            rtsp_url = _resolve_camera_rtsp(cam)
+            if not rtsp_url:
                 continue
             cam_name = f"cam_{cam.id}"
             zones_config = {}
@@ -1112,42 +1219,47 @@ async def sync_cameras_to_nvr():
             existing_motion = existing.get("motion", {})
             existing_detect = existing.get("detect", {})
 
-            config["cameras"][cam_name] = {
-                "enabled": cam.enabled if cam.enabled is not None else True,
-                "ffmpeg": {
-                    "inputs": [
-                        {"path": cam.source, "roles": ["detect", "record"]}
-                    ]
-                },
-                "detect": {
-                    "enabled": (
-                        cam.detection_enabled
-                        if cam.detection_enabled is not None
-                        else True
-                    ),
-                    "width": existing_detect.get("width", 1920),
-                    "height": existing_detect.get("height", 1080),
-                    "fps": existing_detect.get("fps", 10),
-                },
-                "objects": {
+            # 保留現有 config，只更新 source URL + zones
+            is_new_cam = not existing
+            new_cam = dict(existing) if existing else {}
+            # ffmpeg source（永遠更新）
+            new_cam["enabled"] = cam.enabled if cam.enabled is not None else new_cam.get("enabled", True)
+            # roles：保留現有；新 cam 才預設 ["record"]
+            existing_roles = list(existing.get("ffmpeg", {}).get("inputs", [{}])[0].get("roles", [])) if existing else []
+            if is_new_cam and not existing_roles:
+                existing_roles = ["record"]
+            new_cam["ffmpeg"] = {
+                "inputs": [
+                    {"path": rtsp_url, "roles": existing_roles}
+                ]
+            }
+            # detect：保留現有，新 cam 才用預設
+            if "detect" not in new_cam:
+                new_cam["detect"] = {
+                    "enabled": False,
+                    "width": 1920, "height": 1080, "fps": 5,
+                }
+            # objects
+            if "objects" not in new_cam:
+                new_cam["objects"] = {
                     "track": ["car", "motorcycle", "bicycle", "person"],
                     "filters": {
                         "car": {"min_area": 5000, "min_score": 0.5},
                         "motorcycle": {"min_area": 1000, "min_score": 0.5},
                     },
-                },
-                "zones": zones_config,
-                "record": existing_record or {
-                    "enabled": True,
-                    "retain": {"days": 7, "mode": "motion"},
-                },
-                "motion": existing_motion or {},
-                "snapshots": {
-                    "enabled": True,
-                    "timestamp": True,
-                    "bounding_box": True,
-                },
-            }
+                }
+            # zones（從 DB 更新）
+            new_cam["zones"] = zones_config
+            # record：保留現有，新 cam 才設預設
+            if "record" not in new_cam:
+                new_cam["record"] = {"enabled": True}
+            # motion：保留現有
+            if "motion" not in new_cam:
+                new_cam["motion"] = {"enabled": True, "threshold": 25, "contour_area": 20}
+            # snapshots：保留現有
+            if "snapshots" not in new_cam:
+                new_cam["snapshots"] = {"enabled": True, "timestamp": True, "bounding_box": True}
+            config["cameras"][cam_name] = new_cam
             synced_to_nvr.append(cam_name)
 
         # NVR -> DB
@@ -1232,30 +1344,36 @@ async def restart_nvr():
     add_log("info", "收到 NVR 重啟請求", "nvr")
     # Use NVR's own restart API. Avoid docker CLI dependency inside API container.
     try:
-        response = requests.post(f"{FRIGATE_URL}/api/restart", timeout=8)
-        if response.status_code in (200, 202):
-            payload = response.json() if response.content else {}
-            add_log("warning", "NVR 重啟中（等待恢復）", "nvr")
+        import subprocess
+        # 用 Frigate 自己的 API 重啟（不依賴 docker CLI）
+        import requests as _req
+        try:
+            r = _req.post("http://localhost:5000/api/restart", timeout=10)
+            if r.ok:
+                add_log("warning", "NVR 重啟中（Frigate API）", "nvr")
+                return {"status": "success", "message": "NVR 正在重啟（約 30 秒）"}
+        except Exception:
+            pass
+        # fallback: docker CLI
+        result = subprocess.run(
+            ["docker", "restart", "frigate"],
+            capture_output=True, text=True, timeout=60,
+            env={**__import__('os').environ, "PATH": "/usr/bin:/usr/local/bin:/bin"},
+        )
+        if result.returncode == 0:
+            add_log("warning", "NVR 重啟中（docker compose restart）", "nvr")
             return {
                 "status": "success",
-                "message": payload.get("message", "NVR 正在重啟（約 1 分鐘）"),
+                "message": "NVR 正在重啟（約 30 秒）",
             }
-        # Frigate restart may transiently return 500 while auth/app is reloading.
-        if response.status_code >= 500:
-            add_log("warning", f"NVR 重啟中（暫時 HTTP {response.status_code}）", "nvr")
-            return {
-                "status": "success",
-                "message": "NVR 正在重啟中，請稍候自動恢復",
-            }
-        text = response.text[:180] if response.text else ""
-        add_log("error", f"NVR 重啟失敗：HTTP {response.status_code}", "nvr")
+        add_log("error", f"NVR 重啟失敗: {result.stderr.strip()}", "nvr")
         return {
             "status": "error",
-            "message": f"NVR 暫時無法重啟（HTTP {response.status_code}）{text}",
+            "message": f"NVR 重啟失敗: {result.stderr.strip()[:200]}",
         }
     except Exception as e:
         add_log("error", f"NVR 重啟失敗：{e}", "nvr")
-        return {"status": "error", "message": f"NVR 連線失敗，請稍後再試: {e}"}
+        return {"status": "error", "message": f"NVR 重啟失敗: {e}"}
 
 
 # ============ 新增/刪除攝影機 ============
@@ -1313,8 +1431,7 @@ async def add_nvr_camera(camera: FrigateCameraAdd):
 
         config['cameras'][camera.name] = cam_config
 
-        with open(config_path, 'w') as f:
-            yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
+        _safe_write_config(config_path, _sanitize_frigate_config(config))
 
         return {
             "status": "success",
@@ -1344,8 +1461,7 @@ async def delete_nvr_camera_by_name(name: str):
         del cameras[name]
         config['cameras'] = cameras
 
-        with open(config_path, 'w') as f:
-            yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
+        _safe_write_config(config_path, _sanitize_frigate_config(config))
 
         return {
             "status": "success",
@@ -1374,9 +1490,9 @@ async def switch_nvr_camera_features(name: str, data: NvrCameraSwitch):
 
         cam = cameras[name]
         if "ffmpeg" not in cam:
-            cam["ffmpeg"] = {"inputs": [{"path": "", "roles": ["detect"]}]}
+            cam["ffmpeg"] = {"inputs": [{"path": "", "roles": ["record"]}]}
         if "inputs" not in cam["ffmpeg"] or not cam["ffmpeg"]["inputs"]:
-            cam["ffmpeg"]["inputs"] = [{"path": "", "roles": ["detect"]}]
+            cam["ffmpeg"]["inputs"] = [{"path": "", "roles": ["record"]}]
         roles = cam["ffmpeg"]["inputs"][0].get("roles", []) or []
 
         if data.record_enabled is not None:
@@ -1401,9 +1517,8 @@ async def switch_nvr_camera_features(name: str, data: NvrCameraSwitch):
             detect_cfg["height"] = int(detect_cfg.get("height", 1080) or 1080)
             cam["detect"] = detect_cfg
 
-            # 相容舊版 UI：detect 開關同時帶動 motion.enabled
+            # motion 保持原本設定，不跟隨 detect 開關
             motion_cfg = cam.get("motion", {}) or {}
-            motion_cfg["enabled"] = detect_on
             motion_cfg["threshold"] = int(motion_cfg.get("threshold", 25))
             motion_cfg["contour_area"] = int(motion_cfg.get("contour_area", 20))
             cam["motion"] = motion_cfg
@@ -1415,21 +1530,36 @@ async def switch_nvr_camera_features(name: str, data: NvrCameraSwitch):
             motion_cfg["threshold"] = int(motion_cfg.get("threshold", 25))
             motion_cfg["contour_area"] = int(motion_cfg.get("contour_area", 20))
             cam["motion"] = motion_cfg
+            # Motion 事件錄影：motion 啟動同時啟用 record.enabled + role
+            # motion 關閉時不動 record，讓「錄影」toggle 獨立控制 24hr 錄影
+            if motion_on:
+                record_cfg = cam.get("record", {}) or {}
+                record_cfg["enabled"] = True
+                cam["record"] = record_cfg
+                if "record" not in roles:
+                    roles.append("record")
 
         if data.snapshots_enabled is not None:
+            snap_on = bool(data.snapshots_enabled)
             snapshots_cfg = cam.get("snapshots", {}) or {}
-            snapshots_cfg["enabled"] = bool(data.snapshots_enabled)
+            snapshots_cfg["enabled"] = snap_on
             retain_cfg = snapshots_cfg.get("retain", {}) or {}
             retain_cfg["default"] = int(retain_cfg.get("default", 14))
             snapshots_cfg["retain"] = retain_cfg
             cam["snapshots"] = snapshots_cfg
+            # 事件截圖 需要 motion 啟動才會觸發
+            if snap_on:
+                motion_cfg = cam.get("motion", {}) or {}
+                motion_cfg["enabled"] = True
+                motion_cfg["threshold"] = int(motion_cfg.get("threshold", 25))
+                motion_cfg["contour_area"] = int(motion_cfg.get("contour_area", 20))
+                cam["motion"] = motion_cfg
 
         cam["ffmpeg"]["inputs"][0]["roles"] = roles
         cameras[name] = cam
         config["cameras"] = cameras
 
-        with open(config_path, 'w') as f:
-            yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
+        _safe_write_config(config_path, _sanitize_frigate_config(config))
 
         if data.record_enabled is not None:
             add_log("info", f"{name} 錄影已{'開啟' if data.record_enabled else '關閉'}", "nvr")

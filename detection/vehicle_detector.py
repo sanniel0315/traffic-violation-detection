@@ -24,6 +24,24 @@ class VehicleDetector:
     }
     # 需要做二階段細分類的類別
     _RECLASSIFY_CLASSES = {'truck', 'bus'}
+
+    # 車種中文標籤對照（統一所有車種顯示）
+    CLASS_LABEL_ZH = {
+        'car':         '小客車',
+        'motorcycle':  '機車',
+        'bicycle':     '自行車',
+        'person':      '行人',
+        'truck':       '貨車',
+        'bus':         '大客車',
+        'heavy_truck': '大貨車',
+        'light_truck': '小貨車',
+        'non_truck':   '小客車',
+    }
+
+    @classmethod
+    def get_zh_label(cls, class_name: str) -> str:
+        return cls.CLASS_LABEL_ZH.get(str(class_name or ''), str(class_name or ''))
+
     CLASS_NAME_ALIASES = {
         'person': {'person', 'pedestrian', 'people'},
         'bicycle': {'bicycle', 'cycle'},
@@ -82,12 +100,17 @@ class VehicleDetector:
     def _match_canonical_label(cls, raw_name: str) -> Optional[str]:
         name = cls._normalize_label(raw_name)
         compact = name.replace(" ", "")
+        # 第一輪：精確比對（避免 bicycle 的 alias "cycle" 子字串命中 "motorcycle"）
         for canonical, aliases in cls.CLASS_NAME_ALIASES.items():
             for alias in aliases:
                 alias_norm = cls._normalize_label(alias)
                 alias_compact = alias_norm.replace(" ", "")
                 if name == alias_norm or compact == alias_compact:
                     return canonical
+        # 第二輪：子字串比對（容忍 "pickup_truck" 之類的變體）
+        for canonical, aliases in cls.CLASS_NAME_ALIASES.items():
+            for alias in aliases:
+                alias_norm = cls._normalize_label(alias)
                 if alias_norm and alias_norm in name:
                     return canonical
         return None
@@ -159,7 +182,10 @@ class VehicleDetector:
                 if (self.truck_classifier
                         and det['class_name'] in self._RECLASSIFY_CLASSES):
                     cls_result = self.truck_classifier.classify(frame, det['bbox'])
-                    if cls_result['class_name'] != 'unknown':
+                    if cls_result['class_name'] == 'non_truck':
+                        det['class_name'] = 'car'
+                        det['truck_cls'] = cls_result
+                    elif cls_result['class_name'] != 'unknown':
                         det['class_name'] = cls_result['class_name']
                         det['truck_cls'] = cls_result
 
@@ -204,12 +230,12 @@ class VehicleDetector:
                 color, 2
             )
             
-            # 繪製標籤（若有細分類，顯示中文標籤）
+            # 繪製標籤（統一顯示中文，不帶信心度）
             truck_cls = det.get('truck_cls')
             if truck_cls:
-                label = f"{truck_cls['label']} {truck_cls['confidence']:.2f}"
+                label = str(truck_cls['label'])
             else:
-                label = f"{det['class_name']} {det['confidence']:.2f}"
+                label = self.get_zh_label(det['class_name'])
             cv2.putText(
                 annotated, label,
                 (bbox['x1'], bbox['y1'] - 10),

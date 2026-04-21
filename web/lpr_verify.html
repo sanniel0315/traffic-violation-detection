@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>LPR 車種驗證</title>
+<script src="/web/lib/vue.global.prod.js"></script>
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--text:#e2e8f0;--muted:#64748b;--accent:#3b82f6;--ok:#10b981;--bad:#ef4444}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,sans-serif;background:var(--bg);color:var(--text);padding:0}
+.top{position:sticky;top:0;background:#1e293b;padding:12px 20px;border-bottom:1px solid #334155;display:flex;gap:12px;align-items:center;z-index:10}
+.top h1{font-size:18px;margin:0}
+.top .stats{display:flex;gap:16px;font-size:13px;color:var(--muted)}
+.top .stats b{color:var(--text)}
+.top button{background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer}
+.top select{background:#0f172a;color:var(--text);border:1px solid #334155;padding:6px 10px;border-radius:6px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px;padding:20px}
+.card{background:var(--card);border-radius:8px;overflow:hidden;border:2px solid #334155;transition:.15s}
+.card.ok{border-color:var(--ok)}
+.card.bad{border-color:var(--bad)}
+.card img{width:100%;height:220px;object-fit:cover;background:#000;display:block;cursor:pointer}
+.card .info{padding:12px}
+.card .plate{font-size:22px;font-weight:700;letter-spacing:2px;color:#60a5fa}
+.card .meta{font-size:12px;color:var(--muted);margin-top:6px;display:flex;justify-content:space-between}
+.card .vtype{display:inline-block;padding:4px 10px;border-radius:4px;background:#334155;font-size:13px;font-weight:600;margin-top:8px}
+.card .actions{display:flex;gap:8px;margin-top:10px}
+.card .actions button{flex:1;padding:8px;border:none;border-radius:4px;cursor:pointer;font-weight:600}
+.btn-ok{background:var(--ok);color:#fff}
+.btn-bad{background:var(--bad);color:#fff}
+.btn-skip{background:#334155;color:var(--text)}
+.empty{text-align:center;padding:80px;color:var(--muted)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;z-index:100;cursor:zoom-out}
+.modal img{max-width:95vw;max-height:95vh;object-fit:contain}
+.correction{display:none;gap:6px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px solid #334155}
+.card.bad .correction{display:flex}
+.correction button{flex:0 0 auto;padding:4px 10px;background:#334155;border:none;border-radius:4px;color:var(--text);cursor:pointer;font-size:12px}
+.correction button.active{background:var(--accent)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="top">
+    <h1>🚗 LPR 車種驗證</h1>
+    <select v-model="filterCam" @change="reload">
+      <option value="">全部攝影機</option>
+      <option v-for="c in cameras" :value="c.id">{{c.name}}</option>
+    </select>
+    <select v-model="filterTime" @change="reload">
+      <option value="1h">最近 1 小時</option>
+      <option value="6h">最近 6 小時</option>
+      <option value="24h">最近 24 小時</option>
+    </select>
+    <select v-model.number="limit" @change="reload">
+      <option :value="20">20 筆</option>
+      <option :value="50">50 筆</option>
+      <option :value="100">100 筆</option>
+    </select>
+    <button @click="reload">🔄 重新載入</button>
+    <div class="stats">
+      <span>總計 <b>{{rows.length}}</b></span>
+      <span style="color:#10b981">✓ 正確 <b>{{okCount}}</b></span>
+      <span style="color:#ef4444">✗ 錯誤 <b>{{badCount}}</b></span>
+      <span>準確率 <b>{{accuracy}}%</b></span>
+    </div>
+    <a href="/web/index.html" style="color:#94a3b8;margin-left:auto">← 返回</a>
+  </div>
+
+  <div v-if="loading" class="empty">載入中...</div>
+  <div v-else-if="!rows.length" class="empty">無資料</div>
+  <div v-else class="grid">
+    <div v-for="r in rows" :key="r.id" class="card" :class="{ok:marks[r.id]==='ok',bad:marks[r.id]==='bad'}">
+      <img v-if="r.snapshot" :src="'/api/lpr/stream/snapshot/'+r.snapshot" @click="zoom=r" @error="$event.target.style.display='none'">
+      <div class="info">
+        <div class="plate">{{r.plate_number}}</div>
+        <div class="vtype">🚙 預測車種：{{vTypeZh(r.vehicle_type)}}</div>
+        <div class="meta">
+          <span>{{r.timeText}}</span>
+          <span>{{r.camera_name}}</span>
+          <span>conf {{(r.confidence*100).toFixed(0)}}%</span>
+        </div>
+        <div class="actions">
+          <button class="btn-ok" @click="mark(r.id,'ok')">✓ 正確</button>
+          <button class="btn-bad" @click="mark(r.id,'bad')">✗ 錯誤</button>
+          <button class="btn-skip" @click="mark(r.id,null)">略過</button>
+        </div>
+        <div class="correction">
+          <span style="font-size:11px;color:#94a3b8;width:100%">應該是：</span>
+          <button v-for="t in vehicleTypes" :class="{active:corrections[r.id]===t.k}" @click="setCorrection(r.id,t.k)">{{t.v}}</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="zoom" class="modal" @click="zoom=null">
+    <img :src="'/api/lpr/stream/snapshot/'+zoom.snapshot">
+  </div>
+</div>
+
+<script>
+const {createApp,ref,reactive,computed,onMounted}=Vue;
+createApp({
+  setup(){
+    const VEHICLE_TYPE_ZH={car:'小客車',motorcycle:'機車',bicycle:'自行車',person:'行人',truck:'貨車',bus:'大客車',heavy_truck:'大貨車',light_truck:'小貨車',non_truck:'小客車'};
+    const vehicleTypes=[
+      {k:'car',v:'小客車'},{k:'motorcycle',v:'機車'},{k:'light_truck',v:'小貨車'},
+      {k:'heavy_truck',v:'大貨車'},{k:'bus',v:'大客車'}
+    ];
+    const vTypeZh=(v)=>VEHICLE_TYPE_ZH[String(v||'').toLowerCase()]||v||'未知';
+    
+    const cameras=ref([]);
+    const rows=ref([]);
+    const loading=ref(false);
+    const filterCam=ref('');
+    const filterTime=ref('1h');
+    const limit=ref(50);
+    const zoom=ref(null);
+    
+    const marks=reactive(JSON.parse(localStorage.getItem('lpr_verify_marks')||'{}'));
+    const corrections=reactive(JSON.parse(localStorage.getItem('lpr_verify_corrections')||'{}'));
+    
+    const mark=(id,v)=>{
+      if(v===null)delete marks[id]; else marks[id]=v;
+      localStorage.setItem('lpr_verify_marks',JSON.stringify(marks));
+    };
+    const setCorrection=(id,k)=>{
+      corrections[id]=k;
+      localStorage.setItem('lpr_verify_corrections',JSON.stringify(corrections));
+    };
+    
+    const okCount=computed(()=>rows.value.filter(r=>marks[r.id]==='ok').length);
+    const badCount=computed(()=>rows.value.filter(r=>marks[r.id]==='bad').length);
+    const accuracy=computed(()=>{
+      const total=okCount.value+badCount.value;
+      return total?(okCount.value/total*100).toFixed(1):0;
+    });
+    
+    const reload=async()=>{
+      loading.value=true;
+      try{
+        const now=new Date();
+        const hoursMap={'1h':1,'6h':6,'24h':24};
+        const from=new Date(now.getTime()-hoursMap[filterTime.value]*3600000);
+        const params=new URLSearchParams({
+          start:from.toISOString(),end:now.toISOString(),
+          limit:limit.value,offset:0
+        });
+        if(filterCam.value)params.set('camera_id',filterCam.value);
+        const r=await fetch('/api/lpr/stream/history?'+params);
+        const d=await r.json();
+        rows.value=(d.results||[]).map(it=>({
+          ...it,
+          timeText:it.time||'-'
+        }));
+      }catch(e){console.error(e);}
+      loading.value=false;
+    };
+    
+    onMounted(async()=>{
+      // 載入攝影機
+      try{
+        const r=await fetch('/api/cameras');
+        const d=await r.json();
+        cameras.value=(d.items||[]).filter(c=>c.enabled);
+      }catch(e){}
+      reload();
+    });
+    
+    return{cameras,rows,loading,filterCam,filterTime,limit,zoom,marks,corrections,
+      mark,setCorrection,okCount,badCount,accuracy,reload,vTypeZh,vehicleTypes};
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

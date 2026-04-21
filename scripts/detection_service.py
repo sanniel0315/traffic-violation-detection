@@ -59,7 +59,7 @@ class DetectionService:
                 
                 # 偵測
                 detections = self.detector.detect(frame)
-                vehicles = [d for d in detections if d['class_name'] in ['car', 'motorcycle', 'truck', 'bus']]
+                vehicles = [d for d in detections if d['class_name'] in ['car', 'motorcycle', 'truck', 'bus', 'heavy_truck', 'light_truck']]
                 
                 if vehicles:
                     detection_count += 1

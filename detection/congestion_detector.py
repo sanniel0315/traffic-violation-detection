@@ -15,13 +15,16 @@ class CongestionDetector:
     LEVEL_RANK = {'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
     DEFAULT_DETECT_CONF = 0.12
     DEFAULT_FALLBACK_CONF = 0.05
+    # 停等長度評估用：每種車輛佔用的等效路面長度（公尺）
     VEHICLE_EQUIVALENT_LENGTH_M = {
-        'motorcycle': 2.0,
-        'car': 6.0,
-        'bus': 12.0,
-        'truck': 12.0,
-        'heavy_truck': 12.0,
-        'light_truck': 6.0,
+        'bicycle':     1.8,
+        'motorcycle':  2.0,
+        'car':         5.0,    # 小客車
+        'non_truck':   5.0,    # YOLO 誤判為 truck 但實為小客車
+        'light_truck': 6.0,    # 小貨車
+        'truck':       8.0,    # 未細分 truck（保守取中值）
+        'bus':         12.0,   # 大客車
+        'heavy_truck': 12.0,   # 大貨車
     }
     DEFAULT_SAFETY_GAP_M = 1.5
 
@@ -89,8 +92,11 @@ class CongestionDetector:
         detections = self.detector.detect(frame)
         if not detections and self.fallback_detector is not None:
             detections = self.fallback_detector.detect(frame)
-        vehicles = [d for d in detections if d['class_name'] in ['car', 'motorcycle', 'bus', 'truck']]
-        
+        vehicles = [d for d in detections if d['class_name'] in ['car', 'motorcycle', 'bus', 'truck', 'heavy_truck', 'light_truck']]
+        # 過濾異常大的 bbox（面積 > 畫面 40% 不可能是車）
+        max_area = w * h * 0.4
+        vehicles = [v for v in vehicles if v['bbox'].get('width', 0) * v['bbox'].get('height', 0) < max_area]
+
         if roi_mask is not None:
             vehicles = self._filter_in_roi(vehicles, roi_mask)
 

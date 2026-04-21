@@ -73,75 +73,104 @@ class PlateDetector:
         return self._detect_heuristic(image)
 
     def _detect_heuristic(self, image) -> List[Dict[str, Any]]:
+        """改良版啟發式車牌偵測
+
+        策略：
+        1. 將影像放大到 960px 寬，提高小車牌可見度
+        2. 限縮在車輛下半部 + 中央區域（台灣車牌常在此）
+        3. 多尺度形態學 (黑帽 + Sobel + 邊緣) 並聯
+        4. 嚴格的長寬比 + 字元密度過濾
+        """
         h, w = image.shape[:2]
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image.copy()
         if h < 48 or w < 120:
             return []
 
+        # ----- 1. 放大到合適尺寸 -----
         scale = 1.0
-        if w < 640:
-            scale = 640.0 / float(w)
+        target_w = 960
+        if w < target_w:
+            scale = target_w / float(w)
             gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
 
         work_h, work_w = gray.shape[:2]
-        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+
+        # ----- 2. 對比增強 -----
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray)
 
+        # ----- 3. 多種形態學遮罩 -----
         masks = []
-        blackhat = cv2.morphologyEx(
-            enhanced,
-            cv2.MORPH_BLACKHAT,
-            cv2.getStructuringElement(cv2.MORPH_RECT, (25, 7)),
-        )
-        _, bh_mask = cv2.threshold(blackhat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        masks.append(cv2.morphologyEx(bh_mask, cv2.MORPH_CLOSE, np.ones((3, 11), np.uint8)))
 
-        grad_x = cv2.Sobel(enhanced, cv2.CV_32F, 1, 0, ksize=3)
-        grad_x = cv2.convertScaleAbs(grad_x)
-        _, gx_mask = cv2.threshold(grad_x, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        masks.append(cv2.morphologyEx(gx_mask, cv2.MORPH_CLOSE, np.ones((3, 13), np.uint8)))
+        # 3a. 黑帽 - 突顯白底黑字
+        for kw, kh in [(25, 7), (35, 9), (45, 11)]:
+            blackhat = cv2.morphologyEx(
+                enhanced, cv2.MORPH_BLACKHAT,
+                cv2.getStructuringElement(cv2.MORPH_RECT, (kw, kh))
+            )
+            _, bh_mask = cv2.threshold(blackhat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            closed = cv2.morphologyEx(bh_mask, cv2.MORPH_CLOSE, np.ones((3, 13), np.uint8))
+            masks.append(closed)
 
-        edges = cv2.Canny(enhanced, 60, 180)
-        masks.append(cv2.dilate(edges, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 3)), iterations=1))
+        # 3b. 水平 Sobel - 字元邊緣
+        sobel_x = cv2.Sobel(enhanced, cv2.CV_32F, 1, 0, ksize=3)
+        sobel_x = cv2.convertScaleAbs(sobel_x)
+        sobel_x = cv2.GaussianBlur(sobel_x, (5, 5), 0)
+        _, sx_mask = cv2.threshold(sobel_x, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        sx_closed = cv2.morphologyEx(sx_mask, cv2.MORPH_CLOSE, np.ones((5, 17), np.uint8))
+        sx_closed = cv2.morphologyEx(sx_closed, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        masks.append(sx_closed)
 
+        # 3c. Canny 邊緣
+        edges = cv2.Canny(enhanced, 80, 200)
+        edges = cv2.dilate(edges, cv2.getStructuringElement(cv2.MORPH_RECT, (7, 3)), iterations=1)
+        masks.append(edges)
+
+        # ----- 4. 從每個 mask 找候選 -----
         candidates: List[Dict[str, Any]] = []
         for mask in masks:
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             for cnt in contours:
                 x, y, cw, ch = cv2.boundingRect(cnt)
-                if cw < work_w * 0.12 or ch < work_h * 0.06:
+
+                # 尺寸過濾（放寬以接受更多候選）
+                if cw < max(40, work_w * 0.08) or ch < max(12, work_h * 0.04):
                     continue
-                if cw > work_w * 0.88 or ch > work_h * 0.45:
-                    continue
-                aspect = cw / max(1.0, float(ch))
-                if not (2.0 <= aspect <= 6.8):
-                    continue
-                y_center = (y + (ch / 2.0)) / max(1.0, float(work_h))
-                if not (0.25 <= y_center <= 0.92):
+                if cw > work_w * 0.95 or ch > work_h * 0.50:
                     continue
 
-                pad_x = int(cw * 0.04)
-                pad_y = int(ch * 0.10)
+                aspect = cw / max(1.0, float(ch))
+                # 台灣車牌標準 320x160 = 2.0；機車 230x150 ~= 1.5
+                if not (1.8 <= aspect <= 7.0):
+                    continue
+
+                # 位置過濾：車牌通常在車輛下半部
+                y_center = (y + (ch / 2.0)) / max(1.0, float(work_h))
+                if not (0.20 <= y_center <= 0.95):
+                    continue
+
+                # 加 padding
+                pad_x = int(cw * 0.06)
+                pad_y = int(ch * 0.15)
                 x1 = max(0, x - pad_x)
                 y1 = max(0, y - pad_y)
                 x2 = min(work_w, x + cw + pad_x)
                 y2 = min(work_h, y + ch + pad_y)
                 patch = enhanced[y1:y2, x1:x2]
                 score = self._plate_score(patch, x1, y1, x2, y2, work_w, work_h)
-                if score < 0.28:
+                if score < 0.22:  # 降低門檻收更多候選
                     continue
-                candidates.append(
-                    {
-                        "bbox": [
-                            int(x1 / scale),
-                            int(y1 / scale),
-                            int(x2 / scale),
-                            int(y2 / scale),
-                        ],
-                        "confidence": float(min(0.99, score)),
-                        "backend": self.backend,
-                    }
-                )
+
+                candidates.append({
+                    "bbox": [
+                        int(x1 / scale),
+                        int(y1 / scale),
+                        int(x2 / scale),
+                        int(y2 / scale),
+                    ],
+                    "confidence": float(min(0.99, score)),
+                    "backend": self.backend,
+                })
 
         if not candidates:
             return []

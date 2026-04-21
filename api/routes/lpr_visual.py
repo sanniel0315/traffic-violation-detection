@@ -12,7 +12,6 @@ import re
 
 sys.path.insert(0, '/workspace')
 
-from model_paths import get_detect_model_engine, get_detect_model_pt
 from api.utils.camera_stream import resolve_analysis_source
 
 router = APIRouter(prefix="/api/lpr/visual", tags=["lpr-visual"])
@@ -54,11 +53,8 @@ def get_recognizer():
 def get_yolo():
     global _yolo_model
     if _yolo_model is None:
-        from ultralytics import YOLO
-        model_path = get_detect_model_engine()
-        if not os.path.exists(model_path):
-            model_path = get_detect_model_pt()
-        _yolo_model = YOLO(model_path, task='detect')
+        from detection.vehicle_detector import VehicleDetector
+        _yolo_model = VehicleDetector(conf_threshold=0.5)
     return _yolo_model
 
 
@@ -323,7 +319,6 @@ def generate_frames(source: str):
     model_error = None
     next_model_retry_at = 0.0
 
-    VEHICLE_CLASSES = {2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
     frame_count = 0
     last_results = []  # 快取上次結果
     last_ok = time.time()
@@ -372,39 +367,45 @@ def generate_frames(source: str):
             if recognizer is not None and yolo is not None:
                 last_results = []
                 try:
-                    results = yolo(frame, verbose=False, conf=0.5)
+                    detections = yolo.detect(frame)
 
-                    for r in results:
-                        for box in r.boxes:
-                            cls_id = int(box.cls[0])
-                            if cls_id not in VEHICLE_CLASSES:
-                                continue
+                    for det in detections:
+                        vehicle_type = str(det.get('class_name') or '')
+                        if vehicle_type not in ('car','motorcycle','bus','truck','heavy_truck','light_truck'):
+                            continue
+                        bbox = det.get('bbox', {})
+                        x1, y1 = int(bbox.get('x1', 0)), int(bbox.get('y1', 0))
+                        x2, y2 = int(bbox.get('x2', 0)), int(bbox.get('y2', 0))
+                        truck_cls = det.get('truck_cls')
 
-                            x1, y1, x2, y2 = map(int, box.xyxy[0])
-                            vehicle_type = VEHICLE_CLASSES[cls_id]
+                        result = _recognize_plate_ensemble(frame, x1, y1, x2, y2, recognizer)
+                        plate_text = result.get('plate_number', '') or ''
+                        plate_conf = result.get('confidence', 0)
+                        plate_valid = result.get('valid', False)
+                        ocr_raw_text = result.get('raw', '') or ''
+                        pb = result.get('plate_bbox')
+                        if isinstance(pb, (list, tuple)) and len(pb) == 4:
+                            px1, py1, px2, py2 = map(int, pb)
+                        else:
+                            vh = y2 - y1
+                            px1, py1, px2, py2 = x1, y1 + int(vh * 0.5), x2, y2
 
-                            result = _recognize_plate_ensemble(frame, x1, y1, x2, y2, recognizer)
-                            plate_text = result.get('plate_number', '') or ''
-                            plate_conf = result.get('confidence', 0)
-                            plate_valid = result.get('valid', False)
-                            ocr_raw_text = result.get('raw', '') or ''
-                            pb = result.get('plate_bbox')
-                            if isinstance(pb, (list, tuple)) and len(pb) == 4:
-                                px1, py1, px2, py2 = map(int, pb)
-                            else:
-                                vh = y2 - y1
-                                px1, py1, px2, py2 = x1, y1 + int(vh * 0.5), x2, y2
+                        from detection.vehicle_detector import VehicleDetector
+                        if truck_cls and truck_cls.get('label'):
+                            display_type = truck_cls['label']
+                        else:
+                            display_type = VehicleDetector.get_zh_label(vehicle_type)
 
-                            last_results.append({
-                                'bbox': (x1, y1, x2, y2),
-                                'plate_bbox': (px1, py1, px2, py2),
-                                'vehicle_type': vehicle_type,
-                                'plate_text': plate_text,
-                                'ocr_text': ocr_raw_text,
-                                'plate_conf': plate_conf,
-                                'plate_valid': plate_valid,
-                                'raw': ocr_raw_text
-                            })
+                        last_results.append({
+                            'bbox': (x1, y1, x2, y2),
+                            'plate_bbox': (px1, py1, px2, py2),
+                            'vehicle_type': display_type,
+                            'plate_text': plate_text,
+                            'ocr_text': ocr_raw_text,
+                            'plate_conf': plate_conf,
+                            'plate_valid': plate_valid,
+                            'raw': ocr_raw_text
+                        })
                 except Exception as e:
                     print(f"[Visual] 錯誤: {e}")
 
@@ -497,53 +498,58 @@ async def visual_snapshot(camera_id: int):
         if not ret:
             raise HTTPException(status_code=500, detail="無法擷取畫面")
         
-        VEHICLE_CLASSES = {2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
         detected = []
-        
-        results = yolo(frame, verbose=False, conf=0.5)
-        
-        for r in results:
-            for box in r.boxes:
-                cls_id = int(box.cls[0])
-                if cls_id not in VEHICLE_CLASSES:
-                    continue
-                
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                vehicle_type = VEHICLE_CLASSES[cls_id]
-                
-                result = _recognize_plate_ensemble(frame, x1, y1, x2, y2, recognizer)
-                plate_text = result.get('plate_number', '') or ''
-                plate_conf = result.get('confidence', 0)
-                plate_valid = result.get('valid', False)
-                ocr_raw_text = result.get('raw', '') or ''
-                pb = result.get('plate_bbox')
-                if isinstance(pb, (list, tuple)) and len(pb) == 4:
-                    px1, py1, px2, py2 = map(int, pb)
-                else:
-                    vh = y2 - y1
-                    px1, py1, px2, py2 = x1, y1 + int(vh * 0.5), x2, y2
-                
-                # 繪製
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 255, 255), 2)
-                cv2.putText(frame, vehicle_type, (x1, y1 - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                
-                ocr_text = (plate_text or ocr_raw_text).strip()
-                if ocr_text:
-                    color = (0, 255, 0) if plate_valid else (0, 165, 255)
-                    label = f"{ocr_text} ({plate_conf:.0%})"
-                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
-                    cv2.rectangle(frame, (px1, py2), (px1 + tw + 10, py2 + th + 10), color, -1)
-                    cv2.putText(frame, label, (px1 + 5, py2 + th + 5),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
-                
-                detected.append({
-                    'vehicle_type': vehicle_type,
-                    'plate': ocr_text,
-                    'confidence': plate_conf,
-                    'valid': plate_valid
-                })
+
+        detections = yolo.detect(frame)
+
+        for det in detections:
+            vehicle_type = str(det.get('class_name') or '')
+            if vehicle_type not in ('car','motorcycle','bus','truck','heavy_truck','light_truck'):
+                continue
+            bbox = det.get('bbox', {})
+            x1, y1 = int(bbox.get('x1', 0)), int(bbox.get('y1', 0))
+            x2, y2 = int(bbox.get('x2', 0)), int(bbox.get('y2', 0))
+            truck_cls = det.get('truck_cls')
+
+            result = _recognize_plate_ensemble(frame, x1, y1, x2, y2, recognizer)
+            plate_text = result.get('plate_number', '') or ''
+            plate_conf = result.get('confidence', 0)
+            plate_valid = result.get('valid', False)
+            ocr_raw_text = result.get('raw', '') or ''
+            pb = result.get('plate_bbox')
+            if isinstance(pb, (list, tuple)) and len(pb) == 4:
+                px1, py1, px2, py2 = map(int, pb)
+            else:
+                vh = y2 - y1
+                px1, py1, px2, py2 = x1, y1 + int(vh * 0.5), x2, y2
+
+            from detection.vehicle_detector import VehicleDetector as _VD
+            if truck_cls and truck_cls.get('label'):
+                display_type = truck_cls['label']
+            else:
+                display_type = _VD.get_zh_label(vehicle_type)
+
+            # 繪製
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 255, 255), 2)
+            cv2.putText(frame, display_type, (x1, y1 - 10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+            ocr_text = (plate_text or ocr_raw_text).strip()
+            if ocr_text:
+                color = (0, 255, 0) if plate_valid else (0, 165, 255)
+                label = f"{ocr_text} ({plate_conf:.0%})"
+                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+                cv2.rectangle(frame, (px1, py2), (px1 + tw + 10, py2 + th + 10), color, -1)
+                cv2.putText(frame, label, (px1 + 5, py2 + th + 5),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
+
+            detected.append({
+                'vehicle_type': display_type,
+                'plate': ocr_text,
+                'confidence': plate_conf,
+                'valid': plate_valid
+            })
         
         _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         

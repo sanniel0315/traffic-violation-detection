@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import cv2
 import asyncio
+import os
 import threading
 import time
 import requests
@@ -33,6 +34,25 @@ router = APIRouter(prefix="/api/stream", tags=["串流"])
 
 # 偵測服務狀態
 detection_services: Dict[int, dict] = {}
+# detection 服務共享最新 frame 給 overlay（避免 NX 串流開第二條連線）
+_shared_frames: Dict[int, dict] = {}  # {camera_id: {"frame": ndarray, "ts": float}}
+# 共用 overlay detector singleton
+_shared_overlay_detector = None
+_shared_overlay_detector_lock = threading.Lock()
+
+def _get_shared_overlay_detector():
+    global _shared_overlay_detector
+    if _shared_overlay_detector is not None:
+        return _shared_overlay_detector
+    with _shared_overlay_detector_lock:
+        if _shared_overlay_detector is not None:
+            return _shared_overlay_detector
+        try:
+            from detection.vehicle_detector import VehicleDetector
+            _shared_overlay_detector = VehicleDetector(conf_threshold=0.25)
+        except Exception as e:
+            add_log("warning", f"overlay 共用偵測器初始化失敗: {e}", "stream")
+        return _shared_overlay_detector
 snapshot_cache: Dict[int, dict] = {}
 snapshot_locks: Dict[int, asyncio.Lock] = {}
 snapshot_warm_tasks: Dict[int, asyncio.Task] = {}
@@ -60,7 +80,7 @@ async def _warm_snapshot(camera_id: int, source: str):
         for _ in range(2):
             try:
                 image = await asyncio.wait_for(
-                    asyncio.to_thread(_capture_snapshot_bytes, source),
+                    asyncio.to_thread(_capture_snapshot_bytes, source, camera_id=camera_id),
                     timeout=30.0,
                 )
             except asyncio.TimeoutError:
@@ -72,15 +92,23 @@ async def _warm_snapshot(camera_id: int, source: str):
 
 
 def _open_capture(source: str):
-    """OpenCV capture with backend fallback to avoid hard dependency on FFMPEG backend."""
+    """OpenCV capture with backend fallback to avoid hard dependency on FFMPEG backend.
+    強制 RTSP 走 TCP 避免封包遺失導致殘影 / 條紋。
+    """
     source = resolve_capture_source(source)
-    backends = []
     source_lc = str(source or "").lower()
-    if source_lc.startswith("http://") or source_lc.startswith("https://"):
+    is_rtsp = source_lc.startswith("rtsp://")
+    if is_rtsp:
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
+
+    backends = []
+    is_http = source_lc.startswith("http://") or source_lc.startswith("https://")
+    is_http_mjpeg = is_http and ("mpjpeg" in source_lc or source_lc.endswith(".mjpg") or source_lc.endswith(".mjpeg"))
+    # 只有 HTTP MJPEG 才用 CAP_OPENCV_MJPEG；其他 HTTP 格式會 crash
+    if is_http_mjpeg:
         mjpeg_backend = getattr(cv2, "CAP_OPENCV_MJPEG", None)
         if mjpeg_backend is not None:
             backends.append(mjpeg_backend)
-        backends.append(None)
     ffmpeg_backend = getattr(cv2, "CAP_FFMPEG", None)
     gst_backend = getattr(cv2, "CAP_GSTREAMER", None)
     if ffmpeg_backend is not None:
@@ -223,8 +251,38 @@ def _touch_http_mjpeg_worker(state: dict | None) -> None:
         state["last_consumer_ts"] = time.time()
 
 
-def _capture_snapshot_bytes(source: str):
+def _try_frigate_snapshot(source: str):
+    """嘗試透過 Frigate latest.jpg API 取得截圖（適用於 Frigate/go2rtc 管理的串流）。"""
+    src = str(source or "").lower()
+    # 從 rtsp://127.0.0.1:8554/<stream_name> 取出 stream name
+    if src.startswith("rtsp://127.0.0.1:8554/"):
+        stream_name = source.split("/")[-1]
+        if stream_name:
+            try:
+                resp = requests.get(
+                    f"http://127.0.0.1:5000/api/{stream_name}/latest.jpg",
+                    timeout=3.0,
+                )
+                if resp.status_code == 200 and len(resp.content) > 1000:
+                    return resp.content
+            except Exception:
+                pass
+    return None
+
+
+def _capture_snapshot_bytes(source: str, camera_id: int = None):
     """嘗試以較短超時擷取單張影像，避免 RTSP 長時間阻塞。"""
+    # 優先嘗試從 detection 服務的共享 frame 取得（避免重開連線）
+    if camera_id is not None:
+        sf = _shared_frames.get(camera_id)
+        if sf and (time.time() - sf.get("ts", 0)) < 5.0 and sf.get("frame") is not None:
+            ok, buffer = cv2.imencode(".jpg", sf["frame"])
+            if ok:
+                return buffer.tobytes()
+    # 嘗試 Frigate snapshot API（比重新建立 RTSP 連線快很多）
+    frigate_jpg = _try_frigate_snapshot(source)
+    if frigate_jpg:
+        return frigate_jpg
     http_source = resolve_local_api_source(source)
     if _is_http_mjpeg_source(http_source):
         state = _ensure_http_mjpeg_worker(http_source)
@@ -494,17 +552,23 @@ def generate_frames_overlay(
     *,
     render_overlay: bool = True,
     render_roi_labels: bool = True,
+    camera_id: int = None,
 ):
     """產生即時 MJPEG 串流，可選擇是否繪製辨識疊加。"""
     http_source = resolve_local_api_source(source)
     use_http_mjpeg = _is_http_mjpeg_source(http_source)
     source = resolve_capture_source(source)
-    cap = None if use_http_mjpeg else _open_capture(source)
-    if cap is not None:
-        try:
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        except Exception:
-            pass
+    # 背景開啟 RTSP（避免阻塞 generator）
+    cap = None
+    _cap_holder = [None]
+    _cap_event = threading.Event()
+    if not use_http_mjpeg:
+        def _bg_open():
+            _cap_holder[0] = _open_capture(source)
+            _cap_event.set()
+        threading.Thread(target=_bg_open, daemon=True).start()
+    else:
+        _cap_event.set()
     zones = zones or []
     detection_config = detection_config or {}
     det_zones = select_zones(zones, scope=SCOPE_TRAFFIC, allowed_types=("detection", "flow_detection"), fallback_scopes=(SCOPE_CONGESTION,))
@@ -515,13 +579,9 @@ def generate_frames_overlay(
     tracks = {}
     next_track_id = 1
     track_ttl_sec = 1.2
-    detector = None
-    try:
-        from detection.vehicle_detector import VehicleDetector
-        detector = VehicleDetector(conf_threshold=0.45)
-    except Exception as e:
-        add_log("warning", f"疊加串流偵測器初始化失敗，改回原始串流: {e}", "stream")
-    
+    _det_last = []
+    _det_count = 0
+
     last_ok = time.time()
     last_placeholder_ts = 0.0
     had_frame = False
@@ -529,6 +589,9 @@ def generate_frames_overlay(
     http_state = _ensure_http_mjpeg_worker(http_source) if use_http_mjpeg else None
     last_http_ts = 0.0
     while True:
+        # 自己讀 RTSP 維持流暢影像
+        ret = False
+        frame = None
         if use_http_mjpeg:
             _touch_http_mjpeg_worker(http_state)
             ts = float(http_state.get("last_ts") or 0.0) if http_state else 0.0
@@ -537,18 +600,20 @@ def generate_frames_overlay(
                 frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
                 ret = frame is not None and getattr(frame, "size", 0) > 0
                 last_http_ts = ts
-            else:
-                frame = None
-                ret = False
         else:
-            ret, frame = cap.read()
+            if cap is None and _cap_event.wait(timeout=0.05):
+                cap = _cap_holder[0]
+            if cap is not None:
+                ret, frame = cap.read()
         if not ret:
-            if time.time() - last_ok > 2.0:
-                if cap is not None:
-                    cap.release()
-                    time.sleep(0.1)
-                    cap = _open_capture(source)
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            if cap is not None and time.time() - last_ok > 5.0:
+                cap.release()
+                cap = None
+                _cap_event.clear()
+                def _bg_reopen():
+                    _cap_holder[0] = _open_capture(source)
+                    _cap_event.set()
+                threading.Thread(target=_bg_reopen, daemon=True).start()
             now_ts = time.time()
             if ((not had_frame) or (now_ts - last_ok > 3.0)) and (now_ts - last_placeholder_ts) > 1.0:
                 ph = _placeholder_jpeg("Overlay waiting for camera frame...")
@@ -562,16 +627,38 @@ def generate_frames_overlay(
         had_frame = True
 
         if not render_overlay:
-            out = cv2.resize(frame, (640, 360))
-            _, buffer = cv2.imencode('.jpg', out, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            fh0, fw0 = frame.shape[:2]
+            if fw0 > 1920:
+                s0 = 1920.0 / fw0
+                out = cv2.resize(frame, (1920, int(fh0 * s0)))
+            else:
+                out = frame
+            _, buffer = cv2.imencode('.jpg', out, [cv2.IMWRITE_JPEG_QUALITY, 75])
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
             time.sleep(0.1)
             continue
-        # 用原始解析度偵測，提高遠端小車辨識率
-        if detector is not None:
+        # 畫面跟 bbox 使用同一張 detection frame，確保時間戳一致、bbox 對齊、無慘影。
+        # 偵測落後 >3s 才 fallback 用 RTSP live frame（無 bbox）。
+        _label_items = []
+        _sf = _shared_frames.get(camera_id) if camera_id else None
+        det_age = None
+        stale_overlay = False
+        if _sf and _sf.get("frame") is not None:
+            det_age = time.time() - float(_sf.get("ts", 0) or 0)
+            if det_age < 3.0:
+                frame = _sf["frame"].copy()
+                detections = _sf.get("detections", [])
+                _det_last = detections
+                if det_age >= 1.5:
+                    stale_overlay = True
+            else:
+                detections = _det_last
+                stale_overlay = True
+        else:
+            detections = _det_last
+        if detections:
             try:
-                detections = detector.detect(frame)
                 fh, fw = frame.shape[:2]
                 now_ts = time.time()
                 valid_dets = []
@@ -589,7 +676,6 @@ def generate_frames_overlay(
                     in_speed_roi = any(_point_in_zone(cx, cy, z, fw, fh) for z in speed_zones) if speed_zones else False
                     valid_dets.append((det, cx, cy, in_speed_roi))
 
-                # 清理過期追蹤
                 stale_ids = [tid for tid, tr in tracks.items() if (now_ts - tr.get("t", now_ts)) > track_ttl_sec]
                 for tid in stale_ids:
                     tracks.pop(tid, None)
@@ -612,40 +698,56 @@ def generate_frames_overlay(
                         speed_kmh = raw_kmh
                     else:
                         speed_kmh = (speed_smooth_alpha * raw_kmh) + ((1.0 - speed_smooth_alpha) * prev_kmh)
-                    tracks[track_id] = {
-                        "center": (cx, cy),
-                        "t": now_ts,
-                        "class_name": det["class_name"],
-                        "speed_kmh": speed_kmh,
-                    }
+                    tracks[track_id] = {"center": (cx, cy), "t": now_ts, "class_name": det["class_name"], "speed_kmh": speed_kmh}
 
                     b = det["bbox"]
                     if render_overlay:
-                        color = (0, 200, 0)
-                        cv2.rectangle(frame, (b["x1"], b["y1"]), (b["x2"], b["y2"]), color, 2)
-                        label = f"{det['class_name']} {det['confidence']:.2f}"
+                        # stale 時改橙色、單線，作為「偵測跟不上影像」的視覺提示
+                        color = (0, 140, 255) if stale_overlay else (0, 200, 0)
+                        thick = 1 if stale_overlay else 2
+                        cv2.rectangle(frame, (b["x1"], b["y1"]), (b["x2"], b["y2"]), color, thick)
+                        _ZH = {"car": "小客車", "motorcycle": "機車", "truck": "大貨車", "bus": "公車", "heavy_truck": "重型貨車", "light_truck": "小貨車", "person": "行人", "bicycle": "自行車"}
+                        truck_cls = det.get("truck_cls")
+                        zh = str(truck_cls["label"]) if truck_cls and truck_cls.get("label") else _ZH.get(det["class_name"], det["class_name"])
+                        label = zh
                         if in_speed_roi:
-                            label += f" | {int(speed_kmh)} km/h"
-                        else:
-                            label += " | ROI"
-                        cv2.putText(
-                            frame,
-                            label,
-                            (b["x1"], max(20, b["y1"] - 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.55,
-                            color,
-                            2
-                        )
+                            label += f" {int(speed_kmh)}km/h"
+                        _label_items.append((label, (b["x1"], max(2, b["y1"] - 24)), color, (0, 0, 0)))
             except Exception:
                 pass
+        # 畫標籤（中文用 PIL，ASCII 用 cv2）
+        for text, (tx, ty), fg, bg in _label_items:
+            if not text.isascii() and _PIL_AVAILABLE:
+                try:
+                    font = _get_unicode_font(18)
+                    if font:
+                        _tw = int(len(text) * 14)
+                        _th = 24
+                        _rx1 = max(0, tx - 2)
+                        _ry1 = max(0, ty - 2)
+                        _rx2 = min(frame.shape[1], tx + _tw + 4)
+                        _ry2 = min(frame.shape[0], ty + _th + 4)
+                        roi = frame[_ry1:_ry2, _rx1:_rx2].copy()
+                        pil_roi = PILImage.fromarray(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
+                        d = ImageDraw.Draw(pil_roi)
+                        d.rectangle([0, 0, pil_roi.width, pil_roi.height], fill=bg)
+                        d.text((2, 2), text, fill=fg, font=font)
+                        frame[_ry1:_ry2, _rx1:_rx2] = cv2.cvtColor(np.asarray(pil_roi), cv2.COLOR_RGB2BGR)
+                except Exception:
+                    cv2.putText(frame, text, (tx, ty + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 0), 1)
+            else:
+                cv2.rectangle(frame, (tx - 2, ty - 2), (tx + len(text) * 10, ty + 18), bg, -1)
+                cv2.putText(frame, text, (tx, ty + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.5, fg, 1)
         if render_roi_labels:
             _draw_roi_labels(frame, zones)
-        frame = cv2.resize(frame, (640, 360))
-        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        fh, fw = frame.shape[:2]
+        if fw > 1920:
+            scale = 1920.0 / fw
+            frame = cv2.resize(frame, (1920, int(fh * scale)))
+        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 55])
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        time.sleep(0.1)
+        time.sleep(0.04)
     
     if cap is not None:
         cap.release()
@@ -661,11 +763,12 @@ async def live_stream(camera_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="攝影機已關閉")
     return StreamingResponse(
         generate_frames_overlay(
-            camera.source,
+            resolve_analysis_source(camera),
             camera.zones or [],
             camera.detection_config or {},
             render_overlay=False,
             render_roi_labels=False,
+            camera_id=camera_id,
         ),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
@@ -679,13 +782,14 @@ async def live_stream_overlay(camera_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="攝影機不存在")
     if not bool(camera.enabled):
         raise HTTPException(status_code=409, detail="攝影機已關閉")
-    overlay_source = camera.source if "/api/nx/stream/" in str(camera.source or "") else resolve_analysis_source(camera)
+    overlay_source = resolve_analysis_source(camera)
     return StreamingResponse(
         generate_frames_overlay(
             overlay_source,
             camera.zones or [],
             camera.detection_config or {},
             render_roi_labels=False,
+            camera_id=camera_id,
         ),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
@@ -735,7 +839,7 @@ async def snapshot(camera_id: int, db: Session = Depends(get_db)):
                     break
                 try:
                     image = await asyncio.wait_for(
-                        asyncio.to_thread(_capture_snapshot_bytes, camera.source),
+                        asyncio.to_thread(_capture_snapshot_bytes, resolve_analysis_source(camera), camera_id=camera.id),
                         timeout=timeout_sec,
                     )
                 except asyncio.TimeoutError:
@@ -751,7 +855,7 @@ async def snapshot(camera_id: int, db: Session = Depends(get_db)):
             task = snapshot_warm_tasks.get(camera_id)
             if task is None or task.done():
                 snapshot_warm_tasks[camera_id] = asyncio.create_task(
-                    _warm_snapshot(camera_id, camera.source)
+                    _warm_snapshot(camera_id, resolve_analysis_source(camera))
                 )
                 task = snapshot_warm_tasks[camera_id]
             # Wait briefly for warm-up result, then fallback to latest cache if available.
@@ -830,7 +934,29 @@ async def detection_status(camera_id: int):
 @router.get("/detection/all")
 async def all_detection_status():
     """取得所有偵測服務狀態"""
-    return detection_services
+    return {k: {kk: vv for kk, vv in v.items() if not kk.startswith("_")} for k, v in detection_services.items()}
+
+
+@router.get("/debug/shared-frames")
+async def debug_shared_frames():
+    """Debug: 查看 shared_frames 狀態"""
+    import time as _t
+    result = {}
+    for cam_id, sf in _shared_frames.items():
+        result[cam_id] = {
+            "age_sec": round(_t.time() - sf.get("ts", 0), 1),
+            "has_frame": sf.get("frame") is not None,
+            "detections_count": len(sf.get("detections", [])),
+        }
+    # also check thread liveness
+    threads = {}
+    for cid, info in detection_services.items():
+        t = info.get("_thread")
+        threads[cid] = {
+            "running_flag": info.get("running"),
+            "thread_alive": t.is_alive() if t else None,
+        }
+    return {"shared_frames": result, "threads": threads}
 
 
 def _start_detection_service(camera: Camera) -> bool:
@@ -848,6 +974,7 @@ def _start_detection_service(camera: Camera) -> bool:
         name=f"detection-{camera.id}",
     )
     detection_services[camera.id]["thread_name"] = worker.name
+    detection_services[camera.id]["_thread"] = worker
     worker.start()
     return True
 
@@ -906,9 +1033,16 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     output_dir = Path("./output/violations")
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    detector = VehicleDetector(conf_threshold=0.5)
+    # 錯開各 camera 的 RTSP/HTTP 連線，避免 FFMPEG 同時 open 互相阻塞
+    time.sleep(camera_id * 3)
+    detector = _get_shared_overlay_detector()
+    if detector is None:
+        detector = VehicleDetector(conf_threshold=0.5)
     add_log("info", f"偵測器 device: {getattr(detector, 'runtime_device', 'unknown')}", "detection")
-    cap = cv2.VideoCapture(source)
+    _src_lc = str(source or "").lower()
+    if _src_lc.startswith("rtsp://"):
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
+    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
     speed_kmh_per_pxps = float(detection_config.get("speed_kmh_per_pxps", 0.12) or 0.12)
     speed_smooth_alpha = float(detection_config.get("speed_smooth_alpha", 0.35) or 0.35)
     track_ttl_sec = float(detection_config.get("speed_track_ttl_sec", 1.2) or 1.2)
@@ -1018,18 +1152,34 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             return "straight"
         return "straight"
     
+    _read_fail_count = 0
     while detection_services.get(camera_id, {}).get('running', False):
         ret, frame = cap.read()
         if not ret:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            _read_fail_count += 1
+            if _read_fail_count == 1 or _read_fail_count % 100 == 0:
+                print(f"⚠️ [detection] cam{camera_id} cap.read() failed (count={_read_fail_count}), reconnecting...", flush=True)
+            cap.release()
+            time.sleep(2)
+            _src_lc2 = str(source or "").lower()
+            if _src_lc2.startswith("rtsp://"):
+                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
+            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
             continue
-        
+        _read_fail_count = 0
+
         frame_count += 1
-        if frame_count % 10 != 0:  # 每 10 幀處理一次
+        # 每幀都共享給 overlay（但只每 3 幀做一次 YOLO 偵測 → ~8 FPS 偵測頻率，畫面更順 bbox 對位更準）
+        _prev = _shared_frames.get(camera_id)
+        _shared_frames[camera_id] = {"frame": frame, "detections": _prev.get("detections", []) if _prev else [], "ts": time.time()}
+        if frame_count % 3 != 0:
             continue
         
-        detections = detector.detect(frame)
-        vehicles = [d for d in detections if d['class_name'] in ['car', 'motorcycle', 'truck', 'bus']]
+        with _shared_overlay_detector_lock:
+            detections = detector.detect(frame)
+        # 共享 frame 和偵測結果給 overlay 串流
+        _shared_frames[camera_id] = {"frame": frame.copy(), "detections": detections, "ts": time.time()}
+        vehicles = [d for d in detections if d['class_name'] in ['car', 'motorcycle', 'truck', 'bus', 'heavy_truck', 'light_truck']]
         
         # ROI 區域過濾：只保留中心點在偵測區域內的車輛
         if vehicles and det_zones:
@@ -1091,9 +1241,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 tracks[track_id] = {"center": (cx, cy), "t": now_ts, "class_name": cls, "speed_kmh": speed_kmh}
                 v["speed_kmh"] = speed_kmh
         
-        if vehicles:
+        if vehicles and det_zones:
             detection_count += 1
-            
+
             # 更新服務狀態
             detection_services[camera_id]['detections'] = detection_count
             detection_services[camera_id]['last_detection'] = datetime.now().isoformat()
@@ -1108,7 +1258,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 for v in vehicles:
                     bbox = v.get("bbox", {}) or {}
                     hit_zones = _vehicle_hit_zones(v, det_zones)
-                    pick_zone = hit_zones[0] if hit_zones else {}
+                    if not hit_zones:
+                        continue
+                    pick_zone = hit_zones[0]
                     occupancy_val = zone_occupancy_map.get(_zone_key(pick_zone)) if pick_zone else None
                     speed_raw = v.get("speed_kmh")
                     try:

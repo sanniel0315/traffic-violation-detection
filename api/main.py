@@ -22,19 +22,111 @@ TZ_TAIPEI = ZoneInfo("Asia/Taipei")
 
 
 def _resume_services_in_background():
-    try:
-        det = stream.resume_detection_services()
-        cong = congestion.resume_congestion_services()
-        lpr_resume = lpr_stream.resume_lpr_streams()
-        logs.add_log(
-            "info",
-            f"服務狀態恢復完成: detection={det.get('resumed',0)}/{det.get('total',0)} "
-            f"congestion={cong.get('resumed',0)}/{cong.get('total',0)} "
-            f"lpr={lpr_resume.get('resumed',0)}/{lpr_resume.get('total',0)}",
-            "system",
-        )
-    except Exception as e:
-        logs.add_log("error", f"服務狀態恢復失敗: {e}", "system")
+    # 三個服務各自獨立恢復，不互相阻塞
+    def _resume_detection():
+        try:
+            det = stream.resume_detection_services()
+            logs.add_log("info", f"偵測服務恢復: {det.get('resumed',0)}/{det.get('total',0)}", "system")
+        except Exception as e:
+            logs.add_log("error", f"偵測恢復失敗: {e}", "system")
+
+    def _resume_congestion():
+        try:
+            cong = congestion.resume_congestion_services()
+            logs.add_log("info", f"壅塞偵測恢復: {cong.get('resumed',0)}/{cong.get('total',0)}", "system")
+        except Exception as e:
+            logs.add_log("error", f"壅塞恢復失敗: {e}", "system")
+
+    def _resume_lpr():
+        try:
+            lpr_resume = lpr_stream.resume_lpr_streams()
+            logs.add_log("info", f"LPR 恢復: {lpr_resume.get('resumed',0)}/{lpr_resume.get('total',0)}", "system")
+        except Exception as e:
+            logs.add_log("error", f"LPR 恢復失敗: {e}", "system")
+
+    threading.Thread(target=_resume_detection, daemon=True, name="resume-detection").start()
+    threading.Thread(target=_resume_congestion, daemon=True, name="resume-congestion").start()
+    threading.Thread(target=_resume_lpr, daemon=True, name="resume-lpr").start()
+
+
+import time as _time
+
+_WATCHDOG_INTERVAL = 15  # 每 15 秒檢查一次
+
+
+def _service_watchdog():
+    """定期監控 detection / LPR / congestion 服務，掛掉自動重啟。"""
+    from api.models import SessionLocal, Camera
+    from api.utils.feature_state import get_feature_enabled
+
+    # 等待初始啟動完成
+    _time.sleep(45)
+    print("🐕 [watchdog] 服務監控啟動", flush=True)
+
+    while True:
+        try:
+            db = SessionLocal()
+            cameras = db.query(Camera).filter(Camera.enabled == True).all()
+            restarted = []
+
+            for cam in cameras:
+                cam_id = cam.id
+
+                # --- Detection watchdog ---
+                want_det = get_feature_enabled("detection", cam_id, default=bool(cam.detection_enabled))
+                if want_det:
+                    svc = stream.detection_services.get(cam_id, {})
+                    t = svc.get("_thread")
+                    if t is not None and not t.is_alive():
+                        stream.detection_services.pop(cam_id, None)
+                        stream._start_detection_service(cam)
+                        restarted.append(f"detection-{cam_id}")
+
+                # --- LPR watchdog ---
+                want_lpr = get_feature_enabled("lpr", cam_id, default=False)
+                if want_lpr:
+                    task = lpr_stream._lpr_tasks.get(cam_id)
+                    need_restart = False
+                    if task is None:
+                        need_restart = True
+                    elif not task.running:
+                        need_restart = True
+                    elif task.thread is not None and not task.thread.is_alive():
+                        need_restart = True
+                    elif task.last_frame_at and (_time.time() - task.last_frame_at) > 20:
+                        # 超過 60 秒沒有新幀 → 串流卡住，重啟
+                        need_restart = True
+                    if need_restart:
+                        if task:
+                            try:
+                                task.stop()
+                            except Exception:
+                                pass
+                        lpr_stream._lpr_tasks.pop(cam_id, None)
+                        lpr_stream._start_lpr_task(cam)
+                        restarted.append(f"lpr-{cam_id}")
+
+                # --- Congestion watchdog ---
+                want_cong = get_feature_enabled("congestion", cam_id, default=False)
+                if want_cong:
+                    cong_svc = congestion.congestion_services.get(cam_id, {})
+                    ct = cong_svc.get("_thread")
+                    if ct is not None and not ct.is_alive():
+                        congestion.congestion_services.pop(cam_id, None)
+                        congestion._start_congestion_service(cam)
+                        restarted.append(f"congestion-{cam_id}")
+
+            db.close()
+
+            if restarted:
+                msg = f"Watchdog 自動重啟服務: {', '.join(restarted)}"
+                print(f"🔄 {msg}", flush=True)
+                logs.add_log("warning", msg, "watchdog")
+
+        except Exception as e:
+            print(f"⚠️ [watchdog] 監控異常: {e}", flush=True)
+
+        _time.sleep(_WATCHDOG_INTERVAL)
 
 
 def _assert_gpu_ready():
@@ -80,6 +172,7 @@ async def lifespan(app: FastAPI):
     logs.add_log("info", "系統日誌服務啟動", "system")
     os.makedirs("./output/violations", exist_ok=True)
     threading.Thread(target=_resume_services_in_background, daemon=True, name="resume-services").start()
+    threading.Thread(target=_service_watchdog, daemon=True, name="service-watchdog").start()
     print("✅ 系統初始化完成")
     yield
     print("👋 系統關閉")

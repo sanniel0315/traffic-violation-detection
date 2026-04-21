@@ -33,13 +33,18 @@ _recognizer = None
 _plate_detector = None
 _OCR_FAST_MODE = os.getenv("LPR_OCR_MODE", "accurate").strip().lower() in {"fast", "quick", "speed"}
 _PLATE_INSET_SCALE = 3.0
-_PLATE_DETECT_CONF = 0.08
-_PLATE_CROP_PAD_X_RATIO = 0.12
-_PLATE_CROP_PAD_Y_RATIO = 0.18
-_PLATE_MIN_WIDTH = 58
-_PLATE_MIN_HEIGHT = 18
-_PLATE_MIN_AREA = 1000
-_PLATE_BLUR_TOO_LOW = 55.0
+_PLATE_DETECT_CONF = 0.30
+_PLATE_CROP_PAD_X_RATIO = 0.18
+_PLATE_CROP_PAD_Y_RATIO = 0.25
+_PLATE_MIN_WIDTH = 40
+_PLATE_MIN_HEIGHT = 14
+_PLATE_MIN_AREA = 600
+_PLATE_BLUR_TOO_LOW = 35.0
+# === 最佳距離窗口 — 車牌夠大夠清楚才做 OCR ===
+_PLATE_OCR_MIN_CROP_W = 40        # 車牌裁切最小寬度（px）才值得 OCR
+_PLATE_OCR_MIN_CROP_H = 12        # 車牌裁切最小高度（px）
+_PLATE_OCR_MIN_BLUR = 15.0        # 最低清晰度（Laplacian variance）
+_VEHICLE_MIN_AREA_RATIO = 0.003   # 車輛面積佔畫面比例 — 太小不做 OCR
 _PLATE_BLUR_THRESHOLD = 85.0
 _PLATE_BLUR_GOOD = 120.0
 _PLATE_BRIGHTNESS_MIN = 45.0
@@ -52,20 +57,23 @@ _PLATE_NORM_H = 80
 _PLATE_LIGHT_ROTATE_MAX_DEG = 8.0
 _PLATE_VOTE_BUCKET_SIZE = 160
 _PLATE_VOTE_TTL_SEC = 3.5
-_PLATE_VOTE_STRONG_SINGLE_CONF = 0.50
-_PLATE_VOTE_VERY_STRONG_SINGLE_CONF = 0.72
-_PLATE_MAIN_OCR_CONF_THRESHOLD = 0.68
+_PLATE_VOTE_STRONG_SINGLE_CONF = 0.40         # 0.50 → 0.40
+_PLATE_VOTE_VERY_STRONG_SINGLE_CONF = 0.62    # 0.72 → 0.62
+# === best-of-track 追蹤式 commit ===
+_TRACK_PLATE_TTL_SEC = 5.0                    # track 超時（最後偵測後多久算結束）
+_TRACK_MIN_OCR_COUNT = 1                      # 允許單次 OCR commit — 字元投票在多次時自動修正
+_PLATE_MAIN_OCR_CONF_THRESHOLD = 0.55         # 0.68 → 0.55
 _PLATE_MAIN_OCR_MIN_LEN = 5
 _PLATE_MAIN_OCR_MAX_LEN = 8
-_PLATE_CONFIRM_MIN_COUNT = 3
-_PLATE_CONFIRM_MIN_SCORE = 2.4
-_PLATE_COMMIT_MIN_SCORE = 2.0
-_PLATE_COMMIT_COOLDOWN_SEC = 20.0
-_PLATE_COMMIT_MIN_CONF = 0.20
-_PLATE_COMMIT_MIN_QUALITY = 0.12
-_PLATE_SINGLE_FRAME_MIN_CONF = 0.55
-_PLATE_SINGLE_FRAME_MIN_SCORE = 3.10
-_PLATE_SINGLE_FRAME_MIN_LAYOUT = 1.20
+_PLATE_CONFIRM_MIN_COUNT = 2                  # 3 → 2
+_PLATE_CONFIRM_MIN_SCORE = 1.8                # 2.4 → 1.8
+_PLATE_COMMIT_MIN_SCORE = 1.5                 # 2.0 → 1.5
+_PLATE_COMMIT_COOLDOWN_SEC = 20.0             # 同車牌冷卻 20 秒
+_PLATE_COMMIT_MIN_CONF = 0.40                 # 提高最低信心度
+_PLATE_COMMIT_MIN_QUALITY = 0.08              # 0.12 → 0.08
+_PLATE_SINGLE_FRAME_MIN_CONF = 0.45           # 0.55 → 0.45
+_PLATE_SINGLE_FRAME_MIN_SCORE = 2.50          # 3.10 → 2.50
+_PLATE_SINGLE_FRAME_MIN_LAYOUT = 1.00         # 1.20 → 1.00
 _PLATE_ADAPTIVE_BLOCK_SIZE = 19
 _PLATE_ADAPTIVE_C = 6
 _PLATE_CHAR_MIN_W = 8
@@ -137,8 +145,13 @@ def _derive_plate_snapshot_name(snapshot_name: Optional[str]) -> Optional[str]:
 
 def _open_capture(source: str):
     src = str(source or "").strip()
-    backends = []
     src_lc = src.lower()
+    is_rtsp = src_lc.startswith("rtsp://")
+    if is_rtsp:
+        # 強制 RTSP TCP transport 避免封包遺失，加 socket timeout 避免 read 卡死
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
+
+    backends = []
     if src_lc.startswith("http://") or src_lc.startswith("https://"):
         mjpeg_backend = getattr(cv2, "CAP_OPENCV_MJPEG", None)
         if mjpeg_backend is not None:
@@ -160,6 +173,16 @@ def _open_capture(source: str):
         except Exception:
             cap = None
         if cap is not None and cap.isOpened():
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+            # 設 read/open timeout（OpenCV 4.x 支援）
+            try:
+                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+            except Exception:
+                pass
             return cap
         if cap is not None:
             last_cap = cap
@@ -303,6 +326,8 @@ def _flatten_plate_roi_with_bbox(roi):
 
 
 def _recognize_plate_fast(roi, recognizer) -> Dict[str, Any]:
+    """已改用 YOLO 字元偵測，直接走 recognize_easy"""
+    return recognizer.recognize_easy(roi) if hasattr(recognizer, 'recognize_easy') else recognizer.recognize(roi)
     best: Dict[str, Any] = {"plate_number": None, "confidence": 0.0, "valid": False, "raw": ""}
     if roi is None or getattr(roi, "size", 0) == 0:
         return best
@@ -455,7 +480,7 @@ def _build_plate_ocr_variants(roi, original_roi=None) -> List[tuple[str, np.ndar
     variants: List[tuple[str, np.ndarray]] = []
     seen = set()
 
-    def add(name: str, img) -> None:
+    def add(name: str, img, resize: bool = True) -> None:
         if img is None or getattr(img, "size", 0) == 0:
             return
         try:
@@ -464,7 +489,8 @@ def _build_plate_ocr_variants(roi, original_roi=None) -> List[tuple[str, np.ndar
                 gray = cv2.cvtColor(work, cv2.COLOR_BGR2GRAY)
             else:
                 gray = work.copy()
-            gray = cv2.resize(gray, (_PLATE_NORM_W, _PLATE_NORM_H), interpolation=cv2.INTER_CUBIC)
+            if resize:
+                gray = cv2.resize(gray, (_PLATE_NORM_W, _PLATE_NORM_H), interpolation=cv2.INTER_CUBIC)
             key = (gray.shape[1], gray.shape[0], gray.tobytes()[:256])
             if key in seen:
                 return
@@ -473,6 +499,10 @@ def _build_plate_ocr_variants(roi, original_roi=None) -> List[tuple[str, np.ndar
         except Exception:
             return
 
+    # 不變形原圖（讓 recognizer 自己預處理 - 對小車牌特別重要）
+    add("raw_native", original_roi, resize=False)
+    add("enhanced_native", roi, resize=False)
+    # 標準化版本
     add("enhanced", roi)
     add("raw", original_roi)
 
@@ -843,6 +873,7 @@ def _should_try_character_fallback(result: Dict[str, Any]) -> bool:
 
 
 def _recognize_plate_on_crop(plate_crop, recognizer) -> Dict[str, Any]:
+    """車牌辨識 — 直接用 YOLO 字元偵測微服務"""
     empty = {
         "plate_number": None,
         "confidence": 0.0,
@@ -855,6 +886,16 @@ def _recognize_plate_on_crop(plate_crop, recognizer) -> Dict[str, Any]:
     }
     if plate_crop is None or getattr(plate_crop, "size", 0) == 0:
         return empty
+    quality_metrics = _plate_quality_metrics(plate_crop)
+    quality_level = _plate_quality_level(plate_crop)
+    quality_score = _plate_quality_score(quality_metrics)
+    result = recognizer.recognize_easy(plate_crop)
+    result["quality_level"] = quality_level
+    result["quality_score"] = quality_score
+    result["quality_metrics"] = quality_metrics
+    result["char_candidates"] = []
+    return result
+    # === 以下為舊 Tesseract 邏輯（停用）===
     original_roi = plate_crop.copy()
     try:
         flat, _ = _flatten_plate_roi_with_bbox(plate_crop)
@@ -862,27 +903,56 @@ def _recognize_plate_on_crop(plate_crop, recognizer) -> Dict[str, Any]:
     except Exception:
         roi = plate_crop
 
-    try:
-        tightened = _tighten_plate_crop(roi)
-        if tightened is not None and getattr(tightened, "size", 0) > 0:
-            roi = tightened
-    except Exception:
-        pass
+    # 只在大圖時才 tighten 與正規化 resize，避免破壞小車牌
+    rh, rw = roi.shape[:2]
+    if rw >= 120 and rh >= 30:
+        try:
+            tightened = _tighten_plate_crop(roi)
+            if tightened is not None and getattr(tightened, "size", 0) > 0:
+                roi = tightened
+        except Exception:
+            pass
 
     try:
         roi = _enhance_plate_snapshot(roi)
     except Exception:
         pass
 
-    try:
-        roi = cv2.resize(roi, (_PLATE_NORM_W, _PLATE_NORM_H), interpolation=cv2.INTER_CUBIC)
-    except Exception:
-        pass
+    # 不再強制 resize 到固定尺寸（會變形小車牌），讓 recognizer 自己處理
 
     quality = _plate_snapshot_quality_score(roi)
     quality_metrics = _plate_quality_metrics(roi)
     quality_level = _plate_quality_level(roi)
     quality_score = _plate_quality_score(quality_metrics)
+
+    # ---- 1. 字元分割 OCR（快速）----
+    if hasattr(recognizer, 'recognize_chars'):
+        try:
+            char_res = recognizer.recognize_chars(original_roi)
+            cp = str(char_res.get('plate_number') or '')
+            cv_flag = bool(char_res.get('valid'))
+            if cp and cv_flag:
+                char_res['quality_level'] = quality_level
+                char_res['quality_score'] = quality_score
+                char_res['quality_metrics'] = quality_metrics
+                char_res['variant'] = 'char_segment'
+                return char_res
+        except Exception:
+            pass
+
+    # ---- 2. EasyOCR GPU 加速辨識 ----
+    if hasattr(recognizer, 'easy_reader') and recognizer.easy_reader is not None:
+        try:
+            easy_res = recognizer.recognize_easy(original_roi)
+            ep = str(easy_res.get('plate_number') or '')
+            if ep and len(ep) >= 4:
+                easy_res['quality_level'] = quality_level
+                easy_res['quality_score'] = quality_score
+                easy_res['quality_metrics'] = quality_metrics
+                easy_res['variant'] = 'easyocr_gpu'
+                return easy_res
+        except Exception:
+            pass
 
     def _run_variant_ocr(img, variant_name: str = ""):
         try:
@@ -1174,16 +1244,20 @@ def _rank_plate_candidates(candidates: List[Dict[str, Any]], full_w: int, full_h
         cy = ((y1 + y2) / 2.0) / max(1.0, float(full_h))
         area_ratio = float(bw * bh) / vehicle_area
         normalized_area = min(1.0, area_ratio / 0.06)
-        lower_position_score = max(0.0, 1.0 - abs(cy - 0.74) / 0.28)
+        # 車牌在車輛下方 (cy≈0.85)；中上方的疑似文字（如車身電話號碼）要被壓低
+        lower_position_score = max(0.0, 1.0 - abs(cy - 0.85) / 0.22)
+        # cy < 0.45 幾乎不可能是車牌 → 重罰
+        upper_half_penalty = max(0.0, (0.45 - cy) / 0.45) if cy < 0.45 else 0.0
         center_x_score = max(0.0, 1.0 - abs(cx - 0.50) / 0.30)
         aspect = float(bw) / max(1.0, float(bh))
         plate_aspect_score = max(0.0, 1.0 - abs(aspect - 3.6) / 2.2)
         candidate_score = (
-            0.35 * float(item.get("confidence") or 0.0)
-            + 0.25 * normalized_area
-            + 0.20 * lower_position_score
-            + 0.12 * plate_aspect_score
+            0.28 * float(item.get("confidence") or 0.0)
+            + 0.22 * normalized_area
+            + 0.32 * lower_position_score
+            + 0.10 * plate_aspect_score
             + 0.08 * center_x_score
+            - 0.60 * upper_half_penalty
         )
         ranked.append({
             **item,
@@ -1610,6 +1684,7 @@ class LPRStreamTask:
         self.started_at = time.time()
         self.recent_frames = deque(maxlen=10)
         self.pending_plate_votes: Dict[str, Dict[str, Any]] = {}
+        self.track_plate_candidates: Dict[int, Dict[str, Any]] = {}
         self.vehicle_tracker = VehicleTracker(max_age=8, iou_threshold=0.2)
         self.vehicle_track_states: Dict[int, Dict[str, Any]] = {}
         self._stats_lock = threading.Lock()
@@ -1718,9 +1793,15 @@ class LPRStreamTask:
             px1, py1, px2, py2 = [int(v) for v in plate_bbox]
             cv2.rectangle(snapshot, (px1, py1), (px2, py2), (0, 255, 255), 2)
             if plate_crop is not None and getattr(plate_crop, "size", 0) > 0:
+                # 存攤平+二值化的截圖（顯示用）
+                try:
+                    from recognition.plate_recognizer import PlateRecognizer
+                    _display_crop = PlateRecognizer.enhance_plate_static(plate_crop)
+                except Exception:
+                    _display_crop = plate_crop
                 cv2.imwrite(
                     plate_snapshot_path,
-                    plate_crop,
+                    _display_crop,
                     [cv2.IMWRITE_PNG_COMPRESSION, 1],
                 )
                 saved_plate_snapshot = plate_snapshot_name
@@ -1781,33 +1862,12 @@ class LPRStreamTask:
 
     def _flush_inactive_vehicle_tracks(self, *, force: bool = False) -> None:
         active_track_ids = set(int(track_id) for track_id in self.vehicle_tracker.tracks.keys())
-        stale_ids = []
-        for track_id, state in self.vehicle_track_states.items():
-            if not force and int(track_id) in active_track_ids:
-                continue
-            stale_ids.append(int(track_id))
-
+        stale_ids = [
+            int(tid) for tid in self.vehicle_track_states
+            if force or int(tid) not in active_track_ids
+        ]
         for track_id in stale_ids:
-            state = self.vehicle_track_states.pop(track_id, None)
-            if not state:
-                continue
-            if state.get("plate_recorded") or state.get("unknown_recorded"):
-                continue
-            if int(state.get("seen_frames", 0) or 0) < _VEHICLE_UNKNOWN_MIN_SEEN_FRAMES:
-                continue
-            bbox = list(state.get("bbox") or [])
-            frame = state.get("frame")
-            if len(bbox) != 4 or frame is None or getattr(frame, "size", 0) == 0:
-                continue
-            self._store_history_record(
-                frame=frame,
-                vehicle_bbox=bbox,
-                vehicle_type=str(state.get("vehicle_type") or "vehicle"),
-                plate_number="UNKNOWN",
-                confidence=0.0,
-                valid=False,
-                raw="vehicle_only",
-            )
+            self.vehicle_track_states.pop(track_id, None)
 
     def _plate_vote_bucket(self, bbox: List[int], track_id: Optional[int] = None) -> str:
         if track_id is not None and int(track_id) > 0:
@@ -1848,20 +1908,22 @@ class LPRStreamTask:
     def _history_plate_gate(self, plate: str, *, conf: float, quality_score: float, vote_count: int) -> bool:
         normalized = self._normalize_plate_candidate(plate)
         core = normalized.replace("-", "")
-        if len(core) < 5:
+        if len(core) < 4:
             return False
-        if re.match(r"^[A-Z]{2,4}-\d{4}$", normalized):
-            return True
-        if re.match(r"^[A-Z]{4}-\d{2}$", normalized):
-            return float(conf or 0.0) >= 0.62 and int(vote_count or 0) >= 1 and float(quality_score or 0.0) >= 0.18
-        if re.match(r"^[A-Z]{3}-\d{3}$", normalized):
-            return float(conf or 0.0) >= 0.60 and int(vote_count or 0) >= 1 and float(quality_score or 0.0) >= 0.18
-        if re.match(r"^[A-Z]{2}-\d{3}$", normalized):
-            return float(conf or 0.0) >= 0.56 and int(vote_count or 0) >= 1 and float(quality_score or 0.0) >= 0.16
-        if re.match(r"^[A-Z]{2,4}-\d{2}$", normalized):
-            return float(conf or 0.0) >= 0.70 and int(vote_count or 0) >= 2 and float(quality_score or 0.0) >= 0.22
-        if re.match(r"^\d{3,4}-[A-Z]{2,3}$", normalized):
-            return float(conf or 0.0) >= 0.68 and int(vote_count or 0) >= 1 and float(quality_score or 0.0) >= 0.20
+        # 所有合法台灣車牌格式統一門檻
+        tw_patterns = [
+            r"^[A-Z]{2,4}-\d{2,4}$",  # ABC-1234, AB-12, ABCD-12
+            r"^\d{2,4}-[A-Z]{2,4}$",  # 1234-AB, 12-ABCD
+            r"^[A-Z]\d{2}-\d{3,4}$",  # A12-3456
+            r"^[A-Z]{3}-\d{4}$",      # 新式: ABC-1234
+            r"^\d{4}-[A-Z]{2}$",      # 舊式: 1234-AB
+            r"^[A-Z]{2}\d-\d{4}$",    # 特殊: AB1-2345
+            r"^[A-Z]\d-\d{4}$",       # 營業: A1-2345
+            r"^\d{3}-[A-Z]{2,3}$",    # 舊式機車: 123-AB, 123-ABC
+        ]
+        for pat in tw_patterns:
+            if re.match(pat, normalized):
+                return True  # 格式合法直接通過（OCR 品質由 _effective_plate_conf 把關）
         return False
 
     def _reject_commit(self, plate: str, reason: str) -> bool:
@@ -1902,6 +1964,229 @@ class LPRStreamTask:
         self.last_rejected_plate = None
         self.last_rejected_reason = None
         return True
+
+    # === best-of-track 追蹤式 commit ===
+
+    def _update_track_plate_candidate(
+        self,
+        track_id: int,
+        plate: str,
+        effective_conf: float,
+        valid: bool,
+        raw: str,
+        quality_score: float,
+        plate_bbox: List[int],
+        vehicle_bbox: List[int],
+        vehicle_type: str,
+        frame,
+        plate_crop,
+        iw: int,
+        ih: int,
+    ) -> None:
+        """累積 track 的所有 OCR 結果，做字元級投票選最佳。"""
+        if track_id is None or track_id <= 0:
+            return
+        now = time.time()
+        entry = self.track_plate_candidates.get(track_id)
+        if entry is None:
+            entry = {
+                "track_id": track_id,
+                "vehicle_type": vehicle_type,
+                "first_seen": now,
+                "last_seen": now,
+                "best_plate": plate,
+                "best_conf": effective_conf,
+                "best_valid": valid,
+                "best_raw": raw,
+                "best_quality_score": quality_score,
+                "best_frame": frame.copy() if frame is not None else None,
+                "best_plate_crop": plate_crop.copy() if plate_crop is not None and hasattr(plate_crop, 'copy') else plate_crop,
+                "best_plate_bbox": list(plate_bbox),
+                "best_vehicle_bbox": list(vehicle_bbox),
+                "iw": iw,
+                "ih": ih,
+                "ocr_count": 1,
+                "committed": False,
+                "all_raws": [],       # 所有 OCR 原始結果
+                "char_slots": {},     # 字元投票 {length: [{char: weight, ...}, ...]}
+            }
+            self.track_plate_candidates[track_id] = entry
+        else:
+            entry["last_seen"] = now
+            entry["ocr_count"] += 1
+
+        # 累積所有原始 OCR 結果用於字元投票
+        raw_clean = re.sub(r"[^A-Z0-9]", "", str(raw or "").upper())
+        if raw_clean and len(raw_clean) >= 4:
+            entry["all_raws"].append({"raw": raw_clean, "conf": effective_conf, "quality": quality_score})
+            # 字元級投票：按 raw 長度分組，每個位置投票
+            length = len(raw_clean)
+            weight = effective_conf + quality_score * 0.3
+            slots = entry["char_slots"].setdefault(length, [dict() for _ in range(length)])
+            if len(slots) == length:
+                for idx, ch in enumerate(raw_clean):
+                    slots[idx][ch] = slots[idx].get(ch, 0.0) + weight
+
+        # 保留最高 confidence+quality 的結果（作為 fallback）
+        new_score = effective_conf + quality_score * 0.3
+        old_score = entry["best_conf"] + entry.get("best_quality_score", 0) * 0.3
+        if new_score > old_score:
+            entry["best_plate"] = plate
+            entry["best_conf"] = effective_conf
+            entry["best_valid"] = valid
+            entry["best_raw"] = raw
+            entry["best_quality_score"] = quality_score
+            entry["best_frame"] = frame.copy() if frame is not None else None
+            entry["best_plate_crop"] = plate_crop.copy() if plate_crop is not None and hasattr(plate_crop, 'copy') else plate_crop
+            entry["best_plate_bbox"] = list(plate_bbox)
+            entry["best_vehicle_bbox"] = list(vehicle_bbox)
+            entry["iw"] = iw
+            entry["ih"] = ih
+
+    def _resolve_track_best_plate(self, entry: dict) -> Optional[str]:
+        """從 track 的字元投票中組合最佳車牌。"""
+        char_slots = entry.get("char_slots", {})
+        if not char_slots:
+            return None
+        # 選出票數最多的長度
+        best_length = max(char_slots.keys(), key=lambda L: sum(
+            max(s.values()) for s in char_slots[L] if s
+        ) if char_slots[L] else 0)
+        slots = char_slots.get(best_length, [])
+        if not slots:
+            return None
+        # 每個位置取最高票的字元
+        voted_chars = []
+        total_weight = 0.0
+        for slot in slots:
+            if not slot:
+                return None
+            best_ch = max(slot, key=slot.get)
+            voted_chars.append(best_ch)
+            total_weight += slot[best_ch]
+        voted_raw = "".join(voted_chars)
+        if len(voted_raw) < 4:
+            return None
+        # 用 _plate_variants 格式化成標準車牌
+        variants = self._plate_variants(voted_raw)
+        if not variants:
+            return None
+        # 從 variants 中選 layout score 最高的
+        best_variant = max(variants, key=lambda v: self._plate_layout_score(v))
+        return best_variant
+
+    def _flush_completed_tracks(self, *, force: bool = False) -> None:
+        """追蹤結束的 track，commit 最佳結果。"""
+        now = time.time()
+        active_ids = set()
+        try:
+            active_ids = set(int(t) for t in self.vehicle_tracker.tracks.keys())
+        except Exception:
+            pass
+
+        to_remove = []
+        for tid, entry in self.track_plate_candidates.items():
+            if entry.get("committed"):
+                # 已 commit，等結束後清理
+                if tid not in active_ids or force:
+                    to_remove.append(tid)
+                continue
+            # 判斷追蹤是否結束
+            # track 結束：離開畫面 OR 超過 TTL OR 追蹤超過 15 秒
+            track_ended = (tid not in active_ids) or ((now - entry["last_seen"]) > _TRACK_PLATE_TTL_SEC) or ((now - entry["first_seen"]) > 15.0) or force
+            if not track_ended:
+                continue
+            _bp = entry.get("best_plate", "?")
+            _oc = entry.get("ocr_count", 0)
+            # OCR 次數不足，不 commit
+            if entry["ocr_count"] < _TRACK_MIN_OCR_COUNT:
+                print(f"[LPR-flush] track={tid} plate={_bp} REJECT ocr_count={_oc}", flush=True)
+                to_remove.append(tid)
+                continue
+            # 車牌截圖品質過濾
+            _crop = entry.get("best_plate_crop")
+            if _crop is not None and hasattr(_crop, 'shape') and len(_crop.shape) >= 2:
+                _ch, _cw = _crop.shape[:2]
+                _aspect = _cw / max(_ch, 1)
+                if _cw < 40 or _ch < 15 or _cw > 400 or _ch > 200 or _aspect > 4.5 or _aspect < 1.5:
+                    print(f"[LPR-flush] track={tid} plate={_bp} REJECT size={_cw}x{_ch} aspect={_aspect:.1f}", flush=True)
+                    to_remove.append(tid)
+                    continue
+                _gray = cv2.cvtColor(_crop, cv2.COLOR_BGR2GRAY) if len(_crop.shape) == 3 else _crop
+                _edges = cv2.Canny(_gray, 50, 150)
+                _edge_density = float(_edges.sum()) / max(1, _cw * _ch * 255)
+                if _edge_density < 0.08:
+                    print(f"[LPR-flush] track={tid} plate={_bp} REJECT edges={_edge_density:.3f}", flush=True)
+                    to_remove.append(tid)
+                    continue
+            # 直接用最高 confidence 的 OCR 結果（不做字元投票）
+            plate = entry.get("best_plate")
+            conf = float(entry.get("best_conf", 0))
+            valid = entry.get("best_valid", False)
+            raw = entry.get("best_raw", "")
+            # (字元投票已停用)
+            quality_score = float(entry.get("best_quality_score", 0))
+            if not plate or plate == "UNKNOWN":
+                print(f"[LPR-flush] track={tid} REJECT empty plate", flush=True)
+                to_remove.append(tid)
+                continue
+            # 格式驗證
+            if not self._is_plausible_plate(plate):
+                print(f"[LPR-flush] track={tid} plate={plate} REJECT implausible", flush=True)
+                to_remove.append(tid)
+                continue
+            if not self._history_plate_gate(plate, conf=conf, quality_score=quality_score, vote_count=entry["ocr_count"]):
+                to_remove.append(tid)
+                continue
+            normalized = self._normalize_plate_candidate(plate)
+            standard_pattern = bool(re.match(r"^[A-Z]{2,4}-\d{2,4}$", normalized))
+            if not valid and not (standard_pattern and conf >= 0.30):
+                to_remove.append(tid)
+                continue
+            if conf < _PLATE_COMMIT_MIN_CONF:
+                to_remove.append(tid)
+                continue
+            # cooldown 檢查（車牌 + 位置區域，避免同車重複 commit）
+            cooldown_key = plate
+            bbox = entry.get("best_plate_bbox", [0, 0, 0, 0])
+            area_key = f"{bbox[0]//200}:{bbox[1]//200}"
+            if cooldown_key in self.last_committed_plates and (now - self.last_committed_plates[cooldown_key]) <= self.cooldown:
+                to_remove.append(tid)
+                continue
+            if area_key in self.last_committed_plates and (now - self.last_committed_plates[area_key]) <= 5.0:
+                to_remove.append(tid)
+                continue
+            # commit
+            self.last_committed_plates[cooldown_key] = now
+            self.last_committed_plates[area_key] = now
+            frame = entry.get("best_frame")
+            plate_crop = entry.get("best_plate_crop")
+            self._store_history_record(
+                frame=frame,
+                vehicle_bbox=entry.get("best_vehicle_bbox", [0, 0, 0, 0]),
+                vehicle_type=entry.get("vehicle_type", "car"),
+                plate_number=plate,
+                confidence=conf,
+                valid=valid,
+                raw=raw,
+                plate_bbox=entry.get("best_plate_bbox"),
+                plate_crop=plate_crop,
+            )
+            entry["committed"] = True
+            self.committed_candidates += 1
+            self._increment_debug_counter("committed_candidates")
+            self.last_confirmed_plate = plate
+            self.last_plate_number = plate
+            self._mark_vehicle_track_plate_recorded(tid)
+            to_remove.append(tid)
+
+        for tid in to_remove:
+            self.track_plate_candidates.pop(tid, None)
+        # 防止記憶體洩漏：超過 200 entries 時清理最舊的
+        if len(self.track_plate_candidates) > 200:
+            oldest = sorted(self.track_plate_candidates.keys(), key=lambda t: self.track_plate_candidates[t].get("first_seen", 0))
+            for tid in oldest[:50]:
+                self.track_plate_candidates.pop(tid, None)
 
     def _register_plate_vote(
         self,
@@ -2072,7 +2357,7 @@ class LPRStreamTask:
         variants.add(plate)
 
         plain = plate.replace("-", "")
-        if 5 <= len(plain) <= 8:
+        if 4 <= len(plain) <= 9:
             for cut in (2, 3, 4):
                 if 2 <= cut < len(plain) - 1:
                     variants.add(f"{plain[:cut]}-{plain[cut:]}")
@@ -2092,7 +2377,7 @@ class LPRStreamTask:
         for v in variants:
             n = self._normalize_plate_candidate(v)
             core_len = len(n.replace("-", ""))
-            if 5 <= core_len <= 8:
+            if 4 <= core_len <= 9:
                 out.append(n)
         return out
 
@@ -2101,7 +2386,7 @@ class LPRStreamTask:
         if not plate:
             return -3.0
         plain = plate.replace("-", "")
-        if len(plain) < 5 or len(plain) > 8:
+        if len(plain) < 4 or len(plain) > 9:
             return -2.5
 
         digits = sum(ch.isdigit() for ch in plain)
@@ -2159,7 +2444,17 @@ class LPRStreamTask:
         return score
 
     def _is_plausible_plate(self, plate: str) -> bool:
-        return self._plate_layout_score(plate) >= 0.0
+        # 台灣車牌字元總數（去掉 dash）至少 6 字：XX-1234 / 1234-XX / ABC-1234 / LAB-123
+        n = self._normalize_plate_candidate(plate)
+        plain = n.replace("-", "")
+        if len(plain) < 6:
+            return False
+        digits = sum(ch.isdigit() for ch in plain)
+        letters = sum("A" <= ch <= "Z" for ch in plain)
+        # 全字母或全數字、或字母/數字少於 2 個都拒絕
+        if digits < 2 or letters < 2:
+            return False
+        return self._plate_layout_score(plate) >= -0.5
 
     def _score_ocr_result(self, result: Dict[str, Any], plate: str) -> float:
         conf = float(result.get("confidence") or 0.0)
@@ -2182,25 +2477,28 @@ class LPRStreamTask:
         quality_score: float,
         raw: str,
     ) -> float:
+        """回傳真實 OCR 信心度，不再硬塞 0.58 防止假陽性"""
         base_conf = max(0.0, float(conf or 0.0))
-        if valid:
-            return max(base_conf, 0.58)
-
+        # 檢查 plate 與 raw 的相似度（避免 raw="ABUTS" 變成 plate="ABO-75" 還拿到高 conf）
         normalized = self._normalize_plate_candidate(plate)
-        layout_score = self._plate_layout_score(normalized)
-        core_len = len(normalized.replace("-", ""))
-        if layout_score < 2.6 or core_len < 5:
+        plain = normalized.replace("-", "")
+        raw_clean = re.sub(r"[^A-Z0-9]", "", str(raw or "").upper())
+
+        if not raw_clean or not plain:
             return base_conf
 
-        inferred = 0.24
-        inferred += min(0.18, max(0.0, layout_score - 2.4) * 0.09)
-        inferred += min(0.10, max(0.0, float(quality_score or 0.0)) * 0.18)
-        if re.match(r"^[A-Z]{2,4}-[0-9]{3,4}$", normalized):
-            inferred += 0.10
-        raw_core_len = len(re.sub(r"[^A-Z0-9]", "", str(raw or "").upper()))
-        if raw_core_len >= core_len:
-            inferred += 0.04
-        return max(base_conf, min(0.56, inferred))
+        # 計算 raw 與 plate 的字元相似度
+        common = sum(1 for ch in plain if ch in raw_clean)
+        similarity = common / max(1, len(plain))
+
+        # 相似度太低（OCR 讀的跟最終 plate 對不上）→ 不給信心度加成
+        if similarity < 0.4:
+            return min(base_conf, 0.20)
+
+        if valid and similarity >= 0.8:
+            return max(base_conf, 0.45)
+
+        return base_conf
 
     def _merge_crop_ocr(self, base: Dict[str, Any], crop_res: Dict[str, Any]) -> Dict[str, Any]:
         if not crop_res:
@@ -2269,8 +2567,10 @@ class LPRStreamTask:
         primary_bbox = ranked_detections[0].get("bbox") or fallback_bbox
         if len(primary_bbox) == 4:
             pbx1, pby1, pbx2, pby2 = [int(v) for v in primary_bbox]
+            # 無論 OCR 結果如何，先保留 detector 找到的 plate_bbox
             best["plate_bbox"] = [x1 + pbx1, y1 + pby1, x1 + pbx2, y1 + pby2]
             best["selected_candidate"] = "detector_primary_bbox"
+            best["det_conf"] = float(ranked_detections[0].get("confidence") or 0.0)
 
         secondary_candidates: List[str] = []
         primary_area = float(ranked_detections[0].get("rank_area") or 0.0)
@@ -2303,12 +2603,13 @@ class LPRStreamTask:
             cx = ((gbx1 + gbx2) / 2.0 - x1) / max(1.0, float(vw))
             cy = ((gby1 + gby2) / 2.0 - y1) / max(1.0, float(vh))
             area_ratio = (det_w * det_h) / max(1.0, float(vw * vh))
-            lower_bias = max(0.0, 1.0 - abs(cy - 0.82) / 0.30)
+            lower_bias = max(0.0, 1.0 - abs(cy - 0.85) / 0.22)
+            upper_half_penalty = max(0.0, (0.45 - cy) / 0.45) if cy < 0.45 else 0.0
             center_bias = max(0.0, 1.0 - abs(cx - 0.5) / 0.35)
             aspect = det_w / det_h
             aspect_bias = max(0.0, 1.0 - abs(aspect - 3.2) / 2.4)
             area_bias = max(0.0, 1.0 - abs(area_ratio - 0.035) / 0.04)
-            geom_score = (lower_bias * 0.90) + (center_bias * 0.25) + (aspect_bias * 0.25) + (area_bias * 0.20)
+            geom_score = (lower_bias * 1.30) + (center_bias * 0.25) + (aspect_bias * 0.25) + (area_bias * 0.20) - (upper_half_penalty * 2.0)
             for cand in candidates:
                 if not self._is_plausible_plate(cand):
                     continue
@@ -2374,44 +2675,90 @@ class LPRStreamTask:
     def stop(self):
         self.running = False
         if self.thread:
-            self.thread.join(timeout=3)
+            self.thread.join(timeout=5)
         self._flush_cumulative_stats(force=True)
         print(f"[LPR] 停止: {self.camera_name}")
             
     def _run(self):
+        # Watchdog: 從外部 thread 監控 last_frame_at，超時 forcibly release cap
+        cap_holder = {"cap": None}
+        watchdog_stop = threading.Event()
+        def _watchdog():
+            while not watchdog_stop.is_set():
+                time.sleep(2.0)
+                last = self.last_frame_at
+                if last and (time.time() - last > 8.0):
+                    # cap.read() 卡死，強制 release（會讓 read() 拋例外或回 ret=False）
+                    c = cap_holder.get("cap")
+                    if c is not None:
+                        try:
+                            c.release()
+                        except Exception:
+                            pass
+                        self.last_frame_at = 0.0
+        wd_thread = threading.Thread(target=_watchdog, daemon=True)
+        wd_thread.start()
+
         try:
             yolo = get_yolo()
             recognizer = get_recognizer()
             get_plate_detector()
-            cap = _open_capture(self.source)
-            try:
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            except Exception:
-                pass
 
-            if not cap.isOpened():
+            cap = None
+            for _retry in range(5):
+                cap = _open_capture(self.source)
+                if cap.isOpened():
+                    break
+                print(f"[LPR] 來源連線失敗，{3}秒後重試 ({_retry+1}/5): {self.source}")
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                time.sleep(3)
+
+            if cap is None or not cap.isOpened():
                 self.last_error = f"無法開啟來源: {self.source}"
                 print(f"[LPR] {self.last_error}")
                 self.running = False
+                watchdog_stop.set()
                 return
+
+            cap_holder["cap"] = cap
+            self.last_frame_at = time.time()  # 啟動 watchdog 計時
+            consecutive_fail = 0
 
             frame_skip = 1
             while self.running:
-                # 避免 read 卡死太久：若長時間沒幀就重連
-                if self.last_frame_at and (time.time() - self.last_frame_at > 12):
-                    cap.release()
-                    time.sleep(0.3)
-                    cap = _open_capture(self.source)
+                # 主迴圈 watchdog：若 read 連續失敗或長時間沒幀就重連
+                need_reconnect = (
+                    consecutive_fail >= 10
+                    or self.last_frame_at == 0.0
+                    or (self.last_frame_at and time.time() - self.last_frame_at > 8)
+                )
+                if need_reconnect:
                     try:
-                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                        cap.release()
                     except Exception:
                         pass
-                    self.last_frame_at = 0.0
+                    time.sleep(0.5)
+                    cap = _open_capture(self.source)
+                    cap_holder["cap"] = cap
+                    consecutive_fail = 0
+                    if not (cap and cap.isOpened()):
+                        time.sleep(2.0)
+                        self.last_frame_at = time.time()
+                        continue
+                    self.last_frame_at = time.time()
 
-                ret, frame = cap.read()
+                try:
+                    ret, frame = cap.read()
+                except Exception:
+                    ret, frame = False, None
                 if not ret:
+                    consecutive_fail += 1
                     time.sleep(0.2)
                     continue
+                consecutive_fail = 0
 
                 self.last_frame_at = time.time()
                 self._increment_debug_counter("total_frames")
@@ -2426,7 +2773,7 @@ class LPRStreamTask:
                     tracked_inputs = []
                     for det in detections:
                         vehicle_type = str(det.get("class_name") or "")
-                        if vehicle_type not in ("car", "motorcycle", "bus", "truck"):
+                        if vehicle_type not in ("car", "motorcycle", "bus", "truck", "heavy_truck", "light_truck"):
                             continue
 
                         bbox = det.get("bbox", {}) or {}
@@ -2462,6 +2809,16 @@ class LPRStreamTask:
                         track_id = int(det.get("track_id") or 0)
                         self._increment_debug_counter("vehicles_detected")
 
+                        # === 最佳距離窗口：車輛太小時跳過 OCR，等它靠近 ===
+                        ih_pre, iw_pre = frame.shape[:2]
+                        veh_w = max(1, x2 - x1)
+                        veh_h = max(1, y2 - y1)
+                        veh_area_ratio = (veh_w * veh_h) / max(1, iw_pre * ih_pre)
+                        if veh_area_ratio < _VEHICLE_MIN_AREA_RATIO:
+                            self._update_vehicle_track_state(track_id, vehicle_type, [x1, y1, x2, y2], frame)
+                            print(f"[LPR] skip: cam{self.camera_id} 車太小 {veh_w}x{veh_h} ratio={veh_area_ratio:.4f}", flush=True)
+                            continue
+
                         # 多裁切候選 + OCR 投票
                         result = self._recognize_plate_best(frame, x1, y1, x2, y2, recognizer)
                         ih, iw = frame.shape[:2]
@@ -2475,6 +2832,7 @@ class LPRStreamTask:
 
                         pb = result.get("plate_bbox")
                         if not (isinstance(pb, (list, tuple)) and len(pb) == 4):
+                            print(f"[LPR] skip: cam{self.camera_id} no plate_bbox, vehicle={veh_w}x{veh_h}, selected={result.get('selected_candidate','?')}, fallback={result.get('fallback_only')}", flush=True)
                             continue
                         self._increment_debug_counter("plate_boxes_detected")
                         px1 = max(0, min(iw - 1, int(pb[0])))
@@ -2500,6 +2858,17 @@ class LPRStreamTask:
                         if plate_crop is None or getattr(plate_crop, "size", 0) == 0:
                             plate_crop = plate_crop_raw
                         if plate_crop is None or getattr(plate_crop, "size", 0) == 0:
+                            continue
+
+                        # === 車牌裁切品質檢查：太小太糊不做 OCR，等下一幀更好的 ===
+                        _crop_h, _crop_w = plate_crop.shape[:2]
+                        if _crop_w < _PLATE_OCR_MIN_CROP_W or _crop_h < _PLATE_OCR_MIN_CROP_H:
+                            print(f"[LPR] skip: cam{self.camera_id} 車牌太小 {_crop_w}x{_crop_h}", flush=True)
+                            continue
+                        _crop_gray = cv2.cvtColor(plate_crop, cv2.COLOR_BGR2GRAY) if len(plate_crop.shape) == 3 else plate_crop
+                        _crop_blur = float(cv2.Laplacian(_crop_gray, cv2.CV_32F).var())
+                        if _crop_blur < _PLATE_OCR_MIN_BLUR:
+                            print(f"[LPR] skip: cam{self.camera_id} 車牌太糊 blur={_crop_blur:.1f} size={_crop_w}x{_crop_h}", flush=True)
                             continue
 
                         crop_res = _recognize_plate_on_crop(plate_crop, recognizer)
@@ -2563,6 +2932,7 @@ class LPRStreamTask:
                                 f"信心度: {conf:.2f} 有效信心: {effective_conf:.2f}"
                             )
 
+                        # best-of-track：累積 OCR 結果，追蹤結束時才 commit
                         pre_vote_ok = (
                             crop_valid
                             or effective_conf > 0.10
@@ -2571,122 +2941,29 @@ class LPRStreamTask:
                         )
 
                         if plate and self._is_plausible_plate(plate) and 4 <= len(plate) <= 10 and pre_vote_ok:
-                            voted = self._register_plate_vote(
-                                plate,
-                                effective_conf,
-                                crop_valid,
-                                raw,
-                                [px1, py1, px2, py2],
-                                track_id,
-                                vehicle_type,
-                                frame,
-                                plate_crop,
-                                iw,
-                                ih,
-                                det_conf=det_conf,
-                                quality_score=quality_score,
-                                center_score=center_score,
-                            )
-                            if not voted:
-                                strong_single_fallback = (
-                                    effective_conf >= _PLATE_SINGLE_FRAME_MIN_CONF
-                                    and best_crop_score >= _PLATE_SINGLE_FRAME_MIN_SCORE
-                                    and best_crop_layout >= _PLATE_SINGLE_FRAME_MIN_LAYOUT
-                                ) or (
-                                    crop_valid
-                                    and effective_conf >= 0.40
-                                    and best_crop_score >= 2.20
-                                ) or (
-                                    best_crop_layout >= 3.2
-                                    and best_crop_score >= 4.2
-                                    and quality_score >= 0.22
-                                    and effective_conf >= 0.28
-                                )
-                                if not strong_single_fallback:
-                                    self.last_rejected_plate = plate
-                                    self.last_rejected_reason = "vote_not_ready"
-                                    continue
-                                voted = {
-                                    "plate": plate,
-                                    "confidence": effective_conf,
-                                    "valid": crop_valid,
-                                    "raw": raw,
-                                    "plate_bbox": [px1, py1, px2, py2],
-                                    "vehicle_type": vehicle_type,
-                                    "frame": frame,
-                                    "plate_crop": plate_crop,
-                                    "iw": iw,
-                                    "ih": ih,
-                                    "vote_count": 1,
-                                    "vote_score": max(best_crop_score, quality_score * 3.0),
-                                    "quality_score": quality_score,
-                                    "confirmed": True,
-                                }
-                                self._increment_debug_counter("confirmed_candidates")
-                                print(
-                                    "[LPR] single-frame accept "
-                                    f"plate={plate} conf={effective_conf:.2f} "
-                                    f"score={best_crop_score:.2f} layout={best_crop_layout:.2f}"
-                                )
-                            self._increment_debug_counter("vote_candidates_detected")
-
-                            plate = str(voted.get("plate") or plate)
-                            conf = float(voted.get("confidence") or conf)
-                            crop_valid = bool(voted.get("valid", crop_valid))
-                            raw = str(voted.get("raw") or raw)
-                            vehicle_type = str(voted.get("vehicle_type") or vehicle_type)
-                            voted_frame = voted.get("frame") if voted.get("frame") is not None else frame
-                            voted_plate_crop = voted.get("plate_crop") if voted.get("plate_crop") is not None else plate_crop
-                            px1, py1, px2, py2 = [int(v) for v in voted.get("plate_bbox") or [px1, py1, px2, py2]]
-                            iw = int(voted.get("iw") or iw)
-                            ih = int(voted.get("ih") or ih)
-                            vote_score = float(voted.get("vote_score") or 0.0)
-                            vote_count = int(voted.get("vote_count") or 1)
-                            quality_score = float(voted.get("quality_score") or quality_score)
-                            self.last_confirmed_plate = plate
-
-                            if not self._should_commit_plate(
-                                plate,
-                                vote_score,
-                                raw,
-                                conf=conf,
+                            self._update_track_plate_candidate(
+                                track_id=track_id,
+                                plate=plate,
+                                effective_conf=effective_conf,
                                 valid=crop_valid,
+                                raw=raw,
                                 quality_score=quality_score,
-                                vote_count=vote_count,
-                            ):
-                                continue
-
-                            now = time.time()
-                            cooldown_key = plate
-                            if cooldown_key not in self.last_committed_plates or (now - self.last_committed_plates[cooldown_key]) > self.cooldown:
-                                self.last_committed_plates[cooldown_key] = now
-                                self.last_plates[f"{int(track_id)}:{plate}" if track_id is not None else plate] = now
-                                self.last_plate_number = plate
-                                plate_snapshot_img = _select_best_native_plate_snapshot(
-                                    list(self.recent_frames) or [voted_frame],
-                                    [px1, py1, px2, py2],
-                                    iw,
-                                    ih,
-                                )
-                                self._store_history_record(
-                                    frame=voted_frame,
-                                    vehicle_bbox=[vx1, vy1, vx2, vy2],
-                                    vehicle_type=vehicle_type,
-                                    plate_number=plate,
-                                    confidence=conf,
-                                    valid=crop_valid,
-                                    raw=raw,
-                                    plate_bbox=[px1, py1, px2, py2],
-                                    plate_crop=plate_snapshot_img if plate_snapshot_img is not None and getattr(plate_snapshot_img, "size", 0) > 0 else voted_plate_crop,
-                                )
-                                self._increment_debug_counter("committed_candidates")
-                                self._flush_cumulative_stats(force=True, latest_history_at=datetime.utcnow())
-                                self._mark_vehicle_track_plate_recorded(track_id)
-                                print(f"[LPR] ✅ {plate} ({vehicle_type}) {conf:.0%} vote={vote_score:.2f}")
+                                plate_bbox=[px1, py1, px2, py2],
+                                vehicle_bbox=[vx1, vy1, vx2, vy2],
+                                vehicle_type=vehicle_type,
+                                frame=frame,
+                                plate_crop=plate_crop,
+                                iw=iw,
+                                ih=ih,
+                            )
+                            self._increment_debug_counter("vote_candidates_detected")
+                            self.last_candidate_plate = plate
                         elif plate:
                             self.last_rejected_plate = plate
                             self.last_rejected_reason = "pre_vote_gate"
 
+                    # 追蹤結束的 track → commit 最佳結果
+                    self._flush_completed_tracks()
                     self._flush_inactive_vehicle_tracks()
 
                 except Exception as e:
@@ -2696,6 +2973,7 @@ class LPRStreamTask:
                 time.sleep(0.05)
 
             cap.release()
+            self._flush_completed_tracks(force=True)
             self._flush_inactive_vehicle_tracks(force=True)
             self._flush_cumulative_stats(force=True)
         except Exception as e:
@@ -2909,13 +3187,35 @@ async def get_history(
             query = query.filter((LPRRecord.raw.is_(None)) | (LPRRecord.raw != "vehicle_only"))
         if keyword:
             like_kw = f"%{keyword}%"
-            query = query.filter(
-                or_(
-                    LPRRecord.plate_number.ilike(like_kw),
-                    LPRRecord.vehicle_type.ilike(like_kw),
-                    LPRRecord.camera_name.ilike(like_kw),
-                )
-            )
+            # 中文車種關鍵字對應到 DB 裡的英文 label
+            _ZH_TO_EN_VEHICLE = {
+                "小客車": ["car"],
+                "小貨車": ["light_truck"],
+                "大貨車": ["heavy_truck"],
+                "大客車": ["bus"],
+                "公車": ["bus"],
+                "機車": ["motorcycle"],
+                "自行車": ["bicycle"],
+                "貨車": ["truck", "light_truck", "heavy_truck"],
+                "小車": ["car", "light_truck", "motorcycle"],
+                "大車": ["heavy_truck", "bus"],
+            }
+            clauses = [
+                LPRRecord.plate_number.ilike(like_kw),
+                LPRRecord.vehicle_type.ilike(like_kw),
+                LPRRecord.camera_name.ilike(like_kw),
+            ]
+            # 取最具體的中文詞（較長的優先，避免 "大貨車" 又命中 "貨車"）
+            matched_en: set[str] = set()
+            remaining = keyword
+            for zh, en_list in sorted(_ZH_TO_EN_VEHICLE.items(), key=lambda kv: -len(kv[0])):
+                if zh in remaining:
+                    for en in en_list:
+                        matched_en.add(en)
+                    remaining = remaining.replace(zh, "")
+            for en in matched_en:
+                clauses.append(LPRRecord.vehicle_type.ilike(f"%{en}%"))
+            query = query.filter(or_(*clauses))
         total = int(query.count())
         ordered_query = query.order_by(LPRRecord.created_at.desc(), LPRRecord.id.desc())
         latest_row = ordered_query.first()

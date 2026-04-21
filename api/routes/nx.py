@@ -7,6 +7,7 @@ import hashlib
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urljoin
 
@@ -471,3 +472,149 @@ async def nx_stream(
     except requests.RequestException as e:
         session.close()
         raise HTTPException(status_code=502, detail=f"NX direct stream error: {e}") from e
+
+
+# ==================== NX Motion / Archive APIs ====================
+
+def _nx_authed_session(settings: Optional[Dict[str, Any]] = None):
+    """建立 NX 已登入 session（含 Bearer token）"""
+    settings = settings or _nx_settings()
+    base = _nx_server_base(settings)
+    auth = _nx_auth(settings)
+    if not base or not auth:
+        raise HTTPException(status_code=503, detail="NX 未設定")
+    session = requests.Session()
+    verify = _nx_verify_ssl(settings)
+    try:
+        resp = session.post(
+            f"{base}/rest/v2/login/sessions",
+            json={"username": auth[0], "password": auth[1], "setCookie": False},
+            verify=verify,
+            timeout=8,
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"NX 登入失敗 ({resp.status_code})")
+        token = resp.json().get("token")
+        if not token:
+            raise HTTPException(status_code=502, detail="NX 登入沒有 token")
+        session.headers["Authorization"] = f"Bearer {token}"
+        return session, base, verify
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"NX 連線失敗: {e}") from e
+
+
+@router.get("/recording-periods/{device_id}")
+async def nx_recording_periods(
+    device_id: str,
+    hours: int = Query(24, ge=1, le=168),
+):
+    """取得 NX 攝影機的錄影時段（給 motion 截圖/clip 用）"""
+    session, base, verify = _nx_authed_session()
+    try:
+        now_ms = int(datetime.utcnow().timestamp() * 1000)
+        start_ms = now_ms - hours * 3600 * 1000
+        # 確保 device_id 帶大括號
+        did = device_id if device_id.startswith("{") else f"{{{device_id}}}"
+        url = f"{base}/ec2/recordedTimePeriods"
+        params = {
+            "cameraId": did,
+            "startTime": start_ms,
+            "endTime": now_ms,
+            "periodsType": 0,  # all recorded
+        }
+        r = session.get(url, params=params, verify=verify, timeout=15)
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"NX recordedTimePeriods 失敗 ({r.status_code})")
+        data = r.json()
+        reply = data.get("reply", [])
+        periods = reply[0].get("periods", []) if reply else []
+        out = []
+        for p in periods:
+            try:
+                start = int(p.get("startTimeMs", 0))
+                duration = int(p.get("durationMs", 0))
+                if start <= 0 or duration <= 0:
+                    continue
+                out.append({
+                    "start_ms": start,
+                    "duration_ms": duration,
+                    "end_ms": start + duration,
+                    "start_iso": datetime.utcfromtimestamp(start / 1000).replace(tzinfo=timezone.utc).isoformat(),
+                    "duration_sec": round(duration / 1000.0, 1),
+                })
+            except Exception:
+                continue
+        return {"device_id": did, "hours": hours, "count": len(out), "periods": out}
+    finally:
+        session.close()
+
+
+def _parse_pos_to_ms(pos: str) -> int:
+    """接受 ms timestamp 或 ISO 8601 字串，回傳 ms"""
+    s = str(pos or "").strip()
+    if not s:
+        raise HTTPException(status_code=400, detail="pos 必填")
+    # 純數字 = ms
+    if s.isdigit():
+        return int(s)
+    # ISO 8601
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp() * 1000)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"無效的 pos 格式: {e}")
+
+
+@router.get("/motion-clip/{device_id}")
+async def nx_motion_clip(
+    device_id: str,
+    pos: str = Query(..., description="開始時間 (ms timestamp 或 ISO 8601)"),
+    duration: int = Query(10000, ge=500, le=60000, description="長度 ms (0.5~60 秒)"),
+):
+    """從 NX archive 拉取 motion 時段的 mp4 clip"""
+    from fastapi.responses import Response
+    pos_ms = _parse_pos_to_ms(pos)
+    session, base, verify = _nx_authed_session()
+    try:
+        did = device_id if device_id.startswith("{") else f"{{{device_id}}}"
+        url = f"{base}/media/{did}.mp4"
+        params = {"pos": pos_ms, "duration": duration}
+        r = session.get(url, params=params, verify=verify, timeout=60)
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"NX archive 取得失敗 ({r.status_code})")
+        if not r.content:
+            raise HTTPException(status_code=404, detail="該時段無錄影資料")
+        ct = r.headers.get("content-type") or "video/mp4"
+        return Response(content=r.content, media_type=ct)
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"NX motion clip 錯誤: {e}") from e
+    finally:
+        session.close()
+
+
+@router.get("/motion-snapshot/{device_id}")
+async def nx_motion_snapshot(
+    device_id: str,
+    pos: str = Query(..., description="時間戳 (ms 或 ISO 8601)"),
+):
+    """從 NX archive 拉取單張快照（指定時間點）"""
+    from fastapi.responses import Response
+    pos_ms = _parse_pos_to_ms(pos)
+    session, base, verify = _nx_authed_session()
+    try:
+        did = device_id if device_id.startswith("{") else f"{{{device_id}}}"
+        url = f"{base}/ec2/cameraThumbnail"
+        params = {"cameraId": did, "time": pos_ms}
+        r = session.get(url, params=params, verify=verify, timeout=15)
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"NX snapshot 失敗 ({r.status_code})")
+        if not r.content:
+            raise HTTPException(status_code=404, detail="該時段無錄影資料")
+        return Response(
+            content=r.content,
+            media_type=r.headers.get("content-type") or "image/jpeg",
+        )
+    finally:
+        session.close()

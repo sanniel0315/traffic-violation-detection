@@ -216,7 +216,7 @@ async def all_congestion_status():
     """取得所有壅塞偵測狀態"""
     return {
         cid: {
-            **congestion_services.get(cid, {}),
+            **{k: v for k, v in congestion_services.get(cid, {}).items() if not k.startswith("_")},
             'result': congestion_results.get(cid, {}),
             'params': get_effective_params(cid),
         }
@@ -427,6 +427,7 @@ def _start_congestion_service(camera: Camera) -> bool:
         name=f"congestion-{camera_id}",
     )
     congestion_services[camera_id]["thread_name"] = worker.name
+    congestion_services[camera_id]["_thread"] = worker
     worker.start()
     return True
 
