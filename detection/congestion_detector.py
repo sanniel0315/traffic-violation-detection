@@ -143,12 +143,16 @@ class CongestionDetector:
             history.pop(0)
         smoothed = sum(history) / len(history)
 
-        level = (
-            'critical' if smoothed >= critical_t
-            else 'high' if smoothed >= high_t
-            else 'medium' if smoothed >= medium_t
-            else 'low'
-        )
+        # 全域 level 同樣要求車輛數 >=2，避免單一大車誤判
+        if len(tracked_vehicles) < 2:
+            level = 'low'
+        else:
+            level = (
+                'critical' if smoothed >= critical_t
+                else 'high' if smoothed >= high_t
+                else 'medium' if smoothed >= medium_t
+                else 'low'
+            )
         
         stats = {}
         for v in tracked_vehicles:
@@ -200,12 +204,17 @@ class CongestionDetector:
                 zhist.pop(0)
             z_occ = sum(zhist) / len(zhist)
 
-            z_level = (
-                'critical' if z_occ >= critical_t
-                else 'high' if z_occ >= high_t
-                else 'medium' if z_occ >= medium_t
-                else 'low'
-            )
+            # 車輛數必須 >=2 才能升 level，避免單一大車（公車/聯結）被誤判 擁擠
+            zveh_n = len(zvehicles)
+            if zveh_n < 2:
+                z_level = 'low'
+            else:
+                z_level = (
+                    'critical' if z_occ >= critical_t
+                    else 'high' if z_occ >= high_t
+                    else 'medium' if z_occ >= medium_t
+                    else 'low'
+                )
             lane_no = self._parse_lane_no(z)
             movement = self._normalize_movement(z.get("lane"), z.get("type"))
             lane_tags = z.get("lane_tags") if isinstance(z.get("lane_tags"), list) else []

@@ -36,6 +36,8 @@ router = APIRouter(prefix="/api/stream", tags=["串流"])
 detection_services: Dict[int, dict] = {}
 # detection 服務共享最新 frame 給 overlay（避免 NX 串流開第二條連線）
 _shared_frames: Dict[int, dict] = {}  # {camera_id: {"frame": ndarray, "ts": float}}
+# 事件截圖節流：每 cam 上次存截圖的 ts，limit ~1 張/2秒
+_per_cam_last_snap_ts: Dict[int, float] = {}
 # Per-camera detector instances（每 cam 獨立 → 並行推理、無 lock 競爭）
 _per_cam_detectors: Dict[int, "object"] = {}
 _per_cam_detectors_lock = threading.Lock()
@@ -1303,6 +1305,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             detection_services[camera_id]['detections'] = detection_count
             detection_services[camera_id]['last_detection'] = datetime.now().isoformat()
             db = None
+            row_to_vehicle = []  # 平行 list 用於存截圖時對應 bbox
             try:
                 db = SessionLocal()
                 rows = []
@@ -1323,7 +1326,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     except Exception:
                         speed_num = None
                     speed_val = speed_num if (isinstance(speed_num, float) and speed_num > 0) else None
-                    rows.append(TrafficEvent(
+                    row = TrafficEvent(
                         camera_id=int(camera_id),
                         label=str(v.get("class_name", "unknown")).lower(),
                         speed_kmh=speed_val,
@@ -1333,10 +1336,36 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         entered_zones=[str(z.get("name") or "") for z in hit_zones if str(z.get("name") or "")],
                         bbox=[bbox.get("x1"), bbox.get("y1"), bbox.get("x2"), bbox.get("y2")],
                         source="roi_detection",
-                    ))
+                    )
+                    rows.append(row)
+                    row_to_vehicle.append(v)
                 if rows:
                     db.add_all(rows)
                     db.commit()
+                    # 事件截圖：每 cam 每 2 秒最多存一張，避免磁碟爆掉
+                    try:
+                        import os as _os
+                        SNAP_DIR = "/tmp/event_snapshots"
+                        _os.makedirs(SNAP_DIR, exist_ok=True)
+                        last_snap_ts = _per_cam_last_snap_ts.get(camera_id, 0.0)
+                        if (cur_ts - last_snap_ts) >= 2.0 and rows and row_to_vehicle:
+                            row = rows[0]; v = row_to_vehicle[0]
+                            eid = int(row.id)
+                            if eid > 0:
+                                path = f"{SNAP_DIR}/{eid}.jpg"
+                                snap = infer_frame.copy()
+                                fh, fw = snap.shape[:2]
+                                bbox = v.get("bbox", {}) or {}
+                                if bbox:
+                                    cv2.rectangle(snap, (int(bbox.get("x1",0)), int(bbox.get("y1",0))),
+                                                  (int(bbox.get("x2",0)), int(bbox.get("y2",0))), (0,200,0), 2)
+                                if fw > 480:
+                                    sc = 480.0/fw
+                                    snap = cv2.resize(snap, (480, int(fh*sc)))
+                                cv2.imwrite(path, snap, [cv2.IMWRITE_JPEG_QUALITY, 60])
+                                _per_cam_last_snap_ts[camera_id] = cur_ts
+                    except Exception:
+                        pass
                 db.close()
             except Exception:
                 try:
@@ -1344,7 +1373,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         db.close()
                 except Exception:
                     pass
-            
+
             # 每 50 次偵測記錄一次違規 (模擬)
             if detection_count % 50 == 1 and enabled_types:
                 import random
