@@ -203,12 +203,21 @@ def _query_ntp_server(server: str, timeout_sec: float = 1.5) -> Dict[str, Any]:
     server = str(server or "").strip()
     if not server:
         return {"server": server, "ok": False, "error": "empty_server"}
+    # 先做 DNS 解析（不算進 rtt），rtt 只記 UDP 真實來回
+    try:
+        addr_info = socket.getaddrinfo(server, 123, socket.AF_UNSPEC, socket.SOCK_DGRAM)
+        if not addr_info:
+            return {"server": server, "ok": False, "error": "dns_no_result"}
+        family, _, _, _, sockaddr = addr_info[0]
+    except Exception as e:
+        return {"server": server, "ok": False, "error": f"dns_failed: {e}"}
+
     packet = b"\x1b" + 47 * b"\0"
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s = socket.socket(family, socket.SOCK_DGRAM)
     s.settimeout(timeout_sec)
     try:
         t_send = time.time()
-        s.sendto(packet, (server, 123))
+        s.sendto(packet, sockaddr)
         data, _addr = s.recvfrom(512)
         t_recv = time.time()
         if len(data) < 48:
@@ -247,7 +256,15 @@ def _probe_ntp_servers(servers: List[str]) -> Dict[str, Any]:
 
 
 def _get_ntp_runtime_status(servers: List[str] | None = None) -> Dict[str, Any]:
-    runtime = {"service": "unknown", "synced": None, "source": "", "note": ""}
+    # 先塞預設值，避免 probe 暫時失敗時欄位缺失
+    runtime = {
+        "service": "unknown",
+        "synced": None,
+        "source": "",
+        "note": "",
+        "offset_sec": None,
+        "rtt_ms": None,
+    }
     try:
         if shutil.which("chronyc"):
             tracking = subprocess.run(
@@ -264,33 +281,47 @@ def _get_ntp_runtime_status(servers: List[str] | None = None) -> Dict[str, Any]:
             runtime["synced"] = "Not synchronised" not in txt
         elif shutil.which("timedatectl"):
             out = subprocess.run(
-                ["timedatectl", "show", "-p", "NTPSynchronized", "-p", "NTP", "--value"],
+                ["timedatectl", "show", "-p", "NTPSynchronized", "-p", "NTP", "-p", "ServerName", "-p", "ServerAddress", "--value"],
                 capture_output=True,
                 text=True,
                 timeout=2,
             )
-            vals = [v.strip().lower() for v in (out.stdout or "").splitlines() if v.strip()]
+            vals = [v.strip() for v in (out.stdout or "").splitlines()]
             runtime["service"] = "systemd-timesyncd"
-            if vals:
-                runtime["synced"] = vals[0] == "yes"
+            # 順序：NTPSynchronized / NTP / ServerName / ServerAddress
+            if len(vals) >= 1 and vals[0]:
+                runtime["synced"] = vals[0].lower() == "yes"
+            # timedatectl 的 ServerName 或 ServerAddress 當成 source
+            if len(vals) >= 3 and vals[2]:
+                runtime["source"] = vals[2]
+            elif len(vals) >= 4 and vals[3]:
+                runtime["source"] = vals[3]
             if runtime["synced"] is None:
                 runtime["note"] = (out.stderr or "").strip() or "無法判定 NTPSynchronized（可能非 systemd 主機環境）"
         else:
             runtime["note"] = "未偵測到 chronyc/timedatectl"
     except Exception as e:
         runtime["note"] = str(e)
+    # 探測所有設定的 servers 取 offset/rtt
     probe = _probe_ntp_servers(servers or _load_ntp_settings().get("servers", []))
     runtime["probe"] = probe
     if probe.get("ok") and probe.get("best"):
         best = probe["best"]
-        runtime["source"] = best.get("server", runtime.get("source", ""))
+        # probe 的 server 只在 runtime.source 為空時才覆蓋
+        if not runtime.get("source"):
+            runtime["source"] = best.get("server", "")
         runtime["offset_sec"] = best.get("offset_sec")
         runtime["rtt_ms"] = best.get("rtt_ms")
-        runtime["synced"] = abs(float(best.get("offset_sec", 9999))) <= NTP_SYNC_OK_OFFSET_SEC
+        if runtime.get("synced") is None:
+            runtime["synced"] = abs(float(best.get("offset_sec", 9999))) <= NTP_SYNC_OK_OFFSET_SEC
         if runtime.get("note"):
             runtime["note"] = f"{runtime['note']} | probe=ok"
     else:
-        runtime["note"] = (runtime.get("note") or "NTP 探測失敗") + " | probe=failed"
+        # probe 失敗時保留 timedatectl 的判斷不覆蓋 synced
+        if not runtime.get("note"):
+            runtime["note"] = "NTP 探測失敗"
+        else:
+            runtime["note"] = f"{runtime['note']} | probe=failed"
     return runtime
 
 

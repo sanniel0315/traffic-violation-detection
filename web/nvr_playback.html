@@ -616,8 +616,13 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
                  @timeupdate="onVideoTimeUpdate(idx)"
                  @play="cell.playing=true"
                  @pause="cell.playing=false"
+                 @error="onVideoError(idx, $event)"
                  style="width:100%;height:100%;object-fit:contain;background:#000;">
           </video>
+          <div v-if="cell.errorMsg" class="grid-cell-error" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.8);color:#fff;padding:12px 16px;border-radius:6px;font-size:14px;text-align:center;max-width:80%;pointer-events:none;z-index:5;">
+            <div style="font-weight:600;margin-bottom:4px">⚠️ 錄影不可用</div>
+            <div style="font-size:12px;opacity:0.85">{{ cell.errorMsg }}</div>
+          </div>
           <div class="grid-cell-overlay">
             <span class="grid-cell-name">{{cell.camera||''}}</span>
             <span class="grid-cell-time">{{formatClock(cell.currentSec)}} / {{formatClock(cell.durationSec)}}</span>
@@ -939,7 +944,7 @@ setup(){
   const gridMode=ref('1x1');
   const activeCell=ref(0);
   const dropTarget=ref(-1);
-  const cells=reactive(Array.from({length:9},()=>({camera:'',url:'',label:'',playing:false,currentSec:0,durationSec:0,key:''})));
+  const cells=reactive(Array.from({length:9},()=>({camera:'',url:'',label:'',playing:false,currentSec:0,durationSec:0,key:'',errorMsg:''})));
   const cellVideoRefs=reactive({});
 
   // Cameras (from API)
@@ -1116,6 +1121,7 @@ setup(){
     cell.currentSec=0;
     cell.durationSec=Math.max(0,Math.floor(Number(row?.duration_sec||0)));
     cell.playing=false;
+    cell.errorMsg='';
     isPlaying.value=false;
     currentSec.value=0;
     durationSec.value=cell.durationSec;
@@ -1147,8 +1153,21 @@ setup(){
     const video=cellVideoRefs[idx];if(!video)return;
     const dur=Number.isFinite(video.duration)?Math.floor(video.duration):cells[idx].durationSec;
     cells[idx].durationSec=dur;
+    cells[idx].errorMsg='';
     if(idx===activeCell.value)durationSec.value=dur;
     video.playbackRate=playbackRate.value;
+  };
+  const onVideoError=(idx,evt)=>{
+    const url=cells[idx]?.url||'';
+    // fetch 一下看 server 回什麼，給更精準訊息
+    if(!url){cells[idx].errorMsg='無播放來源';return;}
+    fetch(url,{method:'HEAD'}).then(r=>{
+      const cl=Number(r.headers.get('content-length')||0);
+      if(r.status===404)cells[idx].errorMsg='錄影段不存在（可能已過期或當時未錄製）';
+      else if(!r.ok)cells[idx].errorMsg=`伺服器回應 HTTP ${r.status}`;
+      else if(cl===0)cells[idx].errorMsg='此時段沒有錄影片段（NVR 可能當時未啟動或錄影被關閉）';
+      else cells[idx].errorMsg='影片格式無法播放（codec 或容器問題）';
+    }).catch(()=>{cells[idx].errorMsg='連線失敗';});
   };
   const onVideoTimeUpdate=(idx)=>{
     const video=cellVideoRefs[idx];if(!video)return;

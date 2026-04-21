@@ -42,7 +42,7 @@ services:
 
   # Frigate NVR 服務
   frigate:
-    image: ghcr.io/blakeblackshear/frigate:stable-tensorrt-jp6
+    image: ghcr.io/blakeblackshear/frigate:0.16.4-tensorrt-jp6
     container_name: frigate
     runtime: nvidia
     privileged: true
@@ -58,6 +58,7 @@ services:
       - FRIGATE_CAM2_PASSWORD=1qaz@WSX
       - ORT_DISABLE_ALL=1
       - ONNXRUNTIME_DISABLE=1
+      - MALLOC_CHECK_=0
     restart: unless-stopped
 
   # 開發環境 (可選)
