@@ -194,7 +194,115 @@ async def get_traffic_events(
                     if x.created_at
                     else None
                 ),
+                "snapshot_url": f"/api/traffic/events/{x.id}/snapshot.jpg",
             }
             for x in items
         ],
     }
+
+
+# 從 Frigate 錄影擷取事件當下的截圖（cv2 first frame extraction，磁碟快取）
+_EVENT_SNAPSHOT_CACHE_DIR = "/tmp/event_snapshots"
+
+
+@router.get("/events/{event_id}/snapshot.jpg")
+async def get_event_snapshot(event_id: int, db: Session = Depends(get_db)):
+    import os
+    import io
+    from fastapi.responses import Response, FileResponse
+    import requests as _req
+
+    os.makedirs(_EVENT_SNAPSHOT_CACHE_DIR, exist_ok=True)
+    cache_path = os.path.join(_EVENT_SNAPSHOT_CACHE_DIR, f"{event_id}.jpg")
+    # 優先用 detection worker 即時存的截圖（不依賴 Frigate 錄影，符合「事件截圖無錄影」設計）
+    if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
+        return FileResponse(cache_path, media_type="image/jpeg",
+                            headers={"Cache-Control": "public, max-age=86400"})
+
+    evt = db.query(TrafficEvent).filter(TrafficEvent.id == event_id).first()
+    if not evt:
+        return Response(status_code=404, content="event not found")
+    if not evt.created_at or not evt.camera_id:
+        return Response(status_code=404, content="missing camera/timestamp")
+
+    # 該 event id 沒對應 snapshot（被 throttle 跳過）→ 找同 cam 時間最近的 snapshot
+    try:
+        evt_ts = evt.created_at.replace(tzinfo=timezone.utc).timestamp()
+        # 撈該 cam 同時段（前後 30 秒）有 snapshot 的 event
+        from sqlalchemy import and_
+        nearby = db.query(TrafficEvent).filter(
+            and_(
+                TrafficEvent.camera_id == evt.camera_id,
+                TrafficEvent.created_at >= datetime.utcfromtimestamp(evt_ts - 30),
+                TrafficEvent.created_at <= datetime.utcfromtimestamp(evt_ts + 30),
+            )
+        ).order_by(TrafficEvent.id).all()
+        # 找最接近 event_id 且有檔案的
+        best = None; best_dist = 10**9
+        for n in nearby:
+            np = os.path.join(_EVENT_SNAPSHOT_CACHE_DIR, f"{n.id}.jpg")
+            if os.path.exists(np) and os.path.getsize(np) > 0:
+                dist = abs(n.id - event_id)
+                if dist < best_dist:
+                    best_dist = dist; best = np
+        if best:
+            return FileResponse(best, media_type="image/jpeg",
+                                headers={"Cache-Control": "public, max-age=300"})
+    except Exception:
+        pass
+
+    ts = int(evt.created_at.replace(tzinfo=timezone.utc).timestamp())
+    cam_name = f"cam_{evt.camera_id}"
+    # 從 Frigate 拉 clip — Frigate segment 邊界不規則，逐步擴大 window 重試
+    r = None
+    for half_window in (5, 15, 30):
+        clip_url = f"http://localhost:5000/api/{cam_name}/start/{ts - half_window}/end/{ts + half_window}/clip.mp4"
+        try:
+            r = _req.get(clip_url, timeout=15)
+            if r.status_code == 200 and len(r.content) >= 1024:
+                break
+        except Exception:
+            r = None
+    if r is None or r.status_code != 200 or len(r.content) < 1024:
+        return Response(status_code=404, content="recording not available")
+
+    # 寫到暫存檔讓 cv2 開
+    tmp_clip = os.path.join(_EVENT_SNAPSHOT_CACHE_DIR, f"_tmp_{event_id}.mp4")
+    try:
+        with open(tmp_clip, "wb") as f:
+            f.write(r.content)
+        import cv2
+        cap = cv2.VideoCapture(tmp_clip)
+        ok, frame = cap.read()
+        cap.release()
+        if not ok or frame is None:
+            return Response(status_code=500, content="failed to decode frame")
+        # 縮成 thumbnail 320x180
+        h, w = frame.shape[:2]
+        if w > 480:
+            scale = 480.0 / w
+            frame = cv2.resize(frame, (480, int(h * scale)))
+        # 在 bbox 上畫框
+        try:
+            bbox = evt.bbox or []
+            if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                x1, y1, x2, y2 = [int(v) for v in bbox]
+                # bbox 是原始解析度，要按比例縮
+                if w > 480:
+                    rs = 480.0 / w
+                    x1, y1, x2, y2 = int(x1 * rs), int(y1 * rs), int(x2 * rs), int(y2 * rs)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 200, 0), 2)
+        except Exception:
+            pass
+        ok2, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        if not ok2:
+            return Response(status_code=500, content="encode failed")
+        with open(cache_path, "wb") as f:
+            f.write(buf.tobytes())
+        return Response(content=buf.tobytes(), media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=86400"})
+    finally:
+        try:
+            os.unlink(tmp_clip)
+        except Exception:
+            pass
