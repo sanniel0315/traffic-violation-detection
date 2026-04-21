@@ -11,15 +11,19 @@ services:
     runtime: nvidia
     volumes:
       - ./:/workspace
-      - ./models:/workspace/models
-      - ./storage:/workspace/storage
+      - /mnt/nvme/traffic/models:/workspace/models
+      - /mnt/nvme/traffic/storage:/workspace/storage
+      - /mnt/nvme/traffic/output:/workspace/output
+      - /mnt/nvme/traffic/data:/workspace/data
+      - /home/ubuntu/.local/lib/python3.10/site-packages:/opt/host-packages:ro
+      - /home/ubuntu/.EasyOCR:/root/.EasyOCR:ro
     working_dir: /workspace
-    ports:
-      - "8000:8000"
+    network_mode: host
     environment:
       - TZ=Asia/Taipei
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
+      - PYTHONPATH=/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/opt/host-packages
       - FRIGATE_HOST=localhost
       - FRIGATE_PORT=5000
       - MODEL_DIR=/workspace/models

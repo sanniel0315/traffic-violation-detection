@@ -1,0 +1,9 @@
+streams:
+  cam_1:
+    - rtsp://root:root@111.70.33.189:554/axis-media/media.amp
+  cam_2:
+    - "rtsp://admin:1qaz%40WSX@111.70.34.183:6554/profile2/media.smp"
+  cam_3:
+    - "ffmpeg:http://127.0.0.1:8000/api/nx/stream/%7B850f42c7-893a-1697-11ec-64448f93b04a%7D?format=mpegts&stream=0#video=copy"
+  cam_4:
+    - "ffmpeg:http://127.0.0.1:8000/api/nx/stream/%7Be3f59960-30aa-839e-11e5-056bd2b87ff6%7D?format=mpegts&stream=0#video=copy"

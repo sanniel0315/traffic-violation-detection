@@ -107,7 +107,7 @@ def direction_label(value: str | None) -> str:
         "S2N": "南向北",
         "E2W": "東向西",
         "W2E": "西向東",
-    }.get(str(value or "").strip(), "未知")
+    }.get(str(value or "").strip(), "-")
 
 
 def normalize_direction(value: str | None) -> str:
@@ -130,27 +130,24 @@ def normalize_direction(value: str | None) -> str:
 
 
 def classify_vehicle_group(label: str | None) -> str:
+    """
+    VD 報表車種分組規則：
+      large（大車）= 大貨車 + 大客車
+      small（小車）= 其他全部（小客車、小貨車、機車、自行車...）
+    """
     text = str(label or "").lower()
+    # 大車：大貨車 + 大客車
     if any(token in text for token in (
         "heavy_truck", "trailer", "tractor", "聯結", "bus", "大車", "大貨車", "大客車",
     )):
         return "large"
-    if any(token in text for token in (
-        "light_truck", "小貨車",
-        "car", "motorcycle", "bicycle", "小車",
-    )):
-        return "small"
-    # 未細分的 truck 仍歸 large
-    if "truck" in text:
-        return "large"
-    return "other"
+    # 未細分的 truck 視為小車（保守估計，避免誤算為大車）
+    return "small"
 
 
 def is_vd_zone(zone: dict | None) -> bool:
-    scope = str((zone or {}).get("scope") or "").strip()
+    """車流相關 zone（不限 scope，避免 congestion_detection 被排除）"""
     zone_type = str((zone or {}).get("type") or "").strip()
-    if scope and scope != "traffic_flow_settings":
-        return False
     return zone_type in {"flow_detection", "detection", "lane_left", "lane_straight", "lane_right"}
 
 
@@ -200,6 +197,10 @@ def _delete_agg_range(db: Session, model, bucket_size: str, start: datetime, end
     query.delete(synchronize_session=False)
 
 
+_BUCKET_STEP_SEC = {"1m": 60, "5m": 300, "1h": 3600}
+_LARGE_LABELS = ("heavy_truck", "bus", "trailer", "tractor")
+
+
 def refresh_traffic_aggregates(
     db: Session,
     start_time: datetime,
@@ -212,77 +213,63 @@ def refresh_traffic_aggregates(
     end = bucket_ceil(end_time, bucket_size)
     if end <= start:
         return 0
+    step = _BUCKET_STEP_SEC.get(bucket_size)
+    if step is None:
+        return 0
     camera_by_id, _ = _camera_meta(db)
-    query = db.query(TrafficEvent).filter(TrafficEvent.created_at >= start, TrafficEvent.created_at < end)
+    # SQL GROUP BY 聚合（避免把 40 萬筆 raw events 拉進 Python 做迴圈）
+    large_case = " OR ".join(f"LOWER(COALESCE(label,'')) LIKE '%{lbl}%'" for lbl in _LARGE_LABELS)
+    sql = text(f"""
+        SELECT
+            datetime(strftime('%s', created_at) - (strftime('%s', created_at) % :step), 'unixepoch') AS bucket_start,
+            camera_id,
+            COALESCE(LOWER(direction), '') AS direction,
+            COALESCE(lane_no, 0) AS lane_no,
+            COUNT(*) AS total_flow,
+            AVG(CASE WHEN speed_kmh > 0 THEN speed_kmh END) AS avg_speed,
+            MAX(CASE WHEN speed_kmh > 0 THEN speed_kmh END) AS max_speed,
+            AVG(CASE WHEN occupancy >= 0 THEN occupancy END) AS avg_occupancy,
+            SUM(CASE WHEN ({large_case}) THEN 1 ELSE 0 END) AS large_flow
+        FROM traffic_events
+        WHERE created_at >= :start AND created_at < :end
+              {'AND camera_id = :cam_id' if camera_id is not None else ''}
+              AND camera_id IS NOT NULL
+        GROUP BY bucket_start, camera_id, direction, lane_no
+    """)
+    params = {"step": step, "start": start, "end": end}
     if camera_id is not None:
-        query = query.filter(TrafficEvent.camera_id == int(camera_id))
-    events = query.all()
-    buckets: dict[tuple[datetime, int, str, int], dict] = {}
-    for evt in events:
-        if evt.camera_id is None:
-            continue
-        bucket_start = bucket_floor(evt.created_at or start, bucket_size)
-        direction = normalize_direction(evt.direction)
-        lane_no = int(evt.lane_no) if evt.lane_no is not None else 0
-        key = (bucket_start, int(evt.camera_id), direction, lane_no)
-        meta = camera_by_id.get(int(evt.camera_id), {})
-        if key not in buckets:
-            buckets[key] = {
-                "bucket_start": bucket_start,
-                "bucket_size": bucket_size,
-                "camera_id": int(evt.camera_id),
-                "camera_name": str(meta.get("camera_name") or f"cam_{evt.camera_id}"),
-                "road_name": str(meta.get("road_name") or "未知"),
-                "direction": direction,
-                "lane_no": lane_no or None,
-                "total_flow": 0,
-                "speed_sum": 0.0,
-                "speed_count": 0,
-                "max_speed": 0.0,
-                "occupancy_sum": 0.0,
-                "occupancy_count": 0,
-                "small_vehicle_flow": 0,
-                "large_vehicle_flow": 0,
-                "other_vehicle_flow": 0,
-                "event_count": 0,
-            }
-        row = buckets[key]
-        row["total_flow"] += 1
-        row["event_count"] += 1
-        speed_val = float(evt.speed_kmh) if evt.speed_kmh is not None else None
-        if speed_val is not None and speed_val > 0:
-            row["speed_sum"] += speed_val
-            row["speed_count"] += 1
-            row["max_speed"] = max(float(row["max_speed"] or 0.0), speed_val)
-        occupancy = float(evt.occupancy) if evt.occupancy is not None else None
-        if occupancy is not None and occupancy >= 0:
-            row["occupancy_sum"] += occupancy
-            row["occupancy_count"] += 1
-        group = classify_vehicle_group(evt.label)
-        row[f"{group}_vehicle_flow"] += 1
+        params["cam_id"] = int(camera_id)
+    rows_raw = db.execute(sql, params).fetchall()
     _delete_agg_range(db, TrafficReportAgg, bucket_size, start, end, camera_id=camera_id)
+    now = datetime.utcnow()
     insert_rows = []
-    for row in buckets.values():
-        insert_rows.append(
-            {
-                "bucket_start": row["bucket_start"],
-                "bucket_size": row["bucket_size"],
-                "camera_id": row["camera_id"],
-                "camera_name": row["camera_name"],
-                "road_name": row["road_name"],
-                "direction": row["direction"],
-                "lane_no": row["lane_no"],
-                "total_flow": row["total_flow"],
-                "avg_speed": (row["speed_sum"] / row["speed_count"]) if row["speed_count"] else None,
-                "max_speed": row["max_speed"] if row["speed_count"] else None,
-                "avg_occupancy": (row["occupancy_sum"] / row["occupancy_count"]) if row["occupancy_count"] else None,
-                "small_vehicle_flow": row["small_vehicle_flow"],
-                "large_vehicle_flow": row["large_vehicle_flow"],
-                "other_vehicle_flow": row["other_vehicle_flow"],
-                "event_count": row["event_count"],
-                "updated_at": datetime.utcnow(),
-            }
-        )
+    for r in rows_raw:
+        bs_val = r[0]
+        bs = bs_val if isinstance(bs_val, datetime) else datetime.fromisoformat(str(bs_val))
+        cam = int(r[1])
+        direction = normalize_direction(r[2])
+        lane_no = int(r[3]) if r[3] else 0
+        total = int(r[4] or 0)
+        large = int(r[8] or 0)
+        meta = camera_by_id.get(cam, {})
+        insert_rows.append({
+            "bucket_start": bs,
+            "bucket_size": bucket_size,
+            "camera_id": cam,
+            "camera_name": str(meta.get("camera_name") or f"cam_{cam}"),
+            "road_name": str(meta.get("road_name") or "未知"),
+            "direction": direction,
+            "lane_no": lane_no or None,
+            "total_flow": total,
+            "avg_speed": float(r[5]) if r[5] is not None else None,
+            "max_speed": float(r[6]) if r[6] is not None else None,
+            "avg_occupancy": float(r[7]) if r[7] is not None else None,
+            "small_vehicle_flow": total - large,
+            "large_vehicle_flow": large,
+            "other_vehicle_flow": 0,
+            "event_count": total,
+            "updated_at": now,
+        })
     if insert_rows:
         db.bulk_insert_mappings(TrafficReportAgg, insert_rows)
     return len(insert_rows)
@@ -688,13 +675,18 @@ def build_vd_report_rows(
 
     rows = []
     for row in buckets.values():
-        direction = "unknown"
+        # 從 directionCounts 取最多的方向；若空則保留 row 原本從 cam meta 取的 direction
+        direction = row.get("direction") or "unknown"
         if row["directionCounts"]:
             ordered = sorted(
                 row["directionCounts"].items(),
                 key=lambda item: (-int(item[1] or 0), item[0] == "unknown", str(item[0])),
             )
-            direction = next((item[0] for item in ordered if item[0] != "unknown"), ordered[0][0])
+            best = next((item[0] for item in ordered if item[0] != "unknown"), None)
+            if best:
+                direction = best
+            elif direction == "unknown":
+                direction = ordered[0][0]
         row["direction"] = direction
         row["directionText"] = direction_label(direction)
         if row["_speed_weight_count"] > 0:

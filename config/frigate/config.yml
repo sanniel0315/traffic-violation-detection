@@ -1,49 +1,256 @@
 cameras:
   cam_1:
-    enabled: true
     detect:
       enabled: false
+      fps: 5
+      height: 1080
+      width: 1920
+    enabled: true
     ffmpeg:
       inputs:
-        - path: rtsp://root:root@111.70.33.189:554/axis-media/media.amp
-          roles:
-            - record
+      - path: rtsp://root:root@111.70.33.189:554/axis-media/media.amp
+        roles:
+        - record
+    motion:
+      contour_area: 20
+      enabled: false
+      threshold: 25
+    objects:
+      filters:
+        car:
+          min_area: 5000
+          min_score: 0.5
+        motorcycle:
+          min_area: 1000
+          min_score: 0.5
+      track:
+      - car
+      - motorcycle
+      - bicycle
+      - person
     record:
       enabled: true
-    motion:
+    snapshots:
+      bounding_box: true
       enabled: false
+      timestamp: true
+    zones:
+      車流區 1:
+        coordinates: 690,38,1838,715,1894,1048,1131,1064,549,78
+        objects:
+        - car
+        - motorcycle
+      車流區 2:
+        coordinates: 744,26,1906,742,1909,213,850,5
+        objects:
+        - car
+        - motorcycle
+      車速區 1:
+        coordinates: 739,16,1896,731,1912,1077,968,1061,536,58
+        objects:
+        - car
+        - motorcycle
+      車速區 2:
+        coordinates: 910,0,1914,272,1915,709,750,13
+        objects:
+        - car
+        - motorcycle
   cam_2:
-    enabled: true
     detect:
       enabled: false
+      fps: 5
+      height: 1080
+      width: 1920
+    enabled: true
     ffmpeg:
       inputs:
-        - path: rtsp://admin:{FRIGATE_CAM2_PASSWORD}@111.70.34.183:6554/profile2/media.smp
-          roles:
-            - record
-    record:
-      enabled: true
+      - path: rtsp://127.0.0.1:8554/cam_2
+        roles: []
     motion:
+      contour_area: 20
       enabled: true
       threshold: 25
+    objects:
+      filters:
+        car:
+          min_area: 5000
+          min_score: 0.5
+        motorcycle:
+          min_area: 1000
+          min_score: 0.5
+      track:
+      - car
+      - motorcycle
+      - bicycle
+      - person
+    record:
+      enabled: false
+    snapshots:
+      bounding_box: true
+      enabled: true
+      timestamp: true
+    zones:
+      車流區 1:
+        coordinates: 1459,173,1795,235,1912,1051,1059,1053,1005,606,1112,370,1334,235
+        objects:
+        - car
+        - motorcycle
+      車流區 2:
+        coordinates: 1272,11,1400,178,1094,379,978,722,1010,1032,24,1038,37,318,678,86
+        objects:
+        - car
+        - motorcycle
+      車速區 1:
+        coordinates: 1597,118,1915,150,1902,1074,1045,1075,1005,883,1005,696,1026,554,1069,453,1219,280
+        objects:
+        - car
+        - motorcycle
+      車速區 2:
+        coordinates: 1350,13,24,190,18,1056,986,1072,974,672,1038,461,1248,235,1501,126
+        objects:
+        - car
+        - motorcycle
+  cam_3:
+    detect:
+      enabled: false
+      fps: 5
+      height: 1080
+      width: 1920
+    enabled: true
+    ffmpeg:
+      input_args: -avoid_negative_ts make_zero -fflags +genpts+discardcorrupt -rtsp_transport
+        tcp -timeout 5000000 -analyzeduration 20M -probesize 20M
+      inputs:
+      - path: rtsp://127.0.0.1:8554/cam_3
+        roles:
+        - record
+    motion:
       contour_area: 20
+      enabled: false
+      threshold: 25
+    objects:
+      filters:
+        car:
+          min_area: 5000
+          min_score: 0.5
+        motorcycle:
+          min_area: 1000
+          min_score: 0.5
+      track:
+      - car
+      - motorcycle
+      - bicycle
+      - person
+    record:
+      enabled: true
+    snapshots:
+      bounding_box: true
+      enabled: false
+      timestamp: true
+    zones:
+      車流區 1:
+        coordinates: 1034,190,1133,213,1114,1075,506,1032
+        objects:
+        - car
+        - motorcycle
+      車流區 2:
+        coordinates: 1173,222,1296,222,1896,886,1874,1038,1579,1075,1131,1046
+        objects:
+        - car
+        - motorcycle
+      車流區 3:
+        coordinates: 928,176,979,197,416,877,5,784,818,219
+        objects:
+        - car
+        - motorcycle
+      車流區 4:
+        coordinates: 859,155,907,174,8,768,22,440
+        objects:
+        - car
+        - motorcycle
+      車速區 1:
+        coordinates: 1173,170,1358,178,1915,936,1912,1064,1118,1070,1096,546,1114,267,1134,218
+        objects:
+        - car
+        - motorcycle
+      車速區 2:
+        coordinates: 997,146,1144,170,1099,288,1098,1067,374,1070
+        objects:
+        - car
+        - motorcycle
+      車速區 3:
+        coordinates: 910,155,958,170,342,1072,35,1067,34,754
+        objects:
+        - car
+        - motorcycle
+      車速區 4:
+        coordinates: 886,141,882,170,11,758,27,414,813,126
+        objects:
+        - car
+        - motorcycle
+  cam_4:
+    detect:
+      enabled: false
+      fps: 5
+      height: 1080
+      width: 1920
+    enabled: true
+    ffmpeg:
+      inputs:
+      - path: rtsp://127.0.0.1:8554/cam_4
+        roles: []
+    motion:
+      contour_area: 20
+      enabled: true
+      threshold: 25
+    objects:
+      filters:
+        car:
+          min_area: 5000
+          min_score: 0.5
+        motorcycle:
+          min_area: 1000
+          min_score: 0.5
+      track:
+      - car
+      - motorcycle
+      - bicycle
+      - person
+    record:
+      enabled: false
+    snapshots:
+      bounding_box: true
+      enabled: true
+      timestamp: true
+    zones: {}
 detect:
   enabled: false
 detectors:
-  cpu1:
-    type: cpu
+  tensorrt:
+    device: 0
+    type: tensorrt
 ffmpeg:
   hwaccel_args: []
   output_args:
     record: preset-record-generic-audio-copy
+go2rtc:
+  streams:
+    cam_1:
+    - rtsp://root:root@111.70.33.189:554/axis-media/media.amp
+    cam_2:
+    - rtsp://admin:1qaz%40WSX@111.70.34.183:6554/profile2/media.smp
+    cam_3:
+    - ffmpeg:http://127.0.0.1:8000/api/nx/stream/%7B850f42c7-893a-1697-11ec-64448f93b04a%7D?format=mpegts&stream=0#video=copy
+    cam_4:
+    - ffmpeg:http://127.0.0.1:8000/api/nx/stream/%7Be3f59960-30aa-839e-11e5-056bd2b87ff6%7D?format=mpegts&stream=0#video=copy
 mqtt:
   enabled: false
 record:
-  enabled: true
   continuous:
     days: 3
+  enabled: true
   motion:
-    days: 7
+    days: 3
 snapshots:
   enabled: false
 version: 0.17-0

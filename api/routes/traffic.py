@@ -13,10 +13,14 @@ from api.models import TrafficEvent, get_db
 from api.utils.report_aggregation import (
     build_vd_report_rows,
     normalize_bucket_size,
-    refresh_report_aggregates_for_range,
+    refresh_traffic_aggregates,
 )
 
 router = APIRouter(prefix="/api/traffic", tags=["交通流"])
+
+# 聚合 cache：避免每次查詢都重建（rebuild 35 萬筆要 16 秒）
+_AGG_CACHE: dict[tuple, float] = {}
+_AGG_CACHE_TTL_SEC = 60.0  # 60 秒內同樣的範圍/bucket/cam 跳過 rebuild
 
 
 def _to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
@@ -70,13 +74,10 @@ async def get_vd_report(
         pass
 
     def rebuild_aggs():
-        return refresh_report_aggregates_for_range(
-            db,
-            start_time,
-            end_time,
-            bucket_sizes=(bucket_size,),
-            camera_id=camera_id,
-        )
+        # VD 報表只需要 traffic_events 聚合；不跑 congestion + LPR 聚合節省時間
+        n = refresh_traffic_aggregates(db, start_time, end_time, bucket_size, camera_id=camera_id)
+        db.commit()
+        return {f"traffic_{bucket_size}": n}
 
     def build_rows():
         return build_vd_report_rows(
@@ -87,7 +88,27 @@ async def get_vd_report(
             camera_id=camera_id,
         )
 
-    refreshed = _run_with_sqlite_retry(db, rebuild_aggs)
+    # Cache 鍵：相同的時間範圍 + bucket + camera 在 TTL 內跳過 rebuild
+    cache_key = (
+        start_time.replace(second=0, microsecond=0),
+        end_time.replace(second=0, microsecond=0),
+        bucket_size,
+        camera_id,
+    )
+    now_ts = time.time()
+    cached_at = _AGG_CACHE.get(cache_key, 0.0)
+    if (now_ts - cached_at) < _AGG_CACHE_TTL_SEC:
+        # 跳過 rebuild，直接讀已有聚合
+        refreshed = {"cached": True}
+    else:
+        refreshed = _run_with_sqlite_retry(db, rebuild_aggs)
+        _AGG_CACHE[cache_key] = now_ts
+        # 清掉太舊的 cache 項目
+        if len(_AGG_CACHE) > 100:
+            cutoff = now_ts - _AGG_CACHE_TTL_SEC * 2
+            for k in list(_AGG_CACHE.keys()):
+                if _AGG_CACHE[k] < cutoff:
+                    del _AGG_CACHE[k]
     rows = _run_with_sqlite_retry(db, build_rows)
     return {
         "bucket_size": bucket_size,

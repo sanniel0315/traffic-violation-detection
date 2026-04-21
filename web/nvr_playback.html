@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NVR Playback - EZ Pro</title>
+<title>NVR Playback</title>
 <link rel="icon" href="/favicon.ico">
 <script src="/web/lib/vue.global.prod.js"></script>
 <script src="/web/lib/element-plus.min.js"></script>
@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="/web/lib/element-plus.css">
 <link rel="stylesheet" href="/web/lib/element-plus-dark.css">
 <style>
-/* ── EZ Pro Dark Theme ── */
+/* ── Dark Theme ── */
 :root {
   --bg-deepest: #0a0c10;
   --bg-primary: #0f1218;
@@ -168,13 +168,13 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
 .grid-cell video { width:100%; height:100%; object-fit:contain; background:#000; display:block; }
 .grid-cell-overlay {
   position:absolute; top:0; left:0; right:0;
-  padding:5px 8px;
+  padding:6px 10px;
   background:linear-gradient(180deg, rgba(0,0,0,.65) 0%, transparent 100%);
   display:flex; justify-content:space-between; align-items:flex-start;
   pointer-events:none;
 }
-.grid-cell-name { font-size:11px; font-weight:600; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.8); }
-.grid-cell-time { font-size:10px; color:rgba(255,255,255,.7); font-variant-numeric:tabular-nums; }
+.grid-cell-name { font-size:15px; font-weight:600; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.8); }
+.grid-cell-time { font-size:14px; color:rgba(255,255,255,.85); font-variant-numeric:tabular-nums; }
 .grid-cell-close {
   position:absolute; top:4px; right:4px;
   width:20px; height:20px; border-radius:50%;
@@ -185,12 +185,16 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
 .grid-cell:hover .grid-cell-close { display:flex; }
 .grid-cell-info-overlay {
   position:absolute; bottom:28px; left:8px; right:8px;
-  display:flex; justify-content:space-between; align-items:center;
-  font-size:12px; color:#fff; text-shadow:0 1px 4px rgba(0,0,0,.9);
-  pointer-events:none; z-index:5;
+  display:inline-flex; flex-direction:column; align-items:flex-start; gap:2px;
+  font-size:16px; color:#fff; text-shadow:0 1px 4px rgba(0,0,0,.9);
+  pointer-events:all; z-index:5; cursor:grab;
+  background:rgba(0,0,0,.45); padding:6px 10px; border-radius:6px;
+  user-select:none; -webkit-user-select:none;
+  width:auto; max-width:80%;
 }
-.overlay-camera { font-weight:600; }
-.overlay-time { font-variant-numeric:tabular-nums; opacity:.85; }
+.grid-cell-info-overlay:active { cursor:grabbing; }
+.overlay-camera { font-weight:600; font-size:16px; }
+.overlay-time { font-variant-numeric:tabular-nums; opacity:.85; font-size:15px; }
 .grid-cell-mode-tag {
   position:absolute; bottom:5px; right:5px;
   font-size:9px; padding:2px 6px; border-radius:3px;
@@ -447,7 +451,7 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
   </div>
 
   <!-- ── Left Panel: Device Tree ── -->
-  <div class="left-panel" v-show="showLeft">
+  <div class="left-panel" v-show="showLeft && viewMode==='playback'">
     <div class="panel-head">
       <span class="panel-head-title">Resource Tree</span>
       <div class="device-search">
@@ -479,7 +483,7 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
   </div>
 
   <!-- ── Center: Viewing Grid ── -->
-  <div class="center-panel">
+  <div class="center-panel" :style="viewMode==='settings'?{gridColumn:'1 / -1'}:{}">
 
     <!-- Settings Panel -->
     <div v-if="viewMode==='settings'" style="flex:1;overflow-y:auto;padding:16px;background:var(--bg-primary)">
@@ -618,7 +622,10 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
             <span class="grid-cell-name">{{cell.camera||''}}</span>
             <span class="grid-cell-time">{{formatClock(cell.currentSec)}} / {{formatClock(cell.durationSec)}}</span>
           </div>
-          <div v-if="showOverlay && cell.camera" class="grid-cell-info-overlay">
+          <div v-if="showOverlay && cell.camera" class="grid-cell-info-overlay"
+               :style="osdPositions[idx]||{}"
+               @mousedown.prevent="startOsdDrag(idx,$event)"
+               @touchstart.prevent="startOsdDragTouch(idx,$event)">
             <span class="overlay-camera">{{cameraDisplayName(cell.camera)}}</span>
             <span class="overlay-time">{{clock}} | {{cameraDisplayName(cell.camera)}}</span>
           </div>
@@ -636,7 +643,7 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
   </div>
 
   <!-- ── Right Panel ── -->
-  <div class="right-panel" v-show="showRight">
+  <div class="right-panel" v-show="showRight && viewMode==='playback'">
     <div class="right-tabs">
       <div class="right-tab" :class="{active:rightTab==='events'}" @click="rightTab='events'">
         事件 <span class="tab-badge">{{rows.length}}</span>
@@ -709,7 +716,7 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
   </div>
 
   <!-- ── Bottom Bar ── -->
-  <div class="bottom-bar">
+  <div class="bottom-bar" v-show="viewMode==='playback'">
     <!-- Thumbnail Track -->
     <div class="thumb-track">
       <div class="thumb-card" v-for="row in thumbRows" :key="row.key"
@@ -723,7 +730,7 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
     </div>
 
     <!-- Timeline -->
-    <div class="timeline-area">
+    <div class="timeline-area" v-show="viewMode==='playback'">
       <div class="timeline-bar" @click="seekTimeline($event)">
         <div class="timeline-segments">
           <div class="timeline-seg" v-for="bar in timelineBars" :key="bar.idx"
@@ -743,7 +750,7 @@ body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sy
     </div>
 
     <!-- Playback Controls -->
-    <div class="playback-controls">
+    <div class="playback-controls" v-show="viewMode==='playback'">
       <div class="ctrl-group">
         <button class="ctrl-btn" @click="selectPrev" title="上一段">&#9198;</button>
         <button class="ctrl-btn" @click="seekBy(-10)" title="-10s">&#9194;</button>
@@ -799,6 +806,7 @@ setup(){
   const showLeft=ref(true);
   const showRight=ref(true);
   const showOverlay=ref(true);
+  const osdPositions=reactive({});
   const viewMode=ref('playback');
   const nvrVersion=ref('');
   const nvrCameraCount=ref(0);
@@ -834,17 +842,30 @@ setup(){
   };
   const testNvrConn=async()=>{
     try{
-      const r=await fetch('/api/frigate/status');
+      const ctrl=new AbortController();
+      const timer=setTimeout(()=>ctrl.abort(),8000);
+      const r=await fetch('/api/frigate/status',{signal:ctrl.signal,cache:'no-store'});
+      clearTimeout(timer);
+      if(!r.ok){
+        ElementPlus.ElMessage.error(`連線失敗: HTTP ${r.status}`);
+        nvrOnline.value=false;
+        return;
+      }
       const d=await r.json();
       if(d.status==='online'){
         nvrOnline.value=true;
         nvrVersion.value=d.version||'';
         nvrCameraCount.value=(d.cameras||[]).length;
-        ElementPlus.ElMessage.success('連線成功');
+        ElementPlus.ElMessage.success(`連線成功：${nvrCameraCount.value} 台攝影機 (v${d.version||'-'})`);
       }else{
-        ElementPlus.ElMessage.error('連線失敗');
+        nvrOnline.value=false;
+        ElementPlus.ElMessage.error(`NVR 狀態：${d.status||'unknown'}${d.error?' - '+d.error:''}`);
       }
-    }catch(e){ElementPlus.ElMessage.error('連線失敗: '+e.message);}
+    }catch(e){
+      nvrOnline.value=false;
+      const msg=e.name==='AbortError'?'連線逾時 (8 秒)':e.message;
+      ElementPlus.ElMessage.error('連線失敗: '+msg);
+    }
   };
   const loadNvrCamList=async()=>{
     try{
@@ -1291,6 +1312,63 @@ setup(){
     if(e.key==='ArrowRight'){seekBy(5);e.preventDefault();}
   };
 
+  // ── OSD Drag ──
+  let osdDragState=null;
+  const startOsdDrag=(idx,e)=>{
+    const el=e.currentTarget;
+    const parent=el.closest('.grid-cell');
+    if(!parent) return;
+    const pr=parent.getBoundingClientRect();
+    const er=el.getBoundingClientRect();
+    osdDragState={idx,startX:e.clientX,startY:e.clientY,
+      origLeft:er.left-pr.left, origTop:er.top-pr.top,
+      parentW:pr.width, parentH:pr.height, elW:er.width, elH:er.height};
+    document.addEventListener('mousemove',onOsdDrag);
+    document.addEventListener('mouseup',stopOsdDrag);
+  };
+  const startOsdDragTouch=(idx,e)=>{
+    const t=e.touches[0]; if(!t) return;
+    const el=e.currentTarget;
+    const parent=el.closest('.grid-cell');
+    if(!parent) return;
+    const pr=parent.getBoundingClientRect();
+    const er=el.getBoundingClientRect();
+    osdDragState={idx,startX:t.clientX,startY:t.clientY,
+      origLeft:er.left-pr.left, origTop:er.top-pr.top,
+      parentW:pr.width, parentH:pr.height, elW:er.width, elH:er.height};
+    document.addEventListener('touchmove',onOsdDragTouch,{passive:false});
+    document.addEventListener('touchend',stopOsdDragTouch);
+  };
+  const onOsdDrag=(e)=>{
+    if(!osdDragState) return;
+    const s=osdDragState;
+    let newLeft=s.origLeft+(e.clientX-s.startX);
+    let newTop=s.origTop+(e.clientY-s.startY);
+    newLeft=Math.max(0,Math.min(newLeft,s.parentW-s.elW));
+    newTop=Math.max(0,Math.min(newTop,s.parentH-s.elH));
+    osdPositions[s.idx]={left:newLeft+'px',top:newTop+'px',bottom:'auto',right:'auto',position:'absolute'};
+  };
+  const onOsdDragTouch=(e)=>{
+    e.preventDefault();
+    const t=e.touches[0]; if(!t||!osdDragState) return;
+    const s=osdDragState;
+    let newLeft=s.origLeft+(t.clientX-s.startX);
+    let newTop=s.origTop+(t.clientY-s.startY);
+    newLeft=Math.max(0,Math.min(newLeft,s.parentW-s.elW));
+    newTop=Math.max(0,Math.min(newTop,s.parentH-s.elH));
+    osdPositions[s.idx]={left:newLeft+'px',top:newTop+'px',bottom:'auto',right:'auto',position:'absolute'};
+  };
+  const stopOsdDrag=()=>{
+    osdDragState=null;
+    document.removeEventListener('mousemove',onOsdDrag);
+    document.removeEventListener('mouseup',stopOsdDrag);
+  };
+  const stopOsdDragTouch=()=>{
+    osdDragState=null;
+    document.removeEventListener('touchmove',onOsdDragTouch);
+    document.removeEventListener('touchend',stopOsdDragTouch);
+  };
+
   // ── Lifecycle ──
   let clockTimer;
   onMounted(async()=>{
@@ -1311,7 +1389,7 @@ setup(){
   });
 
   return {
-    clock,nvrOnline,showLeft,showRight,showOverlay,rightTab,deviceSearch,loading,
+    clock,nvrOnline,showLeft,showRight,showOverlay,osdPositions,rightTab,deviceSearch,loading,
     rows,current,page,pageSize,totalPages,pagedRows,
     playbackRate,currentSec,durationSec,isPlaying,
     quickRange,quickRanges,bookmarks,filter,
@@ -1326,7 +1404,7 @@ setup(){
     onDragStartDevice,onDropCell,clearCell,
     addBookmark,jumpToBookmark,
     setQuickRange,loadPlayback,
-    cameraDisplayName,
+    cameraDisplayName,startOsdDrag,startOsdDragTouch,
     viewMode,nvrVersion,nvrCameraCount,nvrCamList,nvrSettings,
     loadNvrSettings,saveNvrSettings,testNvrConn,loadNvrCamList,
     toggleNvrCamFeature,syncNvrCameras,deleteNvrCam,restartNvr,

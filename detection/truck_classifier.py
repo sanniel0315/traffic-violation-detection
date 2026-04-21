@@ -24,12 +24,13 @@ from ultralytics import YOLO
 from model_paths import get_model_dir
 
 
-# 分類結果 → 顯示用中文標籤 & 車輛等效長度
+# 分類結果 → 顯示用中文標籤 & 車輛等效長度（停等評估用）
+# group: large=大車（大貨車+大客車）, small=小車（其他全部）
 CLASS_META = {
     "heavy_truck": {"label": "大貨車", "length_m": 12.0, "group": "large"},
-    "light_truck": {"label": "小貨車", "length_m": 6.0, "group": "small"},
+    "light_truck": {"label": "小貨車", "length_m": 6.0,  "group": "small"},
     "bus":         {"label": "大客車", "length_m": 12.0, "group": "large"},
-    "non_truck":   {"label": "非目標", "length_m": 6.0, "group": "other"},
+    "non_truck":   {"label": "小客車", "length_m": 5.0,  "group": "small"},
 }
 
 

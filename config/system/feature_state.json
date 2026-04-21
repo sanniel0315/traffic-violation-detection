@@ -1,11 +1,11 @@
 {
-  "updated_at": "2026-04-09T03:54:37.007515",
+  "updated_at": "2026-04-17T09:49:03.134703",
   "features": {
     "detection": {
       "3": true,
       "1": true,
       "2": true,
-      "4": false,
+      "4": true,
       "5": false
     },
     "congestion": {
@@ -16,8 +16,8 @@
       "5": false
     },
     "lpr": {
-      "2": true,
       "1": false,
+      "2": true,
       "3": false,
       "4": true,
       "5": false

@@ -946,6 +946,9 @@
                                     <el-radio-button label="overlay">辨識疊加</el-radio-button>
                                     <el-radio-button label="raw">原始畫面</el-radio-button>
                                 </el-radio-group>
+                                <el-button size="small" :type="overlayShowRoi?'primary':'default'" @click="toggleOverlayRoi" :disabled="monitorMode!=='overlay'" style="margin-left:8px">
+                                    {{ overlayShowRoi ? '✓ ROI' : 'ROI' }}
+                                </el-button>
                             </div>
                             <div style="display:flex;align-items:center;gap:8px">
                                 <el-button size="small" @click="reloadMonitorStreams">重載串流</el-button>
@@ -972,7 +975,7 @@
                                 ></video>
                                 <img v-else-if="c.enabled && c.showStream" :src="getMonitorMediaUrl(c)" @load="handleMonitorStreamLoad(c)" @error="handleMonitorStreamError(c)">
                                 <div v-else style="color:#666" @click.stop="if(c.enabled){c.showStream=true;streamKey=Date.now();}">📹 {{ c.enabled?'無影像，點擊重試':'攝影機已關閉' }}</div>
-                                <svg v-if="resolveCameraStreamMode(c)==='overlay' && monitorZoneOverlayItems(c).length" class="monitor-roi-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                                <svg v-if="overlayShowRoi && resolveCameraStreamMode(c)==='overlay' && monitorZoneOverlayItems(c).length" class="monitor-roi-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                                     <g v-for="item in monitorZoneOverlayItems(c)" :key="`mroi-${c.id}-${item.key}`">
                                         <polygon :points="item.points" :fill="item.fill" :stroke="item.stroke" stroke-width="0.35"></polygon>
                                         <text v-if="item.label" class="monitor-roi-label" :x="item.labelX" :y="item.labelY" :fill="item.stroke">{{ item.label }}</text>
@@ -990,7 +993,7 @@
                                 <p>{{ c.location }}</p>
                                 <div style="display:flex;gap:8px">
                                     <el-button size="small" type="primary" @click="openPreview(c)">設定</el-button>
-                                    <el-button size="small" :disabled="isNxProxyCamera(c)" @click="toggleCameraStreamMode(c)">{{ isNxProxyCamera(c)?'Nx 固定原始':(resolveCameraStreamMode(c)==='overlay'?'改原始':'改疊加') }}</el-button>
+                                    <el-button size="small" @click="toggleCameraStreamMode(c)">{{ resolveCameraStreamMode(c)==='overlay'?'改原始':'改疊加' }}</el-button>
                                 </div>
                                 <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">
                                     <span style="font-size:12px;color:#475569">車流/車速偵測</span>
@@ -1020,7 +1023,7 @@
                             </div>
                         </div>
                     </div>
-                    <el-dialog v-model="monitorZoomVisible" top="4vh" width="92vw" :destroy-on-close="false" append-to-body>
+                    <el-dialog v-model="monitorZoomVisible" top="4vh" width="92vw" :destroy-on-close="false" append-to-body @close="closeMonitorZoom">
                         <template #header>
                             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-right:24px">
                                 <div>
@@ -1042,8 +1045,8 @@
                                 controls
                                 playsinline
                             ></video>
-                            <img v-else-if="monitorZoomCamera" :src="getMonitorMediaUrl(monitorZoomCamera)">
-                            <svg v-if="resolveCameraStreamMode(monitorZoomCamera)==='overlay' && monitorZoneOverlayItems(monitorZoomCamera).length" class="monitor-roi-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                            <img v-else-if="monitorZoomCamera" :src="getMonitorMediaUrl(monitorZoomCamera)" @error="() => { if(monitorZoomCamera){ monitorZoomCamera._zoomReloadTick = Date.now(); } }">
+                            <svg v-if="overlayShowRoi && resolveCameraStreamMode(monitorZoomCamera)==='overlay' && monitorZoneOverlayItems(monitorZoomCamera).length" class="monitor-roi-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                                 <g v-for="item in monitorZoneOverlayItems(monitorZoomCamera)" :key="`zroi-${item.key}`">
                                     <polygon :points="item.points" :fill="item.fill" :stroke="item.stroke" stroke-width="0.35"></polygon>
                                     <text v-if="item.label" class="monitor-roi-label" :x="item.labelX" :y="item.labelY" :fill="item.stroke">{{ item.label }}</text>
@@ -1859,18 +1862,18 @@
                                         <th style="width:120px">總流量</th>
                                         <th style="width:140px">平均速度</th>
                                         <th style="width:120px">最高速度</th>
-                                        <th style="width:180px">車種分布(小/大/其他)</th>
+                                        <th style="width:140px">車種分布(小/大)</th>
                                         <th style="width:120px">攝影機數</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <tr v-for="r in statsLaneFlowSpeedRows" :key="`${r.laneNo}-${r.movement}-${r.direction}`">
                                         <td>{{ r.laneNo==='unknown'?'未設定':r.laneNo }}</td>
-                                        <td>{{ r.movement==='left'?'左轉':(r.movement==='middle'?'直行':(r.movement==='right'?'右轉':'未知')) }}</td>
+                                        <td>{{ r.movement==='left'?'左轉':(r.movement==='middle'?'直行':(r.movement==='right'?'右轉':'-')) }}</td>
                                         <td>{{ r.count }}</td>
                                         <td>{{ r.avgSpeed==null?'-':`${r.avgSpeed.toFixed(1)} km/h` }}</td>
                                         <td>{{ r.maxSpeed==null?'-':`${r.maxSpeed.toFixed(1)} km/h` }}</td>
-                                        <td>{{ `${r.smallCount}/${r.largeCount}/${r.otherCount}` }}</td>
+                                        <td>{{ `${r.smallCount}/${r.largeCount}` }}</td>
                                         <td>{{ r.cameraCount }}</td>
                                     </tr>
                                     <tr v-if="!statsLaneFlowSpeedRows.length">
@@ -2400,7 +2403,7 @@
                                         <th>偵測 FPS</th>
                                         <th>錄影</th>
                                         <th>Motion</th>
-                                        <th>Motion 截圖</th>
+                                        <th>事件截圖</th>
                                         <th>操作</th>
                                     </tr>
                                 </thead>
@@ -2455,8 +2458,8 @@
                         </div>
                     </div>
 
-                    <!-- NVR 回放（全時錄影 + Motion） -->
-                    <div class="card">
+                    <!-- NVR 回放（全時錄影 + Motion） - 已移至獨立頁面 /web/nvr_playback.html -->
+                    <div class="card" v-if="false">
                         <div class="card-header">
                             <span>⏯️ NVR 回放（全時錄影 + Motion）</span>
                             <div style="display:flex;gap:8px;align-items:center">
@@ -2993,6 +2996,9 @@
                         <div class="card-header">
                             <span>📜 車牌辨識歷史</span>
                             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                                <a href="/web/lpr_verify.html" target="_blank" style="text-decoration:none">
+                                    <el-button type="primary" size="small">🔍 車種驗證</el-button>
+                                </a>
                                 <el-tag type="info" effect="plain">新版介面</el-tag>
                                 <el-tag effect="plain">攝影機 {{ lprHistoryCameraOptions.length }} 台</el-tag>
                                 <el-tag type="success" effect="plain">最新 {{ lprHistoryLatestTimeText || '-' }}</el-tag>
@@ -3094,7 +3100,7 @@
                                             <span v-else style="color:#999">-</span>
                                         </td>
                                         <td style="font-weight:700;color:#0d6e9f;letter-spacing:1px;cursor:pointer" @click="showLprSnapshot(h)">{{ h.plate_number || '-' }}</td>
-                                        <td><el-tag size="small">{{ h.vehicle_type || '未知' }}</el-tag></td>
+                                        <td><el-tag size="small">{{ vehicleTypeZh(h.vehicle_type) }}</el-tag></td>
                                         <td>{{ h.confText || '-' }}</td>
                                         <td><el-tag size="small" type="info">{{ h.source || '串流' }}</el-tag></td>
                                     </tr>
@@ -3247,7 +3253,7 @@
                                 <span style="font-weight:bold;font-size:18px;color:#409eff;letter-spacing:2px">{{ lprSnapshotData.plate_number }}</span>
                                 <div style="display:flex;gap:12px;align-items:center">
                                     <span style="color:#666">{{ lprSnapshotData.time }}</span>
-                                    <el-tag size="small">{{ lprSnapshotData.vehicle_type }}</el-tag>
+                                    <el-tag size="small">{{ vehicleTypeZh(lprSnapshotData.vehicle_type) }}</el-tag>
                                     <span v-if="Number.isFinite(Number(lprSnapshotData.confidence))">{{ (Number(lprSnapshotData.confidence)*100).toFixed(1) }}%</span>
                                     <span v-else>-</span>
                                     <el-button circle size="small" @click="closeLprSnapshot">✕</el-button>
@@ -4725,7 +4731,18 @@ const app=createApp({
         const loadStoredCameraStreamModes=()=>{
             try{
                 const raw=JSON.parse(localStorage.getItem('monitor_camera_stream_modes')||'{}');
-                return raw && typeof raw==='object' ? raw : {};
+                if(!raw || typeof raw!=='object') return {};
+                // 一次性清理：舊版 NX 攝影機被強制存 raw，重置為 overlay
+                const cleaned={};
+                let changed=false;
+                for(const [k,v] of Object.entries(raw)){
+                    if(v==='raw'){changed=true; cleaned[k]='overlay';}
+                    else{cleaned[k]=v;}
+                }
+                if(changed){
+                    try{localStorage.setItem('monitor_camera_stream_modes',JSON.stringify(cleaned));}catch(_){}
+                }
+                return cleaned;
             }catch(_){
                 return {};
             }
@@ -4746,6 +4763,12 @@ const app=createApp({
             }catch(_){}
         };
         const monitorMode=ref(loadStoredMonitorMode());
+        const overlayShowRoi=ref((function(){try{return localStorage.getItem('monitor_overlay_roi')!=='0';}catch(_){return true;}})());
+        const toggleOverlayRoi=()=>{
+            overlayShowRoi.value=!overlayShowRoi.value;
+            try{localStorage.setItem('monitor_overlay_roi', overlayShowRoi.value?'1':'0');}catch(_){}
+            streamKey.value=Date.now();  // 強制 reload 串流
+        };
         const monitorUpdatedAt=ref('');
         const monitorZoomVisible=ref(false);
         const monitorZoomCamera=ref(null);
@@ -4770,7 +4793,7 @@ const app=createApp({
         const statsDirection=ref("");
         const statsPeriod=ref("1s");
         const statsTrendMode=ref("count");
-        const statsTimeScale=ref("24h");
+        const statsTimeScale=ref("6h");
         const statsEvents=ref([]);
         const statsCountEvents=ref([]);
         const statsCongestionSamples=ref([]);
@@ -4910,14 +4933,24 @@ const app=createApp({
             const toRaw=statsDateTo.value ?? statsTimeTo.value ?? null;
             const fromMs=parseFlexibleTimeMs(fromRaw);
             const toMs=parseFlexibleTimeMs(toRaw);
-            const from=Number.isFinite(fromMs)?new Date(fromMs):null;
-            const to=Number.isFinite(toMs)?new Date(toMs):null;
+            let from=Number.isFinite(fromMs)?new Date(fromMs):null;
+            let to=Number.isFinite(toMs)?new Date(toMs):null;
             // date-only upper bound uses end-of-day to avoid accidental empty results
             if(to && typeof toRaw==='string' && /^\d{4}-\d{2}-\d{2}$/.test(toRaw.trim())){
                 to.setHours(23,59,59,999);
             }
-            if(from && Number.isNaN(from.getTime()))return {from:null,to:null};
-            if(to && Number.isNaN(to.getTime()))return {from:null,to:null};
+            if(from && Number.isNaN(from.getTime()))from=null;
+            if(to && Number.isNaN(to.getTime()))to=null;
+            // 預設範圍 fallback：避免無時間範圍導致全表掃描
+            if(!from || !to){
+                const nowMs=Number(statsNowMs.value||Date.now());
+                let spanMs=24*3600*1000; // 預設 24h
+                if(statsTimeScale.value==='24h')spanMs=24*3600*1000;
+                else if(statsTimeScale.value==='7d')spanMs=7*24*3600*1000;
+                else if(statsTimeScale.value==='30d')spanMs=30*24*3600*1000;
+                if(!to)to=new Date(nowMs);
+                if(!from)from=new Date(nowMs-spanMs);
+            }
             return {from,to};
         };
         const parseVdTimeRange=()=>{
@@ -4971,10 +5004,10 @@ const app=createApp({
             return Math.max(1, Math.ceil(Number(logsTotal.value||0)/size));
         });
         const labelToVehicleGroup=(label)=>{
+            // 大車 = 大貨車 + 大客車; 小車 = 其他
             const x=String(label||'').toLowerCase();
-            if(['truck','bus'].includes(x))return 'large';
-            if(['car','motorcycle','bicycle'].includes(x))return 'small';
-            return 'other';
+            if(['heavy_truck','bus'].includes(x))return 'large';
+            return 'small';
         };
         const STATS_MAX_REASONABLE_SPEED_KMH = 160;
         const parseEventSpeed=(evt)=>{
@@ -5016,8 +5049,8 @@ const app=createApp({
             const zones=(Array.isArray(evt?.entered_zones)?evt.entered_zones:[]).map(z=>String(z||''));
             const camName=String(evt?.camera||'');
             const isTrafficScopeZone=(z)=>{
-                const scope=String(z?.scope||'').trim();
-                return !scope || scope==='traffic_flow_settings';
+                // 接受所有 zone（不限 scope，避免 congestion_detection 被排除）
+                return !!z;
             };
             const pointInPolygon=(x,y,points=[])=>{
                 if(!Array.isArray(points) || points.length<3)return false;
@@ -5086,15 +5119,16 @@ const app=createApp({
                 || parseLaneNo(evt?.data?.lane_no)
                 || '';
             const finalizeLaneDirection=(movement,laneNo,direction)=>{
-                let mv = String(movement||'unknown');
+                // 從 zone 設定的 direction 推導 movement
                 const dir = normalizeDirection(direction);
+                let mv = String(movement||'unknown');
+                if(mv==='unknown' || !mv){
+                    if(dir==='left')mv='left';
+                    else if(dir==='straight')mv='middle';
+                    else if(dir==='right')mv='right';
+                }
                 let ln = String(laneNo||'').trim() || 'unknown';
-                if((mv==='unknown' || !mv) && (ln==='1' || ln==='2' || ln==='3')){
-                    mv = ln==='1' ? 'left' : (ln==='2' ? 'middle' : 'right');
-                }
-                if((ln==='unknown' || ln==='') && (mv==='left' || mv==='middle' || mv==='right')){
-                    ln = mv==='left' ? '1' : (mv==='middle' ? '2' : '3');
-                }
+                // ❌ 移除舊邏輯：lane_no=1 → left 是錯誤猜測
                 return {lane:mv,movement:mv,laneNo:ln,direction:dir};
             };
             let camObj=null;
@@ -5552,22 +5586,44 @@ const app=createApp({
             const typeColors={
                 car:"#0ea5e9",
                 motorcycle:"#f59e0b",
-                bicycle:"#22c55e",
                 bus:"#8b5cf6",
-                truck:"#ef4444",
+                heavy_truck:"#dc2626",
+                light_truck:"#fb923c",
             };
+            // 顯示用合併規則（只在 統計分析-車種分布 顯示時轉換，不影響 VD 報表分組）
+            const displayLabelMap={
+                'truck':'light_truck',
+                'non_truck':'car',
+                'bicycle':'motorcycle',
+                'person':'car',
+            };
+            // 固定 5 種車種，缺資料的也顯示 0
+            const FIXED_TYPES=['car','light_truck','heavy_truck','bus','motorcycle'];
             const grouped={};
+            FIXED_TYPES.forEach(t=>{
+                grouped[t]={type:t,name:vehicleTypeZh(t),count:0,color:typeColors[t]||"#64748b",vehicle_group:labelToVehicleGroup(t)};
+            });
             const total=statsFilteredEvents.value.length||0;
             statsFilteredEvents.value.forEach(evt=>{
-                const t=String(evt.label||"unknown").toLowerCase();
-                if(!grouped[t])grouped[t]={type:t,name:t,count:0,color:typeColors[t]||"#64748b",vehicle_group:labelToVehicleGroup(t)};
+                let t=String(evt.label||"unknown").toLowerCase();
+                t=displayLabelMap[t]||t;
+                if(!grouped[t]){
+                    grouped[t]={type:t,name:vehicleTypeZh(t),count:0,color:typeColors[t]||"#64748b",vehicle_group:labelToVehicleGroup(t)};
+                }
                 grouped[t].count++;
             });
+            // 固定順序：小客車 → 小貨車 → 大貨車 → 大客車 → 機車（其他追加在後）
+            const orderMap={car:1,light_truck:2,heavy_truck:3,bus:4,motorcycle:5};
             return Object.values(grouped)
-                .sort((a,b)=>b.count-a.count)
+                .sort((a,b)=>{
+                    const oa=orderMap[a.type]||99;
+                    const ob=orderMap[b.type]||99;
+                    if(oa!==ob)return oa-ob;
+                    return b.count-a.count;
+                })
                 .map(i=>({
                     ...i,
-                    vehicle_group:i.vehicle_group==='large'?'大車':i.vehicle_group==='small'?'小車':'其他',
+                    vehicle_group:i.vehicle_group==='large'?'大車':'小車',
                     percent: total?((i.count/total)*100).toFixed(1):"0.0",
                     ratio: total?Math.max(6,Math.round((i.count/total)*100)):0,
                 }));
@@ -5681,14 +5737,12 @@ const app=createApp({
                 S2N:'南向北',
                 E2W:'東向西',
                 W2E:'西向東'
-            }[String(d||'')]||'未知');
+            }[String(d||'')]||'-');
             const isVdEligibleCamera=(cam)=>{
                 if(!cam || cam?.enabled === false)return false;
                 const zones=Array.isArray(cam?.zones)?cam.zones:[];
                 return zones.some(z=>{
-                    const scope=String(z?.scope||'').trim();
                     const type=String(z?.type||'').trim();
-                    if(scope && scope!=='traffic_flow_settings')return false;
                     return type==='flow_detection' || type==='detection' || type==='lane_left' || type==='lane_straight' || type==='lane_right';
                 });
             };
@@ -5713,9 +5767,8 @@ const app=createApp({
                 if(!cam || !Array.isArray(cam.zones))return 'unknown';
                 const countMap={};
                 cam.zones.forEach(z=>{
-                    const scope=String(z?.scope||'').trim();
-                    if(scope && scope!=='traffic_flow_settings')return;
                     const t=String(z?.type||'');
+                    // 接受所有車流相關 zone（不限 scope，避免 congestion_detection 被忽略）
                     if(t!=='flow_detection' && t!=='detection' && t!=='lane_left' && t!=='lane_straight' && t!=='lane_right')return;
                     const raw=normalizeVdDirection(z?.direction);
                     if(raw==='unknown')return;
@@ -5730,8 +5783,6 @@ const app=createApp({
                 if(!cam || !Array.isArray(cam.zones))return 0;
                 const laneSet=new Set();
                 cam.zones.forEach(z=>{
-                    const scope=String(z?.scope||'').trim();
-                    if(scope && scope!=='traffic_flow_settings')return;
                     const t=String(z?.type||'');
                     if(t!=='flow_detection' && t!=='detection' && t!=='lane_left' && t!=='lane_straight' && t!=='lane_right')return;
                     const laneNo=Number(z?.lane_no ?? z?.lane_id ?? z?.laneNo);
@@ -6073,9 +6124,7 @@ const app=createApp({
                 if(cam?.enabled === false)return;
                 const zones=Array.isArray(cam?.zones)?cam.zones:[];
                 const hasTrafficZones=zones.some(z=>{
-                    const scope=String(z?.scope||'').trim();
                     const type=String(z?.type||'').trim();
-                    if(scope && scope!=='traffic_flow_settings')return false;
                     return type==='flow_detection' || type==='detection' || type==='lane_left' || type==='lane_straight' || type==='lane_right';
                 });
                 if(!hasTrafficZones)return;
@@ -7594,7 +7643,7 @@ const app=createApp({
                 const rangeFrom=(options?.from instanceof Date)?options.from:null;
                 const rangeTo=(options?.to instanceof Date)?options.to:null;
                 const {from,to}=(rangeFrom||rangeTo)?{from:rangeFrom,to:rangeTo}:parseStatsTimeRange();
-                const trafficParams=new URLSearchParams({page_size:'100000',page:'1',include_total:'0'});
+                const trafficParams=new URLSearchParams({page_size:'20000',page:'1',include_total:'0'});
                 if(from)trafficParams.set('start_time',from.toISOString());
                 if(to)trafficParams.set('end_time',to.toISOString());
                 const trafficCameraId = Number(options?.trafficCameraId);
@@ -7781,7 +7830,6 @@ const app=createApp({
             statsTimeTo.value=now;
         };
         const resolveCameraStreamMode=(camera)=>{
-            if(isNxProxyCamera(camera))return 'raw';
             const globalMode=monitorMode.value==='overlay'?'overlay':'raw';
             if(globalMode==='raw')return 'raw';
             return camera?.streamMode==='overlay'?'overlay':'raw';
@@ -7821,7 +7869,10 @@ const app=createApp({
                 return `/api/stream/${camera.id}/snapshot?t=${camera.thumbKey||streamKey.value}`;
             }
             const route=resolveCameraStreamMode(camera)==='overlay'?'live-overlay':'live';
-            return `/api/stream/${camera.id}/${route}?t=${streamKey.value}`;
+            const roiParam=route==='live-overlay'?`&roi=${overlayShowRoi.value?1:0}`:'';
+            // 放大視窗用單獨的 reload tick，onerror 或手動重載時只影響這一台，不拖整個網格重連
+            const tick=camera?._zoomReloadTick||streamKey.value;
+            return `/api/stream/${camera.id}/${route}?t=${tick}${roiParam}`;
         };
         const getMonitorMediaUrl=(camera)=>{
             if(getMonitorMediaKind(camera)==='video'){
@@ -7872,8 +7923,17 @@ const app=createApp({
             camera.lastFrameAt=Date.now();
         };
         const handleMonitorStreamError=(camera)=>{
-            // 不自動降回原始畫面，避免看不到辨識疊加；保留模式並允許重試
+            // 自動重連：保留串流模式，3 秒後換新的 cache-bust 重試
+            camera._retryCount=(camera._retryCount||0)+1;
+            // 單一攝影機的 reload tick，不動其他攝影機
+            camera._zoomReloadTick=Date.now();
             camera.showStream=false;
+            setTimeout(()=>{
+                if(page.value==='monitor' && camera.enabled){
+                    camera.showStream=true;
+                    camera._zoomReloadTick=Date.now();
+                }
+            }, Math.min(3000 + camera._retryCount * 1000, 15000));
         };
         const reloadMonitorStreams=()=>{
             cameras.value.forEach(c=>{
@@ -7887,16 +7947,33 @@ const app=createApp({
         };
         const openMonitorZoom=(camera)=>{
             if(!camera)return;
+            // 暫停網格中同一台攝影機的串流，避免 RTSP 雙連線讓放大畫面卡住
+            cameras.value.forEach(c=>{
+                if(c.id===camera.id){
+                    c._zoomPausedGrid=true;
+                    c.showStream=false;
+                }
+            });
             monitorZoomCamera.value=camera;
             monitorZoomVisible.value=true;
         };
+        const closeMonitorZoom=()=>{
+            // 還原網格串流
+            cameras.value.forEach(c=>{
+                if(c._zoomPausedGrid){
+                    c._zoomPausedGrid=false;
+                    c.showStream=true;
+                }
+            });
+            monitorZoomVisible.value=false;
+        };
         const refreshMonitorZoom=()=>{
             if(!monitorZoomCamera.value)return;
-            monitorZoomCamera.value.showStream=true;
+            // 只 reload 放大視窗那一台，不碰整個網格
             monitorZoomCamera.value.monitorSnapshotMode=false;
             monitorZoomCamera.value.lastFrameAt=Date.now();
             monitorZoomCamera.value.thumbKey=Date.now();
-            streamKey.value=Date.now();
+            monitorZoomCamera.value._zoomReloadTick=Date.now();
             monitorUpdatedAt.value=new Date().toLocaleTimeString('zh-TW');
         };
         let monitorWatchTimer=null;
@@ -8269,7 +8346,7 @@ const app=createApp({
                 if(!cam.config)cam.config={};
                 cam.config.motion={...(cam.config.motion||{}),enabled:motionOn};
                 cam.config.snapshots={...(cam.config.snapshots||{}),enabled:motionOn};
-                ElementPlus.ElMessage.success(`${name} Motion 截圖模式已${motionOn?'開啟':'關閉'}`);
+                ElementPlus.ElMessage.success(`${name} 事件截圖模式已${motionOn?'開啟':'關閉'}`);
                 const shouldRestart=await ElementPlus.ElMessageBox.confirm(
                     '切換已儲存，是否立即重啟 NVR 套用？',
                     '套用方式',
@@ -10057,6 +10134,11 @@ const app=createApp({
         };
         
         const formatTime=(t)=>t?new Date(t).toLocaleString('zh-TW'):'';
+        const VEHICLE_TYPE_ZH={
+            'car':'小客車','motorcycle':'機車','bicycle':'自行車','person':'行人',
+            'truck':'貨車','bus':'大客車','heavy_truck':'大貨車','light_truck':'小貨車','non_truck':'小客車'
+        };
+        const vehicleTypeZh=(v)=>VEHICLE_TYPE_ZH[String(v||'').toLowerCase()]||v||'未知';
         const getTagType=(t)=>({RED_LIGHT:'primary',SPEEDING:'warning',ILLEGAL_PARKING:'info'}[t]||'');
         const getStatusType=(s)=>({pending:'warning',confirmed:'success',rejected:'info'}[s]||'');
         const getStatusText=(s)=>({pending:'未處理',confirmed:'已舉發',rejected:'不舉發'}[s]||s);
@@ -10358,6 +10440,7 @@ const app=createApp({
         });
         
         let timer;
+        let congestionFastTimer=null;
         onMounted(async()=>{
             window.addEventListener('message',handleRoiEditorMessage);
             window.addEventListener('focus',handleWindowFocus);
@@ -10404,6 +10487,11 @@ const app=createApp({
             }
                 load();
             },30000);
+            congestionFastTimer=setInterval(()=>{
+                if(!isPageVisible())return;
+                if(!['dashboard','monitor','cameras','congestion_detection'].includes(page.value))return;
+                loadCongestionStatus();
+            },2000);
             nextTick(initMap);
         });
         onUnmounted(()=>{
@@ -10411,6 +10499,7 @@ const app=createApp({
             window.removeEventListener('focus',handleWindowFocus);
             clearRoiEditorPoll();
             clearInterval(timer);
+            if(congestionFastTimer)clearInterval(congestionFastTimer);
             if(hwTimer)clearInterval(hwTimer);
             stopStatsAutoTimer();
             stopMonitorWatchdog();
@@ -10418,7 +10507,7 @@ const app=createApp({
             if(lprVisualTimer)clearInterval(lprVisualTimer);
         });
         
-        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
+        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,

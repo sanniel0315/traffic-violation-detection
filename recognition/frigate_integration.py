@@ -235,7 +235,7 @@ class FrigateEventProcessor:
         end_time = event.get("end_time")
         
         # 只處理車輛事件
-        if label not in ["car", "motorcycle", "bus", "truck"]:
+        if label not in ["car", "motorcycle", "bus", "truck", "heavy_truck", "light_truck"]:
             return None
         
         # 取得事件快照

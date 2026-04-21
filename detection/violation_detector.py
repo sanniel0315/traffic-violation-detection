@@ -330,7 +330,7 @@ class ViolationDetector:
     
     def _check_sidewalk(self, track_id: int, center: Tuple, det: Dict, timestamp: float) -> Optional[ViolationEvent]:
         """檢查行駛人行道"""
-        if det['class_name'] not in ['car', 'motorcycle', 'truck', 'bus']:
+        if det['class_name'] not in ['car', 'motorcycle', 'truck', 'bus', 'heavy_truck', 'light_truck']:
             return None
             
         for zone in self.zones:
