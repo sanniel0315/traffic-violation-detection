@@ -74,7 +74,7 @@ def _get_per_cam_detector(camera_id: int):
             return _per_cam_detectors[camera_id]
         try:
             from detection.vehicle_detector import VehicleDetector
-            _per_cam_detectors[camera_id] = VehicleDetector(conf_threshold=0.25)
+            _per_cam_detectors[camera_id] = VehicleDetector(conf_threshold=0.15)
             print(f"⚡ cam_{camera_id} 獨立 detector 初始化完成", flush=True)
         except Exception as e:
             add_log("warning", f"cam_{camera_id} 獨立 detector 初始化失敗: {e}", "stream")
@@ -92,7 +92,7 @@ def _get_shared_overlay_detector():
             return _shared_overlay_detector
         try:
             from detection.vehicle_detector import VehicleDetector
-            _shared_overlay_detector = VehicleDetector(conf_threshold=0.25)
+            _shared_overlay_detector = VehicleDetector(conf_threshold=0.15)
         except Exception as e:
             add_log("warning", f"overlay 共用偵測器初始化失敗: {e}", "stream")
         return _shared_overlay_detector
@@ -596,8 +596,11 @@ def generate_frames_overlay(
     render_overlay: bool = True,
     render_roi_labels: bool = True,
     camera_id: int = None,
+    high_quality: bool = False,
 ):
-    """產生即時 MJPEG 串流，可選擇是否繪製辨識疊加。"""
+    """產生即時 MJPEG 串流，可選擇是否繪製辨識疊加。
+    high_quality=True: 輸出 1080p JPEG Q75；否則輸出 720p JPEG Q60。
+    """
     http_source = resolve_local_api_source(source)
     use_http_mjpeg = _is_http_mjpeg_source(http_source)
     source = resolve_capture_source(source)
@@ -809,18 +812,22 @@ def generate_frames_overlay(
                 cv2.putText(frame, text, (tx, ty + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.5, fg, 1)
         if render_roi_labels:
             _draw_roi_labels(frame, zones)
-        # 縮到 1280 寬：JPEG 編碼 ~14ms vs 1080p 23ms，FPS 多 60%；對監控觀看 720p 已足夠
+        # 輸出解析度與品質（依 high_quality 切換）：
+        #   low  (預設): 1280 寬 Q60 (監控網格用，頻寬輕)
+        #   high        : 1920 寬 Q75 (放大/轉發用，清晰度優先)
         fh, fw = frame.shape[:2]
-        if fw > 1280:
-            scale = 1280.0 / fw
-            frame = cv2.resize(frame, (1280, int(fh * scale)))
-        # 輸出限速 8 FPS：避免瀏覽器解碼負荷累積（之前 14 FPS 連看會頓）
+        _target_w = 1920 if high_quality else 1280
+        _jpg_q = 75 if high_quality else 60
+        if fw > _target_w:
+            scale = _target_w / fw
+            frame = cv2.resize(frame, (_target_w, int(fh * scale)))
+        # 輸出限速 8 FPS：避免瀏覽器解碼負荷累積
         now_yt = time.time()
         wait = _min_yield_interval - (now_yt - _last_yield_ts)
         if wait > 0:
             time.sleep(wait)
         _last_yield_ts = time.time()
-        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, _jpg_q])
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
 
@@ -850,14 +857,19 @@ async def live_stream(camera_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{camera_id}/live-overlay")
-async def live_stream_overlay(camera_id: int, db: Session = Depends(get_db)):
-    """即時影像串流 (MJPEG + AI 辨識框)"""
+async def live_stream_overlay(camera_id: int, q: str = "low", db: Session = Depends(get_db)):
+    """即時影像串流 (MJPEG + AI 辨識框)
+
+    q=low (預設): 720p, JPEG Q60, 監控網格用 (頻寬輕)
+    q=high: 1080p, JPEG Q75, 放大/轉發用 (清晰度優先)
+    """
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:
         raise HTTPException(status_code=404, detail="攝影機不存在")
     if not bool(camera.enabled):
         raise HTTPException(status_code=409, detail="攝影機已關閉")
     overlay_source = resolve_analysis_source(camera)
+    hq = str(q or "").lower() == "high"
     return StreamingResponse(
         generate_frames_overlay(
             overlay_source,
@@ -865,6 +877,7 @@ async def live_stream_overlay(camera_id: int, db: Session = Depends(get_db)):
             camera.detection_config or {},
             render_roi_labels=False,
             camera_id=camera_id,
+            high_quality=hq,
         ),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
@@ -1500,14 +1513,24 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     threading.Thread(target=_post_loop, daemon=True, name=f"post-{camera_id}").start()
 
     # worker: 拿最新 frame 跑 YOLO，把 frame + detections 一起寫入 shared_frames，後處理丟給 queue
+    # 限制每 cam 最多 10 FPS 偵測 → 4 cam × 10 = 40 inferences/s，降 GPU 負載（監控夠用）
     _last_proc_ts = 0.0
+    _last_infer_wall = 0.0
+    MAX_INFER_FPS = 10.0
+    _min_infer_interval = 1.0 / MAX_INFER_FPS
     while detection_services.get(camera_id, {}).get('running', False):
         cur_ts = _latest.get("ts", 0.0)
         frame = _latest.get("frame")
         if frame is None or cur_ts <= _last_proc_ts:
             time.sleep(0.01)
             continue
+        # 節流：距離上次 inference 不到 100ms 就再等一下
+        now_wall = time.time()
+        since_last = now_wall - _last_infer_wall
+        if since_last < _min_infer_interval:
+            time.sleep(_min_infer_interval - since_last)
         _last_proc_ts = cur_ts
+        _last_infer_wall = time.time()
         frame_count += 1
         infer_frame = frame.copy()
         # 每 cam 獨立 detector → 不需鎖，CUDA 端可並行排程
@@ -1518,14 +1541,10 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             "detections": detections,
             "ts": cur_ts,
         }
-        # 後處理丟給 queue 不阻塞（queue 滿就丟掉，避免 worker 變慢）
         try:
             _post_q.put_nowait((infer_frame, list(detections), cur_ts))
         except _queue.Full:
             pass
-        # 短暫 sleep 讓出 GIL，避免 busy loop
-        time.sleep(0.005)
-        continue
 
     
     cap.release()

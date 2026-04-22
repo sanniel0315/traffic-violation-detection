@@ -42,6 +42,27 @@ class VehicleDetector:
     def get_zh_label(cls, class_name: str) -> str:
         return cls.CLASS_LABEL_ZH.get(str(class_name or ''), str(class_name or ''))
 
+    # 共用 truck classifier（一個 instance 給所有 cam），classify() 有內部 lock
+    _shared_truck_classifier = None
+    _shared_truck_classifier_lock = None
+
+    @classmethod
+    def _get_shared_truck_classifier(cls):
+        import threading as _th
+        if cls._shared_truck_classifier_lock is None:
+            cls._shared_truck_classifier_lock = _th.Lock()
+        if cls._shared_truck_classifier is not None:
+            return cls._shared_truck_classifier
+        with cls._shared_truck_classifier_lock:
+            if cls._shared_truck_classifier is not None:
+                return cls._shared_truck_classifier
+            from detection.truck_classifier import TruckClassifier
+            tc = TruckClassifier()
+            if tc.enabled:
+                cls._shared_truck_classifier = tc
+                print("♻️  共用 TruckClassifier 載入完成", flush=True)
+            return cls._shared_truck_classifier
+
     CLASS_NAME_ALIASES = {
         'person': {'person', 'pedestrian', 'people'},
         'bicycle': {'bicycle', 'cycle'},
@@ -82,14 +103,11 @@ class VehicleDetector:
             self.runtime_device = self.device
         self.vehicle_classes = self._resolve_vehicle_classes()
 
-        # 大型車細分類器（可選）
+        # 大型車細分類器（可選）— 所有 VehicleDetector 共用單一 instance，避免 4 cam 各一份吃 GPU
         self.truck_classifier = None
         if enable_truck_cls:
             try:
-                from detection.truck_classifier import TruckClassifier
-                tc = TruckClassifier()
-                if tc.enabled:
-                    self.truck_classifier = tc
+                self.truck_classifier = VehicleDetector._get_shared_truck_classifier()
             except Exception as e:
                 print(f"⚠️  大型車分類器載入失敗: {e}")
 
@@ -187,10 +205,15 @@ class VehicleDetector:
                     }
                 }
 
-                # 大型車細分類
+                # 大型車細分類（共用 instance，加 lock 保護避免多 cam 併發）
                 if (self.truck_classifier
                         and det['class_name'] in self._RECLASSIFY_CLASSES):
-                    cls_result = self.truck_classifier.classify(frame, det['bbox'])
+                    _tc_lock = VehicleDetector._shared_truck_classifier_lock
+                    if _tc_lock is not None:
+                        with _tc_lock:
+                            cls_result = self.truck_classifier.classify(frame, det['bbox'])
+                    else:
+                        cls_result = self.truck_classifier.classify(frame, det['bbox'])
                     if cls_result['class_name'] == 'non_truck':
                         det['class_name'] = 'car'
                         det['truck_cls'] = cls_result
