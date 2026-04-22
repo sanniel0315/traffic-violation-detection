@@ -65,15 +65,22 @@ class TruckClassifier:
             self.model = None
             return
 
-        self.model = YOLO(model_path)
+        # 優先用 TensorRT engine（~3x speedup）
+        engine_path = os.path.splitext(model_path)[0] + ".engine"
+        if os.path.exists(engine_path) and os.getenv("DISABLE_TRT", "").lower() not in ("1", "true", "yes"):
+            print(f"⚡ TruckClassifier 切換到 TensorRT engine: {engine_path}", flush=True)
+            model_path = engine_path
+
+        self.model = YOLO(model_path, task='classify')
         self.conf_threshold = conf_threshold
         self.imgsz = imgsz
 
         self.device = os.getenv("DEVICE", "cuda:0")
-        try:
-            self.model.to(self.device)
-        except Exception:
-            self.device = "cpu"
+        if not model_path.endswith(".engine"):
+            try:
+                self.model.to(self.device)
+            except Exception:
+                self.device = "cpu"
 
         # 建立 class index → name 的映射
         self.class_names = self.model.names  # {0: 'bus', 1: 'heavy_truck', ...}

@@ -1039,13 +1039,13 @@
                         <div class="monitor-zoom-stage">
                             <video
                                 v-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera)==='video'"
-                                :src="getMonitorMediaUrl(monitorZoomCamera)"
+                                :src="getMonitorMediaUrl(monitorZoomCamera, {highQuality:true})"
                                 autoplay
                                 muted
                                 controls
                                 playsinline
                             ></video>
-                            <img v-else-if="monitorZoomCamera" :src="getMonitorMediaUrl(monitorZoomCamera)" @error="() => { if(monitorZoomCamera){ monitorZoomCamera._zoomReloadTick = Date.now(); } }">
+                            <img v-else-if="monitorZoomCamera" :src="getMonitorMediaUrl(monitorZoomCamera, {highQuality:true})" @error="() => { if(monitorZoomCamera){ monitorZoomCamera._zoomReloadTick = Date.now(); } }">
                             <svg v-if="overlayShowRoi && resolveCameraStreamMode(monitorZoomCamera)==='overlay' && monitorZoneOverlayItems(monitorZoomCamera).length" class="monitor-roi-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                                 <g v-for="item in monitorZoneOverlayItems(monitorZoomCamera)" :key="`zroi-${item.key}`">
                                     <polygon :points="item.points" :fill="item.fill" :stroke="item.stroke" stroke-width="0.35"></polygon>
@@ -7923,21 +7923,22 @@ const app=createApp({
         const getDirectCameraSourceUrl=(camera,key)=>withCacheBust(camera?.source||'', key);
         const shouldUseDirectMonitorVideo=(camera)=>!camera?.monitorSnapshotMode && resolveCameraStreamMode(camera)==='raw' && isMp4Camera(camera);
         const getMonitorMediaKind=(camera)=>shouldUseDirectMonitorVideo(camera)?'video':'image';
-        const getMonitorStreamUrl=(camera)=>{
+        const getMonitorStreamUrl=(camera, opts={})=>{
             if(camera?.monitorSnapshotMode){
                 return `/api/stream/${camera.id}/snapshot?t=${camera.thumbKey||streamKey.value}`;
             }
             const route=resolveCameraStreamMode(camera)==='overlay'?'live-overlay':'live';
             const roiParam=route==='live-overlay'?`&roi=${overlayShowRoi.value?1:0}`:'';
-            // 放大視窗用單獨的 reload tick，onerror 或手動重載時只影響這一台，不拖整個網格重連
+            // 放大視窗 / 轉發場景要 1080p 清晰度 (q=high)，監控網格維持 720p 省頻寬
+            const qParam=(route==='live-overlay' && opts.highQuality)?'&q=high':'';
             const tick=camera?._zoomReloadTick||streamKey.value;
-            return `/api/stream/${camera.id}/${route}?t=${tick}${roiParam}`;
+            return `/api/stream/${camera.id}/${route}?t=${tick}${roiParam}${qParam}`;
         };
-        const getMonitorMediaUrl=(camera)=>{
+        const getMonitorMediaUrl=(camera, opts={})=>{
             if(getMonitorMediaKind(camera)==='video'){
                 return getDirectCameraSourceUrl(camera, streamKey.value);
             }
-            return getMonitorStreamUrl(camera);
+            return getMonitorStreamUrl(camera, opts);
         };
         const getPreviewStreamUrl=(camera)=>{
             if(isMp4Camera(camera)){
