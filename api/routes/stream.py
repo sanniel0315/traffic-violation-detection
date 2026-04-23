@@ -1383,6 +1383,30 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 if rows:
                     db.add_all(rows)
                     db.commit()
+                    # MQTT publish: 對齊 toggle（MQTT bridge mode != off 才發）
+                    try:
+                        from services.mqtt_bridge import bridge as _mqtt
+                        if _mqtt.connected() and _mqtt.settings.get("mode") != "off" and rows and row_to_vehicle:
+                            base = _mqtt.settings.get("base_topic") or "traffic"
+                            # 節流：每 cam 每 1 秒最多發一筆（避免 MQTT 洪水），取第一筆代表
+                            last = getattr(_mqtt, "_last_event_ts", {}) or {}
+                            if (cur_ts - last.get(camera_id, 0.0)) >= 1.0:
+                                row = rows[0]; v = row_to_vehicle[0]
+                                _mqtt.publish(f"{base}/event/cam_{camera_id}", {
+                                    "event_id": int(row.id),
+                                    "camera_id": camera_id,
+                                    "label": row.label,
+                                    "speed_kmh": row.speed_kmh,
+                                    "lane_no": row.lane_no,
+                                    "direction": row.direction,
+                                    "zones": row.entered_zones,
+                                    "bbox": row.bbox,
+                                    "timestamp": cur_ts,
+                                })
+                                last[camera_id] = cur_ts
+                                _mqtt._last_event_ts = last
+                    except Exception:
+                        pass
                     # 事件截圖：要對應 cam 在 Frigate config 開「事件截圖」(snapshots.enabled) 才存
                     # 沒開的 cam (例如只設定全時錄影) → 不存事件截圖
                     if _is_snapshot_enabled_for_cam(camera_id):

@@ -808,6 +808,7 @@
             <div v-if="canManageCameras" class="menu-item" :class="{active:page==='nx_viewer'}" @click="page='nx_viewer';loadNxSettings()"><span>🎥</span><span>Nx 串流</span></div>
             <div v-if="canManageNvr" class="menu-item" :class="{active:page==='frigate'}" @click="page='frigate';loadNVRStatus()"><span>🎬</span><span>NVR 設定</span></div>
             <div v-if="hasPerm('logs')" class="menu-item" :class="{active:page==='logs'}" @click="page='logs';loadSystemLogs()"><span>📜</span><span>系統監控日誌</span></div>
+            <div v-if="isAdmin" class="menu-item" :class="{active:page==='mqtt'}" @click="page='mqtt';loadMqttStatus()"><span>📡</span><span>MQTT</span></div>
             <div v-if="hasPerm('hwmonitor')" class="menu-item" :class="{active:page==='hwmonitor'}" @click="page='hwmonitor';loadHwStatus()"><span>🖥️</span><span>硬體效能監測</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='permission_admin'}" @click="page='permission_admin'"><span>🔐</span><span>權限管理</span></div>
         </div>
@@ -1512,6 +1513,110 @@
                         </div>
                         <div class="card-body">
                             <nx-camera-viewer :key="nxViewerKey"></nx-camera-viewer>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- MQTT 管理 -->
+                <div v-if="page==='mqtt'">
+                    <div class="card">
+                        <div class="card-header">
+                            <span>📡 MQTT Broker / Client</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <el-tag :type="mqttStatus.connected ? 'success' : 'danger'" size="small">
+                                    {{ mqttStatus.connected ? '已連線' : '未連線' }}
+                                </el-tag>
+                                <el-tag size="small" type="info">已送 {{ mqttStatus.stats?.sent||0 }}</el-tag>
+                                <el-tag size="small" type="info">已收 {{ mqttStatus.stats?.recv||0 }}</el-tag>
+                                <el-button size="small" @click="loadMqttStatus">重新載入</el-button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- 模式設定 -->
+                            <el-form label-width="110px" inline style="margin-bottom:12px">
+                                <el-form-item label="模式">
+                                    <el-radio-group v-model="mqttSettings.mode" size="small">
+                                        <el-radio-button label="embedded">Embedded (本機 broker)</el-radio-button>
+                                        <el-radio-button label="external">External (連外部 broker)</el-radio-button>
+                                        <el-radio-button label="off">關閉</el-radio-button>
+                                    </el-radio-group>
+                                </el-form-item>
+                            </el-form>
+                            <el-form label-width="110px" inline v-if="mqttSettings.mode==='external'">
+                                <el-form-item label="Host"><el-input v-model="mqttSettings.host" size="small" style="width:180px" placeholder="broker.example.com"/></el-form-item>
+                                <el-form-item label="Port"><el-input-number v-model="mqttSettings.port" :min="1" :max="65535" size="small"/></el-form-item>
+                                <el-form-item label="帳號"><el-input v-model="mqttSettings.username" size="small" style="width:140px"/></el-form-item>
+                                <el-form-item label="密碼"><el-input v-model="mqttSettings.password" type="password" show-password size="small" style="width:140px"/></el-form-item>
+                            </el-form>
+                            <el-form label-width="110px" inline>
+                                <el-form-item label="Base Topic"><el-input v-model="mqttSettings.base_topic" size="small" style="width:150px"/></el-form-item>
+                                <el-form-item label="Client ID"><el-input v-model="mqttSettings.client_id" size="small" style="width:150px"/></el-form-item>
+                                <el-form-item label="訂閱">
+                                    <el-tag v-for="(p,i) in mqttSettings.subscribe_patterns" :key="i" closable @close="mqttSettings.subscribe_patterns.splice(i,1)" style="margin-right:4px">{{p}}</el-tag>
+                                    <el-input v-model="mqttNewSub" size="small" style="width:160px" @keyup.enter="mqttAddSub" placeholder="新增 pattern (Enter)"/>
+                                </el-form-item>
+                                <el-form-item>
+                                    <el-button type="primary" size="small" @click="saveMqttSettings">儲存 + 重連</el-button>
+                                </el-form-item>
+                            </el-form>
+                            <div v-if="mqttStatus.error" style="color:#f56c6c;margin-bottom:8px">⚠️ {{ mqttStatus.error }}</div>
+                            <div v-if="mqttStatus.mode==='embedded'" style="padding:8px 12px;background:#ecf5ff;border-radius:6px;margin-bottom:8px;font-size:13px">
+                                💡 Embedded 模式：外部設備用 <code>tcp://{{ mqttHostIp }}:1883</code> 連線（WebSocket 用 9001）；topic 可訂 <code>{{ mqttSettings.base_topic||'traffic' }}/#</code>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 手動發佈測試 -->
+                    <div class="card" style="margin-top:12px">
+                        <div class="card-header">
+                            <span>✉️ 手動發佈訊息測試</span>
+                        </div>
+                        <div class="card-body">
+                            <el-form inline label-width="80px">
+                                <el-form-item label="Topic"><el-input v-model="mqttPublishForm.topic" size="small" style="width:280px" placeholder="test/hello"/></el-form-item>
+                                <el-form-item label="QoS"><el-select v-model="mqttPublishForm.qos" size="small" style="width:80px"><el-option :value="0" label="0"/><el-option :value="1" label="1"/><el-option :value="2" label="2"/></el-select></el-form-item>
+                                <el-form-item label="Retain"><el-switch v-model="mqttPublishForm.retain"/></el-form-item>
+                            </el-form>
+                            <el-input v-model="mqttPublishForm.payload" type="textarea" :rows="3" placeholder='Payload (JSON 或字串，例如 {"msg":"hello"})'/>
+                            <el-button type="primary" size="small" @click="mqttManualPublish" style="margin-top:8px">📤 發佈</el-button>
+                        </div>
+                    </div>
+
+                    <!-- 即時訊息日誌（左 Sent / 右 Received）-->
+                    <div class="card" style="margin-top:12px">
+                        <div class="card-header">
+                            <span>📜 即時訊息日誌</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <el-switch v-model="mqttLogAutoRefresh" active-text="自動刷新 2s"/>
+                                <el-button size="small" @click="loadMqttMessages">重新載入</el-button>
+                                <el-button size="small" type="warning" @click="clearMqttMessages">清空</el-button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                                <div>
+                                    <div style="font-weight:600;margin-bottom:6px">📤 已發送 (最近 {{ mqttSent.length }} 筆)</div>
+                                    <div style="height:420px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;background:#f8fafc">
+                                        <div v-for="(m,i) in mqttSent.slice().reverse()" :key="'s'+i" style="padding:6px 0;border-bottom:1px dashed #e2e8f0">
+                                            <div style="color:#64748b">{{ new Date(m.ts*1000).toLocaleTimeString('zh-TW') }} · QoS{{m.qos}}<span v-if="m.retain"> · RETAIN</span></div>
+                                            <div style="color:#0ea5e9;font-weight:600">{{ m.topic }}</div>
+                                            <div style="color:#0f172a;word-break:break-all">{{ m.payload }}</div>
+                                        </div>
+                                        <div v-if="!mqttSent.length" style="color:#94a3b8;text-align:center;padding:40px">尚無發送訊息</div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style="font-weight:600;margin-bottom:6px">📥 已接收 (最近 {{ mqttRecv.length }} 筆)</div>
+                                    <div style="height:420px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;background:#f8fafc">
+                                        <div v-for="(m,i) in mqttRecv.slice().reverse()" :key="'r'+i" style="padding:6px 0;border-bottom:1px dashed #e2e8f0">
+                                            <div style="color:#64748b">{{ new Date(m.ts*1000).toLocaleTimeString('zh-TW') }} · QoS{{m.qos}}</div>
+                                            <div style="color:#10b981;font-weight:600">{{ m.topic }}</div>
+                                            <div style="color:#0f172a;word-break:break-all">{{ m.payload }}</div>
+                                        </div>
+                                        <div v-if="!mqttRecv.length" style="color:#94a3b8;text-align:center;padding:40px">尚無接收訊息</div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -6719,6 +6824,87 @@ const app=createApp({
         const showNVRCameraDialog=ref(false);
         const frigateCameraForm=reactive({name:'',rtsp_url:'',ip:'',port:'554',username:'admin',password:'',stream_path:'stream1',record:true,detect:true,snapshots:true});
         const eventClipDialog=reactive({visible:false, url:'', snapshotUrl:'', title:'', errorMsg:''});
+        // MQTT state
+        const mqttStatus=reactive({connected:false, mode:'', stats:{sent:0,recv:0,errors:0}, error:''});
+        const mqttSettings=reactive({mode:'embedded', host:'localhost', port:1883, username:'', password:'', client_id:'traffic-api', base_topic:'traffic', subscribe_patterns:['traffic/#'], qos:0, retain:false});
+        const mqttNewSub=ref('');
+        const mqttSent=ref([]);
+        const mqttRecv=ref([]);
+        const mqttPublishForm=reactive({topic:'test/hello', payload:'{"msg":"hello"}', qos:0, retain:false});
+        const mqttLogAutoRefresh=ref(true);
+        const mqttHostIp=ref(location.hostname || '10.26.4.102');
+        let mqttRefreshTimer=null;
+        const loadMqttStatus=async()=>{
+            try{
+                const [st, se] = await Promise.all([
+                    fetch('/api/mqtt/status').then(r=>r.json()),
+                    fetch('/api/mqtt/settings').then(r=>r.json()),
+                ]);
+                Object.assign(mqttStatus, st);
+                for(const k in mqttSettings){if(se[k]!==undefined)mqttSettings[k]=se[k];}
+                loadMqttMessages();
+            }catch(e){console.error(e);}
+        };
+        const loadMqttMessages=async()=>{
+            try{
+                const [s, r] = await Promise.all([
+                    fetch('/api/mqtt/messages/sent?limit=100').then(r=>r.json()),
+                    fetch('/api/mqtt/messages/recv?limit=100').then(r=>r.json()),
+                ]);
+                mqttSent.value = s.messages || [];
+                mqttRecv.value = r.messages || [];
+            }catch(e){}
+        };
+        const saveMqttSettings=async()=>{
+            try{
+                const body={...mqttSettings};
+                if(body.password==='***') delete body.password;
+                const r=await fetch('/api/mqtt/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+                const d=await r.json();
+                if(r.ok){
+                    ElementPlus.ElMessage.success('已儲存 + 重連');
+                    setTimeout(loadMqttStatus, 1500);
+                }else{
+                    ElementPlus.ElMessage.error('儲存失敗');
+                }
+            }catch(e){ElementPlus.ElMessage.error(e.message);}
+        };
+        const mqttAddSub=()=>{
+            const p=String(mqttNewSub.value||'').trim();
+            if(!p)return;
+            if(!mqttSettings.subscribe_patterns.includes(p))mqttSettings.subscribe_patterns.push(p);
+            mqttNewSub.value='';
+        };
+        const mqttManualPublish=async()=>{
+            try{
+                let payload = mqttPublishForm.payload;
+                try{ payload = JSON.parse(payload); }catch(_){} // 不是 JSON 就當字串
+                const r=await fetch('/api/mqtt/publish',{method:'POST',headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({topic:mqttPublishForm.topic, payload, qos:mqttPublishForm.qos, retain:mqttPublishForm.retain})});
+                const d=await r.json();
+                if(r.ok){
+                    ElementPlus.ElMessage.success('已發佈');
+                    loadMqttMessages();
+                }else{
+                    ElementPlus.ElMessage.error(d.detail||'發佈失敗');
+                }
+            }catch(e){ElementPlus.ElMessage.error(e.message);}
+        };
+        const clearMqttMessages=async()=>{
+            try{
+                await fetch('/api/mqtt/messages',{method:'DELETE'});
+                mqttSent.value=[]; mqttRecv.value=[];
+            }catch(_){}
+        };
+        const startMqttAutoRefresh=()=>{
+            if(mqttRefreshTimer)return;
+            mqttRefreshTimer=setInterval(()=>{
+                if(page.value==='mqtt' && mqttLogAutoRefresh.value){
+                    loadMqttMessages();
+                    fetch('/api/mqtt/status').then(r=>r.json()).then(d=>Object.assign(mqttStatus, d)).catch(()=>{});
+                }
+            }, 2000);
+        };
         const playEventClip=(evt)=>{
             if(!evt || !evt.start_time || !evt.camera){
                 ElementPlus.ElMessage.warning('事件缺少必要資訊');
@@ -10572,6 +10758,7 @@ const app=createApp({
             if(page.value==='monitor'){
                 ensureMonitorWatchdog();
             }
+            startMqttAutoRefresh();
             if(page.value==='statistics'){
                 applyStatsTimeScale();
                 loadStats();
@@ -10626,7 +10813,7 @@ const app=createApp({
         return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
-            load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow};
     }
