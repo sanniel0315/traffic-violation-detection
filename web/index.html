@@ -1577,8 +1577,10 @@
                                 <el-form-item label="QoS"><el-select v-model="mqttPublishForm.qos" size="small" style="width:80px"><el-option :value="0" label="0"/><el-option :value="1" label="1"/><el-option :value="2" label="2"/></el-select></el-form-item>
                                 <el-form-item label="Retain"><el-switch v-model="mqttPublishForm.retain"/></el-form-item>
                             </el-form>
-                            <el-input v-model="mqttPublishForm.payload" type="textarea" :rows="3" placeholder='Payload (JSON 或字串，例如 {"msg":"hello"})'/>
-                            <el-button type="primary" size="small" @click="mqttManualPublish" style="margin-top:8px">📤 發佈</el-button>
+                            <el-input v-model="mqttPublishForm.payload" type="textarea" :rows="3" placeholder='Payload (JSON 或字串，例如 {"msg":"hello"})'></el-input>
+                            <div style="display:flex;justify-content:flex-end;margin-top:12px;gap:8px;clear:both">
+                                <el-button type="primary" size="default" @click="mqttManualPublish">📤 發佈測試訊息</el-button>
+                            </div>
                         </div>
                     </div>
 

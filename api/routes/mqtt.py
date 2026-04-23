@@ -5,8 +5,6 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-import sys
-sys.path.insert(0, "/home/ubuntu/traffic-violation-detection")
 from services.mqtt_bridge import bridge
 
 router = APIRouter(prefix="/api/mqtt", tags=["MQTT"])
