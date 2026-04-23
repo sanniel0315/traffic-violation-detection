@@ -61,6 +61,17 @@ services:
       - MALLOC_CHECK_=0
     restart: unless-stopped
 
+  # MQTT Broker (embedded 模式使用)
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    network_mode: host
+    volumes:
+      - ./config/mosquitto:/mosquitto/config
+      - ./storage/mosquitto:/mosquitto/data
+      - ./storage/mosquitto/log:/mosquitto/log
+    restart: unless-stopped
+
   # 開發環境 (可選)
   dev:
     build: .

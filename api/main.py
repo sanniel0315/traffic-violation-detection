@@ -18,6 +18,7 @@ from api.routes import auth, frigate, lpr, lpr_stream, lpr_visual, violations, c
 from api.routes import congestion
 from api.routes import logs, system
 from api.routes import external, api_key_admin
+from api.routes import mqtt as mqtt_route
 TZ_TAIPEI = ZoneInfo("Asia/Taipei")
 
 
@@ -173,6 +174,12 @@ async def lifespan(app: FastAPI):
     os.makedirs("./output/violations", exist_ok=True)
     threading.Thread(target=_resume_services_in_background, daemon=True, name="resume-services").start()
     threading.Thread(target=_service_watchdog, daemon=True, name="service-watchdog").start()
+    # 啟動 MQTT bridge (讀 config，自動連 broker)
+    try:
+        from services.mqtt_bridge import start as _mqtt_start
+        _mqtt_start()
+    except Exception as _e:
+        print(f"⚠️ MQTT bridge 啟動失敗: {_e}", flush=True)
     print("✅ 系統初始化完成")
     yield
     print("👋 系統關閉")
@@ -220,6 +227,7 @@ app.include_router(logs.router)
 app.include_router(system.router)
 app.include_router(external.router)
 app.include_router(api_key_admin.router)
+app.include_router(mqtt_route.router)
 # 靜態檔案
 if os.path.exists("./output"):
     app.mount("/files", StaticFiles(directory="./output"), name="files")
