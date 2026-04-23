@@ -21,8 +21,18 @@ data/*.sqlite3
 data/*.db-*
 data/*.sqlite-*
 
-# Frigate
+# Frigate runtime state
 config/frigate/*.db*
+config/frigate/.search_stats.json
+config/frigate/.vacuum
+config/frigate/backup_config.yaml
+
+# Per-machine runtime settings (contains client_id / broker IP)
+config/system/mqtt_settings.json
+
+# Training / test artefacts
+datasets/
+test_snapshots/
 
 # 測試檔案
 *.mp4

@@ -12,9 +12,10 @@ from typing import Any, Dict, Optional
 import paho.mqtt.client as mqtt
 
 
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SETTINGS_PATH = os.getenv(
     "MQTT_SETTINGS_PATH",
-    "/home/ubuntu/traffic-violation-detection/config/system/mqtt_settings.json",
+    os.path.join(_PROJECT_ROOT, "config", "system", "mqtt_settings.json"),
 )
 _MAX_LOG = 500  # UI 顯示的訊息 ring buffer 大小
 
@@ -66,6 +67,8 @@ class MqttBridge:
         merged.update(self.settings)
         for k, v in (new_settings or {}).items():
             if k in merged:
+                if isinstance(v, str):
+                    v = v.strip()
                 merged[k] = v
         os.makedirs(os.path.dirname(_SETTINGS_PATH), exist_ok=True)
         with open(_SETTINGS_PATH, "w") as f:
