@@ -6,15 +6,17 @@ __pycache__/
 venv/
 .venv/
 
-# Models (大檔案)
+# --- 每台機器自己管的目錄（實體 dir 或 symlink 都可）---
+# 以 /xxx 開頭 = 只忽略 repo 根目錄下的同名目錄，不影響子層命名一樣的檔案
+/data
+/models
+/output
+/storage
+
+# 大檔案殘留保險（萬一有人不小心放在別的路徑）
 *.pt
 *.engine
 *.onnx
-models/
-
-# Storage (運行時資料)
-storage/
-output/
 data/*.db
 data/*.sqlite
 data/*.sqlite3
