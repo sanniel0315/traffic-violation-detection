@@ -9,14 +9,12 @@ services:
     image: traffic-api:latest
     container_name: traffic-api
     runtime: nvidia
+    # 資料目錄走 host 端 ./models ./storage ./output ./data 的實體路徑或 symlink；
+    # 想把它們放在 NVMe/外接硬碟，直接在 host 建 symlink 指過去即可（見 scripts/init_dirs.sh）
     volumes:
       - ./:/workspace
-      - /mnt/nvme/traffic/models:/workspace/models
-      - /mnt/nvme/traffic/storage:/workspace/storage
-      - /mnt/nvme/traffic/output:/workspace/output
-      - /mnt/nvme/traffic/data:/workspace/data
-      - /home/ubuntu/.local/lib/python3.10/site-packages:/opt/host-packages:ro
-      - /home/ubuntu/.EasyOCR:/root/.EasyOCR:ro
+      - ${HOST_SITE_PACKAGES:-/home/ubuntu/.local/lib/python3.10/site-packages}:/opt/host-packages:ro
+      - ${HOST_EASYOCR:-/home/ubuntu/.EasyOCR}:/root/.EasyOCR:ro
     working_dir: /workspace
     network_mode: host
     environment:
