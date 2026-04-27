@@ -3,16 +3,20 @@
 # =============================================================================
 
 services:
-  # API 服務 (主要服務)
+  # API 服務（容器版，僅供開發/離線打包用 — 正式部署走 systemd `traffic-api.service`，
+  # 兩者搶同一個 :8000 不能同時啟動。日常 compose up 時用 `--profile container-api` 才會帶起此服務）
   api:
+    profiles: ["container-api"]
     build: .
     image: traffic-api:latest
     container_name: traffic-api
     runtime: nvidia
     # 資料目錄走 host 端 ./models ./storage ./output ./data 的實體路徑或 symlink；
-    # 想把它們放在 NVMe/外接硬碟，直接在 host 建 symlink 指過去即可（見 scripts/init_dirs.sh）
+    # 想把它們放在 NVMe/外接硬碟，直接在 host 建 symlink 指過去即可（見 scripts/init_dirs.sh）。
+    # TRAFFIC_STORAGE_ROOT 預設掛 /mnt/nvme/traffic，讓容器能解析 host symlink；無 NVMe 也安全（路徑不存在不影響）。
     volumes:
       - ./:/workspace
+      - ${TRAFFIC_STORAGE_ROOT:-/mnt/nvme/traffic}:${TRAFFIC_STORAGE_ROOT:-/mnt/nvme/traffic}
       - ${HOST_SITE_PACKAGES:-/home/ubuntu/.local/lib/python3.10/site-packages}:/opt/host-packages:ro
       - ${HOST_EASYOCR:-/home/ubuntu/.EasyOCR}:/root/.EasyOCR:ro
     working_dir: /workspace
@@ -79,6 +83,7 @@ services:
     volumes:
       - ./:/workspace
       - ./models:/workspace/models
+      - ${TRAFFIC_STORAGE_ROOT:-/mnt/nvme/traffic}:${TRAFFIC_STORAGE_ROOT:-/mnt/nvme/traffic}
     working_dir: /workspace
     environment:
       - TZ=Asia/Taipei
