@@ -368,7 +368,7 @@ def _call_direct_nx_devices(settings: Optional[Dict[str, Any]] = None) -> List[D
 
 
 @router.get("/devices")
-async def nx_devices():
+def nx_devices():
     settings = _nx_settings()
     proxy_base = _nx_proxy_base(settings)
     if proxy_base:
@@ -394,7 +394,7 @@ async def nx_devices():
 
 
 @router.get("/stream/{device_id}")
-async def nx_stream(
+def nx_stream(
     device_id: str,
     format: str = Query("mp4"),
     stream: Optional[int] = Query(None),
@@ -504,7 +504,7 @@ def _nx_authed_session(settings: Optional[Dict[str, Any]] = None):
 
 
 @router.get("/recording-periods/{device_id}")
-async def nx_recording_periods(
+def nx_recording_periods(
     device_id: str,
     hours: int = Query(24, ge=1, le=168),
 ):
@@ -568,7 +568,7 @@ def _parse_pos_to_ms(pos: str) -> int:
 
 
 @router.get("/motion-clip/{device_id}")
-async def nx_motion_clip(
+def nx_motion_clip(
     device_id: str,
     pos: str = Query(..., description="開始時間 (ms timestamp 或 ISO 8601)"),
     duration: int = Query(10000, ge=500, le=60000, description="長度 ms (0.5~60 秒)"),
@@ -595,7 +595,7 @@ async def nx_motion_clip(
 
 
 @router.get("/motion-snapshot/{device_id}")
-async def nx_motion_snapshot(
+def nx_motion_snapshot(
     device_id: str,
     pos: str = Query(..., description="時間戳 (ms 或 ISO 8601)"),
 ):
