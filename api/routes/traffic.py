@@ -55,7 +55,7 @@ def _run_with_sqlite_retry(db: Session, fn: Callable[[], Any], retries: int = 4)
 
 
 @router.get("/vd-report")
-async def get_vd_report(
+def get_vd_report(
     camera_id: Optional[int] = None,
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
@@ -121,7 +121,7 @@ async def get_vd_report(
 
 
 @router.get("/events")
-async def get_traffic_events(
+def get_traffic_events(
     camera_id: Optional[int] = None,
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,

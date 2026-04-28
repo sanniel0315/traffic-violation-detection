@@ -225,7 +225,7 @@ async def all_congestion_status():
 
 
 @router.get("/samples")
-async def get_congestion_samples(
+def get_congestion_samples(
     camera_id: int | None = None,
     start_time: datetime | None = None,
     end_time: datetime | None = None,
