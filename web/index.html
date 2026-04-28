@@ -10119,7 +10119,8 @@ const app=createApp({
             if(isCameraListVideo(camera)){
                 return getDirectCameraSourceUrl(camera, camera?.thumbKey||Date.now());
             }
-            return `/api/stream/${camera.id}/snapshot?t=${camera.thumbKey||Date.now()}`;
+            // overlay=1：cam tile 縮圖也疊加 ROI + detection bbox（後端 snapshot endpoint 支援）
+            return `/api/stream/${camera.id}/snapshot?t=${camera.thumbKey||Date.now()}&overlay=1`;
         };
         const handleThumbLoad=(c,e)=>{c.snapshotError=false;c.lastGoodSnapshot=e?.target?.currentSrc||c.lastGoodSnapshot;c.listVideoFailed=false;};
         const handleThumbError=(c,e)=>{
