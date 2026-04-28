@@ -29,6 +29,7 @@ router = APIRouter(prefix="/api/cameras", tags=["攝影機"])
 TEST_SOURCE_TIMEOUT_SEC = 8.0
 CAMERA_SOURCE_DIR = Path("./output/camera_sources")
 CAMERA_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
+ALLOWED_VIDEO_EXTS = (".mp4", ".mkv", ".mov", ".avi", ".webm")
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _ANALYZE_MODELS_LOCK = threading.Lock()
 _ANALYZE_MODELS: dict[str, object] = {}
@@ -284,7 +285,10 @@ def _iter_server_mp4_files(limit: int = 200) -> list[dict]:
         if not resolved_root.exists() or not resolved_root.is_dir():
             continue
         try:
-            for path in sorted(resolved_root.rglob("*.mp4")):
+            paths = []
+            for ext in ALLOWED_VIDEO_EXTS:
+                paths.extend(resolved_root.rglob(f"*{ext}"))
+            for path in sorted(paths):
                 if not path.is_file():
                     continue
                 try:
@@ -313,8 +317,8 @@ def _resolve_allowed_source_file(path_text: str) -> Path:
         resolved = candidate.resolve()
     except Exception:
         raise HTTPException(status_code=400, detail="檔案路徑無效")
-    if resolved.suffix.lower() != ".mp4":
-        raise HTTPException(status_code=400, detail="只支援 MP4 檔案")
+    if resolved.suffix.lower() not in ALLOWED_VIDEO_EXTS:
+        raise HTTPException(status_code=400, detail=f"只支援 {', '.join(e[1:].upper() for e in ALLOWED_VIDEO_EXTS)} 檔案")
     for root in _server_source_allowed_roots():
         try:
             resolved.relative_to(root.resolve())
@@ -326,13 +330,13 @@ def _resolve_allowed_source_file(path_text: str) -> Path:
 
 
 @router.post("/upload-source")
-async def upload_camera_source(file: UploadFile = File(...)):
+def upload_camera_source(file: UploadFile = File(...)):
     filename = str(file.filename or "").strip()
     ext = Path(filename).suffix.lower()
-    if ext != ".mp4":
-        raise HTTPException(status_code=400, detail="只支援上傳 MP4 檔案")
+    if ext not in ALLOWED_VIDEO_EXTS:
+        raise HTTPException(status_code=400, detail=f"只支援 {', '.join(e[1:].upper() for e in ALLOWED_VIDEO_EXTS)} 檔案")
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(filename).stem).strip("._-") or "camera_source"
-    stored_name = f"{safe_name}_{uuid.uuid4().hex[:8]}.mp4"
+    stored_name = f"{safe_name}_{uuid.uuid4().hex[:8]}{ext}"
     target = CAMERA_SOURCE_DIR / stored_name
     try:
         with target.open("wb") as buffer:
@@ -359,7 +363,7 @@ async def list_source_files():
 
 
 @router.post("/import-source-file")
-async def import_source_file(data: ImportSourceFileRequest):
+def import_source_file(data: ImportSourceFileRequest):
     source_path = _resolve_allowed_source_file(data.path)
     if source_path.parent.resolve() == CAMERA_SOURCE_DIR.resolve():
         return {
@@ -369,7 +373,7 @@ async def import_source_file(data: ImportSourceFileRequest):
             "original_path": str(source_path),
         }
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", source_path.stem).strip("._-") or "camera_source"
-    stored_name = f"{safe_name}_{uuid.uuid4().hex[:8]}.mp4"
+    stored_name = f"{safe_name}_{uuid.uuid4().hex[:8]}{source_path.suffix.lower()}"
     target = CAMERA_SOURCE_DIR / stored_name
     shutil.copy2(source_path, target)
     return {
@@ -588,7 +592,7 @@ async def test_url(data: TestUrlRequest):
 
 
 @router.post("/analyze-source")
-async def analyze_source(data: AnalyzeSourceRequest):
+def analyze_source(data: AnalyzeSourceRequest):
     """快速分析任意來源，供獨立測試頁使用。"""
     source = str(data.url or "").strip()
     if not source:
@@ -946,7 +950,7 @@ async def analyze_source(data: AnalyzeSourceRequest):
 
 
 @router.post("/analyze-frame")
-async def analyze_frame(data: AnalyzeFrameRequest):
+def analyze_frame(data: AnalyzeFrameRequest):
     image_base64 = str(data.image_base64 or "").strip()
     if not image_base64:
         raise HTTPException(status_code=400, detail="影格資料不得為空")

@@ -218,7 +218,7 @@ async def recognize_plate_base64(image_base64: str):
 
 
 @router.post("/recognize-camera/{camera_id}")
-async def recognize_from_camera(camera_id: int):
+def recognize_from_camera(camera_id: int):
     """從攝影機擷取畫面辨識"""
     from api.models import SessionLocal, Camera
     

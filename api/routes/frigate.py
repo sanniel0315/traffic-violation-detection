@@ -641,7 +641,7 @@ async def update_nvr_settings(settings: NvrSettings):
 # ============ 攝影機 API ============
 
 @router.get("/cameras")
-async def get_nvr_cameras():
+def get_nvr_cameras():
     """取得 NVR 攝影機列表"""
     cameras = []
 
@@ -870,7 +870,7 @@ async def get_event_clip(event_id: str):
 
 
 @router.get("/events/{event_id}/clip.mp4")
-async def get_event_clip_media(event_id: str, request: Request):
+def get_event_clip_media(event_id: str, request: Request):
     """代理事件影片內容"""
     try:
         upstream = None
@@ -925,7 +925,7 @@ async def get_event_clip_media(event_id: str, request: Request):
 
 
 @router.get("/motion-clip/{camera_name}")
-async def get_motion_clip(
+def get_motion_clip(
     camera_name: str,
     ts: float = Query(..., description="事件 epoch 秒"),
     before: int = Query(3, ge=0, le=15, description="事件前 N 秒"),
@@ -1058,7 +1058,7 @@ async def get_nvr_recordings(
 
 
 @router.get("/recordings/play")
-async def play_nvr_recording(src: str, request: Request):
+def play_nvr_recording(src: str, request: Request):
     """代理錄影播放內容（支援 Range）"""
     try:
         target = unquote(str(src or "").strip())
@@ -1339,7 +1339,7 @@ async def sync_cameras_to_nvr():
 
 
 @router.post("/restart")
-async def restart_nvr():
+def restart_nvr():
     """重啟 NVR"""
     add_log("info", "收到 NVR 重啟請求", "nvr")
     # Use NVR's own restart API. Avoid docker CLI dependency inside API container.
