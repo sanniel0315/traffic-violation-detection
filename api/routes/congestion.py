@@ -383,9 +383,22 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
     if str(source).lower().startswith("rtsp://"):
         _os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS",
                                "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536")
+    # file source 判定：不開另一個 cap，直接用 stream._shared_frames 已 decoded 的 frame
+    # （避開 multi-cap multi-thread ffmpeg race，且讓 congestion 跟 stream 同步同一 frame）
+    _src_lc = str(source or "").lower()
+    _is_file_source = (
+        not _src_lc.startswith(("rtsp://", "http://", "https://"))
+        or _src_lc.endswith((".mp4", ".mkv", ".mov", ".avi", ".webm"))
+    )
+    _stream_shared = None
+    if _is_file_source:
+        try:
+            from api.routes.stream import _shared_frames as _stream_shared
+        except Exception:
+            _stream_shared = None
     cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
 
-    print(f"🚦 壅塞偵測啟動: camera_id={camera_id}")
+    print(f"🚦 壅塞偵測啟動: camera_id={camera_id} (file_source={_is_file_source}, share_detection_frame={_stream_shared is not None})")
     fail_count = 0
     last_ok = time.time()
     try:
@@ -402,11 +415,20 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                 time.sleep(1.0)
                 continue
 
-            try:
-                ret, frame = cap.read()
-            except Exception as e:
-                print(f"⚠️ congestion cam_{camera_id} cap.read exception: {e}", flush=True)
-                ret, frame = False, None
+            # file source fast path：用 detection worker 已 decoded 的 frame，跳過自己 cap.read
+            ret, frame = False, None
+            if _is_file_source and _stream_shared is not None:
+                sf = _stream_shared.get(camera_id)
+                if sf and (time.time() - sf.get("ts", 0)) < 1.5 and sf.get("frame") is not None:
+                    frame = sf["frame"].copy() if hasattr(sf["frame"], "copy") else sf["frame"]
+                    ret = frame is not None and getattr(frame, "size", 0) > 0
+
+            if not ret:
+                try:
+                    ret, frame = cap.read()
+                except Exception as e:
+                    print(f"⚠️ congestion cam_{camera_id} cap.read exception: {e}", flush=True)
+                    ret, frame = False, None
 
             if not ret:
                 fail_count += 1
