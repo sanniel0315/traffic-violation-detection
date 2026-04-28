@@ -857,11 +857,12 @@ async def live_stream(camera_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{camera_id}/live-overlay")
-async def live_stream_overlay(camera_id: int, q: str = "low", db: Session = Depends(get_db)):
+async def live_stream_overlay(camera_id: int, q: str = "low", roi: str = "1", db: Session = Depends(get_db)):
     """即時影像串流 (MJPEG + AI 辨識框)
 
     q=low (預設): 720p, JPEG Q60, 監控網格用 (頻寬輕)
     q=high: 1080p, JPEG Q75, 放大/轉發用 (清晰度優先)
+    roi=1 (預設): 疊加 ROI 多邊形；roi=0 關閉
     """
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:
@@ -870,12 +871,13 @@ async def live_stream_overlay(camera_id: int, q: str = "low", db: Session = Depe
         raise HTTPException(status_code=409, detail="攝影機已關閉")
     overlay_source = resolve_analysis_source(camera)
     hq = str(q or "").lower() == "high"
+    show_roi = str(roi or "").strip() != "0"
     return StreamingResponse(
         generate_frames_overlay(
             overlay_source,
             camera.zones or [],
             camera.detection_config or {},
-            render_roi_labels=False,
+            render_roi_labels=show_roi,
             camera_id=camera_id,
             high_quality=hq,
         ),
