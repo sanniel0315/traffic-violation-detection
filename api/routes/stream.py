@@ -1262,12 +1262,23 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             except Exception:
                 ret, frm = False, None
             if not ret:
-                # 檔案來源 EOF：seek 回開頭，無縫 loop（不要 release+reopen 造成 2 秒黑屏）
+                # 檔案來源 EOF：先試 seek 回開頭（最快），連續失敗就 release+reopen
+                # （壞 metadata 的 mkv frame_count 是 garbage，seek 後 decoder state 可能異常）
                 if _is_file_source:
+                    _read_fail_count[0] += 1
+                    if _read_fail_count[0] <= 3:
+                        try:
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        except Exception:
+                            pass
+                        continue
+                    # 連續 fail >3 次 → seek 救不回來，乾淨重 open（decoder fresh state）
                     try:
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        cap.release()
                     except Exception:
                         pass
+                    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                    _read_fail_count[0] = 0
                     continue
                 # RTSP/HTTP：連線真的斷了 → reconnect
                 _read_fail_count[0] += 1
