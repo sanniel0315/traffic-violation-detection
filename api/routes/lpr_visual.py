@@ -475,7 +475,7 @@ async def visual_stream(camera_id: int):
 
 
 @router.get("/snapshot/{camera_id}")
-async def visual_snapshot(camera_id: int):
+def visual_snapshot(camera_id: int):
     """單張視覺化快照"""
     from api.models import SessionLocal, Camera
     from fastapi.responses import Response

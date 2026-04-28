@@ -206,7 +206,7 @@ _EVENT_SNAPSHOT_CACHE_DIR = "/tmp/event_snapshots"
 
 
 @router.get("/events/{event_id}/snapshot.jpg")
-async def get_event_snapshot(event_id: int, db: Session = Depends(get_db)):
+def get_event_snapshot(event_id: int, db: Session = Depends(get_db)):
     import os
     import io
     from fastapi.responses import Response, FileResponse

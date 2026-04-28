@@ -276,7 +276,7 @@ async def get_congestion_samples(
 
 
 @router.get("/{camera_id}/snapshot")
-async def congestion_snapshot(camera_id: int, db: Session = Depends(get_db)):
+def congestion_snapshot(camera_id: int, db: Session = Depends(get_db)):
     """取得單次壅塞分析截圖"""
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:

@@ -4089,18 +4089,18 @@
                     </div>
                 </template>
                 <template v-else-if="cameraForm.http_source_kind==='file'">
-                <el-form-item label="MP4 檔案">
+                <el-form-item label="影片檔（MP4 / MKV / MOV / AVI / WebM）">
                     <div style="display:flex;gap:8px;width:100%;align-items:center">
-                        <input ref="cameraFileInput" type="file" accept="video/mp4,.mp4" @change="handleCameraSourceFile" style="flex:1"/>
+                        <input ref="cameraFileInput" type="file" accept=".mp4,.mkv,.mov,.avi,.webm,video/mp4,video/x-matroska,video/quicktime,video/x-msvideo,video/webm" @change="handleCameraSourceFile" style="flex:1"/>
                         <el-button type="primary" :loading="cameraSourceUploading" @click="uploadCameraSourceFile" :disabled="!cameraSourceFile">上傳</el-button>
                     </div>
                     <div style="font-size:12px;color:#64748b;margin-top:6px">
-                        上傳後會用本機 MP4 檔作為預覽與分析來源。
+                        上傳後會用本機影片檔作為預覽與分析來源。
                     </div>
                 </el-form-item>
-                <el-form-item label="主機 MP4">
+                <el-form-item label="主機影片">
                     <div style="display:flex;gap:8px;width:100%">
-                        <el-select v-model="cameraServerFilePath" filterable placeholder="選擇主機既有 MP4" style="flex:1" :loading="cameraServerFilesLoading">
+                        <el-select v-model="cameraServerFilePath" filterable placeholder="選擇主機既有影片" style="flex:1" :loading="cameraServerFilesLoading">
                             <el-option v-for="item in cameraServerFiles" :key="item.path" :label="item.label" :value="item.path"/>
                         </el-select>
                         <el-button @click="loadCameraServerFiles" :loading="cameraServerFilesLoading">載入</el-button>
@@ -10025,7 +10025,7 @@ const app=createApp({
                 cameraServerFiles.value=Array.isArray(d?.files)?d.files:[];
                 cameraServerRoots.value=Array.isArray(d?.roots)?d.roots:[];
                 if(!cameraServerFiles.value.length){
-                    ElementPlus.ElMessage.warning('目前沒有可用的主機 MP4');
+                    ElementPlus.ElMessage.warning('目前沒有可用的主機影片');
                 }
             }catch(e){
                 ElementPlus.ElMessage.error(`載入主機 MP4 失敗: ${e?.message||e}`);
