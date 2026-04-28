@@ -1298,6 +1298,10 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             _read_fail_count[0] = 0
             _latest["frame"] = frm
             _latest["ts"] = time.time()
+            # file source 限速到實時播放（~30 fps）。RTSP/HTTP 自然由 server 推送速度限速；
+            # file source 無限速會 burst decode（1080p 200+ fps）把 CPU 燒爆，導致網頁卡頓。
+            if _is_file_source:
+                time.sleep(0.033)
 
     threading.Thread(target=_reader_loop, daemon=True, name=f"reader-{camera_id}").start()
 
