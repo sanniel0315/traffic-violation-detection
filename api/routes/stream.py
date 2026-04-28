@@ -895,8 +895,10 @@ async def snapshot(camera_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="攝影機已關閉")
     
     # 若最近已有快照，直接回傳，避免前端縮圖連續請求造成 RTSP 阻塞
+    # TTL 0.3s：對 RTSP cam 仍能擋連續 thrashing，對 file source / 有 detection worker 持續產 frame
+    # 的 cam，前端每秒 polling 都能拿到新 frame，影像不再卡 1-2 秒
     cached = snapshot_cache.get(camera_id)
-    if cached and (time.time() - cached.get("ts", 0) <= 2):
+    if cached and (time.time() - cached.get("ts", 0) <= 0.3):
         return StreamingResponse(iter([cached.get("image")]), media_type="image/jpeg")
 
     lock = snapshot_locks.setdefault(camera_id, asyncio.Lock())
