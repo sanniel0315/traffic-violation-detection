@@ -1247,6 +1247,13 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     _latest = {"frame": None, "ts": 0.0, "stop": False}
     _read_fail_count = [0]
 
+    # 判斷 source 是不是檔案（影響 EOF 處理）
+    _src_lc_outer = str(source or "").lower()
+    _is_file_source = (
+        not _src_lc_outer.startswith(("rtsp://", "http://", "https://"))
+        or _src_lc_outer.endswith((".mp4", ".mkv", ".mov", ".avi", ".webm"))
+    )
+
     def _reader_loop():
         nonlocal cap
         while detection_services.get(camera_id, {}).get('running', False) and not _latest["stop"]:
@@ -1255,6 +1262,14 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             except Exception:
                 ret, frm = False, None
             if not ret:
+                # 檔案來源 EOF：seek 回開頭，無縫 loop（不要 release+reopen 造成 2 秒黑屏）
+                if _is_file_source:
+                    try:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    except Exception:
+                        pass
+                    continue
+                # RTSP/HTTP：連線真的斷了 → reconnect
                 _read_fail_count[0] += 1
                 if _read_fail_count[0] == 1 or _read_fail_count[0] % 100 == 0:
                     print(f"⚠️ [detection] cam{camera_id} cap.read() failed (count={_read_fail_count[0]}), reconnecting...", flush=True)
@@ -1263,8 +1278,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 except Exception:
                     pass
                 time.sleep(2)
-                _src_lc2 = str(source or "").lower()
-                if _src_lc2.startswith("rtsp://"):
+                if _src_lc_outer.startswith("rtsp://"):
                     os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
                 cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                 continue
