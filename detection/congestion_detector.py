@@ -143,16 +143,23 @@ class CongestionDetector:
             history.pop(0)
         smoothed = sum(history) / len(history)
 
-        # 全域 level 同樣要求車輛數 >=2，避免單一大車誤判
-        if len(tracked_vehicles) < 2:
-            level = 'low'
-        else:
+        # 全域 level：車輛數 >=2 走原邏輯；單車例外：停著且 occupancy 達 medium 以上仍升 level
+        # （單一大車卡住前方 ≠ 「短暫路過」，仍應視為壅塞）
+        if len(tracked_vehicles) >= 2:
             level = (
                 'critical' if smoothed >= critical_t
                 else 'high' if smoothed >= high_t
                 else 'medium' if smoothed >= medium_t
                 else 'low'
             )
+        elif len(tracked_vehicles) == 1 and stopped_count >= 1 and smoothed >= medium_t:
+            level = (
+                'critical' if smoothed >= critical_t
+                else 'high' if smoothed >= high_t
+                else 'medium'
+            )
+        else:
+            level = 'low'
         
         stats = {}
         for v in tracked_vehicles:
@@ -204,17 +211,23 @@ class CongestionDetector:
                 zhist.pop(0)
             z_occ = sum(zhist) / len(zhist)
 
-            # 車輛數必須 >=2 才能升 level，避免單一大車（公車/聯結）被誤判 擁擠
+            # zone level：車輛數 >=2 走原邏輯；單車例外：停著且 occupancy 達 medium 以上仍升 level
             zveh_n = len(zvehicles)
-            if zveh_n < 2:
-                z_level = 'low'
-            else:
+            if zveh_n >= 2:
                 z_level = (
                     'critical' if z_occ >= critical_t
                     else 'high' if z_occ >= high_t
                     else 'medium' if z_occ >= medium_t
                     else 'low'
                 )
+            elif zveh_n == 1 and z_stopped >= 1 and z_occ >= medium_t:
+                z_level = (
+                    'critical' if z_occ >= critical_t
+                    else 'high' if z_occ >= high_t
+                    else 'medium'
+                )
+            else:
+                z_level = 'low'
             lane_no = self._parse_lane_no(z)
             movement = self._normalize_movement(z.get("lane"), z.get("type"))
             lane_tags = z.get("lane_tags") if isinstance(z.get("lane_tags"), list) else []
