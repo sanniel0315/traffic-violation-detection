@@ -122,7 +122,7 @@ def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
 
 
 @router.post("/login")
-async def login(data: LoginRequest, response: Response, db: Session = Depends(get_db)):
+def login(data: LoginRequest, response: Response, db: Session = Depends(get_db)):
     username = str(data.username or "").strip()
     if not username or not data.password:
         raise HTTPException(status_code=400, detail="帳號密碼不可為空")
@@ -137,13 +137,13 @@ async def login(data: LoginRequest, response: Response, db: Session = Depends(ge
 
 
 @router.post("/logout")
-async def logout(response: Response):
+def logout(response: Response):
     _clear_cookie(response)
     return {"status": "success"}
 
 
 @router.get("/me")
-async def me(request: Request, db: Session = Depends(get_db)):
+def me(request: Request, db: Session = Depends(get_db)):
     user = _current_user(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="未登入")
@@ -151,7 +151,7 @@ async def me(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/users")
-async def list_users(
+def list_users(
     db: Session = Depends(get_db),
     _admin: User = Depends(get_admin_user),
 ):
@@ -177,7 +177,7 @@ async def list_users(
 
 
 @router.post("/users")
-async def create_user(
+def create_user(
     data: UserCreateRequest,
     db: Session = Depends(get_db),
     _admin: User = Depends(get_admin_user),
@@ -214,7 +214,7 @@ async def create_user(
 
 
 @router.put("/users/{user_id}")
-async def update_user(
+def update_user(
     user_id: int,
     data: UserUpdateRequest,
     db: Session = Depends(get_db),
@@ -257,7 +257,7 @@ async def update_user(
 
 
 @router.put("/users/{user_id}/password")
-async def update_user_password(
+def update_user_password(
     user_id: int,
     data: UserPasswordUpdateRequest,
     db: Session = Depends(get_db),
@@ -275,7 +275,7 @@ async def update_user_password(
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(
+def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user),
