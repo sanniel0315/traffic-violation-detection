@@ -114,8 +114,9 @@ async def _wait_lock_release(lock: asyncio.Lock, timeout: float = 3.0):
 
 
 async def _warm_snapshot(camera_id: int, source: str):
-    """Background warm-up snapshot to improve next request hit-rate."""
-    lock = snapshot_locks.setdefault(camera_id, asyncio.Lock())
+    """Background warm-up snapshot to improve next request hit-rate (僅 raw 版本)。"""
+    cache_key = (camera_id, False)
+    lock = snapshot_locks.setdefault(cache_key, asyncio.Lock())
     if lock.locked():
         return
     async with lock:
@@ -131,7 +132,7 @@ async def _warm_snapshot(camera_id: int, source: str):
             if image:
                 break
         if image:
-            snapshot_cache[camera_id] = {"image": image, "ts": time.time()}
+            snapshot_cache[cache_key] = {"image": image, "ts": time.time()}
 
 
 def _open_capture(source: str):
@@ -313,13 +314,38 @@ def _try_frigate_snapshot(source: str):
     return None
 
 
-def _capture_snapshot_bytes(source: str, camera_id: int = None):
-    """嘗試以較短超時擷取單張影像，避免 RTSP 長時間阻塞。"""
+def _capture_snapshot_bytes(source: str, camera_id: int = None, overlay_zones: list = None):
+    """嘗試以較短超時擷取單張影像，避免 RTSP 長時間阻塞。
+    overlay_zones=None: 直接 encode raw frame（cam tile 縮圖預設）
+    overlay_zones=list: 疊 ROI + detection bbox（snapshot?overlay=1 用）
+    """
     # 優先嘗試從 detection 服務的共享 frame 取得（避免重開連線）
     if camera_id is not None:
         sf = _shared_frames.get(camera_id)
         if sf and (time.time() - sf.get("ts", 0)) < 5.0 and sf.get("frame") is not None:
-            ok, buffer = cv2.imencode(".jpg", sf["frame"])
+            frame_out = sf["frame"]
+            if overlay_zones is not None:
+                # 疊 ROI 多邊形 + detection bbox（讓 cam tile 縮圖也能看到偵測結果）
+                annotated = frame_out.copy()
+                if overlay_zones:
+                    try:
+                        _draw_roi_labels(annotated, overlay_zones)
+                    except Exception:
+                        pass
+                _ZH = {"car": "小客車", "motorcycle": "機車", "truck": "大貨車", "bus": "公車",
+                       "heavy_truck": "重型貨車", "light_truck": "小貨車"}
+                for det in sf.get("detections") or []:
+                    cls = det.get("class_name", "")
+                    if cls not in ("car", "motorcycle", "truck", "bus", "heavy_truck", "light_truck"):
+                        continue
+                    b = det.get("bbox") or {}
+                    if not all(k in b for k in ("x1", "y1", "x2", "y2")):
+                        continue
+                    cv2.rectangle(annotated, (int(b["x1"]), int(b["y1"])), (int(b["x2"]), int(b["y2"])), (0, 200, 0), 2)
+                    cv2.putText(annotated, _ZH.get(cls, cls), (int(b["x1"]), max(20, int(b["y1"]) - 4)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 0), 2)
+                frame_out = annotated
+            ok, buffer = cv2.imencode(".jpg", frame_out)
             if ok:
                 return buffer.tobytes()
     # 嘗試 Frigate snapshot API（比重新建立 RTSP 連線快很多）
@@ -886,22 +912,24 @@ async def live_stream_overlay(camera_id: int, q: str = "low", roi: str = "1", db
 
 
 @router.get("/{camera_id}/snapshot")
-async def snapshot(camera_id: int, db: Session = Depends(get_db)):
-    """取得單張截圖"""
+async def snapshot(camera_id: int, overlay: int = 0, db: Session = Depends(get_db)):
+    """取得單張截圖。overlay=1 疊加 ROI + detection bbox（cam tile 縮圖也能看到偵測）"""
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:
         raise HTTPException(status_code=404, detail="攝影機不存在")
     if not bool(camera.enabled):
         raise HTTPException(status_code=409, detail="攝影機已關閉")
-    
+
+    overlay_zones = (camera.zones or []) if overlay else None
+    cache_key = (camera_id, bool(overlay))
     # 若最近已有快照，直接回傳，避免前端縮圖連續請求造成 RTSP 阻塞
     # TTL 0.3s：對 RTSP cam 仍能擋連續 thrashing，對 file source / 有 detection worker 持續產 frame
     # 的 cam，前端每秒 polling 都能拿到新 frame，影像不再卡 1-2 秒
-    cached = snapshot_cache.get(camera_id)
+    cached = snapshot_cache.get(cache_key)
     if cached and (time.time() - cached.get("ts", 0) <= 0.3):
         return StreamingResponse(iter([cached.get("image")]), media_type="image/jpeg")
 
-    lock = snapshot_locks.setdefault(camera_id, asyncio.Lock())
+    lock = snapshot_locks.setdefault(cache_key, asyncio.Lock())
     image = None
 
     # 同一攝影機已有擷取進行中時，先嘗試回傳快取；若沒有快取，短暫等待前一個請求完成
@@ -915,7 +943,7 @@ async def snapshot(camera_id: int, db: Session = Depends(get_db)):
             if ph:
                 return StreamingResponse(iter([ph]), media_type="image/jpeg")
             raise HTTPException(status_code=503, detail="影像來源忙碌中")
-        cached_after_wait = snapshot_cache.get(camera_id)
+        cached_after_wait = snapshot_cache.get(cache_key)
         if cached_after_wait and (time.time() - cached_after_wait.get("ts", 0) <= 600):
             return StreamingResponse(iter([cached_after_wait.get("image")]), media_type="image/jpeg")
 
@@ -931,31 +959,32 @@ async def snapshot(camera_id: int, db: Session = Depends(get_db)):
                     break
                 try:
                     image = await asyncio.wait_for(
-                        asyncio.to_thread(_capture_snapshot_bytes, resolve_analysis_source(camera), camera_id=camera.id),
+                        asyncio.to_thread(_capture_snapshot_bytes, resolve_analysis_source(camera), camera_id=camera.id, overlay_zones=overlay_zones),
                         timeout=timeout_sec,
                     )
                 except asyncio.TimeoutError:
                     image = None
 
     if image:
-        snapshot_cache[camera_id] = {"image": image, "ts": time.time()}
+        snapshot_cache[cache_key] = {"image": image, "ts": time.time()}
     else:
         if cached and (time.time() - cached.get("ts", 0) <= 600):
             image = cached.get("image")
         else:
             # No immediate snapshot/cached image: trigger background warm-up for next request.
-            task = snapshot_warm_tasks.get(camera_id)
+            warm_key = (camera_id, False)  # warm-up 只跑 raw
+            task = snapshot_warm_tasks.get(warm_key)
             if task is None or task.done():
-                snapshot_warm_tasks[camera_id] = asyncio.create_task(
+                snapshot_warm_tasks[warm_key] = asyncio.create_task(
                     _warm_snapshot(camera_id, resolve_analysis_source(camera))
                 )
-                task = snapshot_warm_tasks[camera_id]
+                task = snapshot_warm_tasks[warm_key]
             # Wait briefly for warm-up result, then fallback to latest cache if available.
             try:
                 await asyncio.wait_for(task, timeout=0.8)
             except asyncio.TimeoutError:
                 pass
-            warmed = snapshot_cache.get(camera_id)
+            warmed = snapshot_cache.get((camera_id, False))
             if warmed and (time.time() - warmed.get("ts", 0) <= 600):
                 image = warmed.get("image")
 
@@ -1077,10 +1106,11 @@ def _schedule_snapshot_warm(camera_id: int, source: str) -> bool:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return False
-    task = snapshot_warm_tasks.get(camera_id)
+    warm_key = (camera_id, False)
+    task = snapshot_warm_tasks.get(warm_key)
     if task is not None and not task.done():
         return False
-    snapshot_warm_tasks[camera_id] = loop.create_task(_warm_snapshot(camera_id, source))
+    snapshot_warm_tasks[warm_key] = loop.create_task(_warm_snapshot(camera_id, source))
     return True
 
 
