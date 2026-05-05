@@ -10,6 +10,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel
@@ -651,6 +652,7 @@ async def auto_calibrate_apply(camera_id: int, lane_width_m: float = 3.5, rect_l
     zones = [z for z in zones if not (z.get("auto_calibrated") and z.get("lane_no") == lane_no and z.get("type") == "speed_roi")]
     zones.append(new_zone)
     c.zones = zones
+    flag_modified(c, "zones")
     db.commit()
     db.refresh(c)
     return {"camera_id": camera_id, "zone_added": new_zone, "calibration": calib, "msg": "已自動校正並建立 speed_roi zone"}
@@ -764,6 +766,7 @@ async def apply_tw_distance(camera_id: int, distance_m: float, db: Session = Dep
     if changed == 0:
         raise HTTPException(status_code=422, detail="cam 沒有 speed_line_in zone")
     c.zones = zones
+    flag_modified(c, "zones")
     db.commit()
     return {"ok": True, "applied_distance_m": distance_m, "zones_updated": changed,
             "note": "需要 restart traffic-api 才會生效（detection thread 載入舊 zones）"}
@@ -825,6 +828,8 @@ async def calibrate_geometric(camera_id: int, mount_height_m: float = 4.0, range
     }
     c.detection_config = cfg
     c.zones = zones
+    flag_modified(c, "zones")
+    flag_modified(c, "detection_config")
     db.commit()
     return {
         "ok": True,
