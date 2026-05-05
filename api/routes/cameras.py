@@ -769,6 +769,79 @@ async def apply_tw_distance(camera_id: int, distance_m: float, db: Session = Dep
             "note": "需要 restart traffic-api 才會生效（detection thread 載入舊 zones）"}
 
 
+def _distance_at_y(y: float, frame_h: int, mount_height_m: float, range_m: float) -> float:
+    """1/distance 跟 y 線性內插：top y=0 → distance=R，bottom y=h → distance=H"""
+    if frame_h <= 0:
+        return mount_height_m
+    inv_top = 1.0 / max(0.5, range_m)
+    inv_bot = 1.0 / max(0.5, mount_height_m)
+    yr = max(0.0, min(1.0, y / float(frame_h)))
+    inv_d = inv_top + (inv_bot - inv_top) * yr
+    return 1.0 / max(1e-6, inv_d)
+
+
+@router.post("/{camera_id}/calibrate/geometric")
+async def calibrate_geometric(camera_id: int, mount_height_m: float = 4.0, range_m: float = 100.0, frame_h: int = 1080, db: Session = Depends(get_db)):
+    """幾何先驗校正：給相機掛桿高 + 偵測最遠距離 → 自動算 trip wire 真實距離 + 套用"""
+    c = db.query(Camera).filter(Camera.id == camera_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="攝影機不存在")
+    if not (0.5 <= mount_height_m <= 30):
+        raise HTTPException(status_code=400, detail="mount_height_m 範圍 0.5-30 m")
+    if not (5 <= range_m <= 500):
+        raise HTTPException(status_code=400, detail="range_m 範圍 5-500 m")
+
+    zones = list(c.zones or [])
+    in_z = next((z for z in zones if z.get("type") == "speed_line_in"), None)
+    out_z = next((z for z in zones if z.get("type") == "speed_line_out"), None)
+    if not in_z or not out_z:
+        raise HTTPException(status_code=422, detail="需先建立 speed_line_in + speed_line_out")
+    in_pts = in_z.get("points") or []
+    out_pts = out_z.get("points") or []
+    if len(in_pts) < 2 or len(out_pts) < 2:
+        raise HTTPException(status_code=422, detail="trip wire 需 2 點線")
+
+    # Use frame_h from zone if available
+    fh = int(in_z.get("source_height") or out_z.get("source_height") or frame_h)
+
+    in_y_mid = (in_pts[0][1] + in_pts[1][1]) / 2.0
+    out_y_mid = (out_pts[0][1] + out_pts[1][1]) / 2.0
+    d_in = _distance_at_y(in_y_mid, fh, mount_height_m, range_m)
+    d_out = _distance_at_y(out_y_mid, fh, mount_height_m, range_m)
+    line_distance_m = round(abs(d_in - d_out), 2)
+
+    # Apply to all speed_line_in zones
+    applied = 0
+    for z in zones:
+        if z.get("type") == "speed_line_in":
+            z["line_distance_m"] = line_distance_m
+            applied += 1
+    # Save geometric calibration to camera detection_config
+    cfg = dict(c.detection_config or {})
+    cfg["geometric_calibration"] = {
+        "mount_height_m": mount_height_m,
+        "range_m": range_m,
+        "frame_h": fh,
+    }
+    c.detection_config = cfg
+    c.zones = zones
+    db.commit()
+    return {
+        "ok": True,
+        "mount_height_m": mount_height_m,
+        "range_m": range_m,
+        "frame_h": fh,
+        "in_y_mid": int(in_y_mid),
+        "out_y_mid": int(out_y_mid),
+        "distance_in_line_to_cam_m": round(d_in, 2),
+        "distance_out_line_to_cam_m": round(d_out, 2),
+        "line_distance_m_applied": line_distance_m,
+        "zones_updated": applied,
+        "note": "需要 restart traffic-api 才會生效",
+    }
+
+
+
 
 
 
