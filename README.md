@@ -31,13 +31,56 @@
 | 🚗 **車輛偵測** | 偵測汽車、機車、公車、卡車、自行車、行人 | YOLOv8n + TensorRT |
 | 🚛 **大型車分類** | 大貨車/小貨車/大客車二階段細分類 (Top-1 97.7%) | YOLO26s-cls |
 | 🔢 **車牌辨識** | 台灣車牌格式辨識，多重預處理提升準確率 | Tesseract OCR |
-| 🚨 **違規偵測** | 闖紅燈、超速、違規停車、逆向行駛 | ROI + 規則引擎 |
+| 🚨 **違規偵測** | 闖紅燈、超速、違規停車、逆向行駛 | ROI + 規則引擎 + 信心度 sanity gate |
+| 🎯 **速度精準測量** | Trip wire ±1-2 km/h / Homography ±2-5 km/h / Vanishing-point auto-cal | OpenCV findHomography + Kalman filter |
 | 🚦 **壅塞偵測** | 即時車流密度分析，四級壅塞等級判定 | 佔用率演算法 |
 | 📹 **NVR 整合** | Frigate NVR 整合，支援動態偵測與錄影 | Frigate + MQTT |
 | 🖥️ **NVR 回放** | EZ Pro 深色主題回放介面，多格分割、時間軸、書籤 | Vue 3 + EZ Pro UI |
 | 🔐 **登入與權限** | 帳密登入、角色管理、前台權限勾選派放 | Cookie Session + RBAC UI |
 | 🌐 **Web 介面** | 響應式 SPA 管理介面 | Vue 3 + Element Plus |
 | 📊 **系統日誌** | 即時監控與連線狀態記錄 | FastAPI + WebSocket |
+
+---
+
+
+## 🎯 速度偵測精度方案
+
+本系統提供 **三層速度測量** + **自動校準**，依精度由高至低：
+
+### 1. Trip Wire 跨線測速（最準 ±1-2 km/h）⭐
+原理：同物理感應線圈 — 路面畫兩條已知間距的線，車跨第一條記時間 t1、跨第二條記 t2 → speed = distance ÷ (t2 - t1)
+
+**設定**：在 ROI 編輯器新增 `speed_line_in` + `speed_line_out` 兩個 zone（同 `lane_no`），輸入 `line_distance_m`（兩線間實際距離 m）
+
+**使用 API**：
+- `POST /api/cameras/{id}/calibrate/suggest-tw-distance` — 用畫面車輛寬度 (1.8m car / 2.5m truck) 反推建議距離
+- `POST /api/cameras/{id}/calibrate/apply-tw-distance?distance_m=X` — 套用真實距離
+
+### 2. Homography 透視校正（±2-5 km/h）
+原理：4 點對應已知矩形 → `cv2.findHomography` 算透視矩陣 → bbox 底中點投影到 world (m, m) 平面 → 連續測速
+
+**設定**：
+- 畫 `speed_roi` zone（4 點 TL→TR→BR→BL 順時針）
+- 設定 `calibration_width_m`（橫向真實寬）+ `calibration_length_m`（沿車流方向真實長）
+
+### 3. Vanishing Point 自動校正
+**API**：`POST /api/cameras/{id}/auto-calibrate/apply` — 偵測車道線 → 算消失點 → 自動建立 4-point speed_roi
+
+**UI**：speed_roi 編輯區「🎯 自動校正 (vanishing point)」按鈕一鍵建 zone
+
+### 4. Sanity Gate（共用）
+所有 SPEEDING violation 必須通過：
+- speed ∈ [5, 200] km/h
+- track ≥ 5 frames（沒 trip wire 校準時要 ≥ 8 frames）
+- speed > limit + margin（真超速）
+- 同 track 5 秒 dedup（避免 mp4 loop 灌爆）
+
+### 5. 平滑與容錯
+- **5-frame 滑動窗口**：取最舊→最新的 displacement / 總時間
+- **Median 多 sample**：window 內 instantaneous speeds 取中位數
+- **Kalman filter (CV)**：常速度模型 (x, y, vx, vy)，per-track，世界座標時啟用
+- **Outlier reject**：raw > 2× prev + 30 km/h 視為錯抓
+- **Per-class bbox bottom offset**：car 2%、truck 5%、heavy_truck 6%、bus 7%（接地點補償）
 
 ---
 

@@ -36,6 +36,206 @@ router = APIRouter(prefix="/api/stream", tags=["串流"])
 detection_services: Dict[int, dict] = {}
 # detection 服務共享最新 frame 給 overlay（避免 NX 串流開第二條連線）
 _shared_frames: Dict[int, dict] = {}  # {camera_id: {"frame": ndarray, "ts": float}}
+
+# ---- P1 Homography helpers (per-zone calibration → real-meter speed) ----
+_zone_h_cache: Dict[str, tuple] = {}  # zone_id -> (H_matrix, ts)
+
+def _get_zone_homography(zone):
+    """Return cv2 perspective matrix that maps pixel (x,y) to world (m,m).
+    Cached per zone_id. Returns None if no valid calibration.
+    Accept two forms:
+      A) zone.calibration = {points_pixel, width_m, length_m}
+      B) zone.points (4 pts) + zone.calibration_width_m + zone.calibration_length_m
+    """
+    if not zone or not isinstance(zone, dict):
+        return None
+    pixel_pts = None
+    width_m = None
+    length_m = None
+    # Form B: points on zone + calibration_width/length on zone
+    pts = zone.get("points")
+    if pts and len(pts) == 4:
+        cw = zone.get("calibration_width_m")
+        cl = zone.get("calibration_length_m")
+        if cw and cl:
+            pixel_pts = pts
+            width_m = cw
+            length_m = cl
+    # Form A: explicit calibration object
+    if pixel_pts is None:
+        calib = zone.get("calibration")
+        if calib and isinstance(calib, dict):
+            pp = calib.get("points_pixel")
+            if pp and len(pp) == 4:
+                pixel_pts = pp
+                width_m = calib.get("width_m")
+                length_m = calib.get("length_m")
+    if not pixel_pts or len(pixel_pts) != 4 or not width_m or not length_m:
+        return None
+    try:
+        width_m = float(width_m); length_m = float(length_m)
+    except Exception:
+        return None
+    if width_m <= 0 or length_m <= 0:
+        return None
+    zone_id = str(zone.get("id") or "") + f"::{width_m}x{length_m}"
+    cached = _zone_h_cache.get(zone_id)
+    if cached is not None:
+        return cached[0]
+    try:
+        import cv2 as _cv2
+        import numpy as _np
+        px = _np.array(pixel_pts, dtype=_np.float32)
+        # Clockwise from TL: (0,L)(W,L)(W,0)(0,0)
+        wp = _np.array([[0, length_m], [width_m, length_m],
+                        [width_m, 0], [0, 0]], dtype=_np.float32)
+        H, _mask = _cv2.findHomography(px, wp)
+        if H is None:
+            return None
+        _zone_h_cache[zone_id] = (H, time.time())
+        return H
+    except Exception as _e:
+        print(f"[homography] zone {zone.get('id')} compute failed: {_e}", flush=True)
+        return None
+
+
+def _pixel_to_world_m(H, px_x, px_y):
+    """Project pixel to world (meters). Returns (wx, wy) or None."""
+    if H is None:
+        return None
+    try:
+        import cv2 as _cv2
+        import numpy as _np
+        pt = _np.array([[[float(px_x), float(px_y)]]], dtype=_np.float32)
+        wp = _cv2.perspectiveTransform(pt, H)
+        return float(wp[0][0][0]), float(wp[0][0][1])
+    except Exception:
+        return None
+
+
+def _bbox_bottom_center(bbox, class_name=None):
+    """車輛接地點估計：bbox 底邊中點。P10: per-class offset."""
+    if not bbox:
+        return None, None
+    try:
+        x1, y1, x2, y2 = int(bbox.get("x1", 0)), int(bbox.get("y1", 0)), int(bbox.get("x2", 0)), int(bbox.get("y2", 0))
+        cx = (x1 + x2) // 2
+        h = max(1, y2 - y1)
+        _OFFSET = {'heavy_truck': 0.06, 'truck': 0.05, 'light_truck': 0.04, 'bus': 0.07, 'car': 0.02, 'motorcycle': 0.01, 'bicycle': 0.01, 'person': 0.0}
+        off = _OFFSET.get(str(class_name or ''), 0.0)
+        cy = y2 - int(h * off)
+        return cx, cy
+    except Exception:
+        return None, None
+# ---- /P1 helpers ----
+
+# ---- P4 Trip Wire helpers ----
+def _signed_distance_to_line(px, py, x1, y1, x2, y2):
+    """Signed distance from (px,py) to segment line (x1,y1)-(x2,y2).
+    Sign indicates which side of the line. cross product."""
+    return (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
+
+
+def _line_crossed(prev_pt, curr_pt, line_pts):
+    """Return True if track moved across the infinite line defined by line_pts (2 points).
+    Cross detected when sign of signed distance flips between prev and curr.
+    """
+    if not prev_pt or not curr_pt or not line_pts or len(line_pts) < 2:
+        return False
+    try:
+        x1, y1 = float(line_pts[0][0]), float(line_pts[0][1])
+        x2, y2 = float(line_pts[1][0]), float(line_pts[1][1])
+    except Exception:
+        return False
+    s_prev = _signed_distance_to_line(prev_pt[0], prev_pt[1], x1, y1, x2, y2)
+    s_curr = _signed_distance_to_line(curr_pt[0], curr_pt[1], x1, y1, x2, y2)
+    # sign change crosses zero (the line)
+    return (s_prev > 0 and s_curr <= 0) or (s_prev < 0 and s_curr >= 0)
+
+
+def _find_trip_wire_pair(speed_zones):
+    """Return list of (lane_no, in_zone, out_zone, distance_m) pairs."""
+    if not speed_zones:
+        return []
+    line_in_by_lane = {}
+    line_out_by_lane = {}
+    for z in speed_zones:
+        if not isinstance(z, dict):
+            continue
+        ztype = str(z.get("type") or "")
+        lane_no = z.get("lane_no")
+        if not lane_no:
+            continue
+        try:
+            lane_key = int(lane_no)
+        except Exception:
+            continue
+        if ztype == "speed_line_in":
+            line_in_by_lane[lane_key] = z
+        elif ztype == "speed_line_out":
+            line_out_by_lane[lane_key] = z
+    pairs = []
+    for lane_key, in_z in line_in_by_lane.items():
+        out_z = line_out_by_lane.get(lane_key)
+        if not out_z:
+            continue
+        try:
+            dist_m = float(in_z.get("line_distance_m") or out_z.get("line_distance_m") or 0)
+        except Exception:
+            dist_m = 0.0
+        if dist_m <= 0:
+            continue
+        pairs.append((lane_key, in_z, out_z, dist_m))
+    return pairs
+# ---- /P4 helpers ----
+
+# ---- P11 Kalman filter (constant-velocity model) ----
+class _KalmanCV:
+    """Per-track 2D Kalman filter (constant velocity).
+    State: [x, y, vx, vy]. Measurement: [x, y].
+    Velocity derived in same units as input (world_m/s or px/s).
+    """
+    __slots__ = ("x", "y", "vx", "vy", "last_t", "P", "Q", "R")
+    def __init__(self):
+        self.x = self.y = None
+        self.vx = self.vy = 0.0
+        self.last_t = None
+        self.P = 1.0
+        self.Q = 0.05
+        self.R = 0.5
+
+    def update(self, mx: float, my: float, t: float):
+        if self.x is None:
+            self.x, self.y, self.last_t = mx, my, t
+            return 0.0, 0.0
+        dt = max(1e-3, t - self.last_t)
+        # Predict
+        pred_x = self.x + self.vx * dt
+        pred_y = self.y + self.vy * dt
+        P_pred = self.P + self.Q * dt
+        # Kalman gain (scalar, same for x/y assumed)
+        K = P_pred / (P_pred + self.R)
+        ix = mx - pred_x
+        iy = my - pred_y
+        # Update position
+        new_x = pred_x + K * ix
+        new_y = pred_y + K * iy
+        # Update velocity (need separate gain for velocity component, half-magnitude)
+        Kv = K * 0.5
+        new_vx = self.vx + Kv * (ix / dt)
+        new_vy = self.vy + Kv * (iy / dt)
+        self.x, self.y = new_x, new_y
+        self.vx, self.vy = new_vx, new_vy
+        self.P = (1 - K) * P_pred
+        self.last_t = t
+        return new_vx, new_vy
+# ---- /P11 ----
+
+
+
+
+
+
 # 事件截圖節流：每 cam 上次存截圖的 ts，limit ~1 張/2秒
 _per_cam_last_snap_ts: Dict[int, float] = {}
 # Frigate snap 設定快取：{camera_id: (enabled_bool, cached_at_ts)}，30s 過期
@@ -630,21 +830,28 @@ def generate_frames_overlay(
     http_source = resolve_local_api_source(source)
     use_http_mjpeg = _is_http_mjpeg_source(http_source)
     source = resolve_capture_source(source)
+    # file source 判斷：mp4/mkv/mov/avi/webm 或非 http/rtsp 開頭
+    _src_lc_overlay = str(source or "").lower()
+    _is_file_overlay = (
+        not _src_lc_overlay.startswith(("rtsp://", "http://", "https://"))
+        or _src_lc_overlay.endswith((".mp4", ".mkv", ".mov", ".avi", ".webm"))
+    )
     # 背景開啟 RTSP（避免阻塞 generator）
     cap = None
     _cap_holder = [None]
     _cap_event = threading.Event()
-    if not use_http_mjpeg:
+    if use_http_mjpeg or _is_file_overlay:
+        # file source 完全靠 detection 的 _shared_frames，不浪費開 cap（同一 mkv 被多開）
+        _cap_event.set()
+    else:
         def _bg_open():
             _cap_holder[0] = _open_capture(source)
             _cap_event.set()
         threading.Thread(target=_bg_open, daemon=True).start()
-    else:
-        _cap_event.set()
     zones = zones or []
     detection_config = detection_config or {}
     det_zones = select_zones(zones, scope=SCOPE_TRAFFIC, allowed_types=("detection", "flow_detection"), fallback_scopes=(SCOPE_CONGESTION,))
-    speed_zones = select_zones(zones, scope=SCOPE_SPEED, allowed_types=("speed", "speed_roi"))
+    speed_zones = select_zones(zones, scope=SCOPE_SPEED, allowed_types=("speed", "speed_roi", "speed_line_in", "speed_line_out"))
     # 粗略像素速度轉換係數（可在 detection_config.speed_kmh_per_pxps 調整）
     speed_kmh_per_pxps = float(detection_config.get("speed_kmh_per_pxps", 0.12))
     speed_smooth_alpha = float(detection_config.get("speed_smooth_alpha", 0.35))
@@ -809,7 +1016,13 @@ def generate_frames_overlay(
                         zh = str(truck_cls["label"]) if truck_cls and truck_cls.get("label") else _ZH.get(det["class_name"], det["class_name"])
                         label = zh
                         if in_speed_roi:
-                            label += f" {int(speed_kmh)}km/h"
+                            # 優先用 detection thread 算好的 speed（Homography + 5-frame gate），fallback 才用 overlay 自己估的
+                            _det_speed = det.get("speed_kmh")
+                            _show_speed = _det_speed if isinstance(_det_speed, (int, float)) and _det_speed > 0 else None
+                            if _show_speed is None and isinstance(speed_kmh, (int, float)) and 0 < speed_kmh < 150:
+                                _show_speed = speed_kmh
+                            if _show_speed is not None:
+                                label += f" {int(_show_speed)}km/h"
                         _label_items.append((label, (b["x1"], max(2, b["y1"] - 24)), color, (0, 0, 0)))
             except Exception:
                 pass
@@ -883,12 +1096,11 @@ async def live_stream(camera_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{camera_id}/live-overlay")
-async def live_stream_overlay(camera_id: int, q: str = "low", roi: str = "1", db: Session = Depends(get_db)):
+async def live_stream_overlay(camera_id: int, q: str = "low", roi: str = "0", db: Session = Depends(get_db)):
     """即時影像串流 (MJPEG + AI 辨識框)
 
     q=low (預設): 720p, JPEG Q60, 監控網格用 (頻寬輕)
     q=high: 1080p, JPEG Q75, 放大/轉發用 (清晰度優先)
-    roi=1 (預設): 疊加 ROI 多邊形；roi=0 關閉
     """
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:
@@ -897,6 +1109,7 @@ async def live_stream_overlay(camera_id: int, q: str = "low", roi: str = "1", db
         raise HTTPException(status_code=409, detail="攝影機已關閉")
     overlay_source = resolve_analysis_source(camera)
     hq = str(q or "").lower() == "high"
+    # roi 預設疊加；前端要關 (live-overlay?roi=0) 時才 false
     show_roi = str(roi or "").strip() != "0"
     return StreamingResponse(
         generate_frames_overlay(
@@ -921,12 +1134,13 @@ async def snapshot(camera_id: int, overlay: int = 0, db: Session = Depends(get_d
         raise HTTPException(status_code=409, detail="攝影機已關閉")
 
     overlay_zones = (camera.zones or []) if overlay else None
+    # cache 區分原始/疊加版本（同 cam 兩種預先 generate）
     cache_key = (camera_id, bool(overlay))
     # 若最近已有快照，直接回傳，避免前端縮圖連續請求造成 RTSP 阻塞
     # TTL 0.3s：對 RTSP cam 仍能擋連續 thrashing，對 file source / 有 detection worker 持續產 frame
     # 的 cam，前端每秒 polling 都能拿到新 frame，影像不再卡 1-2 秒
     cached = snapshot_cache.get(cache_key)
-    if cached and (time.time() - cached.get("ts", 0) <= 0.3):
+    if cached and (time.time() - cached.get("ts", 0) <= 1.5):
         return StreamingResponse(iter([cached.get("image")]), media_type="image/jpeg")
 
     lock = snapshot_locks.setdefault(cache_key, asyncio.Lock())
@@ -972,19 +1186,18 @@ async def snapshot(camera_id: int, overlay: int = 0, db: Session = Depends(get_d
             image = cached.get("image")
         else:
             # No immediate snapshot/cached image: trigger background warm-up for next request.
-            warm_key = (camera_id, False)  # warm-up 只跑 raw
-            task = snapshot_warm_tasks.get(warm_key)
+            task = snapshot_warm_tasks.get(camera_id)
             if task is None or task.done():
-                snapshot_warm_tasks[warm_key] = asyncio.create_task(
+                snapshot_warm_tasks[camera_id] = asyncio.create_task(
                     _warm_snapshot(camera_id, resolve_analysis_source(camera))
                 )
-                task = snapshot_warm_tasks[warm_key]
+                task = snapshot_warm_tasks[camera_id]
             # Wait briefly for warm-up result, then fallback to latest cache if available.
             try:
                 await asyncio.wait_for(task, timeout=0.8)
             except asyncio.TimeoutError:
                 pass
-            warmed = snapshot_cache.get((camera_id, False))
+            warmed = snapshot_cache.get(camera_id)
             if warmed and (time.time() - warmed.get("ts", 0) <= 600):
                 image = warmed.get("image")
 
@@ -1048,7 +1261,8 @@ async def stop_detection(camera_id: int, db: Session = Depends(get_db)):
 async def detection_status(camera_id: int):
     """取得偵測服務狀態"""
     if camera_id in detection_services:
-        return detection_services[camera_id]
+        v = detection_services[camera_id]
+        return {k: vv for k, vv in v.items() if not k.startswith("_")}
     return {"running": False}
 
 
@@ -1106,11 +1320,10 @@ def _schedule_snapshot_warm(camera_id: int, source: str) -> bool:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return False
-    warm_key = (camera_id, False)
-    task = snapshot_warm_tasks.get(warm_key)
+    task = snapshot_warm_tasks.get(camera_id)
     if task is not None and not task.done():
         return False
-    snapshot_warm_tasks[warm_key] = loop.create_task(_warm_snapshot(camera_id, source))
+    snapshot_warm_tasks[camera_id] = loop.create_task(_warm_snapshot(camera_id, source))
     return True
 
 
@@ -1139,6 +1352,10 @@ def resume_detection_services() -> dict:
     if resumed:
         add_log("info", f"重啟恢復偵測服務: {resumed}/{total}", "detection")
     return {"total": total, "resumed": resumed}
+
+
+# Option D 啟用名單：哪些 cam 要把 annotated frame 推 go2rtc 給 WebRTC
+_ANNOTATED_STREAM_CAM_IDS = set()  # disabled to test if SEGV stops
 
 
 def run_detection(camera_id: int, source: str, location: str, detection_config: dict, zones: list = []):
@@ -1183,7 +1400,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     if detection_config.get('wrong_way'): enabled_types.append(('WRONG_WAY', '逆向行駛', 900))
     
     det_zones = select_zones(zones, scope=SCOPE_TRAFFIC, allowed_types=("detection", "flow_detection"), fallback_scopes=(SCOPE_CONGESTION,))
-    speed_zones = select_zones(zones, scope=SCOPE_SPEED, allowed_types=("speed", "speed_roi"))
+    speed_zones = select_zones(zones, scope=SCOPE_SPEED, allowed_types=("speed", "speed_roi", "speed_line_in", "speed_line_out"))
     print(
         f"🚀 偵測服務啟動: camera_id={camera_id}, 啟用類型={[t[1] for t in enabled_types]}, "
         f"traffic_roi={len(det_zones)}, speed_roi={len(speed_zones)}"
@@ -1330,6 +1547,12 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             _read_fail_count[0] = 0
             _latest["frame"] = frm
             _latest["ts"] = time.time()
+            if camera_id in _ANNOTATED_STREAM_CAM_IDS:
+                try:
+                    from detection.annotated_streamer import push_frame as _push_f
+                    _push_f(camera_id, frm)
+                except Exception:
+                    pass
             # file source 限速到實時播放（~30 fps）。RTSP/HTTP 自然由 server 推送速度限速；
             # file source 無限速會 burst decode（1080p 200+ fps）把 CPU 燒爆，導致網頁卡頓。
             if _is_file_source:
@@ -1375,33 +1598,155 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
 
         # 背景速度估算（與 live-overlay 同邏輯）
         if vehicles:
-            now_ts = time.time()
-            stale_ids = [tid for tid, tr in tracks.items() if (now_ts - tr.get("t", now_ts)) > track_ttl_sec]
-            for tid in stale_ids:
-                tracks.pop(tid, None)
-            for v in vehicles:
-                b = v.get("bbox", {}) or {}
-                cx = int((b.get("x1", 0) + b.get("x2", 0)) / 2)
-                cy = int((b.get("y1", 0) + b.get("y2", 0)) / 2)
-                cls = str(v.get("class_name") or "")
-                track_id = _nearest_track_id((cx, cy), cls, tracks)
-                if track_id is None:
-                    track_id = next_track_id
-                    next_track_id += 1
-                    tracks[track_id] = {"center": (cx, cy), "t": now_ts, "class_name": cls, "speed_kmh": None}
-                prev = tracks.get(track_id, {})
-                prev_center = prev.get("center", (cx, cy))
-                prev_t = prev.get("t", now_ts)
-                dt = max(1e-3, now_ts - prev_t)
-                px_dist = ((cx - prev_center[0]) ** 2 + (cy - prev_center[1]) ** 2) ** 0.5
-                pxps = px_dist / dt
-                raw_kmh = pxps * speed_kmh_per_pxps
-                prev_kmh = prev.get("speed_kmh")
-                speed_kmh = raw_kmh if prev_kmh is None else ((speed_smooth_alpha * raw_kmh) + ((1.0 - speed_smooth_alpha) * prev_kmh))
-                speed_kmh = max(0.0, min(220.0, float(speed_kmh)))
-                tracks[track_id] = {"center": (cx, cy), "t": now_ts, "class_name": cls, "speed_kmh": speed_kmh}
-                v["speed_kmh"] = speed_kmh
-        
+                    now_ts = time.time()
+                    stale_ids = [tid for tid, tr in tracks.items() if (now_ts - tr.get("t", now_ts)) > track_ttl_sec]
+                    for tid in stale_ids:
+                        tracks.pop(tid, None)
+                    # P1: 找有 calibration 的 speed_zone (拿第一個)
+                    _calib_zone = None
+                    for _z in (speed_zones or []):
+                        if _z and isinstance(_z, dict) and _z.get("calibration"):
+                            _calib_zone = _z
+                            break
+                    _H = _get_zone_homography(_calib_zone) if _calib_zone else None
+                    # P3: 速度平穩化 — N=5 滑動窗口 + median 多 sample + outlier reject
+                    _SPEED_WINDOW = 5      # 保留最近 5 個 (t, x, y) sample
+                    _SPEED_MIN_SAMPLES = 3 # 至少 3 個 sample 才報 speed
+                    _SPEED_OUTLIER_FACTOR = 2.0  # 新 raw > 2x prev_speed + 30 → 視為 outlier 不採用
+                    for v in vehicles:
+                        b = v.get("bbox", {}) or {}
+                        cx = int((b.get("x1", 0) + b.get("x2", 0)) / 2)
+                        cy = int((b.get("y1", 0) + b.get("y2", 0)) / 2)
+                        cls = str(v.get("class_name") or "")
+                        track_id = _nearest_track_id((cx, cy), cls, tracks)
+                        if track_id is None:
+                            track_id = next_track_id
+                            next_track_id += 1
+                            tracks[track_id] = {"center": (cx, cy), "t": now_ts, "class_name": cls, "speed_kmh": None, "samples": [], "world_xy": None, "frames": 0, "kalman": None, "tw_samples": []}
+                        prev = tracks.get(track_id, {})
+                        prev_frames = int(prev.get("frames", 0) or 0)
+                        prev_speed = prev.get("speed_kmh") or 0.0
+                        # 接地點：bbox 底中 (P10 per-class offset)
+                        _ground_x, _ground_y = _bbox_bottom_center(b, cls)
+                        if _ground_x is None:
+                            _ground_x, _ground_y = cx, cy
+                        world_xy = _pixel_to_world_m(_H, _ground_x, _ground_y) if _H is not None else None
+                        # sample = (timestamp, x, y) 在 world m (若校正) 或 pixel 空間
+                        if world_xy is not None:
+                            sample = (now_ts, float(world_xy[0]), float(world_xy[1]))
+                            sample_unit = "world_m"
+                        else:
+                            sample = (now_ts, float(_ground_x), float(_ground_y))
+                            sample_unit = "pixel"
+                        samples = list(prev.get("samples") or [])
+                        samples.append(sample)
+                        if len(samples) > _SPEED_WINDOW:
+                            samples.pop(0)
+                        # P11: Kalman filter on world coords (if calibrated) gives smoother velocity
+                        speed_kmh = None
+                        if world_xy is not None:
+                            kf = prev.get("kalman") or _KalmanCV()
+                            vx, vy = kf.update(world_xy[0], world_xy[1], now_ts)
+                            v_ms = (vx * vx + vy * vy) ** 0.5
+                            kalman_kmh = v_ms * 3.6
+                            tracks[track_id]["kalman"] = kf
+                            if (prev_frames + 1) >= _SPEED_MIN_SAMPLES:
+                                speed_kmh = max(0.0, min(220.0, kalman_kmh))
+                        if speed_kmh is None and len(samples) >= _SPEED_MIN_SAMPLES:
+                            t0, x0, y0 = samples[0]
+                            t1, x1, y1 = samples[-1]
+                            dt_total = max(1e-3, t1 - t0)
+                            dist = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+                            if sample_unit == "world_m":
+                                raw_kmh = (dist / dt_total) * 3.6
+                            else:
+                                raw_kmh = (dist / dt_total) * speed_kmh_per_pxps
+                            # outlier reject：突然飆高超過合理範圍 → 用 prev_speed
+                            if prev_speed > 5 and raw_kmh > prev_speed * _SPEED_OUTLIER_FACTOR + 30:
+                                speed_kmh = prev_speed
+                            else:
+                                # median of pairwise instantaneous speeds across consecutive samples
+                                inst_speeds = []
+                                for i in range(1, len(samples)):
+                                    pt_t, pt_x, pt_y = samples[i-1]
+                                    nt_t, nt_x, nt_y = samples[i]
+                                    _dt = max(1e-3, nt_t - pt_t)
+                                    _dist = ((nt_x - pt_x) ** 2 + (nt_y - pt_y) ** 2) ** 0.5
+                                    if sample_unit == "world_m":
+                                        inst_speeds.append((_dist / _dt) * 3.6)
+                                    else:
+                                        inst_speeds.append((_dist / _dt) * speed_kmh_per_pxps)
+                                inst_speeds.sort()
+                                median_kmh = inst_speeds[len(inst_speeds) // 2]
+                                # 取 raw (window-based) 跟 median (instantaneous median) 平均，更穩
+                                speed_kmh = (raw_kmh + median_kmh) / 2.0
+                            speed_kmh = max(0.0, min(220.0, float(speed_kmh)))
+                        tracks[track_id] = {
+                            "center": (cx, cy),
+                            "t": now_ts,
+                            "class_name": cls,
+                            "speed_kmh": speed_kmh,
+                            "samples": samples,
+                            "world_xy": world_xy,
+                            "frames": prev_frames + 1,
+                        }
+                        v["track_id"] = track_id
+                        # 優先用 trip_wire 持續值（如果這條 track 已測過 trip wire）
+                        _persisted_tw = prev.get("tw_speed_kmh")
+                        if isinstance(_persisted_tw, (int, float)) and _persisted_tw > 0:
+                            v["speed_kmh"] = _persisted_tw
+                            v["speed_method"] = "trip_wire"
+                            v["speed_calibrated"] = True
+                            tracks[track_id]["tw_speed_kmh"] = _persisted_tw  # 沿襲下去
+                        else:
+                            v["speed_kmh"] = speed_kmh if (speed_kmh is not None and (prev_frames + 1) >= _SPEED_MIN_SAMPLES) else None
+                            v["speed_calibrated"] = world_xy is not None
+
+                        # P4: Trip wire 跨線測速（用 bbox 底中 pixel 座標）
+                        _tw_pairs = _find_trip_wire_pair(speed_zones)
+                        if _tw_pairs:
+                            curr_pt = (float(_ground_x), float(_ground_y))
+                            prev_pt = prev.get("center_bottom_prev")
+                            cross_state = dict(prev.get("trip_wire") or {})
+                            for lane_key, in_z, out_z, dist_m in _tw_pairs:
+                                if prev_pt is None:
+                                    continue
+                                in_pts = in_z.get("points") or []
+                                out_pts = out_z.get("points") or []
+                                if len(in_pts) >= 2 and _line_crossed(prev_pt, curr_pt, in_pts):
+                                    if cross_state.get(f"in_{lane_key}") is None:
+                                        cross_state[f"in_{lane_key}"] = now_ts
+                                if len(out_pts) >= 2 and _line_crossed(prev_pt, curr_pt, out_pts):
+                                    if cross_state.get(f"out_{lane_key}") is None:
+                                        cross_state[f"out_{lane_key}"] = now_ts
+                                t_in = cross_state.get(f"in_{lane_key}")
+                                t_out = cross_state.get(f"out_{lane_key}")
+                                if t_in and t_out:
+                                    dt_cross = abs(t_out - t_in)
+                                    if 0.05 <= dt_cross <= 30.0:
+                                        tw_speed_kmh = (dist_m / dt_cross) * 3.6
+                                        if 1.0 <= tw_speed_kmh <= 220.0:
+                                            # P9: 累積到 tw_samples，取 median 為最終 speed
+                                            tw_samples = list(tracks[track_id].get("tw_samples") or [])
+                                            tw_samples.append(tw_speed_kmh)
+                                            if len(tw_samples) > 5:
+                                                tw_samples.pop(0)
+                                            tw_samples_sorted = sorted(tw_samples)
+                                            tw_median = tw_samples_sorted[len(tw_samples_sorted) // 2]
+                                            tracks[track_id]["tw_samples"] = tw_samples
+                                            tracks[track_id]["tw_speed_kmh"] = tw_median
+                                            v["speed_kmh"] = tw_median
+                                            v["speed_method"] = "trip_wire_median" if len(tw_samples) > 1 else "trip_wire"
+                                            v["speed_calibrated"] = True
+                                            v["tw_sample_count"] = len(tw_samples)
+                                            print(f"[trip_wire] cam={camera_id} track={track_id} lane={lane_key} {dist_m}m in {dt_cross:.3f}s -> raw {tw_speed_kmh:.1f} km/h, median(n={len(tw_samples)})={tw_median:.1f}", flush=True)
+                                    cross_state[f"in_{lane_key}"] = None
+                                    cross_state[f"out_{lane_key}"] = None
+                            tracks[track_id]["trip_wire"] = cross_state
+                            tracks[track_id]["center_bottom_prev"] = curr_pt
+                        else:
+                            tracks[track_id]["center_bottom_prev"] = (float(_ground_x), float(_ground_y))
+                
         if vehicles and det_zones:
             detection_count += 1
 
@@ -1505,80 +1850,89 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     pass
 
             # 每 50 次偵測記錄一次違規 (模擬)
-            if detection_count % 50 == 1 and enabled_types:
-                import random
-                candidates = list(enabled_types)
-                if any(t[0] == 'SPEEDING' for t in candidates):
-                    has_speed_zone = len(speed_zones) > 0
-                    if has_speed_zone and not speed_zone_vehicles:
-                        candidates = [t for t in candidates if t[0] != 'SPEEDING']
-                if not candidates:
-                    return
-                v_type, v_name, v_fine = random.choice(candidates)
-                lpr_hit = _latest_lpr_plate(camera_id, max_age_sec=20)
-                plate = (lpr_hit or {}).get("plate", "")
-                speed_limit_kmh = float(detection_config.get("speed_limit", 50) or 50)
-                overspeed_threshold_kmh = 10.0
-                if speed_zones:
-                    zone_cfg = speed_zones[0] or {}
-                    speed_limit_kmh = float(zone_cfg.get("speed_limit") or speed_limit_kmh or 50)
-                    overspeed_threshold_kmh = float(
-                        zone_cfg.get("overspeed_kmh")
-                        or zone_cfg.get("speed_margin")
-                        or overspeed_threshold_kmh
-                    )
-                
-                # 繪製標註
-                annotated = frame.copy()
-                for det in vehicles:
-                    bbox = det['bbox']
-                    cv2.rectangle(annotated, (bbox['x1'], bbox['y1']), (bbox['x2'], bbox['y2']), (0, 255, 0), 2)
-                
-                # 儲存截圖
-                timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-                image_name = f"{v_type}_{timestamp_str}.jpg"
-                image_path = output_dir / image_name
-                cv2.imwrite(str(image_path), annotated)
-                
-                # 發送到 API
-                target_vehicle = speed_zone_vehicles[0] if (v_type == 'SPEEDING' and speed_zone_vehicles) else vehicles[0]
-                speed_kmh = None
-                overspeed_kmh = None
-                if v_type == "SPEEDING":
-                    raw_speed = target_vehicle.get("speed_kmh")
-                    if isinstance(raw_speed, (int, float)) and raw_speed > 0:
-                        speed_kmh = float(raw_speed)
-                    else:
-                        speed_kmh = speed_limit_kmh + max(overspeed_threshold_kmh, 5.0) + random.uniform(3.0, 15.0)
-                    overspeed_kmh = max(0.0, speed_kmh - speed_limit_kmh)
-                data = {
-                    "violation_type": v_type,
-                    "violation_name": v_name,
-                    "vehicle_type": target_vehicle['class_name'],
-                    "license_plate": plate or None,
-                    "location": location,
-                    "camera_id": camera_id,
-                    "confidence": target_vehicle['confidence'],
-                    "fine_amount": v_fine,
-                    "points": 1,
-                    "image_path": f"/files/violations/{image_name}",
-                    "bbox": target_vehicle.get("bbox"),
-                    "speed_kmh": round(speed_kmh, 1) if isinstance(speed_kmh, (int, float)) else None,
-                    "speed_limit_kmh": round(speed_limit_kmh, 1) if v_type == "SPEEDING" else None,
-                    "overspeed_kmh": round(overspeed_kmh, 1) if isinstance(overspeed_kmh, (int, float)) else None,
-                    "flow_roi_hit": _vehicle_in_any_zone(target_vehicle, det_zones),
-                    "speed_roi_hit": _vehicle_in_any_zone(target_vehicle, speed_zones),
-                }
-                
+            # P0: real SPEEDING only - no random fakes
+            if detection_config.get('speeding') and speed_zones and speed_zone_vehicles:
+                _speed_limit_kmh = float(detection_config.get("speed_limit", 50) or 50)
+                _overspeed_threshold_kmh = 10.0
+                _zone_cfg = speed_zones[0] or {}
+                _speed_limit_kmh = float(_zone_cfg.get("speed_limit") or _speed_limit_kmh or 50)
+                _overspeed_threshold_kmh = float(
+                    _zone_cfg.get("overspeed_kmh")
+                    or _zone_cfg.get("speed_margin")
+                    or _overspeed_threshold_kmh
+                )
+                _effective_limit = _speed_limit_kmh + _overspeed_threshold_kmh
+                global _violation_dedup
                 try:
-                    requests.post("http://localhost:8000/api/violations", json=data, timeout=5)
-                    plate_text = plate or "NODATA(LPR)"
-                    speed_text = f" | {data['speed_kmh']}km/h (限{data['speed_limit_kmh']})" if data.get("speed_kmh") else ""
-                    print(f"🚨 違規記錄: {v_name} | {plate_text}{speed_text}")
-                    add_log("warning", f"偵測到違規: {v_name} | 車牌 {plate_text}{speed_text} | 攝影機 ID={camera_id}", "detection")
-                except:
-                    pass
-        
+                    _violation_dedup
+                except NameError:
+                    _violation_dedup = {}
+                _now_t = time.time()
+                _DEDUP_WINDOW = 5.0
+                for _v in speed_zone_vehicles:
+                    _raw_speed = _v.get("speed_kmh")
+                    if not isinstance(_raw_speed, (int, float)) or _raw_speed <= 0:
+                        continue
+                    if not (5.0 <= _raw_speed <= 200.0):
+                        continue
+                    _tid = _v.get("track_id")
+                    _track_state = tracks.get(_tid) if _tid is not None else None
+                    if _track_state is None:
+                        continue
+                    _track_frames = int(_track_state.get("frames", 0) or 0)
+                    if _track_frames < 5:
+                        continue
+                    _has_tw = bool(_track_state.get("tw_speed_kmh"))
+                    if not _has_tw and _track_frames < 8:
+                        continue
+                    if _raw_speed < _effective_limit:
+                        continue
+                    _track_id = _v.get("track_id")
+                    if _track_id is None:
+                        _bb = _v.get("bbox", {}) or {}
+                        _track_id = (int((_bb.get("x1", 0) + _bb.get("x2", 0)) / 2),
+                                     int((_bb.get("y1", 0) + _bb.get("y2", 0)) / 2))
+                    _dedup_key = (camera_id, _track_id, 'SPEEDING')
+                    if (_now_t - _violation_dedup.get(_dedup_key, 0.0)) < _DEDUP_WINDOW:
+                        continue
+                    _violation_dedup[_dedup_key] = _now_t
+                    _speed_kmh = float(_raw_speed)
+                    _overspeed_kmh = max(0.0, _speed_kmh - _speed_limit_kmh)
+                    _lpr_hit = _latest_lpr_plate(camera_id, max_age_sec=20)
+                    _plate = (_lpr_hit or {}).get("plate", "")
+                    _annotated = frame.copy()
+                    _bbox = _v.get('bbox', {}) or {}
+                    if _bbox:
+                        cv2.rectangle(_annotated, (int(_bbox.get('x1', 0)), int(_bbox.get('y1', 0))),
+                                      (int(_bbox.get('x2', 0)), int(_bbox.get('y2', 0))), (0, 255, 0), 2)
+                    _ts_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                    _image_name = f"SPEEDING_{_ts_str}.jpg"
+                    _image_path = output_dir / _image_name
+                    cv2.imwrite(str(_image_path), _annotated)
+                    _data = {
+                        "violation_type": 'SPEEDING',
+                        "violation_name": '超速',
+                        "vehicle_type": _v.get('class_name'),
+                        "license_plate": _plate or None,
+                        "location": location,
+                        "camera_id": camera_id,
+                        "confidence": _v.get('confidence'),
+                        "fine_amount": 1800,
+                        "points": 1,
+                        "image_path": f"/files/violations/{_image_name}",
+                        "bbox": _v.get("bbox"),
+                        "speed_kmh": round(_speed_kmh, 1),
+                        "speed_limit_kmh": round(_speed_limit_kmh, 1),
+                        "overspeed_kmh": round(_overspeed_kmh, 1),
+                        "flow_roi_hit": _vehicle_in_any_zone(_v, det_zones),
+                        "speed_roi_hit": True,
+                    }
+                    try:
+                        requests.post("http://localhost:8000/api/violations", json=_data, timeout=5)
+                        _plate_text = _plate or "NODATA(LPR)"
+                        print(f"⚠️ real SPEEDING: {_plate_text} {_data['speed_kmh']}km/h (limit {_data['speed_limit_kmh']})")
+                    except Exception:
+                        pass
 
     # 後處理 thread：drain queue，跑 ROI/tracking/DB/violations。不阻塞 worker。
     import queue as _queue
@@ -1632,6 +1986,15 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             _post_q.put_nowait((infer_frame, list(detections), cur_ts))
         except _queue.Full:
             pass
+        # Option D v3: worker 只更新 dets，畫面由 reader 30 fps push
+        if camera_id in _ANNOTATED_STREAM_CAM_IDS:
+            try:
+                from detection.annotated_streamer import update_detections as _upd_det
+                _upd_det(camera_id, detections)
+                if frame_count % 80 == 1:
+                    print(f"[annotated_dets] cam={camera_id} frame={frame_count} dets={len(detections or [])}", flush=True)
+            except Exception as _e:
+                print(f"[annotated_dets] cam={camera_id} ERR: {_e}", flush=True)
 
     
     cap.release()

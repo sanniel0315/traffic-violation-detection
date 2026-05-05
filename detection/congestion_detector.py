@@ -48,6 +48,23 @@ class CongestionDetector:
         self.queue_state_map: Dict[str, Dict[str, Any]] = defaultdict(dict)
         print("✅ 壅塞偵測器初始化完成")
 
+    def reset_camera_state(self, camera_key: str) -> None:
+        """清空單一攝影機的所有累積狀態。檔案來源 loop 回開頭時呼叫，
+        避免上一輪播放殘留的追蹤 ID / 分數歷史 / queue 持續秒數把新一輪的判定往上灌。"""
+        key = str(camera_key)
+        self.history_map.pop(key, None)
+        self.tracker_map.pop(key, None)
+        self.track_meta_map.pop(key, None)
+        self.queue_state_map.pop(key, None)
+        # zone-level 也清（分數歷史 key 格式是 f"{camera_key}::zone_{idx}" 與 f"{camera_key}::overall"）
+        prefix = f"{key}::"
+        for sub_key in list(self.history_map.keys()):
+            if sub_key.startswith(prefix):
+                self.history_map.pop(sub_key, None)
+        for sub_key in list(self.queue_state_map.keys()):
+            if sub_key.startswith(prefix):
+                self.queue_state_map.pop(sub_key, None)
+
     def analyze(
         self,
         frame: np.ndarray,
@@ -96,13 +113,16 @@ class CongestionDetector:
         # 過濾異常大的 bbox（面積 > 畫面 40% 不可能是車）
         max_area = w * h * 0.4
         vehicles = [v for v in vehicles if v['bbox'].get('width', 0) * v['bbox'].get('height', 0) < max_area]
+        # 過濾過小 bbox（< 8000 px，避免三角錐 / 路標 / 反光鏡誤判成 car）
+        MIN_VEHICLE_AREA = 8000
+        vehicles = [v for v in vehicles if v['bbox'].get('width', 0) * v['bbox'].get('height', 0) >= MIN_VEHICLE_AREA]
 
         if roi_mask is not None:
             vehicles = self._filter_in_roi(vehicles, roi_mask)
 
         tracker = self.tracker_map.get(camera_key)
         if tracker is None:
-            tracker = VehicleTracker(max_age=max(window * 3, 12), iou_threshold=0.15)
+            tracker = VehicleTracker(max_age=max(window, 5), iou_threshold=0.15)  # 即時化：原 window*3=30s 太久，改 window=10s
             self.tracker_map[camera_key] = tracker
         tracked_vehicles = tracker.update([dict(v) for v in vehicles])
         if not tracked_vehicles:
@@ -143,9 +163,22 @@ class CongestionDetector:
             history.pop(0)
         smoothed = sum(history) / len(history)
 
+        # 即時 fast-path：raw vehicles 連 2 frame 都 0 車 → 立刻 force level=low
+        # 不等 smoothing + tracker max_age，車一清就馬上降級
+        _zero_key = f"{camera_key}::raw_zero_count"
+        if not hasattr(self, "_raw_zero_streak"):
+            self._raw_zero_streak = {}
+        if len(vehicles) == 0:
+            self._raw_zero_streak[_zero_key] = self._raw_zero_streak.get(_zero_key, 0) + 1
+        else:
+            self._raw_zero_streak[_zero_key] = 0
+        _force_low = self._raw_zero_streak.get(_zero_key, 0) >= 2
+
         # 全域 level：車輛數 >=2 走原邏輯；單車例外：停著且 occupancy 達 medium 以上仍升 level
         # （單一大車卡住前方 ≠ 「短暫路過」，仍應視為壅塞）
-        if len(tracked_vehicles) >= 2:
+        if _force_low:
+            level = 'low'
+        elif len(tracked_vehicles) >= 2:
             level = (
                 'critical' if smoothed >= critical_t
                 else 'high' if smoothed >= high_t

@@ -2885,12 +2885,13 @@ class LPRStreamTask:
                         width_ratio = (final_w / detector_w) if detector_w > 0 else 0.0
                         height_ratio = (final_h / detector_h) if detector_h > 0 else 0.0
                         area_ratio = ((final_w * final_h) / float(max(1, detector_w * detector_h)))
-                        print(
-                            "[LPR] crop "
-                            f"detector_bbox_size={detector_w}x{detector_h} "
-                            f"final_plate_crop_size={final_w}x{final_h} "
-                            f"crop_ratio=w:{width_ratio:.2f},h:{height_ratio:.2f},area:{area_ratio:.2f}"
-                        )
+                        if os.environ.get("LPR_DEBUG"):
+                            print(
+                                "[LPR] crop "
+                                f"detector_bbox_size={detector_w}x{detector_h} "
+                                f"final_plate_crop_size={final_w}x{final_h} "
+                                f"crop_ratio=w:{width_ratio:.2f},h:{height_ratio:.2f},area:{area_ratio:.2f}"
+                            )
 
                         best_crop_plate = ""
                         best_crop_score = -1.0
@@ -2926,7 +2927,7 @@ class LPRStreamTask:
                         result["effective_confidence"] = effective_conf
                         result["raw"] = raw
                         result["valid"] = crop_valid
-                        if raw:
+                        if raw and os.environ.get("LPR_DEBUG"):
                             print(
                                 f"[LPR] OCR原始: {raw} → 格式化: {plate} "
                                 f"信心度: {conf:.2f} 有效信心: {effective_conf:.2f}"
