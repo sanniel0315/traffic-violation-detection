@@ -846,6 +846,87 @@ async def calibrate_geometric(camera_id: int, mount_height_m: float = 4.0, range
     }
 
 
+@router.post("/{camera_id}/calibrate/by-car-length")
+async def calibrate_by_car_length(camera_id: int, car_length_m: float = 4.0, db: Session = Depends(get_db)):
+    """用畫面中車輛 bbox 高度（=車長 4m 預設）算 px/m scale，套到 trip wire 真實距離。
+    適合鏡頭看後車 (bbox 高 ≈ 車長)。"""
+    c = db.query(Camera).filter(Camera.id == camera_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="攝影機不存在")
+    zones = list(c.zones or [])
+    in_z = next((z for z in zones if z.get("type") == "speed_line_in"), None)
+    out_z = next((z for z in zones if z.get("type") == "speed_line_out"), None)
+    if not in_z or not out_z:
+        raise HTTPException(status_code=422, detail="需先建立 speed_line_in + speed_line_out")
+    in_pts = in_z.get("points") or []
+    out_pts = out_z.get("points") or []
+    if len(in_pts) < 2 or len(out_pts) < 2:
+        raise HTTPException(status_code=422, detail="trip wire 需 2 點")
+
+    in_y_mid = (in_pts[0][1] + in_pts[1][1]) / 2.0
+    out_y_mid = (out_pts[0][1] + out_pts[1][1]) / 2.0
+    line_pixel_dist = abs(out_y_mid - in_y_mid)
+
+    # Get latest detections
+    try:
+        from api.routes.stream import _shared_frames
+        sf = _shared_frames.get(camera_id) or {}
+        dets = sf.get("detections") or []
+    except Exception:
+        dets = []
+    if not dets:
+        raise HTTPException(status_code=503, detail="無偵測車輛 — 請等車經過後再試")
+
+    # 收集 cars 在 trip wire 兩線間 y 的 bbox 高度
+    samples = []
+    tw_min_y = min(in_y_mid, out_y_mid) - line_pixel_dist
+    tw_max_y = max(in_y_mid, out_y_mid) + line_pixel_dist
+    for d in dets:
+        cls = d.get("class_name", "")
+        if cls not in ("car", "truck", "heavy_truck", "light_truck", "bus"):
+            continue
+        b = d.get("bbox") or {}
+        by1 = b.get("y1", 0); by2 = b.get("y2", 0)
+        bbox_h = abs(by2 - by1)
+        bbox_cy = (by1 + by2) / 2.0
+        if bbox_h < 40:
+            continue
+        if not (tw_min_y <= bbox_cy <= tw_max_y):
+            continue
+        scale_px_per_m = bbox_h / car_length_m
+        # px / scale = real m
+        suggested_m = line_pixel_dist / scale_px_per_m
+        samples.append({
+            "class": cls, "bbox_h_px": int(bbox_h), "bbox_cy": int(bbox_cy),
+            "scale_px_per_m": round(scale_px_per_m, 2),
+            "suggested_m": round(suggested_m, 2),
+        })
+    if not samples:
+        raise HTTPException(status_code=503, detail="未找到 trip wire 區域內車輛")
+    sorted_m = sorted(s["suggested_m"] for s in samples)
+    median_m = sorted_m[len(sorted_m) // 2]
+
+    # Apply to all speed_line_in
+    applied = 0
+    for z in zones:
+        if z.get("type") == "speed_line_in":
+            z["line_distance_m"] = median_m
+            applied += 1
+    c.zones = zones
+    flag_modified(c, "zones")
+    db.commit()
+    return {
+        "ok": True,
+        "car_length_m_assumed": car_length_m,
+        "samples": samples,
+        "median_suggested_m": median_m,
+        "line_distance_m_applied": median_m,
+        "zones_updated": applied,
+        "note": "需 restart traffic-api 才會生效",
+    }
+
+
+
 
 
 
