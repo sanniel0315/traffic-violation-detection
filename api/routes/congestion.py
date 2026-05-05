@@ -207,8 +207,9 @@ async def update_congestion_params(camera_id: int, data: CongestionParamsUpdate,
 async def congestion_status(camera_id: int):
     """取得壅塞偵測狀態"""
     service = congestion_services.get(camera_id, {'running': False})
+    safe_service = {k: v for k, v in service.items() if not k.startswith("_")}
     result = congestion_results.get(camera_id, {})
-    return {**service, 'result': result, 'params': get_effective_params(camera_id)}
+    return {**safe_service, 'result': result, 'params': get_effective_params(camera_id)}
 
 
 @router.get("/status/all")
@@ -225,7 +226,7 @@ async def all_congestion_status():
 
 
 @router.get("/samples")
-def get_congestion_samples(
+async def get_congestion_samples(
     camera_id: int | None = None,
     start_time: datetime | None = None,
     end_time: datetime | None = None,
@@ -381,28 +382,53 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
     import os as _os
     # RTSP 強制走 TCP 避免封包掉包
     if str(source).lower().startswith("rtsp://"):
-        _os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS",
-                               "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536")
-    # file source 判定：不開另一個 cap，直接用 stream._shared_frames 已 decoded 的 frame
-    # （避開 multi-cap multi-thread ffmpeg race，且讓 congestion 跟 stream 同步同一 frame）
+        _os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536|threads;1"
+    # 判斷是不是檔案來源（相對路徑、/files/... 或副檔名是影片）→ 影響 EOF 處理策略
     _src_lc = str(source or "").lower()
-    _is_file_source = (
+    is_file_source = (
         not _src_lc.startswith(("rtsp://", "http://", "https://"))
-        or _src_lc.endswith((".mp4", ".mkv", ".mov", ".avi", ".webm"))
+        or _src_lc.endswith((".mp4", ".avi", ".mkv", ".mov"))
     )
-    _stream_shared = None
-    if _is_file_source:
-        try:
-            from api.routes.stream import _shared_frames as _stream_shared
-        except Exception:
-            _stream_shared = None
-    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-
-    print(f"🚦 壅塞偵測啟動: camera_id={camera_id} (file_source={_is_file_source}, share_detection_frame={_stream_shared is not None})")
+    # file source: 不再自己 open cap，從 detection 的 _shared_frames 取 frame
+    # （commit 9c9679e 完成版：避免每個 mkv 被開多條 cap 浪費 CPU）
+    cap = None if is_file_source else cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+    _last_shared_ts = 0.0
+    print(f"🚦 壅塞偵測啟動: camera_id={camera_id} (file_source={is_file_source}, shared_frames={is_file_source})")
     fail_count = 0
     last_ok = time.time()
     try:
         while congestion_services.get(camera_id, {}).get('running', False):
+            if is_file_source:
+                # 從 detection worker 的 _shared_frames 取最新 frame，不重複開 cap
+                try:
+                    from api.routes.stream import _shared_frames as _sf_dict
+                except Exception:
+                    _sf_dict = {}
+                _sf = _sf_dict.get(camera_id) or {}
+                _frame = _sf.get("frame")
+                _ts = float(_sf.get("ts", 0) or 0)
+                if _frame is None or _ts <= 0:
+                    # detection 還沒起來，等
+                    time.sleep(0.5)
+                    continue
+                if _ts == _last_shared_ts:
+                    # 沒新 frame，短暫等
+                    time.sleep(0.05)
+                    continue
+                _last_shared_ts = _ts
+                last_ok = time.time()
+                try:
+                    result = analyze_with_lock(_frame, zones, camera_id)
+                    congestion_results[camera_id] = result
+                    congestion_services[camera_id]['last_update'] = datetime.now().isoformat()
+                    sample_interval_sec = float(get_effective_params(camera_id).get("analyze_interval_sec", 1.0))
+                    _store_congestion_samples(camera_id, camera_name, result, sample_interval_sec)
+                    time.sleep(sample_interval_sec)
+                except Exception as e:
+                    print(f"⚠️ congestion cam_{camera_id} (file) analyze error: {e}", flush=True)
+                    time.sleep(1.0)
+                continue
+            # 以下為 RTSP/HTTP 路徑（保持原邏輯）
             if not cap.isOpened() or (time.time() - last_ok) > 10.0:
                 try:
                     cap.release()
@@ -415,22 +441,29 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                 time.sleep(1.0)
                 continue
 
-            # file source fast path：用 detection worker 已 decoded 的 frame，跳過自己 cap.read
-            ret, frame = False, None
-            if _is_file_source and _stream_shared is not None:
-                sf = _stream_shared.get(camera_id)
-                if sf and (time.time() - sf.get("ts", 0)) < 1.5 and sf.get("frame") is not None:
-                    frame = sf["frame"].copy() if hasattr(sf["frame"], "copy") else sf["frame"]
-                    ret = frame is not None and getattr(frame, "size", 0) > 0
+            try:
+                ret, frame = cap.read()
+            except Exception as e:
+                print(f"⚠️ congestion cam_{camera_id} cap.read exception: {e}", flush=True)
+                ret, frame = False, None
 
             if not ret:
-                try:
-                    ret, frame = cap.read()
-                except Exception as e:
-                    print(f"⚠️ congestion cam_{camera_id} cap.read exception: {e}", flush=True)
-                    ret, frame = False, None
-
-            if not ret:
+                if is_file_source:
+                    # 檔案 EOF：seek 回開頭 + 清空偵測器狀態（tracker / 分數歷史 / queue 持續秒數）；
+                    # 不清會把上一輪播放的 ghost track 帶進新一輪，造成車輛越少但佔用率/排隊越高
+                    try:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    except Exception:
+                        pass
+                    try:
+                        get_detector().reset_camera_state(str(camera_id))
+                    except Exception as _e:
+                        print(f"⚠️ congestion cam_{camera_id} reset_camera_state 失敗: {_e}", flush=True)
+                    print(f"🔁 congestion cam_{camera_id} file loop → state reset", flush=True)
+                    fail_count = 0
+                    last_ok = time.time()
+                    time.sleep(0.1)
+                    continue
                 fail_count += 1
                 if fail_count >= 50:
                     # 連續 50 次讀不到 → 強制 reconnect

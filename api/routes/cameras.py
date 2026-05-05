@@ -549,6 +549,229 @@ async def update_camera(camera_id: int, data: CameraUpdate, db: Session = Depend
     return _to_dict(c)
 
 
+@router.post("/{camera_id}/auto-calibrate")
+async def auto_calibrate_camera(camera_id: int, lane_width_m: float = 3.5, rect_length_m: float = 10.0, db: Session = Depends(get_db)):
+    """P7: 自動透視校正 — 從 cam 即時 frame 偵測車道線 → 算消失點 → 回傳建議的 4 點 + 寬長"""
+    c = db.query(Camera).filter(Camera.id == camera_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="攝影機不存在")
+    # Get a current frame: try _shared_frames first, fallback to capture
+    frame = None
+    try:
+        from api.routes.stream import _shared_frames
+        sf = _shared_frames.get(camera_id) or {}
+        f = sf.get("frame")
+        if f is not None and getattr(f, "size", 0) > 0:
+            frame = f
+    except Exception:
+        pass
+    if frame is None:
+        # Try snapshot via cv2
+        try:
+            import cv2 as _cv2
+            cap = _cv2.VideoCapture(c.source, _cv2.CAP_FFMPEG)
+            ret, frame = cap.read()
+            cap.release()
+            if not ret:
+                frame = None
+        except Exception:
+            frame = None
+    if frame is None:
+        raise HTTPException(status_code=503, detail="無法取得攝影機畫面")
+    try:
+        from detection.auto_calibration import auto_calibrate
+        calib = auto_calibrate(frame, lane_width_m=lane_width_m, rect_length_m=rect_length_m)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"auto_calibrate failed: {e}")
+    if calib is None:
+        raise HTTPException(status_code=422, detail="無法偵測道路車道線/消失點，請改用手動 4 點校正")
+    return {
+        "camera_id": camera_id,
+        "calibration": calib,
+        "hint": "建議：把這 4 個點的 (x,y) + width_m + length_m 套到 speed_roi zone，即可用真實 km/h",
+    }
+
+
+@router.post("/{camera_id}/auto-calibrate/apply")
+async def auto_calibrate_apply(camera_id: int, lane_width_m: float = 3.5, rect_length_m: float = 10.0, lane_no: int = 1, db: Session = Depends(get_db)):
+    """P7 一鍵自動校正並建立 speed_roi zone（含 calibration_width_m / calibration_length_m）"""
+    c = db.query(Camera).filter(Camera.id == camera_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="攝影機不存在")
+    # Run auto-calibrate (reuse logic via direct call)
+    frame = None
+    try:
+        from api.routes.stream import _shared_frames
+        sf = _shared_frames.get(camera_id) or {}
+        f = sf.get("frame")
+        if f is not None and getattr(f, "size", 0) > 0:
+            frame = f
+    except Exception:
+        pass
+    if frame is None:
+        try:
+            import cv2 as _cv2
+            cap = _cv2.VideoCapture(c.source, _cv2.CAP_FFMPEG)
+            ret, frame = cap.read()
+            cap.release()
+            if not ret:
+                frame = None
+        except Exception:
+            frame = None
+    if frame is None:
+        raise HTTPException(status_code=503, detail="無法取得畫面")
+    from detection.auto_calibration import auto_calibrate
+    calib = auto_calibrate(frame, lane_width_m=lane_width_m, rect_length_m=rect_length_m)
+    if calib is None:
+        raise HTTPException(status_code=422, detail="自動校正失敗，請改用手動 4 點")
+    fw, fh = calib.get("frame_size", [1920, 1080])
+    import time, uuid
+    zone_id = f"zone_autocalib_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+    new_zone = {
+        "id": zone_id,
+        "type": "speed_roi",
+        "name": f"自動校正車速區 (lane {lane_no})",
+        "points": calib["points_pixel"],
+        "lane_no": lane_no,
+        "lane_tags": ["straight"],
+        "direction": "straight",
+        "speed_limit": 50,
+        "overspeed_kmh": 10,
+        "scope": "speed_detection",
+        "coord_space": "natural",
+        "source_width": int(fw),
+        "source_height": int(fh),
+        "calibration_width_m": float(lane_width_m),
+        "calibration_length_m": float(rect_length_m),
+        "auto_calibrated": True,
+        "auto_vp": calib.get("vp"),
+    }
+    zones = list(c.zones or [])
+    # Remove previous auto-calibrated zones for the same lane
+    zones = [z for z in zones if not (z.get("auto_calibrated") and z.get("lane_no") == lane_no and z.get("type") == "speed_roi")]
+    zones.append(new_zone)
+    c.zones = zones
+    db.commit()
+    db.refresh(c)
+    return {"camera_id": camera_id, "zone_added": new_zone, "calibration": calib, "msg": "已自動校正並建立 speed_roi zone"}
+
+
+# ---- P7+ 校準助手：用車輛寬度當參考估真實距離 ----
+_CLASS_REAL_WIDTH_M = {
+    "car": 1.8,
+    "motorcycle": 0.8,
+    "truck": 2.5,
+    "heavy_truck": 2.5,
+    "light_truck": 2.0,
+    "bus": 2.5,
+}
+
+
+@router.post("/{camera_id}/calibrate/suggest-tw-distance")
+async def suggest_tw_distance(camera_id: int, db: Session = Depends(get_db)):
+    """根據 cam 當前 frame 的車輛 bbox 寬度，估算 trip wire 兩線真實距離 (m)
+    回傳建議的 line_distance_m + 估算過程。"""
+    c = db.query(Camera).filter(Camera.id == camera_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="攝影機不存在")
+    zones = c.zones or []
+    in_z = next((z for z in zones if z.get("type") == "speed_line_in"), None)
+    out_z = next((z for z in zones if z.get("type") == "speed_line_out"), None)
+    if not in_z or not out_z:
+        raise HTTPException(status_code=422, detail="需先建立 speed_line_in 跟 speed_line_out")
+    in_pts = in_z.get("points") or []
+    out_pts = out_z.get("points") or []
+    if len(in_pts) < 2 or len(out_pts) < 2:
+        raise HTTPException(status_code=422, detail="trip wire 線需要 2 個點")
+
+    # Get latest detections
+    try:
+        from api.routes.stream import _shared_frames
+        sf = _shared_frames.get(camera_id) or {}
+        dets = sf.get("detections") or []
+    except Exception:
+        dets = []
+    if not dets:
+        raise HTTPException(status_code=503, detail="無偵測到車輛 — 請等車輛經過後再試")
+
+    # Trip wire midpoint y values
+    in_y = (in_pts[0][1] + in_pts[1][1]) / 2.0
+    out_y = (out_pts[0][1] + out_pts[1][1]) / 2.0
+    line_pixel_dist = abs(out_y - in_y)
+    if line_pixel_dist < 1:
+        raise HTTPException(status_code=422, detail="兩線過近，無法估算")
+
+    # 收集車輛樣本：靠近 trip wire 中央 y 的車
+    tw_center_y = (in_y + out_y) / 2.0
+    samples = []
+    for d in dets:
+        cls = d.get("class_name", "")
+        real_w = _CLASS_REAL_WIDTH_M.get(cls)
+        if not real_w:
+            continue
+        b = d.get("bbox") or {}
+        bx1, bx2 = b.get("x1", 0), b.get("x2", 0)
+        by1, by2 = b.get("y1", 0), b.get("y2", 0)
+        bbox_w_px = abs(bx2 - bx1)
+        bbox_cy = (by1 + by2) / 2.0
+        if bbox_w_px < 30:  # too small to trust
+            continue
+        # 距離 trip wire 中央太遠的車不參考（perspective 差太多）
+        if abs(bbox_cy - tw_center_y) > line_pixel_dist * 1.5:
+            continue
+        scale_px_per_m = bbox_w_px / real_w  # px per meter at this y
+        # 但 trip wire 兩線是 vertical 距離。需要轉換 vertical 距離為 road 距離。
+        # 簡化：假設 trip wire 兩線分別在 road 的不同 y 上，車輛在中間 y
+        # 此車 bbox cy ≈ trip wire 中央 y → 用此 scale 反推 trip wire 距離
+        suggested_m = line_pixel_dist / scale_px_per_m
+        samples.append({
+            "class": cls, "bbox_w_px": int(bbox_w_px),
+            "bbox_cy": int(bbox_cy), "scale_px_per_m": round(scale_px_per_m, 2),
+            "suggested_m": round(suggested_m, 1),
+        })
+    if not samples:
+        raise HTTPException(status_code=503, detail="未找到接近 trip wire 中央的可用車輛 sample")
+
+    # Median 為建議值
+    sorted_m = sorted(s["suggested_m"] for s in samples)
+    median_m = sorted_m[len(sorted_m) // 2]
+    return {
+        "camera_id": camera_id,
+        "current_line_distance_m": in_z.get("line_distance_m"),
+        "suggested_line_distance_m": median_m,
+        "samples": samples,
+        "in_line_y": int(in_y),
+        "out_line_y": int(out_y),
+        "line_pixel_distance": int(line_pixel_dist),
+        "msg": f"基於 {len(samples)} 個車輛樣本估算，建議 line_distance_m = {median_m} (現在 {in_z.get('line_distance_m')})",
+    }
+
+
+@router.post("/{camera_id}/calibrate/apply-tw-distance")
+async def apply_tw_distance(camera_id: int, distance_m: float, db: Session = Depends(get_db)):
+    """套用 trip wire 真實距離到 cam 7 的 speed_line_in zone"""
+    c = db.query(Camera).filter(Camera.id == camera_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="攝影機不存在")
+    if not (1.0 <= distance_m <= 200.0):
+        raise HTTPException(status_code=400, detail="距離必須 1-200 m")
+    zones = list(c.zones or [])
+    changed = 0
+    for z in zones:
+        if z.get("type") == "speed_line_in":
+            z["line_distance_m"] = float(distance_m)
+            changed += 1
+    if changed == 0:
+        raise HTTPException(status_code=422, detail="cam 沒有 speed_line_in zone")
+    c.zones = zones
+    db.commit()
+    return {"ok": True, "applied_distance_m": distance_m, "zones_updated": changed,
+            "note": "需要 restart traffic-api 才會生效（detection thread 載入舊 zones）"}
+
+
+
+
+
 @router.delete("/{camera_id}")
 async def delete_camera(camera_id: int, db: Session = Depends(get_db)):
     c = db.query(Camera).filter(Camera.id == camera_id).first()
