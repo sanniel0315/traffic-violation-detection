@@ -343,7 +343,7 @@ def _open_capture(source: str):
     source_lc = str(source or "").lower()
     is_rtsp = source_lc.startswith("rtsp://")
     if is_rtsp:
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072|allowed_media_types;video|analyzeduration;1000000|probesize;1000000"
 
     backends = []
     is_http = source_lc.startswith("http://") or source_lc.startswith("https://")
@@ -1355,7 +1355,7 @@ def resume_detection_services() -> dict:
 
 
 # Option D 啟用名單：哪些 cam 要把 annotated frame 推 go2rtc 給 WebRTC
-_ANNOTATED_STREAM_CAM_IDS = set()  # disabled to test if SEGV stops
+_ANNOTATED_STREAM_CAM_IDS = set()  # confirmed annotated_streamer triggers SEGV race
 
 
 def run_detection(camera_id: int, source: str, location: str, detection_config: dict, zones: list = []):
@@ -1381,7 +1381,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     add_log("info", f"cam_{camera_id} 偵測器 device: {getattr(detector, 'runtime_device', 'unknown')}", "detection")
     _src_lc = str(source or "").lower()
     if _src_lc.startswith("rtsp://"):
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072|allowed_media_types;video|analyzeduration;1000000|probesize;1000000"
     cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
     speed_kmh_per_pxps = float(detection_config.get("speed_kmh_per_pxps", 0.12) or 0.12)
     speed_smooth_alpha = float(detection_config.get("speed_smooth_alpha", 0.35) or 0.35)
@@ -1541,7 +1541,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     pass
                 time.sleep(2)
                 if _src_lc_outer.startswith("rtsp://"):
-                    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
+                    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072|allowed_media_types;video|analyzeduration;1000000|probesize;1000000"
                 cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                 continue
             _read_fail_count[0] = 0

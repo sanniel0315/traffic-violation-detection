@@ -8319,7 +8319,8 @@ const app=createApp({
         let monitorWatchTimer=null;
         let monitorRecycleTimer=null;
         // 每 60 秒自動 recycle 串流連線：解 MJPEG 在瀏覽器長連線記憶體累積/buffer 堆積導致頓
-        const RECYCLE_INTERVAL_MS=60*1000;
+        const RECYCLE_INTERVAL_MS=30*1000;
+        const STALE_THRESHOLD_MS=20*1000;
         const ensureMonitorWatchdog=()=>{
             if(monitorWatchTimer)return;
             monitorWatchTimer=setInterval(()=>{
@@ -8346,10 +8347,23 @@ const app=createApp({
                     if(page.value!=='monitor' || !isPageVisible())return;
                     const now=Date.now();
                     cameras.value.forEach(c=>{
-                        if(!c?.showStream || c.monitorSnapshotMode)return;
+                        if(!c?.enabled || c.monitorSnapshotMode)return;
                         if(getMonitorMediaKind(c)==='video')return;
-                        // 把 _zoomReloadTick 推進 → URL 變 → <img> 重新連線（瀏覽器釋放舊 buffer）
-                        c._zoomReloadTick=now;
+                        const lastFrame = c.lastFrameAt || 0;
+                        const stale = lastFrame > 0 && (now - lastFrame) > STALE_THRESHOLD_MS;
+                        const periodic = c.showStream;
+                        if(stale || periodic){
+                            // toggle showStream 強制 Vue re-mount <img> + bump tick
+                            c._zoomReloadTick=now;
+                            c.showStream=false;
+                            setTimeout(()=>{
+                                if(page.value==='monitor' && c.enabled){
+                                    c.showStream=true;
+                                    c._zoomReloadTick=Date.now();
+                                    c.lastFrameAt=Date.now();
+                                }
+                            }, 200);
+                        }
                     });
                 }, RECYCLE_INTERVAL_MS);
             }

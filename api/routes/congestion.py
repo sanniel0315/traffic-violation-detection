@@ -382,7 +382,7 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
     import os as _os
     # RTSP 強制走 TCP 避免封包掉包
     if str(source).lower().startswith("rtsp://"):
-        _os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536|threads;1"
+        _os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072|allowed_media_types;video|analyzeduration;1000000|probesize;1000000|threads;1"
     # 判斷是不是檔案來源（相對路徑、/files/... 或副檔名是影片）→ 影響 EOF 處理策略
     _src_lc = str(source or "").lower()
     is_file_source = (
