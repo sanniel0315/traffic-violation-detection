@@ -58,6 +58,12 @@ class IOService:
         # 下載期間白燈閃爍控制
         self._dl_blink_stop   = threading.Event()
         self._dl_blink_thread: Optional[threading.Thread] = None
+        # status() 結果短暫快取，避免 io_panel 多 caller 每 2 秒打 read_inputs+
+        # read_outputs 各 600-1200ms (USB CDC ACM 驅動延遲)。500ms 快取對 UI
+        # 不影響感受，硬體狀態變化由 _di_loop 20Hz 抓 edge event 即時通知。
+        self._status_cache: Optional[dict] = None
+        self._status_cache_ts: float = 0.0
+        self._status_cache_lock = threading.Lock()
         # threads
         self._di_thread: Optional[threading.Thread] = None
         self._stop_di     = threading.Event()
@@ -294,6 +300,11 @@ class IOService:
 
     # ── status snapshot ───────────────────────────────────────────────
     def status(self) -> dict:
+        # 500ms 快取：多 caller 並發只觸發 1 次 Modbus read
+        with self._status_cache_lock:
+            now = time.time()
+            if self._status_cache is not None and (now - self._status_cache_ts) < 0.5:
+                return self._status_cache
         try:
             di = self._mod.read_inputs()
             do = self._mod.read_outputs()
@@ -304,7 +315,7 @@ class IOService:
             err = str(e)
 
         from services import config_sync
-        return {
+        result = {
             "connected": self._mod.ok,
             "error":     err or self._mod.error,
             "di": {
@@ -324,6 +335,10 @@ class IOService:
             },
             "config_sync": config_sync.status(),
         }
+        with self._status_cache_lock:
+            self._status_cache = result
+            self._status_cache_ts = time.time()
+        return result
 
 
 _service: Optional[IOService] = None

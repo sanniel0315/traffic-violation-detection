@@ -33,21 +33,11 @@ class IOModule:
             self._close_locked()
             try:
                 self._dev = PD3R3(IO_PORT, IO_ADDR, IO_BAUD)
-                # 修 USB CDC 接收延遲：原本每次 Modbus read 600-1200ms
-                # set_low_latency_mode 對 cdc_acm 驅動可能無效 (CDC 是 packet-based)
-                # 改用 inter_byte_timeout: byte 之間沒資料就立刻 return，避免硬等
-                # 整個 timeout (0.3s)。短 frame Modbus 受益最大。
-                try:
-                    self._dev._ser.set_low_latency_mode(True)
-                except Exception as e:
-                    print(f"[io] set_low_latency_mode failed (non-fatal): {e}", flush=True)
-                try:
-                    # byte 間隔 > 10ms 視為 frame 結束
-                    self._dev._ser.inter_byte_timeout = 0.01
-                    # 整體 timeout 從 0.3s 降到 0.1s — 9600bps 8-byte response 7ms 應該夠
-                    self._dev._ser.timeout = 0.1
-                except Exception as e:
-                    print(f"[io] timeout adjust failed (non-fatal): {e}", flush=True)
+                # 註：USB CDC ACM 的 read 延遲由 cdc_acm 驅動的 USB endpoint
+                # polling interval 控制，pyserial 的 timeout / inter_byte_timeout
+                # / set_low_latency_mode 對 ttyACM 都沒幫助 (前者 silent 後兩者
+                # 觸發 RS485 ioctl 失敗)。改在 IOService.status() 加 cache 解
+                # 多 caller 打爆 Modbus 問題 — 見 io_service.py。
                 self._dev.read_outputs()   # smoke-test
                 self._ok    = True
                 self._error = ""
