@@ -173,6 +173,14 @@ class IOService:
     def _do_reset(self) -> None:
         import subprocess
         time.sleep(2.0)
+        # 重啟前主動把 3 顆燈全滅，視覺上表達「系統沒在跑」；
+        # 新 process 起來後 start() → _apply_do() 會自動恢復正常燈號。
+        try:
+            self._mod.set_relays([False, False, False])
+            print("[io_svc] reset → all DO off (重啟中提示)", flush=True)
+            time.sleep(0.2)  # 給 RS-485 frame 完整發送的時間
+        except Exception as e:
+            print(f"[io_svc] reset clear lamps failed: {e}", flush=True)
         try:
             subprocess.Popen(
                 ["sudo", "-n", "systemctl", "restart", "traffic-api.service"],
