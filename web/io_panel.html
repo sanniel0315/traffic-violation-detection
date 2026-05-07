@@ -600,9 +600,10 @@
 
         // 燈號以軟體邏輯狀態為準（硬體未插時仍可正確顯示）
         const lampRunning = computed(() => status.value.state?.comm_ok ?? false);
+        // 白燈 ON = 手動模式 OR 下載中；OFF = 自動(遠端)模式
         const lampMode    = computed(() => {
           const s = status.value.state;
-          return s ? ((s.auto_mode || s.downloading) && s.comm_ok) : false;
+          return s ? (((!s.auto_mode) || s.downloading) && s.comm_ok) : false;
         });
         const lampFault   = computed(() => {
           const s = status.value.state;
