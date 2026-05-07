@@ -811,6 +811,7 @@
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='mqtt'}" @click="page='mqtt';loadMqttStatus()"><span>📡</span><span>MQTT</span></div>
             <div v-if="hasPerm('hwmonitor')" class="menu-item" :class="{active:page==='hwmonitor'}" @click="page='hwmonitor';loadHwStatus()"><span>🖥️</span><span>硬體效能監測</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='permission_admin'}" @click="page='permission_admin'"><span>🔐</span><span>權限管理</span></div>
+            <div v-if="isAdmin" class="menu-item" :class="{active:page==='io_panel'}" @click="page='io_panel'"><span>💡</span><span>燈號 I/O 控制</span></div>
         </div>
         
         <!-- 主內容 -->
@@ -2348,6 +2349,11 @@
                         </div>
                     </div>
                 </div>
+                <!-- 燈號 I/O 控制 -->
+                <div v-if="page==='io_panel'" style="height:calc(100vh - 60px);margin:-16px">
+                    <iframe src="/web/io_panel.html" style="width:100%;height:100%;border:none;display:block;"></iframe>
+                </div>
+
                 <!-- NVR 設定 -->
                 <div v-if="page==='frigate'">
                     <div class="card">
