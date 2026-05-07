@@ -24,6 +24,53 @@ _NX_BEARER_CACHE: Dict[str, Dict[str, Any]] = {}
 _NX_BEARER_CACHE_LOCK = threading.Lock()
 _NX_BEARER_TTL_SEC = 300.0
 
+# Pattern A (query/header token) 共用 session + auth 快取 — 避免多 thread
+# 並行 SSL handshake (`requests.Session()` 每次建新會引發 urllib3/OpenSSL race → SEGV)
+_NX_QUERY_SESSION: Optional[requests.Session] = None
+_NX_QUERY_LOCK = threading.Lock()
+_NX_QUERY_AUTH_CACHE: Dict[str, tuple] = {}  # f"{base}|{accept}" -> (auth_request, expires_at)
+_NX_QUERY_TTL_SEC = 300.0
+
+
+def _get_nx_query_session() -> requests.Session:
+    """Module-level shared session for Pattern A (query token auth)。
+    使用 connection pool 避免並行 SSL handshake 引發 OpenSSL race / SEGV。"""
+    global _NX_QUERY_SESSION
+    if _NX_QUERY_SESSION is None:
+        with _NX_QUERY_LOCK:
+            if _NX_QUERY_SESSION is None:  # double-check
+                from requests.adapters import HTTPAdapter
+                sess = requests.Session()
+                adapter = HTTPAdapter(pool_connections=4, pool_maxsize=20)
+                sess.mount("http://", adapter)
+                sess.mount("https://", adapter)
+                _NX_QUERY_SESSION = sess
+    return _NX_QUERY_SESSION
+
+
+def _get_nx_query_auth(
+    cfg: Dict[str, Any],
+    base: str,
+    timeout: float,
+    verify: bool,
+    accept: str,
+) -> Dict[str, Any]:
+    """取得 cached auth_request dict；過期或無快取就以 lock 序列化登入一次。"""
+    cache_key = f"{base}|{accept}"
+    now = time.time()
+    cached = _NX_QUERY_AUTH_CACHE.get(cache_key)
+    if cached and cached[1] > now:
+        return cached[0]
+    with _NX_QUERY_LOCK:
+        # 進 lock 後再 check（可能別 thread 剛刷新過）
+        cached = _NX_QUERY_AUTH_CACHE.get(cache_key)
+        if cached and cached[1] > time.time():
+            return cached[0]
+        session = _get_nx_query_session()
+        auth_request = _nx_request_auth(session, cfg, base, timeout, verify, accept)
+        _NX_QUERY_AUTH_CACHE[cache_key] = (auth_request, time.time() + _NX_QUERY_TTL_SEC)
+        return auth_request
+
 
 def _media_type_for_format(fmt: str) -> str:
     mapping = {
@@ -341,12 +388,12 @@ def _call_direct_nx_devices(settings: Optional[Dict[str, Any]] = None) -> List[D
     if not base:
         raise HTTPException(status_code=503, detail="NX_SERVER_BASE_URL not configured")
 
-    session = requests.Session()
+    session = _get_nx_query_session()
     timeout = _nx_timeout(cfg)
     verify = _nx_verify_ssl(cfg)
 
     try:
-        auth_request = _nx_request_auth(session, cfg, base, timeout, verify, "application/json")
+        auth_request = _get_nx_query_auth(cfg, base, timeout, verify, "application/json")
         resp = _request_with_ssl_fallback(
             session,
             "GET",
@@ -363,8 +410,7 @@ def _call_direct_nx_devices(settings: Optional[Dict[str, Any]] = None) -> List[D
         raise
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=f"NX devices request error: {e}") from e
-    finally:
-        session.close()
+    # session 共用不 close
 
 
 @router.get("/devices")
@@ -436,9 +482,9 @@ def nx_stream(
     if not base:
         raise HTTPException(status_code=503, detail="NX proxy is not configured")
 
-    session = requests.Session()
+    session = _get_nx_query_session()
     try:
-        auth_request = _nx_request_auth(session, settings, base, timeout, verify, "*/*")
+        auth_request = _get_nx_query_auth(settings, base, timeout, verify, "*/*")
         resp = _request_with_ssl_fallback(
             session,
             "GET",
@@ -451,7 +497,7 @@ def nx_stream(
         )
         if not resp.ok:
             text = resp.text[:200] if "text" in (resp.headers.get("content-type") or "") else "NX stream failed"
-            session.close()
+            resp.close()  # session 共用，只 close response
             raise HTTPException(status_code=resp.status_code, detail=text)
 
         def _stream() -> Iterable[bytes]:
@@ -463,14 +509,13 @@ def nx_stream(
                 except requests.RequestException:
                     return
             finally:
-                resp.close()
-                session.close()
+                resp.close()  # session 共用不 close
 
         return StreamingResponse(_stream(), media_type=resp.headers.get("content-type") or _media_type_for_format(fmt))
     except HTTPException:
         raise
     except requests.RequestException as e:
-        session.close()
+        # session 共用不 close
         raise HTTPException(status_code=502, detail=f"NX direct stream error: {e}") from e
 
 
