@@ -2,9 +2,11 @@
 IO service: maps system state -> DO outputs, monitors DI edges.
 
 DO mapping:
-  DO0 (red)    - 通訊故障:  ON=fault,  OFF=normal
+  DO0 (red)    - 通訊故障:  ON=NTP/link/IP fault,  OFF=normal
+                            (config sync 失敗只記 log 不動紅燈)
   DO1 (green)  - 運作狀況:  solid ON=OK, OFF=fault
-  DO2 (white)  - 操作模式:  ON=手動 或 下載中, OFF=自動(遠端)+閒置
+  DO2 (white)  - 操作模式:  恆亮=手動模式;  閃爍 ~2.5Hz=遠端下載中;
+                            滅=自動(遠端)+閒置 / 通訊故障
 
 DI mapping:
   DI0 - 遠端下載 (triggers config sync)
@@ -13,8 +15,8 @@ DI mapping:
 
 Lamp states:
   正常/閒置(自動/遠端) : red=OFF  green=ON  white=OFF
-  正常/閒置(手動)      : red=OFF  green=ON  white=ON
-  遠端下載中           : red=OFF  green=ON  white=ON  (不論自動/手動)
+  正常/閒置(手動)      : red=OFF  green=ON  white=ON  (恆亮)
+  遠端下載中           : red=OFF  green=ON  white=BLINK 2.5Hz
   通訊故障             : red=ON   green=OFF white=OFF
 """
 from __future__ import annotations
@@ -53,6 +55,9 @@ class IOService:
         self._auto_mode     = True   # True=自動, False=手動
         self._downloading   = False
         self._reset_pending = False  # DI1 防連按重啟
+        # 下載期間白燈閃爍控制
+        self._dl_blink_stop   = threading.Event()
+        self._dl_blink_thread: Optional[threading.Thread] = None
         # threads
         self._di_thread: Optional[threading.Thread] = None
         self._stop_di     = threading.Event()
@@ -109,18 +114,49 @@ class IOService:
 
     def set_downloading(self, active: bool) -> None:
         with self._lock:
+            was = self._downloading
             self._downloading = active
+        if active and not was:
+            # 進入下載 → 啟動白燈閃爍 thread
+            self._dl_blink_stop.clear()
+            self._dl_blink_thread = threading.Thread(
+                target=self._blink_white_loop, daemon=True, name="io-blink-dl"
+            )
+            self._dl_blink_thread.start()
+        elif not active and was:
+            # 結束下載 → 停止閃爍，由 _apply_do 寫回正確白燈狀態
+            self._dl_blink_stop.set()
         self._apply_do()
+
+    def _blink_white_loop(self) -> None:
+        """下載期間白燈 ~2.5Hz 閃爍；通訊故障時讓 _apply_do 接管 (不寫白燈避開覆蓋)。"""
+        on = False
+        while not self._dl_blink_stop.is_set():
+            on = not on
+            if self._comm_ok:
+                try:
+                    self._mod.set_relay(DO_WHITE, on)
+                except Exception:
+                    pass
+            # 0.2s on / 0.2s off → 2.5 Hz
+            if self._dl_blink_stop.wait(0.2):
+                break
 
     # ── DO ────────────────────────────────────────────────────────────
     def _apply_do(self) -> None:
         try:
             fault = not self._comm_ok
-            # 白燈 ON = 手動模式 OR 下載中；OFF = 自動(遠端)模式且非下載
-            white = ((not self._auto_mode) or self._downloading) and not fault
             self._mod.set_relay(DO_RED,   fault)
             self._mod.set_relay(DO_GREEN, not fault)
-            self._mod.set_relay(DO_WHITE, white)
+            # 下載中 → 由 _blink_white_loop 控制白燈，這裡不要動白燈（除非故障）
+            if fault:
+                # 故障壓過閃爍：強制白燈滅，覆蓋 blink loop 上次寫的狀態
+                self._mod.set_relay(DO_WHITE, False)
+            elif not self._downloading:
+                # 非下載 + 非故障 → 白燈 = 手動模式
+                white = (not self._auto_mode)
+                self._mod.set_relay(DO_WHITE, white)
+            # 下載中 + 非故障 → 由 blink loop 自己刷新白燈
         except Exception as e:
             print(f"[io_svc] apply DO error: {e}", flush=True)
             _log("error", f"IO 燈號寫入失敗: {e}")
@@ -142,8 +178,8 @@ class IOService:
                 if success:
                     _log("info", f"遠端 config 同步成功: {msg}")
                 else:
+                    # sync 失敗只記 log（不動紅燈，避免跟 DO0 通訊故障語意混淆）
                     _log("error", f"遠端 config 同步失敗: {msg}")
-                    threading.Thread(target=self._pulse_red, daemon=True).start()
 
             config_sync.on_complete(_done)
             config_sync.trigger()
@@ -195,15 +231,6 @@ class IOService:
             _log("error", f"DI1 Reset 失敗: {e}")
             with self._lock:
                 self._reset_pending = False
-
-    def _pulse_red(self, duration: float = 3.0) -> None:
-        try:
-            self._mod.set_relay(DO_RED, True)
-            time.sleep(duration)
-            if self._comm_ok:
-                self._mod.set_relay(DO_RED, False)
-        except Exception:
-            pass
 
     # ── DI monitor ────────────────────────────────────────────────────
     def on_di_event(self, cb: Callable[[int], None]) -> None:

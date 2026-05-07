@@ -312,6 +312,13 @@
     .badge-idle    { background: #f1f5f9; color: #64748b; }
     .badge-warning { background: #fef3c7; color: #92400e; }
     .badge-primary { background: #dbeafe; color: #1e40af; }
+
+    /* 下載中白燈閃爍動畫 (~2.5Hz，匹配 io_service._blink_white_loop 0.2s/half) */
+    @keyframes lamp-blink-anim {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.15; }
+    }
+    .lamp-blink { animation: lamp-blink-anim 0.4s infinite; }
   </style>
 </head>
 <body>
@@ -342,16 +349,16 @@
             <div class="lamp-label">運作狀況</div>
           </div>
 
-          <!-- 操作模式 — DO2 白燈 -->
+          <!-- 操作模式 — DO2 白燈（下載中閃爍） -->
           <div class="lamp-item">
             <div
               class="lamp-circle"
-              :class="{ 'lamp-off': !lampMode }"
+              :class="{ 'lamp-off': !lampMode, 'lamp-blink': lampModeBlink }"
               :style="lampMode
                 ? 'background:#e5e7eb; border:2px solid #9ca3af; box-shadow:0 0 14px 5px rgba(200,200,200,0.7);'
                 : ''"
             ></div>
-            <div class="lamp-label">操作模式</div>
+            <div class="lamp-label">{{ lampModeBlink ? '下載中' : '操作模式' }}</div>
           </div>
 
           <!-- 通訊故障 — DO0 紅燈 -->
@@ -604,18 +611,20 @@
         // DI 按下短暫高亮（按鍵是 momentary，2s poll 會抓不到）
         const recentDIPress = ref({ DI0: false, DI1: false, DI2: false });
 
-        // 燈號優先採實體 DO 狀態（catches pulse_red / 手動 set_relay）；硬體未連時 fallback 軟體旗標
+        // 燈號優先採實體 DO 狀態（catches 手動 set_relay）；硬體未連時 fallback 軟體旗標
         const lampRunning = computed(() => {
           const s = status.value;
           if (s?.connected && s.do?.DO1) return !!s.do.DO1.state;
           return s?.state?.comm_ok ?? false;
         });
-        // 白燈 ON = 手動 OR 下載中；OFF = 自動(遠端)
+        // 白燈：恆亮=手動、閃=下載中、滅=自動(遠端)。下載中強制 ON 並加 CSS 閃爍 class 避免跟 polling 不同步。
         const lampMode = computed(() => {
           const s = status.value;
+          if (s?.state?.downloading && s?.state?.comm_ok) return true;
           if (s?.connected && s.do?.DO2) return !!s.do.DO2.state;
-          return s?.state ? (((!s.state.auto_mode) || s.state.downloading) && s.state.comm_ok) : false;
+          return s?.state ? ((!s.state.auto_mode) && s.state.comm_ok) : false;
         });
+        const lampModeBlink = computed(() => !!(status.value?.state?.downloading && status.value?.state?.comm_ok));
         const lampFault = computed(() => {
           const s = status.value;
           if (s?.connected && s.do?.DO0) return !!s.do.DO0.state;
@@ -758,6 +767,7 @@
           saveMsg,
           lampRunning,
           lampMode,
+          lampModeBlink,
           lampFault,
           connStatus,
           recentDIPress,
