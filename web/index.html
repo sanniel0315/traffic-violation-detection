@@ -8325,8 +8325,9 @@ const app=createApp({
         let monitorWatchTimer=null;
         let monitorRecycleTimer=null;
         // 每 60 秒自動 recycle 串流連線：解 MJPEG 在瀏覽器長連線記憶體累積/buffer 堆積導致頓
-        const RECYCLE_INTERVAL_MS=30*1000;
-        const STALE_THRESHOLD_MS=20*1000;
+        // 2026-05-07 從 30s/20s 拉回 60s/45s — 太頻繁 reload 多 tab 並發觸發 OpenSSL race → SEGV
+        const RECYCLE_INTERVAL_MS=60*1000;
+        const STALE_THRESHOLD_MS=45*1000;
         const ensureMonitorWatchdog=()=>{
             if(monitorWatchTimer)return;
             monitorWatchTimer=setInterval(()=>{
