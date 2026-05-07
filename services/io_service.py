@@ -49,9 +49,10 @@ class IOService:
         self._mod = module or get_module()
         self._lock = threading.Lock()
         # system state
-        self._comm_ok     = True
-        self._auto_mode   = True   # True=自動, False=手動
-        self._downloading = False
+        self._comm_ok       = True
+        self._auto_mode     = True   # True=自動, False=手動
+        self._downloading   = False
+        self._reset_pending = False  # DI1 防連按重啟
         # threads
         self._di_thread: Optional[threading.Thread] = None
         self._stop_di     = threading.Event()
@@ -70,6 +71,7 @@ class IOService:
         self._apply_do()
         self._start_di_monitor()
         self._wire_download_button()
+        self._wire_reset_button()
         from services import network_health
         network_health.start()
         print("[io_svc] started", flush=True)
@@ -146,6 +148,44 @@ class IOService:
             config_sync.trigger()
 
         self.on_di_event(_on_di)
+
+    # ── reset button wiring ───────────────────────────────────────────
+    def _wire_reset_button(self) -> None:
+        """DI1 按下 → 2 秒後 systemctl restart traffic-api.service。
+
+        2 秒延遲讓 log 寫進 journal、給操作者看到提示；
+        Popen 用 start_new_session 避免被父程序帶走，systemd 會 SIGTERM 本身。
+        """
+        def _on_di(ch: int) -> None:
+            if ch != DI_RESET:
+                return
+            with self._lock:
+                if self._reset_pending:
+                    _log("warning", "DI1 重啟流程進行中，忽略重複按鍵")
+                    return
+                self._reset_pending = True
+            _log("warning", "DI1 按下，2 秒後重啟 traffic-api.service")
+            threading.Thread(
+                target=self._do_reset, daemon=True, name="io-reset"
+            ).start()
+        self.on_di_event(_on_di)
+
+    def _do_reset(self) -> None:
+        import subprocess
+        time.sleep(2.0)
+        try:
+            subprocess.Popen(
+                ["sudo", "-n", "systemctl", "restart", "traffic-api.service"],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            print("[io_svc] reset triggered → systemd restart", flush=True)
+        except Exception as e:
+            print(f"[io_svc] reset failed: {e}", flush=True)
+            _log("error", f"DI1 Reset 失敗: {e}")
+            with self._lock:
+                self._reset_pending = False
 
     def _pulse_red(self, duration: float = 3.0) -> None:
         try:
