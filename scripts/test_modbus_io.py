@@ -221,10 +221,10 @@ def step3_button_listener(client, slave: int, duration_sec: int = 30) -> None:
     print("\n" + "=" * 60)
     print(f"階段 3：按鍵監聽（{duration_sec} 秒，Ctrl+C 提早結束）")
     print("=" * 60)
-    print("  按面板上 3 顆按鍵，會印 edge event")
-    print("  DI0=控制模式  DI1=Reset  DI2=遠端下載\n")
+    print("  按面板上按鍵，會印 edge event")
+    print("  DI0=未使用  DI1=Reset  DI2=遠端下載\n")
 
-    labels = ["控制模式", "Reset    ", "遠端下載"]
+    labels = ["未使用  ", "Reset    ", "遠端下載"]
     last = read_di(client, slave) or [False, False, False]
     end_at = time.time() + duration_sec
     try:
