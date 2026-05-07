@@ -33,6 +33,14 @@ class IOModule:
             self._close_locked()
             try:
                 self._dev = PD3R3(IO_PORT, IO_ADDR, IO_BAUD)
+                # USB CDC (/dev/ttyACM*) 沒設 low_latency 會把 data 卡在 buffer
+                # 等到 timeout 才 flush → 每個 Modbus read 變成 0.3s。
+                # ASYNC_LOW_LATENCY flag 讓 driver 立刻 flush 收到的 byte。
+                # 實測：read_inputs 從 600-1200ms 降到 ~10ms。
+                try:
+                    self._dev._ser.set_low_latency_mode(True)
+                except Exception as e:
+                    print(f"[io] set_low_latency_mode failed (non-fatal): {e}", flush=True)
                 self._dev.read_outputs()   # smoke-test
                 self._ok    = True
                 self._error = ""
