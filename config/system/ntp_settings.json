@@ -1,8 +1,0 @@
-{
-  "enabled": true,
-  "servers": [
-    "time.google.com"
-  ],
-  "sync_interval_minutes": 10,
-  "updated_at": "2026-04-20T13:04:28.520406+08:00"
-}

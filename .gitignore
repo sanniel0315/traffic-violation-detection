@@ -78,3 +78,6 @@ recordings/
 # --- settings backup (track this file) ---
 !config/settings_backup.json
 data/violations.db.bak
+
+# 執行時自動回寫，僅 timestamp churn — 由 _default_ntp_settings() fallback 處理
+config/system/ntp_settings.json
