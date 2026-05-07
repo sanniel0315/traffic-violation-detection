@@ -33,14 +33,21 @@ class IOModule:
             self._close_locked()
             try:
                 self._dev = PD3R3(IO_PORT, IO_ADDR, IO_BAUD)
-                # USB CDC (/dev/ttyACM*) 沒設 low_latency 會把 data 卡在 buffer
-                # 等到 timeout 才 flush → 每個 Modbus read 變成 0.3s。
-                # ASYNC_LOW_LATENCY flag 讓 driver 立刻 flush 收到的 byte。
-                # 實測：read_inputs 從 600-1200ms 降到 ~10ms。
+                # 修 USB CDC 接收延遲：原本每次 Modbus read 600-1200ms
+                # set_low_latency_mode 對 cdc_acm 驅動可能無效 (CDC 是 packet-based)
+                # 改用 inter_byte_timeout: byte 之間沒資料就立刻 return，避免硬等
+                # 整個 timeout (0.3s)。短 frame Modbus 受益最大。
                 try:
                     self._dev._ser.set_low_latency_mode(True)
                 except Exception as e:
                     print(f"[io] set_low_latency_mode failed (non-fatal): {e}", flush=True)
+                try:
+                    # byte 間隔 > 10ms 視為 frame 結束
+                    self._dev._ser.inter_byte_timeout = 0.01
+                    # 整體 timeout 從 0.3s 降到 0.1s — 9600bps 8-byte response 7ms 應該夠
+                    self._dev._ser.timeout = 0.1
+                except Exception as e:
+                    print(f"[io] timeout adjust failed (non-fatal): {e}", flush=True)
                 self._dev.read_outputs()   # smoke-test
                 self._ok    = True
                 self._error = ""
