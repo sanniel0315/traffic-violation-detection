@@ -369,9 +369,9 @@
 
         <!-- Connection chip -->
         <div class="conn-chip-row">
-          <div :class="['conn-chip', status.connected ? 'connected' : 'disconnected']">
+          <div :class="['conn-chip', connStatus.cls]">
             <span class="conn-dot"></span>
-            <span>{{ status.connected ? '已連線' : '未連線' }}</span>
+            <span>{{ connStatus.label }}</span>
           </div>
         </div>
       </div>
@@ -448,7 +448,8 @@
           <div class="relay-left">
             <div
               class="relay-dot"
-              :style="status.di && status.di.DI0 && status.di.DI0.state
+              style="transition: background 0.2s, box-shadow 0.3s;"
+              :style="(recentDIPress.DI0 || status.di?.DI0?.state)
                 ? 'background:#3b82f6;box-shadow:0 0 8px 2px rgba(59,130,246,0.5);'
                 : 'background:#e5e7eb;border:1px solid #cbd5e1;'"
             ></div>
@@ -459,8 +460,8 @@
           </div>
           <span
             class="event-badge"
-            :class="status.di && status.di.DI0 && status.di.DI0.state ? 'badge-primary' : 'badge-idle'"
-          >{{ (status.di && status.di.DI0 && status.di.DI0.state) ? '按下' : '釋放' }}</span>
+            :class="(recentDIPress.DI0 || status.di?.DI0?.state) ? 'badge-primary' : 'badge-idle'"
+          >{{ (recentDIPress.DI0 || status.di?.DI0?.state) ? '按下' : '釋放' }}</span>
         </div>
 
         <!-- DI1 Reset -->
@@ -468,7 +469,8 @@
           <div class="relay-left">
             <div
               class="relay-dot"
-              :style="status.di && status.di.DI1 && status.di.DI1.state
+              style="transition: background 0.2s, box-shadow 0.3s;"
+              :style="(recentDIPress.DI1 || status.di?.DI1?.state)
                 ? 'background:#3b82f6;box-shadow:0 0 8px 2px rgba(59,130,246,0.5);'
                 : 'background:#e5e7eb;border:1px solid #cbd5e1;'"
             ></div>
@@ -479,8 +481,8 @@
           </div>
           <span
             class="event-badge"
-            :class="status.di && status.di.DI1 && status.di.DI1.state ? 'badge-warning' : 'badge-idle'"
-          >{{ (status.di && status.di.DI1 && status.di.DI1.state) ? '按下' : '釋放' }}</span>
+            :class="(recentDIPress.DI1 || status.di?.DI1?.state) ? 'badge-warning' : 'badge-idle'"
+          >{{ (recentDIPress.DI1 || status.di?.DI1?.state) ? '按下' : '釋放' }}</span>
         </div>
 
         <!-- DI2 保留（尚未指派功能） -->
@@ -597,17 +599,38 @@
         const status = ref({});
         const diEvents = ref([]);
         const manualDO = ref([false, false, false]);
+        // WS 連線旗標 (重啟期間 ws 會 close)
+        const wsConnected = ref(false);
+        // DI 按下短暫高亮（按鍵是 momentary，2s poll 會抓不到）
+        const recentDIPress = ref({ DI0: false, DI1: false, DI2: false });
 
-        // 燈號以軟體邏輯狀態為準（硬體未插時仍可正確顯示）
-        const lampRunning = computed(() => status.value.state?.comm_ok ?? false);
-        // 白燈 ON = 手動模式 OR 下載中；OFF = 自動(遠端)模式
-        const lampMode    = computed(() => {
-          const s = status.value.state;
-          return s ? (((!s.auto_mode) || s.downloading) && s.comm_ok) : false;
+        // 燈號優先採實體 DO 狀態（catches pulse_red / 手動 set_relay）；硬體未連時 fallback 軟體旗標
+        const lampRunning = computed(() => {
+          const s = status.value;
+          if (s?.connected && s.do?.DO1) return !!s.do.DO1.state;
+          return s?.state?.comm_ok ?? false;
         });
-        const lampFault   = computed(() => {
-          const s = status.value.state;
-          return s ? !s.comm_ok : false;
+        // 白燈 ON = 手動 OR 下載中；OFF = 自動(遠端)
+        const lampMode = computed(() => {
+          const s = status.value;
+          if (s?.connected && s.do?.DO2) return !!s.do.DO2.state;
+          return s?.state ? (((!s.state.auto_mode) || s.state.downloading) && s.state.comm_ok) : false;
+        });
+        const lampFault = computed(() => {
+          const s = status.value;
+          if (s?.connected && s.do?.DO0) return !!s.do.DO0.state;
+          return s?.state ? !s.state.comm_ok : false;
+        });
+
+        // 連線 chip 邏輯：WS 斷線優先顯示「重啟中」
+        const connStatus = computed(() => {
+          if (!wsConnected.value) {
+            return { cls: 'disconnected', label: '伺服器斷線（可能重啟中…）' };
+          }
+          if (status.value?.connected === false) {
+            return { cls: 'disconnected', label: 'Modbus 未連線' };
+          }
+          return { cls: 'connected', label: '已連線' };
         });
         const ws = ref(null);
         const syncConfig = ref({ url: '', token: '' });
@@ -698,12 +721,23 @@
         function connectWS() {
           const proto = location.protocol === 'https:' ? 'wss' : 'ws';
           ws.value = new WebSocket(`${proto}://${location.host}/api/io/events`);
+          ws.value.onopen = () => { wsConnected.value = true; };
           ws.value.onmessage = (e) => {
             const evt = JSON.parse(e.data);
             diEvents.value.unshift(evt);
             if (diEvents.value.length > 20) diEvents.value.pop();
+            // DI 對應圓點亮 1.5s 後 fade（避免 momentary 按鍵被 2s poll miss）
+            const key = 'DI' + evt.channel;
+            if (recentDIPress.value[key] !== undefined) {
+              recentDIPress.value[key] = true;
+              setTimeout(() => { recentDIPress.value[key] = false; }, 1500);
+            }
           };
-          ws.value.onclose = () => setTimeout(connectWS, 3000);
+          ws.value.onclose = () => {
+            wsConnected.value = false;
+            setTimeout(connectWS, 3000);
+          };
+          ws.value.onerror = () => { wsConnected.value = false; };
         }
 
         onMounted(() => {
@@ -725,6 +759,8 @@
           lampRunning,
           lampMode,
           lampFault,
+          connStatus,
+          recentDIPress,
           formatTime,
           setRelay,
           saveConfig,
