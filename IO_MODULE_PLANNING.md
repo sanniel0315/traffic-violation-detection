@@ -1,0 +1,244 @@
+﻿# I/O 模組整合規劃 — AFE-R750 + tM-PD3R3
+
+外部 I/O 規範（A 控制 / B 燈號顯示）對應到 ICP DAS **tM-PD3R3** 的 3-DI/3-DO + AFE-R750 實體電源鍵。本文件涵蓋 BOM、合規對照、雙電源設計、P1 測試腳本與 P2 正式 driver 規劃。
+
+---
+
+## 1. 合規對照（最終版）
+
+| 規範 | 實作 | 腳位 | 狀態 |
+|------|------|------|------|
+| (A) 電源開/關 | AFE-R750 實體電源鍵 | 24V 純硬體 | ✅ 軟體不介入 |
+| (A) 控制模式 | DO2 白燈顯示（恆亮=自動、滅=手動） | DO2 | ✅ |
+| (A) Reset | tM-PD3R3 **DI1** + Φ22 momentary 按鍵 | DI1 | ✅ |
+| (A) 遠端下載 | tM-PD3R3 **DI2** + Φ22 momentary 按鍵 → config sync | DI2 | ✅ |
+| (B) 電源 ⚪ | 不處理 | — | — |
+| (B) 通訊故障 🔴 | tM-PD3R3 **DO0** → 12V 紅燈 | DO0 | ✅ 恆亮=故障、滅=正常 |
+| (B) 運作狀況 🟢 | tM-PD3R3 **DO1** → 12V 綠燈 | DO1 | ✅ 恆亮=正常（含閒置）、滅=故障 |
+| (B) 操作模式 ⚪ | tM-PD3R3 **DO2** → 12V 白燈（與控制模式共用） | DO2 | ✅ 恆亮=自動 或 下載中、滅=手動+閒置 |
+
+**DO2 雙功能說明**：同一顆白燈同時表示「控制模式（自動/手動）」與「遠端下載中」狀態——  
+`白燈 ON` = 自動模式 **或** 下載進行中；`白燈 OFF` = 手動模式且非下載中（且無通訊故障）。  
+**設計亮點**：DI0 釋出不用，2-DI + 3-DO 實現所有燈號顯示；(B) 電源燈不處理。
+
+---
+
+## 2. BOM 清單
+
+| 項目 | 規格 | 數量 | 狀態 |
+|------|------|------|------|
+| AFE-R750-X1A1U | AGX Orin 64GB | 1 | ✅ 已有 |
+| 24V/230W 變壓器 | 主機電源 | 1 | ✅ 已有 |
+| 12V DC 電源供應器 | ≥2A，工業級 | 1 | 🛒 採購（供 tM-PD3R3 + 燈號/按鍵迴路） |
+| **tM-PD3R3 CR** | **3 DI + 3 DO，Modbus RTU** | **1** | **✅ 已有** |
+| 12V 工業指示燈 | Φ22mm，**白 ×1、綠 ×1、紅 ×1**（操作模式/運作/故障） | 3 | ✅ 現有紅綠白各 1 足夠 |
+| **照明型工業按鍵** | Φ22mm，**內建 12V LED**，無鎖 momentary | **2**（DI1 Reset + DI2 遠端下載） | 🛒 採購（**指定 LED 照明款**，同價位） |
+| RS-485 雙絞線 | 屏蔽，2C | 視距離 | 🛒 採購 |
+| 120Ω 終端電阻 | 1/4W | 2 | 🛒 採購 |
+| 端子台 / 配線槽 / DIN 導軌 | — | — | 🛒 採購 |
+
+---
+
+## 3. 雙電源域設計
+
+```
+┌─ 24V/230W ──┬──▶ AFE-R750（主機 + 推論卡）
+              │
+              └──▶ 24V→12V DC-DC 或獨立 12V PSU
+                          │
+                          ├──▶ tM-PD3R3（VS+/VS−）
+                          ├──▶ 4 顆 12V 工業指示燈（電源/運作/操作/故障）
+                          └──▶ 2 顆按鍵迴路上拉源（DI1/DI2）
+```
+
+- **24V 域**：AGX 主機 + 推論卡（高耗電）
+- **12V 域**：低壓控制 / 燈號 / I/O 模組（隔離高頻干擾）
+- 共地：所有 GND 接共同接地排（**先確認 tM-PD3R3 的 ISO 是否支援電源隔離**）
+
+---
+
+## 4. 通訊設計
+
+| 項目 | 設定 |
+|------|------|
+| 介面 | RS-485 半雙工 |
+| 協定 | Modbus RTU |
+| 預設 baudrate | 9600 8N1（出廠值，依現場可調） |
+| Slave ID | 1（出廠預設） |
+| 訊號線 | D+ / D− / GND（共 3 線屏蔽雙絞線） |
+| 終端電阻 | 兩端各 120Ω |
+| 主機介面 | AFE-R750 內建 COM（`/dev/ttyTHS1`）**或** USB-RS485 轉換器（Plan B）|
+
+### Modbus 暫存器映射（tM-PD3R3 出廠規格）
+
+| 用途 | Modbus 功能碼 | 起始位址 | 數量 |
+|------|--------------|---------|------|
+| 讀 DI 狀態 | 02 (Read Discrete Input) | 0x00000 | 3 |
+| 讀 DO 狀態 | 01 (Read Coils) | 0x00000 | 3 |
+| 寫單一 DO | 05 (Write Single Coil) | 0x00000 | 1 |
+| 寫多個 DO | 15 (Write Multiple Coils) | 0x00000 | 3 |
+
+---
+
+## 5. 燈號 / 按鍵顯示邏輯
+
+### 5.1 面板 4 顆獨立指示燈（燈號顯示）
+
+| # | 燈號 | 顏色 | 訊號源 | 邏輯 | 閃爍 |
+|---|------|------|--------|------|------|
+| 1 | 電源 | ⚪ 白 | — | 不處理 | — |
+| 2 | 通訊故障 | 🔴 紅 | DO0 | 恆亮=故障、滅=正常 | — |
+| 3 | 運作狀況 | 🟢 綠 | DO1 | 恆亮=系統正常（含閒置）、滅=故障 | — |
+| 4 | 操作模式／下載中 | ⚪ 白 | DO2 | 恆亮=自動模式 **或** 下載中；滅=手動+閒置 | — |
+
+**燈號組合速查：**
+
+| 場景 | 🔴 DO0 | 🟢 DO1 | ⚪ DO2 |
+|------|--------|--------|--------|
+| 正常 / 閒置（自動） | OFF | **ON** | **ON** |
+| 正常 / 閒置（手動） | OFF | **ON** | OFF |
+| 遠端下載中（任何模式） | OFF | **ON** | **ON** |
+| 通訊故障 | **ON** | OFF | OFF |
+
+### 5.2 照明型按鍵內建 LED 邏輯
+
+2 顆 momentary 按鍵都選**內建 12V LED** 款（DI0 已移除，不配按鍵）：
+
+| 按鍵 | 對應 DI | 功能 | LED 行為 |
+|------|--------|------|---------|
+| Reset | DI1 | 系統 Reset | 按下發光，放開熄滅 |
+| 遠端下載 | DI2 | 觸發 config sync | 按下發光；可並聯 **DO2** 顯示下載中 |
+
+→ DI2 按下 → `config_sync.trigger()` → DO2 白燈亮（下載中）→ 完成後白燈滅；失敗則 DO0 紅燈亮 3 秒。
+
+### 🔴 待確認
+
+1. 「通訊故障」DO0 涵蓋範圍？建議：MQTT bridge 斷線 ✗、所有相機 offline ✗、`/api/health` 失敗 ✗ — 三者任一觸發
+2. 中央伺服器 config URL（需寫入 `.env` 的 `CONFIG_SYNC_URL`）
+
+---
+
+## 6. 軟體階段規劃
+
+### P1 — 通訊驗證腳本（已產出 `test_modbus.py`，未交付）
+
+3 階段漸進測試，**任何一段失敗就停下來修**，避免後續封裝白做：
+
+1. **通訊驗證** — 讀 DI 確認 Modbus 有回應，失敗時印硬體/BIOS/驅動四層排查清單
+2. **DO 跑馬燈** — 3 顆燈輪流亮 3 圈，肉眼驗證接線正確
+3. **按鍵監聽** — 20Hz 輪詢 DI，按下/放開印 edge event
+
+### P2 — 正式 Driver + Service（P1 通過後動工）
+
+| 模組 | 路徑 | 職責 |
+|------|------|------|
+| `TmPD3R3Driver` | `services/io_module.py` | Modbus 讀寫、連線管理、自動重連 |
+| `IOService` | `services/io_service.py` | 系統健康度 → DO 對映、DI edge → 內部事件、閃爍 timer |
+| API 路由 | `api/routes/io.py` | `GET /api/io/status` / `POST /api/io/do/{id}` / WS 即時 DI 事件 |
+| Web UI | `web/index.html` | I/O 監控面板（admin only） |
+| MQTT 整合 | 透過 `services/mqtt_bridge` | DI 事件 → publish `io/event/...`；DO 狀態心跳 |
+
+### P3 — 規範驗收
+
+- 場勘對照規範條文 → 點亮每顆燈、按每個按鈕、量電氣特性
+- 文件交付：本檔 + 接線圖 + 規範條對應截圖
+
+---
+
+## 7. Jetson RS-485 已知雷點（P1 必經）
+
+### 7.1 `/dev/ttyTHS*` 命名與權限
+
+- Jetson 用 Tegra High-Speed UART (`ttyTHS`)，**不是** `ttyS` 或 `ttyUSB`
+- JetPack 6 預設 `ttyTHS0` 被 serial console (`nvgetty.service`) 佔用
+- AFE-R750 上實際裝置編號可能是 `ttyTHS1` 或更後面，**先用 `ls -l /dev/tty*` 確認**
+
+```bash
+# 釋放被 console 佔用的 UART
+sudo systemctl stop nvgetty.service
+sudo systemctl disable nvgetty.service
+
+# 給用戶權限（避免每次都 sudo）
+sudo usermod -a -G dialout ubuntu
+# 登出再登入生效
+```
+
+### 7.2 ⚠️ 最大雷點：RS-485 方向控制 (DE/RE)
+
+RS-485 半雙工要切「發送/接收」方向：
+
+| AFE-R750 設計 | 軟體要做的事 |
+|--------------|------------|
+| 自動方向控制（推薦） | 不用管 ✅ |
+| RTS 控制 | 透過 `TIOCSRS485` ioctl 強制切換 |
+| 不支援自動切換 | **直接換 USB-RS485** |
+
+**症狀**：能發但讀不回 / 收到自己 echo / Modbus CRC 永遠錯。
+
+### 7.3 BIOS / 硬體模式切換
+
+AFE-R750 COM 可在 **RS-232 / RS-422 / RS-485** 三模切換，要確認：
+- BIOS 設定切到 RS-485
+- Carrier board 上的 jumper / DIP switch 對應位置
+
+### 7.4 Plan B：USB-RS485 轉換器（強烈建議備一條）
+
+| 比較 | AFE-R750 內建 COM | USB-RS485 轉換器 |
+|------|------------------|----------------|
+| 成本 | 0（已有） | NT$300~800 |
+| 驅動穩定性 | Jetson 驅動可能有雷 | 100% 即插即用 |
+| 自動方向控制 | 看硬體設計 | 晶片內建，免煩惱 |
+| 裝置路徑 | `/dev/ttyTHS1` | `/dev/ttyUSB0` |
+
+**推薦晶片**：CP2102 / CP2104（Silicon Labs）或 FT232RL + MAX485（FTDI）。
+**避開**：CH340 便宜貨（在工業環境不穩）。
+
+---
+
+## 8. P1 測試 SOP
+
+```bash
+# 0. 安裝依賴
+pip install pymodbus pyserial
+
+# 1. 環境診斷（不送資料）
+python3 test_modbus.py --diagnose
+
+# 2. 內建 COM 試（Plan A）
+sudo chmod 666 /dev/ttyTHS1
+python3 test_modbus.py --port /dev/ttyTHS1 --slave 1 --baudrate 9600
+
+# 3. 失敗 → 強制 RS-485 模式
+python3 test_modbus.py --port /dev/ttyTHS1 --force-rs485-mode
+
+# 4. 還是失敗 → 換 USB-RS485（Plan B）
+python3 test_modbus.py --port /dev/ttyUSB0
+```
+
+**預期通過標誌**：
+- ✅ 通訊正常，DI 目前狀態: [False, False, False]
+- DO 跑馬燈肉眼可見三顆輪流
+- 按下實體按鍵 print 出 edge event
+
+P1 跑通 → 可進 P2。
+
+---
+
+## 9. 未解決待辦清單
+
+- [ ] 「通訊故障」DO0 觸發條件清單（暫採 MQTT/相機/health 任一）
+- [ ] 中央伺服器 config URL → 寫入 `.env` `CONFIG_SYNC_URL`
+- [ ] config_sync 驗收：按 DI2 → 白燈亮 → 拉到 JSON → 白燈滅
+- [ ] tM-PD3R3 電源隔離規格確認（共地策略）
+- [ ] 採購清單下單：**照明型 Φ22 momentary ×2**（DI1+DI2）、Φ22 白燈 ×1（補齊雙白）、12V PSU、RS-485 線材、終端電阻
+- [ ] AFE-R750 COM RS-485 模式 BIOS 設定值記錄
+- [ ] P1 測試腳本實測通過
+
+---
+
+## 10. 文件版本
+
+| 日期 | 變更 |
+|------|------|
+| 2026-04-25 | 初版（Claude + 使用者協作） |
+| 2026-05-06 | 燈號重設計：DO0=🔴紅/故障、DO1=🟢綠/恆亮(正常)、DO2=⚪白/下載中；DI2 觸發 config sync |

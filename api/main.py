@@ -19,6 +19,7 @@ from api.routes import congestion
 from api.routes import logs, system
 from api.routes import external, api_key_admin
 from api.routes import mqtt as mqtt_route
+from api.routes import io as io_route
 TZ_TAIPEI = ZoneInfo("Asia/Taipei")
 
 
@@ -180,6 +181,11 @@ async def lifespan(app: FastAPI):
         _mqtt_start()
     except Exception as _e:
         print(f"⚠️ MQTT bridge 啟動失敗: {_e}", flush=True)
+    try:
+        from services.io_service import start as _io_start
+        _io_start()
+    except Exception as _e:
+        print(f"?? IO service ????: {_e}", flush=True)
     print("✅ 系統初始化完成")
     yield
     print("👋 系統關閉")
@@ -228,6 +234,7 @@ app.include_router(system.router)
 app.include_router(external.router)
 app.include_router(api_key_admin.router)
 app.include_router(mqtt_route.router)
+app.include_router(io_route.router)
 # 靜態檔案
 if os.path.exists("./output"):
     app.mount("/files", StaticFiles(directory="./output"), name="files")

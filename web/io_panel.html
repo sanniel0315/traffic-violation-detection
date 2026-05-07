@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>燈號 I/O 控制面板</title>
+  <link rel="stylesheet" href="/web/lib/element-plus.css?v=20260407" />
+  <style>
+    :root {
+      --gov-bg: #eef2f6;
+      --gov-surface: #ffffff;
+      --gov-primary: #0b5ea8;
+      --gov-text: #1f2937;
+      --gov-muted: #5b6778;
+      --gov-border: #d7dee8;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--gov-bg);
+      color: var(--gov-text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC",
+        "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+      font-size: 14px;
+    }
+
+    /* Navbar */
+    .navbar {
+      background: #1a2a3d;
+      padding: 0 24px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .navbar-title {
+      color: #ffffff;
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+
+    .navbar-subtitle {
+      color: #8fa8c4;
+      font-size: 12px;
+      margin-left: 4px;
+      white-space: nowrap;
+    }
+
+    /* Layout */
+    .page-body {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Cards */
+    .card {
+      background: #ffffff;
+      border-radius: 8px;
+      border: 1px solid var(--gov-border);
+      padding: 20px 24px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+    }
+
+    .card-title {
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--gov-text);
+      border-bottom: 1px solid var(--gov-border);
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card-title-warning {
+      font-size: 12px;
+      font-weight: 400;
+      color: var(--gov-muted);
+    }
+
+    /* Lamp row */
+    .lamp-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 32px;
+      flex-wrap: wrap;
+    }
+
+    .lamp-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .lamp-circle {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+
+    .lamp-label {
+      font-size: 12px;
+      color: var(--gov-muted);
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .lamp-off {
+      background: #d1d5db;
+      box-shadow: none;
+    }
+
+    /* Connection chip */
+    .conn-chip-row {
+      margin-top: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .conn-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .conn-chip.connected {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .conn-chip.disconnected {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .conn-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+    }
+
+    .conn-chip.connected .conn-dot {
+      background: #22c55e;
+    }
+
+    .conn-chip.disconnected .conn-dot {
+      background: #ef4444;
+    }
+
+    /* Relay rows */
+    .relay-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid #f3f4f6;
+    }
+
+    .relay-row:last-child {
+      border-bottom: none;
+    }
+
+    .relay-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .relay-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .relay-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gov-text);
+    }
+
+    .relay-label {
+      font-size: 12px;
+      color: var(--gov-muted);
+    }
+
+    /* Config sync */
+    .info-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+    }
+
+    .info-label {
+      font-size: 12px;
+      color: var(--gov-muted);
+      min-width: 72px;
+      flex-shrink: 0;
+    }
+
+    .info-value {
+      font-size: 13px;
+      color: var(--gov-text);
+      word-break: break-all;
+    }
+
+    .info-value.muted {
+      color: #9ca3af;
+    }
+
+    .sync-btn-row {
+      margin-top: 14px;
+    }
+
+    /* Event log */
+    .event-subtitle {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gov-text);
+      margin: 4px 0 10px;
+    }
+
+    .event-list {
+      max-height: 220px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .event-entry {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 0;
+    }
+
+    .event-time {
+      font-family: "Courier New", Courier, monospace;
+      font-size: 12px;
+      color: var(--gov-muted);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .event-empty {
+      font-size: 13px;
+      color: #9ca3af;
+      padding: 12px 0;
+      text-align: center;
+    }
+
+    /* Settings form */
+    .section-subtitle {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gov-text);
+      margin: 4px 0 12px;
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .setting-label {
+      font-size: 12px;
+      color: var(--gov-muted);
+      min-width: 90px;
+      flex-shrink: 0;
+    }
+
+    /* Card horizontal rule */
+    .card-hr {
+      border: none;
+      border-top: 1px solid var(--gov-border);
+      margin: 16px 0;
+    }
+
+    /* Inline badges (replacing el-tag / el-divider) */
+    .sync-badge, .event-badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1.6;
+    }
+
+    .badge-idle    { background: #f1f5f9; color: #64748b; }
+    .badge-warning { background: #fef3c7; color: #92400e; }
+    .badge-primary { background: #dbeafe; color: #1e40af; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- Navbar -->
+    <nav class="navbar">
+      <span class="navbar-title">燈號 I/O 控制面板</span>
+      <span class="navbar-subtitle">tM-PD3R3 狀態監控</span>
+    </nav>
+
+    <!-- Page body -->
+    <div class="page-body">
+
+      <!-- CARD 1: Lamp status -->
+      <div class="card">
+        <div class="card-title">燈號顯示狀態</div>
+
+        <div class="lamp-row">
+          <!-- 運作狀況 — DO1 綠燈 -->
+          <div class="lamp-item">
+            <div
+              class="lamp-circle"
+              :class="{ 'lamp-off': !lampRunning }"
+              :style="lampRunning
+                ? 'background:#22c55e; box-shadow:0 0 14px 5px rgba(34,197,94,0.55);'
+                : ''"
+            ></div>
+            <div class="lamp-label">運作狀況</div>
+          </div>
+
+          <!-- 操作模式 — DO2 白燈 -->
+          <div class="lamp-item">
+            <div
+              class="lamp-circle"
+              :class="{ 'lamp-off': !lampMode }"
+              :style="lampMode
+                ? 'background:#e5e7eb; border:2px solid #9ca3af; box-shadow:0 0 14px 5px rgba(200,200,200,0.7);'
+                : ''"
+            ></div>
+            <div class="lamp-label">操作模式</div>
+          </div>
+
+          <!-- 通訊故障 — DO0 紅燈 -->
+          <div class="lamp-item">
+            <div
+              class="lamp-circle"
+              :class="{ 'lamp-off': !lampFault }"
+              :style="lampFault
+                ? 'background:#ef4444; box-shadow:0 0 14px 5px rgba(239,68,68,0.55);'
+                : ''"
+            ></div>
+            <div class="lamp-label">通訊故障</div>
+          </div>
+        </div>
+
+        <!-- Connection chip -->
+        <div class="conn-chip-row">
+          <div :class="['conn-chip', status.connected ? 'connected' : 'disconnected']">
+            <span class="conn-dot"></span>
+            <span>{{ status.connected ? '已連線' : '未連線' }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- CARD 2: Manual relay control -->
+      <div class="card">
+        <div class="card-title">
+          <span>手動繼電器控制</span>
+          <span class="card-title-warning">⚠ 僅限測試用途</span>
+        </div>
+
+        <div class="card-title-inner" style="font-size:13px;font-weight:600;color:var(--gov-muted);margin-bottom:8px;">
+          手動控制 DO
+        </div>
+
+        <!-- DO0 -->
+        <div class="relay-row">
+          <div class="relay-left">
+            <div class="relay-dot" style="background:#ef4444;"></div>
+            <div>
+              <div class="relay-name">DO0</div>
+              <div class="relay-label">通訊故障</div>
+            </div>
+          </div>
+          <el-switch
+            v-model="manualDO[0]"
+            @change="(val) => setRelay(0, val)"
+            active-color="#ef4444"
+          />
+        </div>
+
+        <!-- DO1 -->
+        <div class="relay-row">
+          <div class="relay-left">
+            <div class="relay-dot" style="background:#22c55e;"></div>
+            <div>
+              <div class="relay-name">DO1</div>
+              <div class="relay-label">運作狀況</div>
+            </div>
+          </div>
+          <el-switch
+            v-model="manualDO[1]"
+            @change="(val) => setRelay(1, val)"
+            active-color="#22c55e"
+          />
+        </div>
+
+        <!-- DO2 -->
+        <div class="relay-row">
+          <div class="relay-left">
+            <div class="relay-dot" style="background:#facc15;"></div>
+            <div>
+              <div class="relay-name">DO2</div>
+              <div class="relay-label">操作模式</div>
+            </div>
+          </div>
+          <el-switch
+            v-model="manualDO[2]"
+            @change="(val) => setRelay(2, val)"
+            active-color="#facc15"
+          />
+        </div>
+      </div>
+
+      <!-- CARD 3: Config sync settings & event log -->
+      <div class="card">
+        <div class="card-title">遠端 Config 同步 &amp; 事件紀錄</div>
+
+        <!-- 伺服器設定 -->
+        <div class="section-subtitle">伺服器設定</div>
+
+        <div class="setting-row">
+          <label class="setting-label">同步 URL</label>
+          <el-input
+            v-model="syncConfig.url"
+            placeholder="http://192.168.x.x:8080/api/config"
+            clearable
+            style="flex:1;"
+          />
+        </div>
+
+        <div class="setting-row" style="margin-top:8px;">
+          <label class="setting-label">Token（選填）</label>
+          <el-input
+            v-model="syncConfig.token"
+            placeholder="Bearer token 或留空"
+            show-password
+            style="flex:1;"
+          />
+        </div>
+
+        <div style="margin-top:12px;display:flex;align-items:center;gap:10px;">
+          <el-button
+            type="primary"
+            :loading="savingConfig"
+            @click="saveConfig"
+          >儲存設定</el-button>
+          <span v-if="saveMsg" style="font-size:12px;color:#22c55e;">{{ saveMsg }}</span>
+        </div>
+
+        <!-- 分隔線 -->
+        <div class="card-hr"></div>
+
+        <!-- 同步操作 -->
+        <div class="section-subtitle">同步操作</div>
+
+        <div class="info-row">
+          <span class="info-label">同步狀態</span>
+          <span
+            class="sync-badge"
+            :class="status.config_sync?.running ? 'badge-warning' : 'badge-idle'"
+          >{{ status.config_sync?.running ? '執行中' : '閒置' }}</span>
+        </div>
+
+        <div class="sync-btn-row">
+          <el-button
+            type="primary"
+            :disabled="!syncConfig.url"
+            :title="syncConfig.url ? '' : '請先填入並儲存同步 URL'"
+            @click="triggerSync"
+          >立即同步</el-button>
+          <span v-if="!syncConfig.url" style="font-size:12px;color:#9ca3af;margin-left:8px;">請先填入 URL</span>
+        </div>
+
+        <!-- 分隔線 -->
+        <div class="card-hr"></div>
+
+        <!-- DI 按鍵事件紀錄 -->
+        <div class="section-subtitle">DI 按鍵事件紀錄</div>
+
+        <div class="event-list">
+          <template v-if="diEvents.length > 0">
+            <div
+              v-for="(evt, idx) in diEvents"
+              :key="idx"
+              class="event-entry"
+            >
+              <span class="event-time">{{ formatTime(evt.time || evt.timestamp || '') }}</span>
+              <span
+                class="event-badge"
+                :class="evt.label === 'Reset' ? 'badge-warning' : 'badge-primary'"
+              >{{ evt.label || ('DI' + evt.channel) }}</span>
+            </div>
+          </template>
+          <div v-else class="event-empty">尚無按鍵事件</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="/web/lib/vue.global.prod.js?v=20260407"></script>
+  <script src="/web/lib/element-plus.min.js?v=20260407"></script>
+  <script src="/web/lib/element-plus-icons.min.js?v=20260407"></script>
+  <script>
+    const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
+
+    const app = createApp({
+      setup() {
+        const status = ref({});
+        const diEvents = ref([]);
+        const manualDO = ref([false, false, false]);
+
+        // 燈號以軟體邏輯狀態為準（硬體未插時仍可正確顯示）
+        const lampRunning = computed(() => status.value.state?.comm_ok ?? false);
+        const lampMode    = computed(() => {
+          const s = status.value.state;
+          return s ? ((s.auto_mode || s.downloading) && s.comm_ok) : false;
+        });
+        const lampFault   = computed(() => {
+          const s = status.value.state;
+          return s ? !s.comm_ok : false;
+        });
+        const ws = ref(null);
+        const syncConfig = ref({ url: '', token: '' });
+        const savingConfig = ref(false);
+        const saveMsg = ref('');
+
+        function formatTime(iso) {
+          if (!iso) return '--:--:--';
+          try {
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return iso.slice(0, 8) || '--:--:--';
+            const hh = String(d.getHours()).padStart(2, '0');
+            const mm = String(d.getMinutes()).padStart(2, '0');
+            const ss = String(d.getSeconds()).padStart(2, '0');
+            return `${hh}:${mm}:${ss}`;
+          } catch (e) {
+            return '--:--:--';
+          }
+        }
+
+        async function fetchStatus() {
+          try {
+            const r = await fetch('/api/io/status');
+            const d = await r.json();
+            status.value = d;
+            if (d.do) {
+              manualDO.value[0] = !!d.do.DO0?.state;
+              manualDO.value[1] = !!d.do.DO1?.state;
+              manualDO.value[2] = !!d.do.DO2?.state;
+            }
+          } catch (e) {}
+        }
+
+        async function setRelay(ch, on) {
+          await fetch(`/api/io/do/${ch}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ on })
+          });
+        }
+
+        async function fetchSyncConfig() {
+          try {
+            const r = await fetch('/api/io/sync/config');
+            const d = await r.json();
+            syncConfig.value.url   = d.url   || '';
+            syncConfig.value.token = d.token || '';
+          } catch (e) {}
+        }
+
+        async function saveConfig() {
+          savingConfig.value = true;
+          saveMsg.value = '';
+          try {
+            const r = await fetch('/api/io/sync/config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: syncConfig.value.url, token: syncConfig.value.token })
+            });
+            if (r.ok) {
+              saveMsg.value = '已儲存';
+              ElementPlus.ElMessage.success('設定已儲存');
+              setTimeout(() => { saveMsg.value = ''; }, 3000);
+            } else {
+              ElementPlus.ElMessage.error('儲存失敗');
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error('儲存失敗: ' + e.message);
+          } finally {
+            savingConfig.value = false;
+          }
+        }
+
+        async function triggerSync() {
+          try {
+            const r = await fetch('/api/io/sync/trigger', { method: 'POST' });
+            const d = await r.json();
+            if (d.ok) {
+              ElementPlus.ElMessage.success('已觸發同步');
+            } else {
+              ElementPlus.ElMessage.warning(d.msg || '無法觸發');
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error('觸發失敗');
+          }
+        }
+
+        function connectWS() {
+          const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+          ws.value = new WebSocket(`${proto}://${location.host}/api/io/events`);
+          ws.value.onmessage = (e) => {
+            const evt = JSON.parse(e.data);
+            diEvents.value.unshift(evt);
+            if (diEvents.value.length > 20) diEvents.value.pop();
+          };
+          ws.value.onclose = () => setTimeout(connectWS, 3000);
+        }
+
+        onMounted(() => {
+          fetchStatus();
+          fetchSyncConfig();
+          setInterval(fetchStatus, 2000);
+          connectWS();
+        });
+
+        onUnmounted(() => ws.value?.close());
+
+        return {
+          status,
+          diEvents,
+          manualDO,
+          syncConfig,
+          savingConfig,
+          saveMsg,
+          lampRunning,
+          lampMode,
+          lampFault,
+          formatTime,
+          setRelay,
+          saveConfig,
+          triggerSync
+        };
+      }
+    });
+
+    app.use(ElementPlus);
+
+    // Register all Element Plus icons
+    for (const [name, comp] of Object.entries(ElementPlusIconsVue)) {
+      app.component(name, comp);
+    }
+
+    app.mount('#app');
+  </script>
+</body>
+</html>
