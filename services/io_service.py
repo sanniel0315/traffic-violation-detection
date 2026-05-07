@@ -7,9 +7,9 @@ DO mapping:
   DO2 (white)  - 操作模式:  ON=auto 或 下載中, OFF=手動+閒置
 
 DI mapping:
-  DI0 - not used
+  DI0 - 遠端下載 (triggers config sync)
   DI1 - Reset button
-  DI2 - 遠端下載 (triggers config sync)
+  DI2 - 保留 (尚未指派功能)
 
 Lamp states:
   正常/閒置(自動) : red=OFF  green=ON  white=ON
@@ -39,9 +39,9 @@ DO_GREEN = 1
 DO_WHITE = 2
 
 # DI channel index in pd3r3.read_inputs() / read_all_counters() return list.
-# DI0 釋出不用；DI1 = Reset；DI2 = 遠端下載 (見 IO_MODULE_PLANNING.md §1)
+# DI0 = 遠端下載；DI1 = Reset；DI2 = 保留（見 IO_MODULE_PLANNING.md §1）
+DI_DOWNLOAD = 0
 DI_RESET    = 1
-DI_DOWNLOAD = 2
 
 
 class IOService:
@@ -232,9 +232,9 @@ class IOService:
             "connected": self._mod.ok,
             "error":     err or self._mod.error,
             "di": {
-                "DI0": {"label": "未使用",   "state": di[0]},
+                "DI0": {"label": "遠端下載", "state": di[0]},
                 "DI1": {"label": "Reset",    "state": di[1]},
-                "DI2": {"label": "遠端下載", "state": di[2]},
+                "DI2": {"label": "保留",     "state": di[2]},
             },
             "do": {
                 "DO0": {"color": "red",   "label": "通訊故障", "state": do[0]},

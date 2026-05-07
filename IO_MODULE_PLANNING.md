@@ -10,8 +10,8 @@
 |------|------|------|------|
 | (A) 電源開/關 | AFE-R750 實體電源鍵 | 24V 純硬體 | ✅ 軟體不介入 |
 | (A) 控制模式 | DO2 白燈顯示（恆亮=自動、滅=手動） | DO2 | ✅ |
+| (A) 遠端下載 | tM-PD3R3 **DI0** + Φ22 momentary 按鍵 → config sync | DI0 | ✅ |
 | (A) Reset | tM-PD3R3 **DI1** + Φ22 momentary 按鍵 | DI1 | ✅ |
-| (A) 遠端下載 | tM-PD3R3 **DI2** + Φ22 momentary 按鍵 → config sync | DI2 | ✅ |
 | (B) 電源 ⚪ | 不處理 | — | — |
 | (B) 通訊故障 🔴 | tM-PD3R3 **DO0** → 12V 紅燈 | DO0 | ✅ 恆亮=故障、滅=正常 |
 | (B) 運作狀況 🟢 | tM-PD3R3 **DO1** → 12V 綠燈 | DO1 | ✅ 恆亮=正常（含閒置）、滅=故障 |
@@ -19,7 +19,7 @@
 
 **DO2 雙功能說明**：同一顆白燈同時表示「控制模式（自動/手動）」與「遠端下載中」狀態——  
 `白燈 ON` = 自動模式 **或** 下載進行中；`白燈 OFF` = 手動模式且非下載中（且無通訊故障）。  
-**設計亮點**：DI0 釋出不用，2-DI + 3-DO 實現所有燈號顯示；(B) 電源燈不處理。
+**設計亮點**：DI2 釋出保留（尚未指派功能），2-DI + 3-DO 實現所有燈號顯示；(B) 電源燈不處理。
 
 ---
 
@@ -32,7 +32,7 @@
 | 12V DC 電源供應器 | ≥2A，工業級 | 1 | 🛒 採購（供 tM-PD3R3 + 燈號/按鍵迴路） |
 | **tM-PD3R3 CR** | **3 DI + 3 DO，Modbus RTU** | **1** | **✅ 已有** |
 | 12V 工業指示燈 | Φ22mm，**白 ×1、綠 ×1、紅 ×1**（操作模式/運作/故障） | 3 | ✅ 現有紅綠白各 1 足夠 |
-| **照明型工業按鍵** | Φ22mm，**內建 12V LED**，無鎖 momentary | **2**（DI1 Reset + DI2 遠端下載） | 🛒 採購（**指定 LED 照明款**，同價位） |
+| **照明型工業按鍵** | Φ22mm，**內建 12V LED**，無鎖 momentary | **2**（DI0 遠端下載 + DI1 Reset） | 🛒 採購（**指定 LED 照明款**，同價位） |
 | RS-485 雙絞線 | 屏蔽，2C | 視距離 | 🛒 採購 |
 | 120Ω 終端電阻 | 1/4W | 2 | 🛒 採購 |
 | 端子台 / 配線槽 / DIN 導軌 | — | — | 🛒 採購 |
@@ -48,7 +48,7 @@
                           │
                           ├──▶ tM-PD3R3（VS+/VS−）
                           ├──▶ 4 顆 12V 工業指示燈（電源/運作/操作/故障）
-                          └──▶ 2 顆按鍵迴路上拉源（DI1/DI2）
+                          └──▶ 2 顆按鍵迴路上拉源（DI0/DI1）
 ```
 
 - **24V 域**：AGX 主機 + 推論卡（高耗電）
@@ -102,14 +102,14 @@
 
 ### 5.2 照明型按鍵內建 LED 邏輯
 
-2 顆 momentary 按鍵都選**內建 12V LED** 款（DI0 已移除，不配按鍵）：
+2 顆 momentary 按鍵都選**內建 12V LED** 款（DI2 釋出保留，不配按鍵）：
 
 | 按鍵 | 對應 DI | 功能 | LED 行為 |
 |------|--------|------|---------|
+| 遠端下載 | DI0 | 觸發 config sync | 按下發光；可並聯 **DO2** 顯示下載中 |
 | Reset | DI1 | 系統 Reset | 按下發光，放開熄滅 |
-| 遠端下載 | DI2 | 觸發 config sync | 按下發光；可並聯 **DO2** 顯示下載中 |
 
-→ DI2 按下 → `config_sync.trigger()` → DO2 白燈亮（下載中）→ 完成後白燈滅；失敗則 DO0 紅燈亮 3 秒。
+→ DI0 按下 → `config_sync.trigger()` → DO2 白燈亮（下載中）→ 完成後白燈滅；失敗則 DO0 紅燈亮 3 秒。
 
 ### ✅ 已決議（2026-05-07）
 
@@ -230,16 +230,16 @@ P1 跑通 → 可進 P2。
 
 - [x] **DO0 通訊故障觸發條件確定** — 改採 NTP / link / IP 網路層三層（`services/network_health.py`，30s 輪詢）
 - [x] **CONFIG_SYNC_URL 預設值** — `http://192.168.0.101:8080/api/config`，存於 `config/system/io_settings.json`（網頁可改寫）
-- [x] **DI 編號修正** — `services/io_service.py` `DI_RESET=1, DI_DOWNLOAD=2`（之前誤寫為 0/1，導致按 Reset 鍵沒反應）
+- [x] **DI 編號修正** — `services/io_service.py` 最終 `DI_DOWNLOAD=0, DI_RESET=1`（DI2 改釋出保留）
 - [x] **WS 事件追蹤改用 monotonic seq** — `deque(maxlen=50)` 飽和後 `len()` 不再變大，舊邏輯第 51 個事件起不送
 - [x] **P2 driver / service / API / UI / 規劃文件** — `services/io_module.py` `io_service.py` `network_health.py` `config_sync.py`、`api/routes/io.py`、`web/io_panel.html` 全部交付
 
 ### ❌ 待辦
 
 - [ ] **P1 測試腳本實機跑** — `python3 scripts/test_modbus_io.py --diagnose` → 連線 → 跑馬燈 → 按鍵
-- [ ] **config_sync 驗收** — 按 DI2 → DO2 白燈亮 → 拉到 JSON → 白燈滅；失敗則 DO0 紅燈閃 3 秒
+- [ ] **config_sync 驗收** — 按 DI0 → DO2 白燈亮 → 拉到 JSON → 白燈滅；失敗則 DO0 紅燈閃 3 秒
 - [ ] **tM-PD3R3 電源隔離規格確認**（共地策略：所有 GND 接共同接地排是否安全）
-- [ ] **採購清單下單**：照明型 Φ22 momentary ×2（DI1+DI2）、Φ22 白燈 ×1、12V PSU、RS-485 線材、終端電阻 ×2
+- [ ] **採購清單下單**：照明型 Φ22 momentary ×2（DI0 遠端下載 + DI1 Reset）、Φ22 白燈 ×1、12V PSU、RS-485 線材、終端電阻 ×2
 - [ ] **AFE-R750 COM RS-485 模式 BIOS 設定值記錄**（pd3r3.py docstring 已記 `COM1_SW1 = 1011`，但 BIOS 設定值待補）
 - [ ] **中央伺服器 (192.168.0.101:8080) 可達性 / API 規格驗證**
 
@@ -252,3 +252,4 @@ P1 跑通 → 可進 P2。
 | 2026-04-25 | 初版（Claude + 使用者協作） |
 | 2026-05-06 | 燈號重設計：DO0=🔴紅/故障、DO1=🟢綠/恆亮(正常)、DO2=⚪白/下載中；DI2 觸發 config sync |
 | 2026-05-07 | DI/DO 編號 bug 修正、WS 事件 seq tracker、待辦狀態整理；P2 driver 全部交付 |
+| 2026-05-07b | DI 重映射：**DI0 = 遠端下載**、**DI1 = Reset**、**DI2 = 保留**（原規劃 DI0 釋出，現改為 DI2 釋出）；面板列出全部 3 個 DI |
