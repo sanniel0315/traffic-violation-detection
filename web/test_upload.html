@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>上傳診斷工具</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:720px;margin:32px auto;padding:0 16px;color:#111}
+h1{font-size:18px;margin-bottom:4px}
+.hint{color:#64748b;font-size:13px}
+fieldset{border:1px solid #e2e8f0;border-radius:6px;padding:12px 16px;margin:16px 0}
+input[type=file]{display:block;margin:8px 0}
+button{padding:8px 16px;background:#2563eb;color:#fff;border:0;border-radius:4px;cursor:pointer;font-size:14px}
+button:disabled{background:#94a3b8;cursor:not-allowed}
+.log{background:#0f172a;color:#e2e8f0;padding:12px;border-radius:6px;font-family:monospace;font-size:12px;white-space:pre-wrap;min-height:120px;max-height:300px;overflow:auto;margin-top:12px}
+.bar{height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;margin-top:8px}
+.bar>span{display:block;height:100%;background:#10b981;width:0;transition:width 0.1s}
+</style>
+</head>
+<body>
+<h1>影片上傳診斷</h1>
+<div class="hint">繞過 Vue 應用直接打 <code>POST /api/cameras/upload-source</code>，用來判斷上傳卡住的原因。</div>
+
+<fieldset>
+<legend>選擇檔案</legend>
+<input type="file" id="f" accept=".mp4,.mkv,.mov,.avi,.webm">
+<div id="info" class="hint">尚未選擇檔案</div>
+<button id="go" disabled>開始上傳</button>
+<div class="bar"><span id="bar"></span></div>
+</fieldset>
+
+<div class="log" id="log">[尚未開始]</div>
+
+<script>
+const f=document.getElementById('f'), info=document.getElementById('info'), go=document.getElementById('go'),
+      log=document.getElementById('log'), bar=document.getElementById('bar');
+function L(m){log.textContent+='\n'+new Date().toLocaleTimeString()+'  '+m; log.scrollTop=log.scrollHeight}
+f.addEventListener('change',()=>{
+  const file=f.files[0];
+  if(!file){info.textContent='尚未選擇'; go.disabled=true; return}
+  info.textContent=`${file.name}  /  ${(file.size/1024/1024).toFixed(2)} MB  /  ${file.type||'(no MIME)'}`;
+  go.disabled=false;
+});
+go.addEventListener('click',()=>{
+  const file=f.files[0]; if(!file) return;
+  go.disabled=true; bar.style.width='0%'; log.textContent='[開始]';
+  const fd=new FormData(); fd.append('file', file);
+  const xhr=new XMLHttpRequest();
+  xhr.open('POST', '/api/cameras/upload-source', true);
+  xhr.upload.addEventListener('progress', e=>{
+    if(e.lengthComputable){
+      const pct=(e.loaded/e.total*100).toFixed(1);
+      bar.style.width=pct+'%';
+      L(`上傳中 ${pct}%  (${e.loaded.toLocaleString()} / ${e.total.toLocaleString()} bytes)`);
+    }
+  });
+  xhr.upload.addEventListener('load', ()=>L('上傳資料傳送完成，等待 server 回應…'));
+  xhr.upload.addEventListener('error', ()=>L('❌ 上傳階段網路錯誤'));
+  xhr.upload.addEventListener('abort', ()=>L('❌ 上傳被中止'));
+  xhr.upload.addEventListener('timeout', ()=>L('❌ 上傳階段逾時'));
+  xhr.addEventListener('load', ()=>{
+    L(`✅ Server 回應: HTTP ${xhr.status}`);
+    L('Body: '+xhr.responseText.slice(0,500));
+    go.disabled=false;
+  });
+  xhr.addEventListener('error', ()=>{L('❌ 連線錯誤'); go.disabled=false});
+  xhr.addEventListener('timeout', ()=>{L('❌ Server 回應逾時'); go.disabled=false});
+  xhr.timeout=300000; // 5 min
+  L(`送出 POST /api/cameras/upload-source  (${file.size.toLocaleString()} bytes)`);
+  xhr.send(fd);
+});
+</script>
+</body>
+</html>
