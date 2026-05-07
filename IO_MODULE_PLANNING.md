@@ -110,7 +110,7 @@
 | Reset | DI1 | 系統 Reset → `systemctl restart traffic-api.service` | 按下發光，放開熄滅 |
 
 → DI0 按下 → `config_sync.trigger()` → DO2 白燈亮（下載中）→ 完成後白燈滅；失敗則 DO0 紅燈亮 3 秒。
-→ DI1 按下 → log 提示 → 2 秒後 `sudo -n systemctl restart traffic-api.service`（依靠 NOPASSWD sudo），重啟期間 ~15-20 秒燈號維持上次狀態（systemd 直接 SIGTERM，無法清燈）；新 process 起來後 `_apply_do()` 會復寫燈號。
+→ DI1 按下 → log 提示 → 2 秒後 **主動把 3 顆 DO 全滅**（DO1 綠燈滅 = 系統沒在跑的視覺提示）→ `sudo -n systemctl restart traffic-api.service`（依靠 NOPASSWD sudo）→ 重啟期間 ~15-100 秒燈號維持全暗；新 process 起來後 `start() → _apply_do()` 自動復寫燈號（DO1 綠燈重新亮起代表 ready）。
 
 ### ✅ 已決議（2026-05-07）
 
@@ -255,3 +255,4 @@ P1 跑通 → 可進 P2。
 | 2026-05-07 | DI/DO 編號 bug 修正、WS 事件 seq tracker、待辦狀態整理；P2 driver 全部交付 |
 | 2026-05-07b | DI 重映射：**DI0 = 遠端下載**、**DI1 = Reset**、**DI2 = 保留**（原規劃 DI0 釋出，現改為 DI2 釋出）；面板列出全部 3 個 DI |
 | 2026-05-07c | DI1 Reset 接通系統重啟動作：`sudo -n systemctl restart traffic-api.service`；2 秒延遲、防連按 |
+| 2026-05-07d | DI1 Reset 重啟前 3 顆 DO 全滅（系統沒在跑的視覺提示）；重啟完成後 `_apply_do()` 自動恢復 |
