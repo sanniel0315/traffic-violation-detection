@@ -3,5 +3,7 @@ streams:
     - rtsp://root:<CAMERA_PASSWORD>@203.0.113.11:554/axis-media/media.amp
   cam_2:
     - "rtsp://admin:<CAMERA_PASSWORD>@203.0.113.12:6554/profile2/media.smp"
+  cam_6:
+    - "rtsp://admin:<CAMERA_PASSWORD>@203.0.113.13:7554/profile2/media.smp"
   cam_5:
     - "ffmpeg:/media/frigate/SIG_8_remuxed.mp4#video=copy#input=file"

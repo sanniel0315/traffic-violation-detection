@@ -249,6 +249,8 @@ go2rtc:
     - rtsp://root:<CAMERA_PASSWORD>@203.0.113.11:554/axis-media/media.amp
     cam_2:
     - rtsp://admin:<CAMERA_PASSWORD>@203.0.113.12:6554/profile2/media.smp
+    cam_6:
+    - rtsp://admin:<CAMERA_PASSWORD>@203.0.113.13:7554/profile2/media.smp
 mqtt:
   enabled: false
 record:
