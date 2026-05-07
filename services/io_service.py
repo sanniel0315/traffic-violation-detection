@@ -38,8 +38,10 @@ DO_RED   = 0
 DO_GREEN = 1
 DO_WHITE = 2
 
-DI_RESET    = 0
-DI_DOWNLOAD = 1
+# DI channel index in pd3r3.read_inputs() / read_all_counters() return list.
+# DI0 釋出不用；DI1 = Reset；DI2 = 遠端下載 (見 IO_MODULE_PLANNING.md §1)
+DI_RESET    = 1
+DI_DOWNLOAD = 2
 
 
 class IOService:
@@ -215,8 +217,9 @@ class IOService:
             "connected": self._mod.ok,
             "error":     err or self._mod.error,
             "di": {
-                "DI0": {"label": "Reset",    "state": di[0]},
-                "DI1": {"label": "遠端下載", "state": di[1]},
+                "DI0": {"label": "未使用",   "state": di[0]},
+                "DI1": {"label": "Reset",    "state": di[1]},
+                "DI2": {"label": "遠端下載", "state": di[2]},
             },
             "do": {
                 "DO0": {"color": "red",   "label": "通訊故障", "state": do[0]},
