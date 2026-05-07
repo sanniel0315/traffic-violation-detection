@@ -1974,8 +1974,14 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         _last_infer_wall = time.time()
         frame_count += 1
         infer_frame = frame.copy()
-        # 每 cam 獨立 detector → 不需鎖，CUDA 端可並行排程
-        detections = detector.detect(infer_frame)
+        # 加回 process-level lock — 雖然每 cam 獨立 detector，但底層 ultralytics /
+        # cuDNN / TRT global state (default CUDA stream / cuBLAS handle / cuDNN
+        # workspace) 並非 thread-safe；多 cam 並行 detect() 會觸發 native lib race → SEGV。
+        # 之前 1e3330a 為拚 fps 移掉，但代價是 process SEGV 持續發生（faulthandler 抓到
+        # ultralytics predictor.py preprocess 在 SEGV 時段）。
+        # fps 影響：cam_1 13.3→7.5, cam_2 9.2→7.3 — 換穩定。
+        with _shared_overlay_detector_lock:
+            detections = detector.detect(infer_frame)
         # 原子綁定：frame + bbox + ts 一起寫入
         _shared_frames[camera_id] = {
             "frame": infer_frame,

@@ -249,10 +249,6 @@ go2rtc:
     - rtsp://root:<CAMERA_PASSWORD>@203.0.113.11:554/axis-media/media.amp
     cam_2:
     - rtsp://admin:<CAMERA_PASSWORD>@203.0.113.12:6554/profile2/media.smp
-    cam_3:
-    - ffmpeg:http://127.0.0.1:8000/api/nx/stream/%7B850f42c7-893a-1697-11ec-64448f93b04a%7D?format=mpegts&stream=0#video=copy
-    cam_4:
-    - ffmpeg:http://127.0.0.1:8000/api/nx/stream/%7Be3f59960-30aa-839e-11e5-056bd2b87ff6%7D?format=mpegts&stream=0#video=copy
 mqtt:
   enabled: false
 record:
