@@ -4,7 +4,7 @@ IO service: maps system state -> DO outputs, monitors DI edges.
 DO mapping:
   DO0 (red)    - 通訊故障:  ON=fault,  OFF=normal
   DO1 (green)  - 運作狀況:  solid ON=OK, OFF=fault
-  DO2 (white)  - 操作模式:  ON=auto 或 下載中, OFF=手動+閒置
+  DO2 (white)  - 操作模式:  ON=手動 或 下載中, OFF=自動(遠端)+閒置
 
 DI mapping:
   DI0 - 遠端下載 (triggers config sync)
@@ -12,10 +12,10 @@ DI mapping:
   DI2 - 保留 (尚未指派功能)
 
 Lamp states:
-  正常/閒置(自動) : red=OFF  green=ON  white=ON
-  正常/閒置(手動) : red=OFF  green=ON  white=OFF
-  遠端下載中      : red=OFF  green=ON  white=ON  (不論自動/手動)
-  通訊故障        : red=ON   green=OFF white=OFF
+  正常/閒置(自動/遠端) : red=OFF  green=ON  white=OFF
+  正常/閒置(手動)      : red=OFF  green=ON  white=ON
+  遠端下載中           : red=OFF  green=ON  white=ON  (不論自動/手動)
+  通訊故障             : red=ON   green=OFF white=OFF
 """
 from __future__ import annotations
 
@@ -116,7 +116,8 @@ class IOService:
     def _apply_do(self) -> None:
         try:
             fault = not self._comm_ok
-            white = (self._auto_mode or self._downloading) and not fault
+            # 白燈 ON = 手動模式 OR 下載中；OFF = 自動(遠端)模式且非下載
+            white = ((not self._auto_mode) or self._downloading) and not fault
             self._mod.set_relay(DO_RED,   fault)
             self._mod.set_relay(DO_GREEN, not fault)
             self._mod.set_relay(DO_WHITE, white)
