@@ -111,16 +111,16 @@
 
 → DI2 按下 → `config_sync.trigger()` → DO2 白燈亮（下載中）→ 完成後白燈滅；失敗則 DO0 紅燈亮 3 秒。
 
-### 🔴 待確認
+### ✅ 已決議（2026-05-07）
 
-1. 「通訊故障」DO0 涵蓋範圍？建議：MQTT bridge 斷線 ✗、所有相機 offline ✗、`/api/health` 失敗 ✗ — 三者任一觸發
-2. 中央伺服器 config URL（需寫入 `.env` 的 `CONFIG_SYNC_URL`）
+1. **「通訊故障」DO0 觸發條件** — 改採 **網路層三層檢查**（NTP / 主網卡 link / 主網卡 IP），任一失敗即觸發。實作於 `services/network_health.py`，30 秒輪詢。原本提的 MQTT/相機/health 路線太貼業務層，遇到後端啟動順序或單一 service 短暫掛掉就誤報，網路層較穩定。
+2. **中央伺服器 config URL** — 預設 `http://192.168.0.101:8080/api/config`，存於 `config/system/io_settings.json`（網頁可改寫）；`.env CONFIG_SYNC_URL` 為 fallback。實際可達性待 P3 驗收。
 
 ---
 
 ## 6. 軟體階段規劃
 
-### P1 — 通訊驗證腳本（已產出 `test_modbus.py`，未交付）
+### P1 — 通訊驗證腳本（`scripts/test_modbus_io.py` 已交付，待實機驗收）
 
 3 階段漸進測試，**任何一段失敗就停下來修**，避免後續封裝白做：
 
@@ -199,20 +199,20 @@ AFE-R750 COM 可在 **RS-232 / RS-422 / RS-485** 三模切換，要確認：
 
 ```bash
 # 0. 安裝依賴
-pip install pymodbus pyserial
+pip install --user pymodbus pyserial
 
 # 1. 環境診斷（不送資料）
-python3 test_modbus.py --diagnose
+python3 scripts/test_modbus_io.py --diagnose
 
 # 2. 內建 COM 試（Plan A）
 sudo chmod 666 /dev/ttyTHS1
-python3 test_modbus.py --port /dev/ttyTHS1 --slave 1 --baudrate 9600
+python3 scripts/test_modbus_io.py --port /dev/ttyTHS1 --slave 1 --baudrate 9600
 
 # 3. 失敗 → 強制 RS-485 模式
-python3 test_modbus.py --port /dev/ttyTHS1 --force-rs485-mode
+python3 scripts/test_modbus_io.py --port /dev/ttyTHS1 --force-rs485-mode
 
 # 4. 還是失敗 → 換 USB-RS485（Plan B）
-python3 test_modbus.py --port /dev/ttyUSB0
+python3 scripts/test_modbus_io.py --port /dev/ttyUSB0
 ```
 
 **預期通過標誌**：
@@ -224,15 +224,24 @@ P1 跑通 → 可進 P2。
 
 ---
 
-## 9. 未解決待辦清單
+## 9. 待辦清單
 
-- [ ] 「通訊故障」DO0 觸發條件清單（暫採 MQTT/相機/health 任一）
-- [ ] 中央伺服器 config URL → 寫入 `.env` `CONFIG_SYNC_URL`
-- [ ] config_sync 驗收：按 DI2 → 白燈亮 → 拉到 JSON → 白燈滅
-- [ ] tM-PD3R3 電源隔離規格確認（共地策略）
-- [ ] 採購清單下單：**照明型 Φ22 momentary ×2**（DI1+DI2）、Φ22 白燈 ×1（補齊雙白）、12V PSU、RS-485 線材、終端電阻
-- [ ] AFE-R750 COM RS-485 模式 BIOS 設定值記錄
-- [ ] P1 測試腳本實測通過
+### ✅ 已完成
+
+- [x] **DO0 通訊故障觸發條件確定** — 改採 NTP / link / IP 網路層三層（`services/network_health.py`，30s 輪詢）
+- [x] **CONFIG_SYNC_URL 預設值** — `http://192.168.0.101:8080/api/config`，存於 `config/system/io_settings.json`（網頁可改寫）
+- [x] **DI 編號修正** — `services/io_service.py` `DI_RESET=1, DI_DOWNLOAD=2`（之前誤寫為 0/1，導致按 Reset 鍵沒反應）
+- [x] **WS 事件追蹤改用 monotonic seq** — `deque(maxlen=50)` 飽和後 `len()` 不再變大，舊邏輯第 51 個事件起不送
+- [x] **P2 driver / service / API / UI / 規劃文件** — `services/io_module.py` `io_service.py` `network_health.py` `config_sync.py`、`api/routes/io.py`、`web/io_panel.html` 全部交付
+
+### ❌ 待辦
+
+- [ ] **P1 測試腳本實機跑** — `python3 scripts/test_modbus_io.py --diagnose` → 連線 → 跑馬燈 → 按鍵
+- [ ] **config_sync 驗收** — 按 DI2 → DO2 白燈亮 → 拉到 JSON → 白燈滅；失敗則 DO0 紅燈閃 3 秒
+- [ ] **tM-PD3R3 電源隔離規格確認**（共地策略：所有 GND 接共同接地排是否安全）
+- [ ] **採購清單下單**：照明型 Φ22 momentary ×2（DI1+DI2）、Φ22 白燈 ×1、12V PSU、RS-485 線材、終端電阻 ×2
+- [ ] **AFE-R750 COM RS-485 模式 BIOS 設定值記錄**（pd3r3.py docstring 已記 `COM1_SW1 = 1011`，但 BIOS 設定值待補）
+- [ ] **中央伺服器 (192.168.0.101:8080) 可達性 / API 規格驗證**
 
 ---
 
@@ -242,3 +251,4 @@ P1 跑通 → 可進 P2。
 |------|------|
 | 2026-04-25 | 初版（Claude + 使用者協作） |
 | 2026-05-06 | 燈號重設計：DO0=🔴紅/故障、DO1=🟢綠/恆亮(正常)、DO2=⚪白/下載中；DI2 觸發 config sync |
+| 2026-05-07 | DI/DO 編號 bug 修正、WS 事件 seq tracker、待辦狀態整理；P2 driver 全部交付 |

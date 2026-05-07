@@ -43,7 +43,7 @@ async def set_do(ch: int, cmd: DOCommand):
         raise HTTPException(status_code=400, detail="ch must be 0, 1, or 2")
     svc = get_service()
     try:
-        svc._mod.set_relay(ch, cmd.on)
+        svc.set_relay(ch, cmd.on)
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
     colors = {0: "紅", 1: "綠", 2: "白"}
@@ -55,14 +55,15 @@ async def set_do(ch: int, cmd: DOCommand):
 async def di_events_ws(ws: WebSocket):
     await ws.accept()
     svc = get_service()
-    last_seen = len(svc.di_events)
+    last_seq = svc.di_event_seq  # 連線當下的 seq，跳過先前事件
     try:
         while True:
-            cur = len(svc.di_events)
-            if cur > last_seen:
-                for evt in list(svc.di_events)[last_seen:]:
-                    await ws.send_json(evt)
-                last_seen = cur
+            if svc.di_event_seq > last_seq:
+                # snapshot 後再過濾，避免迭代中 deque 被修改
+                for evt in list(svc.di_events):
+                    if evt.get("seq", 0) > last_seq:
+                        await ws.send_json(evt)
+                        last_seq = evt["seq"]
             await asyncio.sleep(0.05)
     except WebSocketDisconnect:
         pass

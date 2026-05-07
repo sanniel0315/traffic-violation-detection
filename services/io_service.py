@@ -59,6 +59,9 @@ class IOService:
         # DI event callbacks + WS history
         self._di_callbacks: list[Callable[[int], None]] = []
         self.di_events: deque = deque(maxlen=50)
+        # Monotonic sequence number for WS tracking — deque maxlen 會讓 len() 飽和，
+        # 超過 50 個事件後 len() 不再變大，需要獨立 seq 才能正確判斷新事件。
+        self._di_event_seq = 0
 
     # ── lifecycle ─────────────────────────────────────────────────────
     def start(self) -> None:
@@ -188,7 +191,9 @@ class IOService:
     def _fire_di(self, ch: int) -> None:
         labels = {DI_RESET: "Reset", DI_DOWNLOAD: "遠端下載"}
         label = labels.get(ch, f"DI{ch}")
+        self._di_event_seq += 1
         evt = {
+            "seq":     self._di_event_seq,
             "channel": ch,
             "label":   label,
             "time":    datetime.datetime.now().isoformat(),
@@ -200,6 +205,16 @@ class IOService:
                 cb(ch)
             except Exception:
                 pass
+
+    # ── public DO control (manual override, bypasses state machine) ──
+    def set_relay(self, ch: int, on: bool) -> None:
+        """供 API 路由直接驅動單顆 relay；不更新內部狀態旗標。"""
+        self._mod.set_relay(ch, on)
+
+    @property
+    def di_event_seq(self) -> int:
+        """Monotonic counter；WS 端可用來判斷有沒有新事件。"""
+        return self._di_event_seq
 
     # ── status snapshot ───────────────────────────────────────────────
     def status(self) -> dict:
