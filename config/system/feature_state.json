@@ -1,26 +1,31 @@
 {
-  "updated_at": "2026-04-21T15:11:00.763858",
+  "updated_at": "2026-05-06T06:47:41.211111",
   "features": {
     "detection": {
-      "3": true,
+      "3": false,
       "1": true,
       "2": true,
-      "4": true,
-      "5": false
+      "4": false,
+      "5": true,
+      "7": true,
+      "6": false
     },
     "congestion": {
       "1": true,
       "2": true,
-      "3": true,
+      "3": false,
       "4": false,
-      "5": false
+      "5": true,
+      "7": true,
+      "6": false
     },
     "lpr": {
       "1": false,
       "2": true,
       "3": false,
-      "4": true,
-      "5": false
+      "4": false,
+      "5": false,
+      "6": true
     }
   }
 }
