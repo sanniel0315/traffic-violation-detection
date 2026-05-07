@@ -3,6 +3,11 @@
 import warnings
 warnings.filterwarnings('ignore')
 
+# 啟用 Python faulthandler — 觸發 SIGSEGV/SIGABRT 時印 Python 層 stack 到 stderr，
+# 由 systemd journalctl 收下，方便定位 native 崩潰是從哪段 Python 呼叫進去的。
+import faulthandler
+faulthandler.enable()
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
