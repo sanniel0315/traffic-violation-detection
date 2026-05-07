@@ -293,20 +293,11 @@ class IOService:
         return self._di_event_seq
 
     # ── status snapshot ───────────────────────────────────────────────
-    # 暫時 timing log — 確認 status() 哪個段慢 (debug)
-
     def status(self) -> dict:
-        _t0 = time.time()
         try:
             di = self._mod.read_inputs()
-            _t1 = time.time()
             do = self._mod.read_outputs()
-            _t2 = time.time()
             err = ""
-            _dt_di = (_t1 - _t0) * 1000
-            _dt_do = (_t2 - _t1) * 1000
-            if _dt_di > 100 or _dt_do > 100:
-                print(f"[io_svc] SLOW status: read_inputs={_dt_di:.0f}ms read_outputs={_dt_do:.0f}ms", flush=True)
         except Exception as e:
             di  = [None, None, None]
             do  = [None, None, None]
