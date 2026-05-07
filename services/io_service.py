@@ -58,12 +58,12 @@ class IOService:
         # 下載期間白燈閃爍控制
         self._dl_blink_stop   = threading.Event()
         self._dl_blink_thread: Optional[threading.Thread] = None
-        # status() 結果短暫快取，避免 io_panel 多 caller 每 2 秒打 read_inputs+
-        # read_outputs 各 600-1200ms (USB CDC ACM 驅動延遲)。500ms 快取對 UI
-        # 不影響感受，硬體狀態變化由 _di_loop 20Hz 抓 edge event 即時通知。
-        self._status_cache: Optional[dict] = None
-        self._status_cache_ts: float = 0.0
-        self._status_cache_lock = threading.Lock()
+        # status() 不打硬體 — IOService 自己擁有所有 DO state，DI 由 _di_loop
+        # 20Hz 抓 counter delta 推算「最近按下」。USB CDC ACM read 60-1200ms 延遲
+        # 太大不適合放在 web 同步路徑。實機 instantaneous level 由 di_loop 自己
+        # 維護 self._di_levels（每 50ms 更新一次）。
+        self._do_state    = [False, False, False]   # 上次 _apply_do 寫的 DO 物理狀態
+        self._di_levels   = [False, False, False]   # _di_loop 最近一次 read_inputs 結果
         # threads
         self._di_thread: Optional[threading.Thread] = None
         self._stop_di     = threading.Event()
@@ -153,16 +153,20 @@ class IOService:
         try:
             fault = not self._comm_ok
             self._mod.set_relay(DO_RED,   fault)
+            self._do_state[DO_RED] = fault
             self._mod.set_relay(DO_GREEN, not fault)
+            self._do_state[DO_GREEN] = not fault
             # 下載中 → 由 _blink_white_loop 控制白燈，這裡不要動白燈（除非故障）
             if fault:
                 # 故障壓過閃爍：強制白燈滅，覆蓋 blink loop 上次寫的狀態
                 self._mod.set_relay(DO_WHITE, False)
+                self._do_state[DO_WHITE] = False
             elif not self._downloading:
                 # 非下載 + 非故障 → 白燈 = 手動模式
                 white = (not self._auto_mode)
                 self._mod.set_relay(DO_WHITE, white)
-            # 下載中 + 非故障 → 由 blink loop 自己刷新白燈
+                self._do_state[DO_WHITE] = white
+            # 下載中 + 非故障 → 由 blink loop 自己刷新白燈 (state 不可信，UI 用 downloading flag 顯示閃爍)
         except Exception as e:
             print(f"[io_svc] apply DO error: {e}", flush=True)
             _log("error", f"IO 燈號寫入失敗: {e}")
@@ -292,6 +296,8 @@ class IOService:
     def set_relay(self, ch: int, on: bool) -> None:
         """供 API 路由直接驅動單顆 relay；不更新內部狀態旗標。"""
         self._mod.set_relay(ch, on)
+        if 0 <= ch < 3:
+            self._do_state[ch] = on
 
     @property
     def di_event_seq(self) -> int:
@@ -300,24 +306,17 @@ class IOService:
 
     # ── status snapshot ───────────────────────────────────────────────
     def status(self) -> dict:
-        # 500ms 快取：多 caller 並發只觸發 1 次 Modbus read
-        with self._status_cache_lock:
-            now = time.time()
-            if self._status_cache is not None and (now - self._status_cache_ts) < 0.5:
-                return self._status_cache
-        try:
-            di = self._mod.read_inputs()
-            do = self._mod.read_outputs()
-            err = ""
-        except Exception as e:
-            di  = [None, None, None]
-            do  = [None, None, None]
-            err = str(e)
-
+        """回傳 IO 即時狀態。不打硬體 — 純從 IOService 內部 state cache，永遠 ~5ms。
+        DO state 由 _apply_do / set_relay 同步維護；DI level 由 _di_loop 維護
+        (按鍵是 momentary 大部分時間 False，UI 看「按下」改用 WS event 驅動
+        的 recentDIPress 1.5s 高亮，比 polling instantaneous level 更可靠)。
+        """
         from services import config_sync
-        result = {
+        di = self._di_levels
+        do = self._do_state
+        return {
             "connected": self._mod.ok,
-            "error":     err or self._mod.error,
+            "error":     self._mod.error,
             "di": {
                 "DI0": {"label": "遠端下載", "state": di[0]},
                 "DI1": {"label": "Reset",    "state": di[1]},
@@ -335,10 +334,6 @@ class IOService:
             },
             "config_sync": config_sync.status(),
         }
-        with self._status_cache_lock:
-            self._status_cache = result
-            self._status_cache_ts = time.time()
-        return result
 
 
 _service: Optional[IOService] = None
