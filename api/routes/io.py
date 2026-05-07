@@ -28,8 +28,11 @@ def _log(level: str, msg: str) -> None:
         pass
 
 
+# 改 sync def — async def 中呼叫 sync IO (Modbus read) 會 block event loop，
+# 導致 io_panel 每 2 秒 polling /api/io/status 全部排隊 (實測 1.8-2.4s)。
+# FastAPI 對 sync def 自動丟 thread pool，不阻塞 event loop。
 @router.get("/status")
-async def io_status():
+def io_status():
     return get_service().status()
 
 
@@ -38,7 +41,7 @@ class DOCommand(BaseModel):
 
 
 @router.post("/do/{ch}")
-async def set_do(ch: int, cmd: DOCommand):
+def set_do(ch: int, cmd: DOCommand):
     if ch not in (0, 1, 2):
         raise HTTPException(status_code=400, detail="ch must be 0, 1, or 2")
     svc = get_service()
@@ -77,13 +80,13 @@ class SyncConfig(BaseModel):
 
 
 @router.get("/sync/config")
-async def get_sync_config():
+def get_sync_config():
     from services.config_sync import get_sync_url, get_sync_token
     return {"url": get_sync_url(), "token": get_sync_token()}
 
 
 @router.post("/sync/config")
-async def save_sync_config(cfg: SyncConfig):
+def save_sync_config(cfg: SyncConfig):
     from services.config_sync import save_sync_settings
     url = cfg.url.strip()
     save_sync_settings(url, cfg.token.strip())
@@ -92,7 +95,7 @@ async def save_sync_config(cfg: SyncConfig):
 
 
 @router.post("/sync/trigger")
-async def trigger_sync():
+def trigger_sync():
     from services import config_sync
     if config_sync.is_running():
         return {"ok": False, "msg": "已在執行中"}
