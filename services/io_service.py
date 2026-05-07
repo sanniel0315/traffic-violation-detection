@@ -133,7 +133,7 @@ class IOService:
             if config_sync.is_running():
                 _log("warning", "遠端下載已在執行中，忽略重複觸發")
                 return
-            _log("info", "DI2 按下，開始遠端 config 同步")
+            _log("info", f"DI{DI_DOWNLOAD} 按下，開始遠端 config 同步")
             self.set_downloading(True)
 
             def _done(success: bool, msg: str) -> None:
