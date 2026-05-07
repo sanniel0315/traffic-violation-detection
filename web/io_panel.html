@@ -434,6 +434,54 @@
             active-color="#facc15"
           />
         </div>
+
+        <!-- 分隔線 -->
+        <div class="card-hr"></div>
+
+        <!-- DI 即時狀態（只列 DI1 / DI2；DI0 釋出不用） -->
+        <div class="card-title-inner" style="font-size:13px;font-weight:600;color:var(--gov-muted);margin-bottom:8px;">
+          DI 即時狀態
+        </div>
+
+        <!-- DI1 Reset -->
+        <div class="relay-row">
+          <div class="relay-left">
+            <div
+              class="relay-dot"
+              :style="status.di && status.di.DI1 && status.di.DI1.state
+                ? 'background:#3b82f6;box-shadow:0 0 8px 2px rgba(59,130,246,0.5);'
+                : 'background:#e5e7eb;border:1px solid #cbd5e1;'"
+            ></div>
+            <div>
+              <div class="relay-name">DI1</div>
+              <div class="relay-label">Reset</div>
+            </div>
+          </div>
+          <span
+            class="event-badge"
+            :class="status.di && status.di.DI1 && status.di.DI1.state ? 'badge-warning' : 'badge-idle'"
+          >{{ (status.di && status.di.DI1 && status.di.DI1.state) ? '按下' : '釋放' }}</span>
+        </div>
+
+        <!-- DI2 遠端下載 -->
+        <div class="relay-row">
+          <div class="relay-left">
+            <div
+              class="relay-dot"
+              :style="status.di && status.di.DI2 && status.di.DI2.state
+                ? 'background:#3b82f6;box-shadow:0 0 8px 2px rgba(59,130,246,0.5);'
+                : 'background:#e5e7eb;border:1px solid #cbd5e1;'"
+            ></div>
+            <div>
+              <div class="relay-name">DI2</div>
+              <div class="relay-label">遠端下載</div>
+            </div>
+          </div>
+          <span
+            class="event-badge"
+            :class="status.di && status.di.DI2 && status.di.DI2.state ? 'badge-primary' : 'badge-idle'"
+          >{{ (status.di && status.di.DI2 && status.di.DI2.state) ? '按下' : '釋放' }}</span>
+        </div>
       </div>
 
       <!-- CARD 3: Config sync settings & event log -->
