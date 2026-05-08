@@ -12,7 +12,18 @@ from typing import Optional
 
 # pd3r3 driver 隨 git 部署 (services/pd3r3.py)，不再依賴 ~/pd3r3.py
 # 跨機部署 / docker container 都能 import
-from services.pd3r3 import PD3R3, ModbusError
+# 但 staging 環境可能沒裝 pyserial / 沒接實體 IO 模組 — graceful degrade，
+# 讓 service 仍可啟動，IO 自動 disabled (connect 永遠回 False)
+try:
+    from services.pd3r3 import PD3R3, ModbusError
+    _IO_DRIVER_AVAILABLE = True
+except ImportError as _e:
+    print(f"[io] pd3r3 driver unavailable, IO disabled: {_e}", flush=True)
+    _IO_DRIVER_AVAILABLE = False
+    PD3R3 = None  # type: ignore
+
+    class ModbusError(IOError):
+        pass
 
 IO_PORT = os.getenv("IO_PORT",  "/dev/ttyACM0")
 IO_ADDR = int(os.getenv("IO_ADDR", "1"))
@@ -30,6 +41,11 @@ class IOModule:
 
     # ── connection ────────────────────────────────────────────────────
     def connect(self) -> bool:
+        if not _IO_DRIVER_AVAILABLE:
+            with self._lock:
+                self._ok = False
+                self._error = "pd3r3 driver / pyserial not installed"
+                return False
         with self._lock:
             self._close_locked()
             try:
