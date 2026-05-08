@@ -2763,6 +2763,13 @@ class LPRStreamTask:
                 self.last_frame_at = time.time()
                 self._increment_debug_counter("total_frames")
                 self.recent_frames.append(frame.copy())
+                # 同時寫一份給 stream.py 的 _shared_frames，讓 snapshot endpoint 能 <30ms 取
+                # (沒這個 cam_6 之類純 LPR cam 的 snapshot 要重開 cv2.VideoCapture 約 2 秒)
+                try:
+                    from api.routes.stream import _shared_frames as _SF
+                    _SF[self.camera_id] = {"frame": frame, "detections": [], "ts": time.time()}
+                except Exception:
+                    pass
                 if self.total_frames % frame_skip != 0:
                     continue
 
