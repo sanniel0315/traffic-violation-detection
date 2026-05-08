@@ -1611,8 +1611,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     _H = _get_zone_homography(_calib_zone) if _calib_zone else None
                     # P3: 速度平穩化 — N=5 滑動窗口 + median 多 sample + outlier reject
                     _SPEED_WINDOW = 5      # 保留最近 5 個 (t, x, y) sample
-                    _SPEED_MIN_SAMPLES = 3 # 至少 3 個 sample 才報 speed
+                    _SPEED_MIN_SAMPLES = 5 # 至少 5 個 sample 才報 speed (從 3 改 5：YOLO bbox warm-up，避免第一筆 raw 飆高)
                     _SPEED_OUTLIER_FACTOR = 2.0  # 新 raw > 2x prev_speed + 30 → 視為 outlier 不採用
+                    _SPEED_ABS_CAP = 130.0  # 絕對上限 (台灣高速公路最高限速 110 + 安全 buffer)
                     for v in vehicles:
                         b = v.get("bbox", {}) or {}
                         cx = int((b.get("x1", 0) + b.get("x2", 0)) / 2)
@@ -1651,7 +1652,8 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             kalman_kmh = v_ms * 3.6
                             tracks[track_id]["kalman"] = kf
                             if (prev_frames + 1) >= _SPEED_MIN_SAMPLES:
-                                speed_kmh = max(0.0, min(220.0, kalman_kmh))
+                                # clamp 上限從 220 降到 150 (130 是業務 cap，150 留 safety margin)
+                                speed_kmh = max(0.0, min(150.0, kalman_kmh))
                         if speed_kmh is None and len(samples) >= _SPEED_MIN_SAMPLES:
                             t0, x0, y0 = samples[0]
                             t1, x1, y1 = samples[-1]
@@ -1661,8 +1663,12 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                 raw_kmh = (dist / dt_total) * 3.6
                             else:
                                 raw_kmh = (dist / dt_total) * speed_kmh_per_pxps
-                            # outlier reject：突然飆高超過合理範圍 → 用 prev_speed
-                            if prev_speed > 5 and raw_kmh > prev_speed * _SPEED_OUTLIER_FACTOR + 30:
+                            # absolute cap：raw_kmh > 130 視為 ID tracker 跳動 / bbox 抖動偽值，
+                            # 不論有沒有 prev_speed 都直接 drop (用 prev 或 None)
+                            if raw_kmh > _SPEED_ABS_CAP:
+                                speed_kmh = prev_speed if prev_speed > 5 else None
+                            elif prev_speed > 5 and raw_kmh > prev_speed * _SPEED_OUTLIER_FACTOR + 30:
+                                # outlier reject：突然飆高超過合理範圍 → 用 prev_speed
                                 speed_kmh = prev_speed
                             else:
                                 # median of pairwise instantaneous speeds across consecutive samples
@@ -1680,7 +1686,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                 median_kmh = inst_speeds[len(inst_speeds) // 2]
                                 # 取 raw (window-based) 跟 median (instantaneous median) 平均，更穩
                                 speed_kmh = (raw_kmh + median_kmh) / 2.0
-                            speed_kmh = max(0.0, min(220.0, float(speed_kmh)))
+                            # 同樣 clamp 從 220 → 150
+                            if speed_kmh is not None:
+                                speed_kmh = max(0.0, min(150.0, float(speed_kmh)))
                         tracks[track_id] = {
                             "center": (cx, cy),
                             "t": now_ts,
@@ -1781,7 +1789,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     # 飆到 100+ km/h，跟 trip_wire 觀察到的真實塞車速度 (3-15) 矛盾。
                     if speed_num is None or speed_num <= 0:
                         speed_val = None
-                    elif speed_num >= 200.0:  # 飽和不可信
+                    elif speed_num >= 150.0:  # 飽和不可信 (clamp ceiling = 150)
                         speed_val = None
                     elif speed_method in ("trip_wire", "trip_wire_median", "kalman"):
                         # 校正過的 method，相對可信
