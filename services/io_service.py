@@ -84,8 +84,8 @@ class IOService:
         self._wire_download_button()
         self._wire_reset_button()
         from services import network_health
-        # 10 秒輪詢: 最壞 10 秒內偵測網路斷線 / NTP 失同步 / 無 IP → DO0 紅燈
-        network_health.start(interval=10)
+        # 5 秒輪詢: 最壞 5 秒內偵測網路斷線 / NTP 失同步 / 無 IP → DO0 紅燈
+        network_health.start(interval=5)
         print("[io_svc] started", flush=True)
         _log("info", "IO 模組啟動，連線成功")
 
