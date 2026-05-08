@@ -1712,7 +1712,11 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             # 同樣 clamp 從 220 → 150
                             if speed_kmh is not None:
                                 speed_kmh = max(0.0, min(150.0, float(speed_kmh)))
-                        tracks[track_id] = {
+                        # 用 update 而非 replace — 保留 _event_log_ts (cooldown), kalman,
+                        # tw_samples, tw_speed_kmh 等 state，否則每 frame 都被丟掉，
+                        # cooldown / trip_wire median 都會失效
+                        _existing = tracks.get(track_id) or {}
+                        _existing.update({
                             "center": (cx, cy),
                             "t": now_ts,
                             "class_name": cls,
@@ -1720,7 +1724,8 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             "samples": samples,
                             "world_xy": world_xy,
                             "frames": prev_frames + 1,
-                        }
+                        })
+                        tracks[track_id] = _existing
                         v["track_id"] = track_id
                         # 優先用 trip_wire 持續值（如果這條 track 已測過 trip wire）
                         _persisted_tw = prev.get("tw_speed_kmh")
