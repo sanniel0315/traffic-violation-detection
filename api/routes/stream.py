@@ -1647,12 +1647,13 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             _dx = cx - prev_center_xy[0]
                             _dy = cy - prev_center_xy[1]
                             if (_dx * _dx + _dy * _dy) ** 0.5 > 150.0:
-                                # ID swap：reset
+                                # ID swap：reset 速度 state + traffic_event cooldown 紀錄
                                 prev_frames = 0
                                 prev_speed = 0.0
                                 prev = dict(prev)
                                 prev["samples"] = []
                                 prev["kalman"] = None
+                                prev["_event_log_ts"] = {}  # 不然新車繼承舊 cooldown 不寫入
                         samples = list(prev.get("samples") or [])
                         samples.append(sample)
                         if len(samples) > _SPEED_WINDOW:
@@ -1790,9 +1791,11 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     _zone_key(z): _zone_occupancy(z, vehicles)
                     for z in det_zones
                 } if det_zones else {}
-                # 防重複計數：同 track 在同一 zone 5 秒內只算 1 筆 traffic_event。
+                # 防重複計數：同 track 在同一 zone 30 秒內只算 1 筆 traffic_event。
                 # 之前每 frame 寫 → 塞車車輛 30 秒沒動 = 30s × 10fps = 300 筆同車。
-                _EVENT_LOG_COOLDOWN = 5.0
+                # 30s 對快速通過 ROI 仍是 1 車 1 筆；塞車中 30s 也只 1 筆 (ID swap
+                # 偵測會清狀態，新 track 視為新車重新算)。
+                _EVENT_LOG_COOLDOWN = 30.0
                 for v in vehicles:
                     bbox = v.get("bbox", {}) or {}
                     hit_zones = _vehicle_hit_zones(v, det_zones)
