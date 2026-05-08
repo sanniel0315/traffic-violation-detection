@@ -57,7 +57,8 @@ def _check_link(iface: str) -> bool:
         state = open(f"/sys/class/net/{iface}/operstate").read().strip()
         return state == "up"
     except Exception:
-        return False
+        # 看不到 iface (例如 docker container 內的 sysfs 路徑差異) 時不誤報故障
+        return True
 
 
 def _check_ip(iface: str) -> bool:
@@ -68,7 +69,7 @@ def _check_ip(iface: str) -> bool:
         ).decode()
         return "inet " in out
     except Exception:
-        return False
+        return True
 
 
 def _monitor_loop(interval: int) -> None:

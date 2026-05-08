@@ -157,6 +157,9 @@ class IOService:
 
     # ── DO ────────────────────────────────────────────────────────────
     def _apply_do(self) -> None:
+        if not self._mod.ok:
+            # 沒接 IO / driver 缺失：不嘗試寫 relay，避免每次 set_comm_fault 都 spam log
+            return
         try:
             fault = not self._comm_ok
             self._mod.set_relay(DO_RED,   fault)
