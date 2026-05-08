@@ -1770,11 +1770,25 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     pick_zone = hit_zones[0]
                     occupancy_val = zone_occupancy_map.get(_zone_key(pick_zone)) if pick_zone else None
                     speed_raw = v.get("speed_kmh")
+                    speed_method = str(v.get("speed_method") or "")
                     try:
                         speed_num = float(speed_raw)
                     except Exception:
                         speed_num = None
-                    speed_val = speed_num if (isinstance(speed_num, float) and speed_num > 0) else None
+                    # Drop saturated 飽和值（>= 200 表 sanity gate clamp，是 ID tracker
+                    # 跳動造成的 pixel jump 偽值）。Drop 信任度低的 raw pixel-based
+                    # method (沒有 calibration / kalman / trip_wire 校正) — 那些容易
+                    # 飆到 100+ km/h，跟 trip_wire 觀察到的真實塞車速度 (3-15) 矛盾。
+                    if speed_num is None or speed_num <= 0:
+                        speed_val = None
+                    elif speed_num >= 200.0:  # 飽和不可信
+                        speed_val = None
+                    elif speed_method in ("trip_wire", "trip_wire_median", "kalman"):
+                        # 校正過的 method，相對可信
+                        speed_val = speed_num
+                    else:
+                        # 純 pixel-based，限制 < 100 km/h 才可信 (高速車流會被 trip_wire 補上)
+                        speed_val = speed_num if speed_num < 100.0 else None
                     row = TrafficEvent(
                         camera_id=int(camera_id),
                         label=str(v.get("class_name", "unknown")).lower(),
