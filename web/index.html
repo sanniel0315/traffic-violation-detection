@@ -8207,7 +8207,9 @@ const app=createApp({
         };
         const getMonitorMediaUrl=(camera, opts={})=>{
             if(getMonitorMediaKind(camera)==='video'){
-                return getDirectCameraSourceUrl(camera, streamKey.value);
+                // mp4 video src 用 _zoomReloadTick 優先，讓關閉放大時可強制 reload
+                const tick = camera?._zoomReloadTick || streamKey.value;
+                return getDirectCameraSourceUrl(camera, tick);
             }
             return getMonitorStreamUrl(camera, opts);
         };
@@ -8309,6 +8311,8 @@ const app=createApp({
             cameras.value.forEach(c=>{
                 if(c._zoomPausedGrid){
                     c._zoomPausedGrid=false;
+                    // bump tick 強制 video / img src 變化，避免 mp4 <video> 重 mount 不 autoplay (黑畫面)
+                    c._zoomReloadTick=Date.now();
                     c.showStream=true;
                 }
             });
