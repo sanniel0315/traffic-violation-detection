@@ -10,8 +10,9 @@ import threading
 import time
 from typing import Optional
 
-sys.path.insert(0, os.path.expanduser("~"))
-from pd3r3 import PD3R3, ModbusError
+# pd3r3 driver 隨 git 部署 (services/pd3r3.py)，不再依賴 ~/pd3r3.py
+# 跨機部署 / docker container 都能 import
+from services.pd3r3 import PD3R3, ModbusError
 
 IO_PORT = os.getenv("IO_PORT",  "/dev/ttyACM0")
 IO_ADDR = int(os.getenv("IO_ADDR", "1"))
