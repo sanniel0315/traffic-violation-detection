@@ -79,15 +79,21 @@ class IOService:
     def start(self) -> None:
         if not self._mod.ok:
             self._mod.connect()
-        self._apply_do()
-        self._start_di_monitor()
-        self._wire_download_button()
-        self._wire_reset_button()
+        if self._mod.ok:
+            # IO 硬體連線成功 → 啟動 DI 監聽 + 接按鍵 callback
+            self._apply_do()
+            self._start_di_monitor()
+            self._wire_download_button()
+            self._wire_reset_button()
+            print("[io_svc] started (IO active)", flush=True)
+            _log("info", "IO 模組啟動，連線成功")
+        else:
+            # 沒接 IO 或 driver 缺失 (staging) — 跳過 IO 監聽，避免 _di_loop 無限重試 spam log
+            print(f"[io_svc] started (IO unavailable: {self._mod.error})", flush=True)
+            _log("warning", f"IO 模組未啟動: {self._mod.error}")
         from services import network_health
         # 5 秒輪詢: 最壞 5 秒內偵測網路斷線 / NTP 失同步 / 無 IP → DO0 紅燈
         network_health.start(interval=5)
-        print("[io_svc] started", flush=True)
-        _log("info", "IO 模組啟動，連線成功")
 
     def stop(self) -> None:
         self._stop_di.set()
