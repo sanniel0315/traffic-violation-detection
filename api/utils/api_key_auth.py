@@ -24,7 +24,7 @@ class _StaticApiKey:
     """模擬 ApiKey model，供固定 key 使用"""
     id = "static"
     name = "環境變數固定 Key"
-    scopes = ["vd_report", "congestion_report"]
+    scopes = ["vd_report", "congestion_report", "streams"]
     rate_limit_per_min = 120
     enabled = True
     expires_at = None

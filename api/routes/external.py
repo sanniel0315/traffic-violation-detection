@@ -254,3 +254,143 @@ def _congestion_csv_response(records: list, start_time, end_time, bucket):
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── 即時影像串流清單 ──────────────────────────────────────────────
+# 給機關既設數位影像平台統一拿 URL + 規格，後續直接連 RTSP/HLS/MJPEG
+
+def _detect_host_ip() -> str:
+    """自動偵測本機對外 IP (UDP socket trick — 不真連線)，env STREAM_HOST 可覆寫"""
+    import os, socket
+    override = os.getenv("STREAM_HOST", "").strip()
+    if override:
+        return override
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.1)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+def _parse_go2rtc_sdp(sdp: str) -> dict:
+    """從 SDP 抽 codec/profile/resolution/fps"""
+    result = {"codec": None, "resolution": None, "fps": None, "profile": None}
+    for line in sdp.split("\r\n"):
+        if line.startswith("a=rtpmap:") and "H264" in line.upper():
+            result["codec"] = "h264"
+        elif line.startswith("a=rtpmap:") and ("HEVC" in line.upper() or "H265" in line.upper()):
+            result["codec"] = "h265"
+        elif line.startswith("a=framesize:"):
+            try:
+                size = line.split()[-1].replace("-", "x")
+                result["resolution"] = size
+            except Exception:
+                pass
+        elif line.startswith("a=framerate:"):
+            try:
+                result["fps"] = float(line.split(":")[1])
+            except Exception:
+                pass
+        elif "profile-level-id=" in line:
+            try:
+                pid = line.split("profile-level-id=")[1].split(";")[0][:6]
+                # H.264 profile_idc: 42=Baseline 4D=Main 64=High
+                profile_idc = pid[:2].upper()
+                result["profile"] = {
+                    "42": "Baseline", "4D": "Main", "64": "High",
+                }.get(profile_idc, profile_idc)
+            except Exception:
+                pass
+    return result
+
+
+@router.get("/streams")
+def external_streams(
+    api_key: ApiKey = Depends(require_scope("streams")),
+    db: Session = Depends(get_db),
+):
+    """回傳本系統可對外提供的所有即時影像串流 URL + 規格。
+    供機關既設數位影像平台統一查詢。
+    """
+    import requests as _req
+    from api.models import Camera
+
+    host = _detect_host_ip()
+    rtsp_port = 8554
+    http_port = 1984
+
+    # 從 go2rtc HTTP API 拿目前活躍 streams 跟 producer SDP
+    g2rtc = {}
+    try:
+        r = _req.get(f"http://127.0.0.1:{http_port}/api/streams", timeout=3)
+        if r.ok:
+            g2rtc = r.json() or {}
+    except Exception:
+        pass
+
+    # cameras DB 對應 (id → Camera)
+    cam_map = {c.id: c for c in db.query(Camera).all()}
+
+    streams = []
+    for stream_id, info in g2rtc.items():
+        # 只匯出 cam_X 命名的 (跳過內部 / 暫存 stream)
+        if not stream_id.startswith("cam_"):
+            continue
+        try:
+            cam_id = int(stream_id.replace("cam_", ""))
+        except ValueError:
+            continue
+        cam = cam_map.get(cam_id)
+
+        producers = info.get("producers") or []
+        online = bool(producers)
+        spec = {"codec": None, "resolution": None, "fps": None, "profile": None}
+        bytes_recv = 0
+        if producers:
+            p = producers[0]
+            spec = _parse_go2rtc_sdp(p.get("sdp", ""))
+            for rcv in (p.get("receivers") or []):
+                bytes_recv += int(rcv.get("bytes") or 0)
+
+        streams.append({
+            "stream_id": stream_id,
+            "camera_id": cam_id,
+            "name": (cam.name if cam else None),
+            "location": (cam.location if cam else None),
+            "online": online,
+            "codec": spec["codec"],
+            "profile": spec["profile"],
+            "resolution": spec["resolution"],
+            "fps": spec["fps"],
+            "bytes_received": bytes_recv,
+            "urls": {
+                "rtsp":  f"rtsp://{host}:{rtsp_port}/{stream_id}",
+                "hls":   f"http://{host}:{http_port}/api/stream.m3u8?src={stream_id}",
+                "mjpeg": f"http://{host}:{http_port}/api/stream.mjpeg?src={stream_id}",
+                "webrtc_signal": f"http://{host}:{http_port}/api/ws?src={stream_id}",
+            },
+        })
+
+    streams.sort(key=lambda s: s["camera_id"])
+
+    return {
+        "meta": _meta(),
+        "status": "success",
+        "data": {
+            "device_id": _DEVICE_ID,
+            "host": host,
+            "ports": {"rtsp": rtsp_port, "http": http_port},
+            "stream_count": len(streams),
+            "streams": streams,
+            "spec_requirement": {
+                "codec": "H.264 (passthrough，無重編碼)",
+                "min_resolution": "1280x720",
+                "min_fps": 15,
+                "note": "實際解析度/FPS 視相機本機設定，本系統 go2rtc 多路分發不重編碼",
+            },
+        },
+    }
