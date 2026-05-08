@@ -1639,6 +1639,20 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         else:
                             sample = (now_ts, float(_ground_x), float(_ground_y))
                             sample_unit = "pixel"
+                        # B: ID swap 偵測 — 1 frame 內 bbox 中心 pixel 跳 > 150px (~約 180 km/h
+                        # 等級的位移) 視為 tracker 把同一 track_id 分配給新車輛，舊 samples
+                        # 已不可信，清空重新累積。
+                        prev_center_xy = prev.get("center")
+                        if prev_center_xy is not None and prev_frames > 0:
+                            _dx = cx - prev_center_xy[0]
+                            _dy = cy - prev_center_xy[1]
+                            if (_dx * _dx + _dy * _dy) ** 0.5 > 150.0:
+                                # ID swap：reset
+                                prev_frames = 0
+                                prev_speed = 0.0
+                                prev = dict(prev)
+                                prev["samples"] = []
+                                prev["kalman"] = None
                         samples = list(prev.get("samples") or [])
                         samples.append(sample)
                         if len(samples) > _SPEED_WINDOW:
@@ -1652,8 +1666,14 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             kalman_kmh = v_ms * 3.6
                             tracks[track_id]["kalman"] = kf
                             if (prev_frames + 1) >= _SPEED_MIN_SAMPLES:
-                                # clamp 上限從 220 降到 150 (130 是業務 cap，150 留 safety margin)
-                                speed_kmh = max(0.0, min(150.0, kalman_kmh))
+                                # A: Kalman 路徑也套 abs_cap + outlier reject
+                                # (之前只 clamp 150，飆值會直接記成 150 寫進 DB)
+                                if kalman_kmh > _SPEED_ABS_CAP:
+                                    speed_kmh = prev_speed if prev_speed > 5 else None
+                                elif prev_speed > 5 and kalman_kmh > prev_speed * _SPEED_OUTLIER_FACTOR + 30:
+                                    speed_kmh = prev_speed
+                                else:
+                                    speed_kmh = max(0.0, min(150.0, kalman_kmh))
                         if speed_kmh is None and len(samples) >= _SPEED_MIN_SAMPLES:
                             t0, x0, y0 = samples[0]
                             t1, x1, y1 = samples[-1]
