@@ -1790,12 +1790,25 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     _zone_key(z): _zone_occupancy(z, vehicles)
                     for z in det_zones
                 } if det_zones else {}
+                # 防重複計數：同 track 在同一 zone 5 秒內只算 1 筆 traffic_event。
+                # 之前每 frame 寫 → 塞車車輛 30 秒沒動 = 30s × 10fps = 300 筆同車。
+                _EVENT_LOG_COOLDOWN = 5.0
                 for v in vehicles:
                     bbox = v.get("bbox", {}) or {}
                     hit_zones = _vehicle_hit_zones(v, det_zones)
                     if not hit_zones:
                         continue
                     pick_zone = hit_zones[0]
+                    # cooldown check — 跳過同 track 同 zone 已記錄過且未冷卻完的
+                    _track_id = v.get("track_id")
+                    if _track_id is not None:
+                        _zone_log_key = str(pick_zone.get("name") or pick_zone.get("id") or "")
+                        _track_state = tracks.setdefault(_track_id, {})
+                        _log_state = _track_state.setdefault("_event_log_ts", {})
+                        _last = _log_state.get(_zone_log_key, 0.0)
+                        if now_ts - _last < _EVENT_LOG_COOLDOWN:
+                            continue
+                        _log_state[_zone_log_key] = now_ts
                     occupancy_val = zone_occupancy_map.get(_zone_key(pick_zone)) if pick_zone else None
                     speed_raw = v.get("speed_kmh")
                     speed_method = str(v.get("speed_method") or "")
