@@ -1385,7 +1385,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
     speed_kmh_per_pxps = float(detection_config.get("speed_kmh_per_pxps", 0.12) or 0.12)
     speed_smooth_alpha = float(detection_config.get("speed_smooth_alpha", 0.35) or 0.35)
-    track_ttl_sec = float(detection_config.get("speed_track_ttl_sec", 1.2) or 1.2)
+    # track_ttl 從 1.2 → 5 秒：塞車場景偶爾 1 frame detection miss 不會讓 track
+    # 被刪除產生新 ID，避免 traffic_event cooldown 被頻繁 reset 導致重複計數
+    track_ttl_sec = float(detection_config.get("speed_track_ttl_sec", 5.0) or 5.0)
     tracks = {}
     next_track_id = 1
     
