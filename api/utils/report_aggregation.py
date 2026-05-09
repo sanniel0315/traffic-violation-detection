@@ -701,6 +701,16 @@ def build_vd_report_rows(
             row["queueDurationSec"] = None
         if row["maxQueueDurationSec"] in (0, 0.0):
             row["maxQueueDurationSec"] = None
+        # 一致性：totalFlow=0 (沒 small/large 車) 時，把 speed/occupancy/queue
+        # 都歸 None 避免「count=0 卻有平均速度」的 user 困惑 (motorcycle/person
+        # 帶 speed 仍累積但不算車流量)
+        if not row.get("totalFlow"):
+            row["avgSpeed"] = None
+            row["avgOccupancyPct"] = None
+            row["avgQueueLengthM"] = None
+            row["maxQueueLengthM"] = None
+            row["queueDurationSec"] = None
+            row["maxQueueDurationSec"] = None
         for lane_no, lane in list(row["lanes"].items()):
             if lane["_speed_weight_count"] > 0:
                 lane["avgSpeed"] = lane["_speed_weight_sum"] / lane["_speed_weight_count"]
@@ -713,6 +723,14 @@ def build_vd_report_rows(
             if lane["queueDurationSec"] in (0, 0.0):
                 lane["queueDurationSec"] = None
             if lane["maxQueueDurationSec"] in (0, 0.0):
+                lane["maxQueueDurationSec"] = None
+            # 同 row：lane flow=0 時所有 metric 一律 None
+            if not lane.get("flow"):
+                lane["avgSpeed"] = None
+                lane["avgOccupancyPct"] = None
+                lane["avgQueueLengthM"] = None
+                lane["maxQueueLengthM"] = None
+                lane["queueDurationSec"] = None
                 lane["maxQueueDurationSec"] = None
             for key in list(lane.keys()):
                 if key.startswith("_"):
