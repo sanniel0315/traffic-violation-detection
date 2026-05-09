@@ -10398,7 +10398,18 @@ const app=createApp({
                 }
             }
         };
-        const clearSystemLogs=async()=>{await fetch('/api/logs',{method:'DELETE'});loadSystemLogs();ElementPlus.ElMessage.success('日誌已清除');};
+        const clearSystemLogs=async()=>{
+            if(!confirm('確定清除所有系統日誌？此動作不可復原。'))return;
+            try{
+                const r=await fetch('/api/logs',{method:'DELETE',credentials:'include'});
+                const d=await r.json().catch(()=>({}));
+                if(!r.ok)throw new Error(d?.detail||d?.message||`HTTP ${r.status}`);
+                await loadSystemLogs();
+                ElementPlus.ElMessage.success('日誌已清除');
+            }catch(e){
+                ElementPlus.ElMessage.error(`清除失敗: ${e?.message||e}`);
+            }
+        };
         const parseNxServerBaseUrl=(value)=>{
             const raw=String(value||'').trim();
             if(!raw)return {protocol:'https',host:'',port:7001};
