@@ -341,9 +341,7 @@ def _open_capture(source: str):
     """
     source = resolve_capture_source(source)
     source_lc = str(source or "").lower()
-    is_rtsp = source_lc.startswith("rtsp://")
-    if is_rtsp:
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072|allowed_media_types;video|analyzeduration;1000000|probesize;1000000"
+    # OPENCV_FFMPEG_CAPTURE_OPTIONS 已在 systemd service 統一設定，這裡不再 runtime mutate
 
     backends = []
     is_http = source_lc.startswith("http://") or source_lc.startswith("https://")
@@ -1380,8 +1378,6 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         detector = VehicleDetector(conf_threshold=0.5)
     add_log("info", f"cam_{camera_id} 偵測器 device: {getattr(detector, 'runtime_device', 'unknown')}", "detection")
     _src_lc = str(source or "").lower()
-    if _src_lc.startswith("rtsp://"):
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072|allowed_media_types;video|analyzeduration;1000000|probesize;1000000"
     cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
     speed_kmh_per_pxps = float(detection_config.get("speed_kmh_per_pxps", 0.12) or 0.12)
     speed_smooth_alpha = float(detection_config.get("speed_smooth_alpha", 0.35) or 0.35)
@@ -1514,6 +1510,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 ret, frm = cap.read()
             except Exception:
                 ret, frm = False, None
+            # frame is None / size=0 視為失敗，避免後續處理 SEGV
+            if ret and (frm is None or getattr(frm, "size", 0) == 0):
+                ret = False
             if not ret:
                 # 檔案來源 EOF：先試 seek 回開頭（最快），連續失敗就 release+reopen
                 # （壞 metadata 的 mkv frame_count 是 garbage，seek 後 decoder state 可能異常）
@@ -1542,8 +1541,6 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 except Exception:
                     pass
                 time.sleep(2)
-                if _src_lc_outer.startswith("rtsp://"):
-                    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072|allowed_media_types;video|analyzeduration;1000000|probesize;1000000"
                 cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                 continue
             _read_fail_count[0] = 0
