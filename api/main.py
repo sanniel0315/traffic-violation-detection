@@ -19,7 +19,7 @@ import os
 import threading
 from zoneinfo import ZoneInfo
 from api.models import init_db
-from api.routes import auth, frigate, lpr, lpr_stream, lpr_visual, violations, cameras, stream, traffic, nx
+from api.routes import auth, frigate, stream, lpr, lpr_stream, lpr_visual, violations, cameras, traffic, nx
 from api.routes import congestion
 from api.routes import logs, system
 from api.routes import external, api_key_admin
