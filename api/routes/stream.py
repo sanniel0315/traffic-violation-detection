@@ -1578,22 +1578,6 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 _read_fail_count[0] += 1
                 if _read_fail_count[0] == 1 or _read_fail_count[0] % 100 == 0:
                     print(f"⚠️ [detection] cam{camera_id} cap.read() failed (count={_read_fail_count[0]}), reconnecting...", flush=True)
-                # frigate latest.jpg fallback：cap.read 一直失敗時也讓 _latest 持續有 frame，
-                # 監看畫面才不會空白卡頓（throttle 0.4s 避免 burst frigate API）
-                try:
-                    _now_fb2 = time.time()
-                    _gfb = globals().setdefault('_reader_fb_last', {})
-                    if _now_fb2 - _gfb.get(camera_id, 0.0) > 0.4:
-                        _fb_jpg = _try_frigate_snapshot(source, camera_id=camera_id)
-                        if _fb_jpg:
-                            _arr = np.frombuffer(_fb_jpg, dtype=np.uint8)
-                            _dec = cv2.imdecode(_arr, cv2.IMREAD_COLOR)
-                            if _dec is not None and _dec.size > 0:
-                                _latest["frame"] = _dec
-                                _latest["ts"] = time.time()
-                        _gfb[camera_id] = _now_fb2
-                except Exception:
-                    pass
                 try:
                     cap.release()
                 except Exception:
