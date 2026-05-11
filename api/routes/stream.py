@@ -552,6 +552,18 @@ def _capture_snapshot_bytes(source: str, camera_id: int = None, overlay_zones: l
     frigate_jpg = _try_frigate_snapshot(source)
     if frigate_jpg:
         return frigate_jpg
+    # go2rtc HTTP frame.jpeg fallback：cv2 對 idle/半死攝影機處理不好，
+    # go2rtc 已維持 stream session 可直接給 frame。stream 名稱用 cam_{id} 對應 go2rtc.yaml。
+    if camera_id is not None:
+        try:
+            resp = requests.get(
+                f"http://127.0.0.1:1984/api/frame.jpeg?src=cam_{camera_id}",
+                timeout=4.0,
+            )
+            if resp.status_code == 200 and len(resp.content) > 1000:
+                return resp.content
+        except Exception:
+            pass
     http_source = resolve_local_api_source(source)
     if _is_http_mjpeg_source(http_source):
         state = _ensure_http_mjpeg_worker(http_source)
