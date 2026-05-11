@@ -389,14 +389,6 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
     # file source: 不再自己 open cap，從 detection 的 _shared_frames 取 frame
     # （commit 9c9679e 完成版：避免每個 mkv 被開多條 cap 浪費 CPU）
     cap = None if is_file_source else cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-    # 顯式設 timeout（環境變數 stimeout 不可靠）
-    if cap is not None:
-        try:
-            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        except Exception:
-            pass
     _last_shared_ts = 0.0
     print(f"🚦 壅塞偵測啟動: camera_id={camera_id} (file_source={is_file_source}, shared_frames={is_file_source})")
     fail_count = 0
@@ -441,12 +433,6 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                     pass
                 print(f"🔄 congestion cam_{camera_id} reconnect (fail={fail_count})", flush=True)
                 cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-                try:
-                    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-                    cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                except Exception:
-                    pass
                 fail_count = 0
                 last_ok = time.time()
                 time.sleep(1.0)
@@ -484,12 +470,6 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                     try: cap.release()
                     except: pass
                     cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-                    try:
-                        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-                        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                    except Exception:
-                        pass
                     fail_count = 0
                     last_ok = time.time()
                 time.sleep(0.2)
