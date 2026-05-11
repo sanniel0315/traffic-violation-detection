@@ -2065,9 +2065,28 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     _last_infer_wall = 0.0
     MAX_INFER_FPS = 10.0
     _min_infer_interval = 1.0 / MAX_INFER_FPS
+    _frigate_fb_last = 0.0  # frigate fallback throttle (worker-local，不影響 reader_loop)
     while detection_services.get(camera_id, {}).get('running', False):
         cur_ts = _latest.get("ts", 0.0)
         frame = _latest.get("frame")
+        # frigate latest.jpg fallback：當 reader_loop 從未拿到 frame（_latest["frame"] is None）
+        # 時主動 poll frigate，throttle 0.2s。檔案 source（mkv）的 cap.read 不會落到 None，
+        # 所以這條只對 RTSP 且 go2rtc → ffmpeg consumer 拉不到 frame 的 cam 觸發。
+        if frame is None:
+            _now_fb = time.time()
+            if _now_fb - _frigate_fb_last > 0.2:
+                _frigate_fb_last = _now_fb
+                try:
+                    _fb_jpg = _try_frigate_snapshot(source, camera_id=camera_id)
+                    if _fb_jpg:
+                        _arr = np.frombuffer(_fb_jpg, dtype=np.uint8)
+                        _dec = cv2.imdecode(_arr, cv2.IMREAD_COLOR)
+                        if _dec is not None and _dec.size > 0:
+                            _latest["frame"] = _dec
+                            _latest["ts"] = _now_fb
+                            continue
+                except Exception:
+                    pass
         if frame is None or cur_ts <= _last_proc_ts:
             time.sleep(0.01)
             continue
