@@ -928,6 +928,29 @@ def generate_frames_overlay(
                     cap = _cap_holder[0]
                 if cap is not None:
                     ret, frame = cap.read()
+        # frigate/go2rtc fallback：cap.read / _shared_frames 都拿不到時，
+        # 試 frigate latest.jpg（很快）或 go2rtc frame.jpeg（較慢），throttle 0.5s
+        if not ret and camera_id is not None:
+            _now_fb = time.time()
+            if (_now_fb - globals().setdefault('_live_fb_last', {}).get(camera_id, 0.0)) > 0.5:
+                _live_fb_jpg = _try_frigate_snapshot(source, camera_id=camera_id)
+                if not _live_fb_jpg:
+                    try:
+                        _resp = requests.get(
+                            f"http://127.0.0.1:1984/api/frame.jpeg?src=cam_{camera_id}",
+                            timeout=3.0,
+                        )
+                        if _resp.status_code == 200 and len(_resp.content) > 1000:
+                            _live_fb_jpg = _resp.content
+                    except Exception:
+                        pass
+                if _live_fb_jpg:
+                    _live_fb_arr = np.frombuffer(_live_fb_jpg, dtype=np.uint8)
+                    _decoded = cv2.imdecode(_live_fb_arr, cv2.IMREAD_COLOR)
+                    if _decoded is not None and _decoded.size > 0:
+                        frame = _decoded
+                        ret = True
+                globals()['_live_fb_last'][camera_id] = _now_fb
         if not ret:
             if cap is not None and time.time() - last_ok > 5.0:
                 cap.release()
