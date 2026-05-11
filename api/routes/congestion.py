@@ -379,7 +379,10 @@ def draw_congestion(frame, result):
 
 def run_congestion_detection(camera_id: int, camera_name: str, source: str, zones: list):
     """背景壅塞偵測任務"""
-    # OPENCV_FFMPEG_CAPTURE_OPTIONS 已在 systemd service 統一設定，這裡不再 runtime mutate
+    import os as _os
+    # RTSP 強制走 TCP 避免封包掉包
+    if str(source).lower().startswith("rtsp://"):
+        _os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072|allowed_media_types;video|analyzeduration;1000000|probesize;1000000|threads;1"
     # 判斷是不是檔案來源（相對路徑、/files/... 或副檔名是影片）→ 影響 EOF 處理策略
     _src_lc = str(source or "").lower()
     is_file_source = (
@@ -443,9 +446,6 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
             except Exception as e:
                 print(f"⚠️ congestion cam_{camera_id} cap.read exception: {e}", flush=True)
                 ret, frame = False, None
-            # frame is None / size=0 視為失敗，避免後續處理 SEGV
-            if ret and (frame is None or getattr(frame, "size", 0) == 0):
-                ret = False
 
             if not ret:
                 if is_file_source:
