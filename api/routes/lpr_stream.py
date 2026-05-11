@@ -147,8 +147,9 @@ def _open_capture(source: str):
     src = str(source or "").strip()
     src_lc = src.lower()
     is_rtsp = src_lc.startswith("rtsp://")
-    # OPENCV_FFMPEG_CAPTURE_OPTIONS 已在 systemd service 統一設定（含 err_detect/discardcorrupt 等防 SEGV 旗標）
-    # 不再 runtime mutate，避免多 thread 開 cap 時 race condition
+    if is_rtsp:
+        # 強制 RTSP TCP transport 避免封包遺失，加 socket timeout 避免 read 卡死
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
 
     backends = []
     if src_lc.startswith("http://") or src_lc.startswith("https://"):
@@ -2753,8 +2754,7 @@ class LPRStreamTask:
                     ret, frame = cap.read()
                 except Exception:
                     ret, frame = False, None
-                # frame is None / size=0 視為失敗：broken H264 frame 可能讓後續處理 SEGV
-                if not ret or frame is None or getattr(frame, "size", 0) == 0:
+                if not ret:
                     consecutive_fail += 1
                     time.sleep(0.2)
                     continue
