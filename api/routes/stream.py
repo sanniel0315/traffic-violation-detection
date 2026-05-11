@@ -1378,15 +1378,17 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         detector = VehicleDetector(conf_threshold=0.5)
     add_log("info", f"cam_{camera_id} 偵測器 device: {getattr(detector, 'runtime_device', 'unknown')}", "detection")
     _src_lc = str(source or "").lower()
-    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-    # 顯式設 open/read timeout（環境變數 stimeout 不可靠，CAP_PROP 才會吃進去）
+    # 用 params 列表設 open/read timeout — 必須在 open 之前傳，構造後 cap.set 來不及
     # 避免 RTSP 讀卡死 30 秒（OpenCV default）
+    _cap_params = [
+        cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000,
+        cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000,
+        cv2.CAP_PROP_BUFFERSIZE, 1,
+    ]
     try:
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG, _cap_params)
     except Exception:
-        pass
+        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
     speed_kmh_per_pxps = float(detection_config.get("speed_kmh_per_pxps", 0.12) or 0.12)
     speed_smooth_alpha = float(detection_config.get("speed_smooth_alpha", 0.35) or 0.35)
     # track_ttl 從 1.2 → 5 秒：塞車場景偶爾 1 frame detection miss 不會讓 track
@@ -1549,13 +1551,10 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 except Exception:
                     pass
                 time.sleep(2)
-                cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                 try:
-                    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-                    cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG, _cap_params)
                 except Exception:
-                    pass
+                    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                 continue
             _read_fail_count[0] = 0
             _latest["frame"] = frm

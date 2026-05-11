@@ -388,15 +388,19 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
     )
     # file source: 不再自己 open cap，從 detection 的 _shared_frames 取 frame
     # （commit 9c9679e 完成版：避免每個 mkv 被開多條 cap 浪費 CPU）
-    cap = None if is_file_source else cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-    # 顯式設 timeout（環境變數 stimeout 不可靠）
-    if cap is not None:
+    # 用 params 列表設 timeout — 必須在 open 之前傳
+    _cap_params = [
+        cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000,
+        cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000,
+        cv2.CAP_PROP_BUFFERSIZE, 1,
+    ]
+    if is_file_source:
+        cap = None
+    else:
         try:
-            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG, _cap_params)
         except Exception:
-            pass
+            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
     _last_shared_ts = 0.0
     print(f"🚦 壅塞偵測啟動: camera_id={camera_id} (file_source={is_file_source}, shared_frames={is_file_source})")
     fail_count = 0
@@ -440,13 +444,10 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                 except Exception:
                     pass
                 print(f"🔄 congestion cam_{camera_id} reconnect (fail={fail_count})", flush=True)
-                cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                 try:
-                    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-                    cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG, _cap_params)
                 except Exception:
-                    pass
+                    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                 fail_count = 0
                 last_ok = time.time()
                 time.sleep(1.0)
@@ -483,13 +484,10 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                     # 連續 50 次讀不到 → 強制 reconnect
                     try: cap.release()
                     except: pass
-                    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                     try:
-                        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-                        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG, _cap_params)
                     except Exception:
-                        pass
+                        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                     fail_count = 0
                     last_ok = time.time()
                 time.sleep(0.2)
