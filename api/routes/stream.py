@@ -522,7 +522,7 @@ def _capture_snapshot_bytes(source: str, camera_id: int = None, overlay_zones: l
     # 優先嘗試從 detection 服務的共享 frame 取得（避免重開連線）
     if camera_id is not None:
         sf = _shared_frames.get(camera_id)
-        if sf and (time.time() - sf.get("ts", 0)) < 5.0 and sf.get("frame") is not None:
+        if sf and (time.time() - sf.get("ts", 0)) < 30.0 and sf.get("frame") is not None:
             frame_out = sf["frame"]
             if overlay_zones is not None:
                 # 疊 ROI 多邊形 + detection bbox（讓 cam tile 縮圖也能看到偵測結果）
@@ -1176,7 +1176,7 @@ async def snapshot(camera_id: int, overlay: int = 0, db: Session = Depends(get_d
     async with lock:
         # Keep snapshot latency very short for UI usage; slow sources should fallback fast
         # and let warm-up task fill cache for subsequent requests.
-        attempts = [(4.0, 1)]
+        attempts = [(8.0, 1)]
         for timeout_sec, count in attempts:
             if image:
                 break
