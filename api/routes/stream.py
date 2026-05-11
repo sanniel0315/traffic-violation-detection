@@ -495,22 +495,28 @@ def _touch_http_mjpeg_worker(state: dict | None) -> None:
         state["last_consumer_ts"] = time.time()
 
 
-def _try_frigate_snapshot(source: str):
-    """嘗試透過 Frigate latest.jpg API 取得截圖（適用於 Frigate/go2rtc 管理的串流）。"""
+def _try_frigate_snapshot(source: str, camera_id: int = None):
+    """嘗試透過 Frigate latest.jpg API 取得截圖（適用於 Frigate/go2rtc 管理的串流）。
+    優先用 camera_id → cam_{id} 對應 frigate stream name；source URL 解析為 fallback。
+    """
+    candidates = []
+    if camera_id is not None:
+        candidates.append(f"cam_{camera_id}")
     src = str(source or "").lower()
-    # 從 rtsp://127.0.0.1:8554/<stream_name> 取出 stream name
     if src.startswith("rtsp://127.0.0.1:8554/"):
-        stream_name = source.split("/")[-1]
-        if stream_name:
-            try:
-                resp = requests.get(
-                    f"http://127.0.0.1:5000/api/{stream_name}/latest.jpg",
-                    timeout=3.0,
-                )
-                if resp.status_code == 200 and len(resp.content) > 1000:
-                    return resp.content
-            except Exception:
-                pass
+        n = source.split("/")[-1]
+        if n and n not in candidates:
+            candidates.append(n)
+    for stream_name in candidates:
+        try:
+            resp = requests.get(
+                f"http://127.0.0.1:5000/api/{stream_name}/latest.jpg",
+                timeout=3.0,
+            )
+            if resp.status_code == 200 and len(resp.content) > 1000:
+                return resp.content
+        except Exception:
+            pass
     return None
 
 
@@ -549,7 +555,7 @@ def _capture_snapshot_bytes(source: str, camera_id: int = None, overlay_zones: l
             if ok:
                 return buffer.tobytes()
     # 嘗試 Frigate snapshot API（比重新建立 RTSP 連線快很多）
-    frigate_jpg = _try_frigate_snapshot(source)
+    frigate_jpg = _try_frigate_snapshot(source, camera_id=camera_id)
     if frigate_jpg:
         return frigate_jpg
     # go2rtc HTTP frame.jpeg fallback：cv2 對 idle/半死攝影機處理不好，
