@@ -169,27 +169,21 @@ def _open_capture(source: str):
     if None not in backends:
         backends.append(None)
 
-    # params 必須在 open 之前傳，構造後 cap.set 對 OPEN_TIMEOUT 來不及生效
-    _cap_params = [
-        cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000,
-        cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000,
-        cv2.CAP_PROP_BUFFERSIZE, 1,
-    ]
     last_cap = None
     for backend in backends:
         try:
-            if backend is None:
-                cap = cv2.VideoCapture(src)
-            else:
-                try:
-                    cap = cv2.VideoCapture(src, backend, _cap_params)
-                except Exception:
-                    cap = cv2.VideoCapture(src, backend)
+            cap = cv2.VideoCapture(src) if backend is None else cv2.VideoCapture(src, backend)
         except Exception:
             cap = None
         if cap is not None and cap.isOpened():
             try:
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+            # 設 read/open timeout（OpenCV 4.x 支援）
+            try:
+                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
             except Exception:
                 pass
             return cap
