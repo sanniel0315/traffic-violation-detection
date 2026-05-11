@@ -28,11 +28,7 @@ router = APIRouter(prefix="/api/lpr/stream", tags=["lpr-stream"])
 
 _lpr_tasks: Dict[int, 'LPRStreamTask'] = {}
 _yolo_model = None
-# 共用 stream.py 的 _shared_overlay_detector_lock：LPR worker 與 stream.py detection
-# worker 雖各自持有 detector instance，但底層 ultralytics / cuDNN / TRT global state
-# (CUDA stream、cuBLAS/cuDNN handle、TRT engine context) 並非 thread-safe，並行
-# detect() 會在 native lib 競爭觸發 SEGV — 必須共用同一把 lock 序列化。
-from api.routes.stream import _shared_overlay_detector_lock as _yolo_lock
+_yolo_lock = threading.Lock()
 _recognizer = None
 _plate_detector = None
 _OCR_FAST_MODE = os.getenv("LPR_OCR_MODE", "accurate").strip().lower() in {"fast", "quick", "speed"}
