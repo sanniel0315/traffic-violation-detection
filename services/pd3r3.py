@@ -153,11 +153,27 @@ class PD3R3:
             raise ModbusError(f"unexpected reg byte count {nbytes}")
         return list(struct.unpack(">" + "H" * count, body[1:1 + nbytes]))
 
+    def _write_lenient(self, fc: int, payload: bytes) -> None:
+        """Modbus write 對手上這顆 PD3R3 的 echo 第一個 byte 常被讀成 0
+        (RS-485 line floating / converter timing)，但實際 hardware action 已生效。
+        改成寫完後 drain echo + 短 wait，不要 raise wrong-addr，避免 caller error。"""
+        frame = bytes([self.address, fc]) + payload
+        frame += _crc16(frame)
+        self._ser.reset_input_buffer()
+        self._ser.write(frame)
+        # 等 echo 完全傳完（worst case 8 bytes @ 9600 ≈ 9 ms）+ inter-frame
+        time.sleep(0.020)
+        # drain echo bytes, don't validate
+        try:
+            self._ser.read(16)
+        except Exception:
+            pass
+        time.sleep(self.inter_frame_pause)
+
     def _write_coil(self, number: int, value: bool) -> None:
         offset = number - 1
         payload = offset.to_bytes(2, "big") + (b"\xff\x00" if value else b"\x00\x00")
-        # echo response is 4 bytes (offset + value) → expected 8 with addr+fc+CRC
-        self._txrx(0x05, payload, expected_len=8)
+        self._write_lenient(0x05, payload)
 
     def _write_coils(self, number: int, values: list[bool]) -> None:
         offset = number - 1
@@ -173,13 +189,12 @@ class PD3R3:
             + bytes([byte_count])
             + bytes(bits)
         )
-        # response: addr fc start_hi start_lo count_hi count_lo crc_lo crc_hi → 8
-        self._txrx(0x0F, payload, expected_len=8)
+        self._write_lenient(0x0F, payload)
 
     def _write_register(self, number: int, value: int) -> None:
         offset = number - 40001
         payload = offset.to_bytes(2, "big") + value.to_bytes(2, "big")
-        self._txrx(0x06, payload, expected_len=8)
+        self._write_lenient(0x06, payload)
 
     # ── high-level API ──────────────────────────────────────────────────
     def read_inputs(self) -> list[bool]:
