@@ -22,6 +22,7 @@ Lamp states:
 from __future__ import annotations
 
 import datetime
+import os
 import threading
 import time
 from collections import deque
@@ -261,6 +262,12 @@ class IOService:
         self._di_callbacks.append(cb)
 
     def _start_di_monitor(self) -> None:
+        # IO_DI_DISABLED=1 → 停掉 in-process _di_loop polling (DI 改由獨立 daemon
+        # 透過 long-poll 觸發)。避開 pyserial / Tegra UART 在 traffic-api 內偶發
+        # native SEGV 拉倒整個 process 的問題。
+        if os.getenv("IO_DI_DISABLED", "0") == "1":
+            print("[io_svc] _di_loop disabled (IO_DI_DISABLED=1, use external daemon)", flush=True)
+            return
         # read_all_counters (FC4 input register at 30001) 對手上這顆 PD3R3 100% fail
         # (wrong slave addr)，改用 read_inputs (FC2 discrete input) 取 DI level
         # 做 edge detect。read_inputs 已測 100% 穩定。
