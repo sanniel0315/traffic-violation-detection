@@ -68,7 +68,7 @@ class PD3R3:
         parity: str = "N",
         stopbits: int = 1,
         timeout: float = 0.3,
-        inter_frame_pause: float = 0.015,
+        inter_frame_pause: float = 0.005,
     ):
         if not 1 <= address <= 247:
             raise ValueError(f"address {address} out of Modbus range 1..247")
@@ -106,26 +106,8 @@ class PD3R3:
         frame += _crc16(frame)
         self._ser.reset_input_buffer()
         self._ser.write(frame)
-        # 確保 TX 完全送出後 transceiver 才切到 RX 方向
-        self._ser.flush()
-        # RS-485 半雙工 turnaround：等 transceiver 從 TX 切到 RX
-        time.sleep(0.003)
-        # 讀第一個 byte：忽略 leading null（RS-485 line floating / transceiver 切換瞬間
-        # 採到的 0x00），最多 skip 2 個 null 找到真正的 frame start
-        skip = 0
-        first = b""
-        while skip < 3:
-            first = self._ser.read(1)
-            if not first:
-                raise ModbusError(f"timeout waiting for reply (skipped {skip})")
-            if first[0] != 0:
-                break
-            skip += 1
-        if first[0] == 0:
-            raise ModbusError(f"only leading nulls received")
-        # 讀剩下 expected_len - 1 bytes
-        rest = self._ser.read(expected_len - 1)
-        resp = first + rest
+        # 3.5-char silence at 9600 ≈ 4ms; pyserial timeout handles read
+        resp = self._ser.read(expected_len)
         if len(resp) < 3:
             raise ModbusError(f"timeout, got {resp!r}")
         if resp[0] != self.address:
