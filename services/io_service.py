@@ -270,7 +270,9 @@ class IOService:
         self._di_thread.start()
 
     def _di_loop(self) -> None:
-        interval = 1.0 / 20
+        # 50ms → 200ms：降低 RS-485 / pyserial / Tegra UART 半雙工 race window，
+        # native SEGV 發生率明顯下降；DI rising edge 仍能 catch 一般按鍵 (≥200ms)
+        interval = 0.2
         print(f"[io_svc] _di_loop entered (interval={interval}s)", flush=True)
         _sample_count = 0
         while not self._stop_di.is_set():
