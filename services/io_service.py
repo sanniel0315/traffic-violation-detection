@@ -47,8 +47,17 @@ DI_DOWNLOAD = 0
 DI_RESET    = 1
 
 
+_DAEMON_URL = os.getenv("IO_DAEMON_URL", "").rstrip("/")
+
+
 class IOService:
     def __init__(self, module: Optional[IOModule] = None):
+        # client mode: 透過 HTTP 跟 traffic-io.service daemon 通訊（process 隔離）
+        self._daemon_url = _DAEMON_URL
+        if self._daemon_url:
+            import requests as _req
+            self._session = _req.Session()
+        # 不管 native / client mode 都要保留以下 state 給 status() / WS 用
         self._mod = module or get_module()
         self._lock = threading.Lock()
         # system state
@@ -78,14 +87,28 @@ class IOService:
 
     # ── lifecycle ─────────────────────────────────────────────────────
     def start(self) -> None:
+        if self._daemon_url:
+            # client mode: 不開 PD3R3 / serial port，改起 long-poll thread 從 daemon
+            # /events 接 DI rising edge，本地觸發 reset / download callback。
+            self._wire_download_button()
+            self._wire_reset_button()
+            threading.Thread(target=self._client_di_poller, daemon=True, name="io-di-poller").start()
+            print(f"[io_svc] started (client mode, daemon={self._daemon_url})", flush=True)
+            _log("info", f"IO 模組啟動 (client mode, daemon={self._daemon_url})")
+            from services import network_health
+            network_health.start(interval=5)
+            return
         if not self._mod.ok:
             self._mod.connect()
         if self._mod.ok:
-            # IO 硬體連線成功 → 啟動 DI 監聽 + 接按鍵 callback
+            # IO 硬體連線成功 → 啟動 DI 監聽
             self._apply_do()
             self._start_di_monitor()
-            self._wire_download_button()
-            self._wire_reset_button()
+            # daemon host mode 不 wire reset/download callback (client 端去接 events
+            # 觸發 reset / config_sync — 避免雙重觸發)
+            if os.getenv("IO_DAEMON_HOST", "0") != "1":
+                self._wire_download_button()
+                self._wire_reset_button()
             print("[io_svc] started (IO active)", flush=True)
             _log("info", "IO 模組啟動，連線成功")
         else:
@@ -95,6 +118,32 @@ class IOService:
         from services import network_health
         # 5 秒輪詢: 最壞 5 秒內偵測網路斷線 / NTP 失同步 / 無 IP → DO0 紅燈
         network_health.start(interval=5)
+
+    def _client_di_poller(self) -> None:
+        """Long-poll daemon /events，本地 fire callback (reset / download trigger)。"""
+        while not self._stop_di.is_set():
+            try:
+                r = self._session.get(
+                    f"{self._daemon_url}/events",
+                    params={"since": self._di_event_seq},
+                    timeout=10,
+                )
+                d = r.json()
+                for evt in d.get("events", []) or []:
+                    seq = int(evt.get("seq", 0))
+                    ch = int(evt.get("channel", -1))
+                    if ch < 0:
+                        continue
+                    if seq > self._di_event_seq:
+                        self._di_event_seq = seq
+                        self.di_events.append(evt)
+                    for cb in self._di_callbacks:
+                        try:
+                            cb(ch)
+                        except Exception:
+                            pass
+            except Exception:
+                time.sleep(1.0)
 
     def stop(self) -> None:
         self._stop_di.set()
@@ -108,8 +157,18 @@ class IOService:
         print("[io_svc] stopped", flush=True)
         _log("info", "IO 模組關閉")
 
+    # ── client-mode HTTP helpers ──────────────────────────────────────
+    def _daemon_post(self, path: str, json_body: dict) -> None:
+        try:
+            self._session.post(f"{self._daemon_url}{path}", json=json_body, timeout=2)
+        except Exception as e:
+            print(f"[io_svc] daemon {path} unreachable: {e}", flush=True)
+
     # ── state setters ─────────────────────────────────────────────────
     def set_comm_fault(self, fault: bool) -> None:
+        if self._daemon_url:
+            self._daemon_post("/set_comm_fault", {"fault": fault})
+            return
         with self._lock:
             changed = self._comm_ok == fault   # comm_ok was True, now fault=True → changed
             self._comm_ok = not fault
@@ -119,6 +178,9 @@ class IOService:
         self._apply_do()
 
     def set_auto_mode(self, auto: bool) -> None:
+        if self._daemon_url:
+            self._daemon_post("/set_auto_mode", {"auto": auto})
+            return
         with self._lock:
             changed = self._auto_mode != auto
             self._auto_mode = auto
@@ -127,6 +189,9 @@ class IOService:
         self._apply_do()
 
     def set_downloading(self, active: bool) -> None:
+        if self._daemon_url:
+            self._daemon_post("/set_downloading", {"active": active})
+            return
         with self._lock:
             was = self._downloading
             self._downloading = active
@@ -329,6 +394,9 @@ class IOService:
     # ── public DO control (manual override, bypasses state machine) ──
     def set_relay(self, ch: int, on: bool) -> None:
         """供 API 路由直接驅動單顆 relay；不更新內部狀態旗標。"""
+        if self._daemon_url:
+            self._daemon_post(f"/do/{ch}", {"on": on})
+            return
         self._mod.set_relay(ch, on)
         if 0 <= ch < 3:
             self._do_state[ch] = on
@@ -345,6 +413,27 @@ class IOService:
         (按鍵是 momentary 大部分時間 False，UI 看「按下」改用 WS event 驅動
         的 recentDIPress 1.5s 高亮，比 polling instantaneous level 更可靠)。
         """
+        if self._daemon_url:
+            try:
+                return self._session.get(f"{self._daemon_url}/status", timeout=2).json()
+            except Exception as e:
+                # daemon 不可達：回 placeholder 讓 UI 不要 crash
+                return {
+                    "connected": False,
+                    "error": f"daemon unreachable: {e}",
+                    "di": {
+                        "DI0": {"label": "遠端下載", "state": False},
+                        "DI1": {"label": "Reset",    "state": False},
+                        "DI2": {"label": "保留",     "state": False},
+                    },
+                    "do": {
+                        "DO0": {"color": "red",   "label": "通訊故障", "state": False},
+                        "DO1": {"color": "green", "label": "運作狀況", "state": False},
+                        "DO2": {"color": "white", "label": "操作模式", "state": False},
+                    },
+                    "state": {"comm_ok": False, "auto_mode": False, "downloading": False},
+                    "config_sync": {"url_configured": False, "url": "", "running": False},
+                }
         from services import config_sync
         di = self._di_levels
         do = self._do_state
