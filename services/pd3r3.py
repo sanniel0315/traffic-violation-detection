@@ -68,7 +68,7 @@ class PD3R3:
         parity: str = "N",
         stopbits: int = 1,
         timeout: float = 0.3,
-        inter_frame_pause: float = 0.005,
+        inter_frame_pause: float = 0.020,
     ):
         if not 1 <= address <= 247:
             raise ValueError(f"address {address} out of Modbus range 1..247")
