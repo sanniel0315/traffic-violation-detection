@@ -2704,72 +2704,106 @@ class LPRStreamTask:
             recognizer = get_recognizer()
             get_plate_detector()
 
+            # cam_6 (samsung 攝影機) cap.read 對 go2rtc RTSP output 偶發 native SEGV
+            # 拉倒整個 traffic-api。改成從 stream.py _shared_frames 取 frame —
+            # detection worker 已透過 frigate latest.jpg fallback 拿到 1080p frame
+            # 並寫進 shared_frames，LPR 共用即可，完全繞過 cap.read 風險。
+            _SHARED_FRAME_LPR_CAMS = {6}
+            use_shared = self.camera_id in _SHARED_FRAME_LPR_CAMS
             cap = None
-            for _retry in range(5):
-                cap = _open_capture(self.source)
-                if cap.isOpened():
-                    break
-                print(f"[LPR] 來源連線失敗，{3}秒後重試 ({_retry+1}/5): {self.source}")
-                try:
-                    cap.release()
-                except Exception:
-                    pass
-                time.sleep(3)
 
-            if cap is None or not cap.isOpened():
-                self.last_error = f"無法開啟來源: {self.source}"
-                print(f"[LPR] {self.last_error}")
-                self.running = False
-                watchdog_stop.set()
-                return
-
-            cap_holder["cap"] = cap
-            self.last_frame_at = time.time()  # 啟動 watchdog 計時
-            consecutive_fail = 0
-
-            frame_skip = 1
-            while self.running:
-                # 主迴圈 watchdog：若 read 連續失敗或長時間沒幀就重連
-                need_reconnect = (
-                    consecutive_fail >= 10
-                    or self.last_frame_at == 0.0
-                    or (self.last_frame_at and time.time() - self.last_frame_at > 8)
-                )
-                if need_reconnect:
+            if not use_shared:
+                for _retry in range(5):
+                    cap = _open_capture(self.source)
+                    if cap.isOpened():
+                        break
+                    print(f"[LPR] 來源連線失敗，{3}秒後重試 ({_retry+1}/5): {self.source}")
                     try:
                         cap.release()
                     except Exception:
                         pass
-                    time.sleep(0.5)
-                    cap = _open_capture(self.source)
-                    cap_holder["cap"] = cap
-                    consecutive_fail = 0
-                    if not (cap and cap.isOpened()):
-                        time.sleep(2.0)
-                        self.last_frame_at = time.time()
+                    time.sleep(3)
+
+                if cap is None or not cap.isOpened():
+                    self.last_error = f"無法開啟來源: {self.source}"
+                    print(f"[LPR] {self.last_error}")
+                    self.running = False
+                    watchdog_stop.set()
+                    return
+
+                cap_holder["cap"] = cap
+            else:
+                print(f"[LPR] cam_{self.camera_id} 走 shared_frames 模式 (繞過 cap.read SEGV)", flush=True)
+
+            self.last_frame_at = time.time()  # 啟動 watchdog 計時
+            consecutive_fail = 0
+
+            frame_skip = 1
+            last_shared_ts = 0.0
+            while self.running:
+                if use_shared:
+                    # 從 detection 寫的 _shared_frames 取最新 frame
+                    try:
+                        from api.routes.stream import _shared_frames as _SF
+                        sf = _SF.get(self.camera_id) or {}
+                        sf_ts = float(sf.get("ts") or 0.0)
+                        sf_frame = sf.get("frame")
+                    except Exception:
+                        sf_ts, sf_frame = 0.0, None
+                    if sf_frame is None or sf_ts <= last_shared_ts:
+                        time.sleep(0.05)  # 等下一張新 frame
                         continue
+                    if time.time() - sf_ts > 10:
+                        # detection 沒在更新，等待
+                        time.sleep(0.5)
+                        continue
+                    frame = sf_frame
+                    last_shared_ts = sf_ts
                     self.last_frame_at = time.time()
+                    self._increment_debug_counter("total_frames")
+                    self.recent_frames.append(frame.copy())
+                else:
+                    # 原 cap.read 路徑
+                    need_reconnect = (
+                        consecutive_fail >= 10
+                        or self.last_frame_at == 0.0
+                        or (self.last_frame_at and time.time() - self.last_frame_at > 8)
+                    )
+                    if need_reconnect:
+                        try:
+                            cap.release()
+                        except Exception:
+                            pass
+                        time.sleep(0.5)
+                        cap = _open_capture(self.source)
+                        cap_holder["cap"] = cap
+                        consecutive_fail = 0
+                        if not (cap and cap.isOpened()):
+                            time.sleep(2.0)
+                            self.last_frame_at = time.time()
+                            continue
+                        self.last_frame_at = time.time()
 
-                try:
-                    ret, frame = cap.read()
-                except Exception:
-                    ret, frame = False, None
-                if not ret:
-                    consecutive_fail += 1
-                    time.sleep(0.2)
-                    continue
-                consecutive_fail = 0
+                    try:
+                        ret, frame = cap.read()
+                    except Exception:
+                        ret, frame = False, None
+                    if not ret:
+                        consecutive_fail += 1
+                        time.sleep(0.2)
+                        continue
+                    consecutive_fail = 0
 
-                self.last_frame_at = time.time()
-                self._increment_debug_counter("total_frames")
-                self.recent_frames.append(frame.copy())
-                # 同時寫一份給 stream.py 的 _shared_frames，讓 snapshot endpoint 能 <30ms 取
-                # (沒這個 cam_6 之類純 LPR cam 的 snapshot 要重開 cv2.VideoCapture 約 2 秒)
-                try:
-                    from api.routes.stream import _shared_frames as _SF
-                    _SF[self.camera_id] = {"frame": frame, "detections": [], "ts": time.time()}
-                except Exception:
-                    pass
+                    self.last_frame_at = time.time()
+                    self._increment_debug_counter("total_frames")
+                    self.recent_frames.append(frame.copy())
+                    # 同時寫一份給 stream.py 的 _shared_frames，讓 snapshot endpoint 能 <30ms 取
+                    # (沒這個 cam_6 之類純 LPR cam 的 snapshot 要重開 cv2.VideoCapture 約 2 秒)
+                    try:
+                        from api.routes.stream import _shared_frames as _SF
+                        _SF[self.camera_id] = {"frame": frame, "detections": [], "ts": time.time()}
+                    except Exception:
+                        pass
                 if self.total_frames % frame_skip != 0:
                     continue
 
