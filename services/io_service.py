@@ -257,10 +257,13 @@ class IOService:
         self._di_callbacks.append(cb)
 
     def _start_di_monitor(self) -> None:
+        # read_all_counters (FC4 input register at 30001) 對手上這顆 PD3R3 100% fail
+        # (wrong slave addr)，改用 read_inputs (FC2 discrete input) 取 DI level
+        # 做 edge detect。read_inputs 已測 100% 穩定。
         try:
-            self._di_counters = self._mod.read_all_counters()
+            self._di_levels = list(self._mod.read_inputs())
         except Exception:
-            self._di_counters = [0, 0, 0]
+            self._di_levels = [False, False, False]
         self._di_thread = threading.Thread(
             target=self._di_loop, daemon=True, name="io-di-monitor"
         )
@@ -270,11 +273,12 @@ class IOService:
         interval = 1.0 / 20
         while not self._stop_di.is_set():
             try:
-                cur = self._mod.read_all_counters()
+                cur = list(self._mod.read_inputs())
+                # rising edge: prev False → current True
                 for ch in (DI_RESET, DI_DOWNLOAD):
-                    if cur[ch] != self._di_counters[ch]:
+                    if cur[ch] and not self._di_levels[ch]:
                         self._fire_di(ch)
-                        self._di_counters[ch] = cur[ch]
+                self._di_levels = cur
             except Exception as e:
                 print(f"[io_svc] DI poll error: {e}", flush=True)
                 _log("error", f"IO 通訊中斷，嘗試重連: {e}")
