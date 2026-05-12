@@ -271,14 +271,21 @@ class IOService:
 
     def _di_loop(self) -> None:
         interval = 1.0 / 20
+        print(f"[io_svc] _di_loop entered (interval={interval}s)", flush=True)
+        _sample_count = 0
         while not self._stop_di.is_set():
             try:
                 cur = list(self._mod.read_inputs())
+                _sample_count += 1
                 # rising edge: prev False → current True
                 for ch in (DI_RESET, DI_DOWNLOAD):
                     if cur[ch] and not self._di_levels[ch]:
+                        print(f"[io_svc] DI rising edge: ch={ch} levels {self._di_levels} -> {cur}", flush=True)
                         self._fire_di(ch)
                 self._di_levels = cur
+                # 每 200 sample (~10s) 印一次心跳
+                if _sample_count % 200 == 0:
+                    print(f"[io_svc] _di_loop alive, samples={_sample_count} last_di={cur}", flush=True)
             except Exception as e:
                 print(f"[io_svc] DI poll error: {e}", flush=True)
                 _log("error", f"IO 通訊中斷，嘗試重連: {e}")
