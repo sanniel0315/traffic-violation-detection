@@ -229,7 +229,11 @@ class IOService:
 
     def _do_reset(self) -> None:
         import subprocess
-        time.sleep(2.0)
+        # 先停 _di_loop 避免 reset 流程內 set_relays 跟 _di_loop read_inputs
+        # 同時打 RS-485 serial port 造成 native SEGV race。
+        self._stop_di.set()
+        time.sleep(0.5)  # 等 _di_loop 結束當前 sample + 退出 loop
+        time.sleep(1.5)  # 剩 1.5s 湊滿原本的 2s 提示間隔
         # 重啟前主動把 3 顆燈全滅，視覺上表達「系統沒在跑」；
         # 新 process 起來後 start() → _apply_do() 會自動恢復正常燈號。
         try:
