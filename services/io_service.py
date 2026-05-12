@@ -120,7 +120,16 @@ class IOService:
         network_health.start(interval=5)
 
     def _client_di_poller(self) -> None:
-        """Long-poll daemon /events，本地 fire callback (reset / download trigger)。"""
+        """Long-poll daemon /events，本地 fire callback (reset / download trigger)。
+        啟動時先讀 daemon latest_seq，跳過所有歷史事件 — 否則 traffic-api 重啟後
+        重播 daemon 內歷史 DI1 events 會無限觸發 reset 循環。"""
+        # 同步 daemon 當前 latest_seq，本 client 從這之後才接事件
+        try:
+            r = self._session.get(f"{self._daemon_url}/health", timeout=3)
+            self._di_event_seq = int(r.json().get("di_seq") or 0)
+            print(f"[io_svc client] synced di_seq={self._di_event_seq} from daemon (skip historic events)", flush=True)
+        except Exception as e:
+            print(f"[io_svc client] init di_seq sync failed: {e}", flush=True)
         while not self._stop_di.is_set():
             try:
                 r = self._session.get(
