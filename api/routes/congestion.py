@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from api.models import CongestionSample, get_db, Camera, SessionLocal
 from api.utils.roi_scope import SCOPE_CONGESTION, SCOPE_TRAFFIC, select_zones
+from api.utils.shutdown import shutdown_event
 from api.utils.feature_state import get_feature_state, set_feature_state
 from api.utils.camera_stream import resolve_analysis_source
 
@@ -324,8 +325,12 @@ def generate_congestion_stream(camera_id: int, source: str, zones: list):
     """產生壅塞偵測串流"""
     cap = cv2.VideoCapture(source)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    
+
     while True:
+        # process shutdown 時讓 generator 乾淨退出
+        if shutdown_event.is_set():
+            cap.release()
+            return
         ret, frame = cap.read()
         if not ret:
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)

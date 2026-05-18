@@ -193,6 +193,9 @@ async def lifespan(app: FastAPI):
         print(f"?? IO service ????: {_e}", flush=True)
     print("✅ 系統初始化完成")
     yield
+    # 通知所有 streaming generator 退出，避免 sync while True 卡到 SIGKILL
+    from api.utils.shutdown import shutdown_event
+    shutdown_event.set()
     print("👋 系統關閉")
 
 
