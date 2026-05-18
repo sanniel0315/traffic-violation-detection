@@ -122,14 +122,24 @@ class IOService:
     def _client_di_poller(self) -> None:
         """Long-poll daemon /events，本地 fire callback (reset / download trigger)。
         啟動時先讀 daemon latest_seq，跳過所有歷史事件 — 否則 traffic-api 重啟後
-        重播 daemon 內歷史 DI1 events 會無限觸發 reset 循環。"""
-        # 同步 daemon 當前 latest_seq，本 client 從這之後才接事件
-        try:
-            r = self._session.get(f"{self._daemon_url}/health", timeout=3)
-            self._di_event_seq = int(r.json().get("di_seq") or 0)
-            print(f"[io_svc client] synced di_seq={self._di_event_seq} from daemon (skip historic events)", flush=True)
-        except Exception as e:
-            print(f"[io_svc client] init di_seq sync failed: {e}", flush=True)
+        重播 daemon 內歷史 DI1 events 會無限觸發 reset 循環。
+
+        sync 必須成功才能進 events long-poll：systemd 同時拉起 traffic-api 與
+        traffic-io 時 daemon 可能尚未 ready，若 sync 失敗用 di_seq=0 進 long-poll
+        會把 daemon 之後 publish 的歷史事件全部當新事件 replay。
+        """
+        # 同步 daemon 當前 latest_seq，本 client 從這之後才接事件；
+        # daemon 還沒起就 retry，直到拿到 di_seq 才繼續。
+        while not self._stop_di.is_set():
+            try:
+                r = self._session.get(f"{self._daemon_url}/health", timeout=3)
+                self._di_event_seq = int(r.json().get("di_seq") or 0)
+                print(f"[io_svc client] synced di_seq={self._di_event_seq} from daemon (skip historic events)", flush=True)
+                break
+            except Exception as e:
+                print(f"[io_svc client] init di_seq sync failed, retry in 2s: {e}", flush=True)
+                if self._stop_di.wait(2.0):
+                    return
         while not self._stop_di.is_set():
             try:
                 r = self._session.get(
@@ -158,11 +168,14 @@ class IOService:
         self._stop_di.set()
         from services import network_health
         network_health.stop()
-        try:
-            self._mod.set_relays([False, False, False])
-        except Exception:
-            pass
-        self._mod.close()
+        # client mode: 不要動 self._mod (沒 connect)，也不能關 daemon 上的 relay
+        # — daemon 是獨立 systemd 服務，traffic-api 停止不該滅燈。
+        if not self._daemon_url:
+            try:
+                self._mod.set_relays([False, False, False])
+            except Exception:
+                pass
+            self._mod.close()
         print("[io_svc] stopped", flush=True)
         _log("info", "IO 模組關閉")
 
@@ -304,19 +317,29 @@ class IOService:
 
     def _do_reset(self) -> None:
         import subprocess
-        # 先停 _di_loop 避免 reset 流程內 set_relays 跟 _di_loop read_inputs
-        # 同時打 RS-485 serial port 造成 native SEGV race。
-        self._stop_di.set()
-        time.sleep(0.5)  # 等 _di_loop 結束當前 sample + 退出 loop
-        time.sleep(1.5)  # 剩 1.5s 湊滿原本的 2s 提示間隔
-        # 重啟前主動把 3 顆燈全滅，視覺上表達「系統沒在跑」；
+        # 2 秒提示間隔 (log 落地 + 操作者看到提示)，之後滅燈表達「系統沒在跑」。
         # 新 process 起來後 start() → _apply_do() 會自動恢復正常燈號。
-        try:
-            self._mod.set_relays([False, False, False])
-            print("[io_svc] reset → all DO off (重啟中提示)", flush=True)
-            time.sleep(0.2)  # 給 RS-485 frame 完整發送的時間
-        except Exception as e:
-            print(f"[io_svc] reset clear lamps failed: {e}", flush=True)
+        if self._daemon_url:
+            # client mode: 本地 _mod 沒 connect，改用 HTTP 通知 daemon 滅燈。
+            # daemon 端 _di_loop 持續跑 (IOModule._lock 序列化 read/write，不會
+            # race)，重啟期間 DI 監測不中斷 — daemon 仍能 catch 任何 rising edge，
+            # 重啟完成後 client poller 起來繼續處理。
+            time.sleep(2.0)
+            for ch in (DO_RED, DO_GREEN, DO_WHITE):
+                self._daemon_post(f"/do/{ch}", {"on": False})
+            print("[io_svc] reset → all DO off via daemon (重啟中提示)", flush=True)
+        else:
+            # native mode (legacy / daemon-less)：本機跑 _di_loop，
+            # 先停 loop 避免 set_relays 跟 read_inputs 同時打 RS-485 造成 SEGV。
+            self._stop_di.set()
+            time.sleep(0.5)  # 等 _di_loop 結束當前 sample + 退出 loop
+            time.sleep(1.5)  # 剩 1.5s 湊滿原本的 2s 提示間隔
+            try:
+                self._mod.set_relays([False, False, False])
+                print("[io_svc] reset → all DO off (重啟中提示)", flush=True)
+                time.sleep(0.2)  # 給 RS-485 frame 完整發送的時間
+            except Exception as e:
+                print(f"[io_svc] reset clear lamps failed: {e}", flush=True)
         try:
             subprocess.Popen(
                 ["sudo", "-n", "systemctl", "restart", "traffic-api.service"],
