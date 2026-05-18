@@ -13,6 +13,7 @@ import re
 sys.path.insert(0, '/workspace')
 
 from api.utils.camera_stream import resolve_analysis_source
+from api.utils.shutdown import shutdown_event
 
 router = APIRouter(prefix="/api/lpr/visual", tags=["lpr-visual"])
 
@@ -326,6 +327,13 @@ def generate_frames(source: str):
     had_frame = False
 
     while True:
+        # process shutdown 時讓 generator 乾淨退出
+        if shutdown_event.is_set():
+            try:
+                cap.release()
+            except Exception:
+                pass
+            return
         ret, frame = cap.read()
         if not ret:
             if time.time() - last_ok > 2.0:

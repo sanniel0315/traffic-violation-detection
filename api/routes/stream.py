@@ -29,6 +29,7 @@ from api.routes.logs import add_log
 from api.utils.roi_scope import SCOPE_TRAFFIC, SCOPE_SPEED, SCOPE_CONGESTION, select_zones
 from api.utils.feature_state import get_feature_enabled, set_feature_state
 from api.utils.camera_stream import resolve_analysis_source, resolve_capture_source, resolve_local_api_source
+from api.utils.shutdown import shutdown_event
 
 router = APIRouter(prefix="/api/stream", tags=["串流"])
 
@@ -892,6 +893,9 @@ def generate_frames_overlay(
     _min_yield_interval = 1.0 / OUTPUT_FPS_CAP
     _last_yield_ts = 0.0
     while True:
+        # process shutdown 時讓 generator 乾淨退出，避免卡到 systemd SIGKILL
+        if shutdown_event.is_set():
+            return
         # 優先用 detection worker 已解碼好的 frame（省一次 RTSP 解碼、單一時間源）；
         # 若 detection 完全未啟動才 fallback 自己讀 RTSP。
         ret = False
