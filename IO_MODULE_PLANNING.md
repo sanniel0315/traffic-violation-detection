@@ -232,7 +232,7 @@ P1 跑通 → 可進 P2。
 
 ### ✅ 已完成
 
-- [x] **DO0 通訊故障觸發條件確定** — 改採 NTP / link / IP 網路層三層（`services/network_health.py`，30s 輪詢）
+- [x] **DO0 通訊故障觸發條件確定** — 採 link / IP 兩層（`services/network_health.py`，5s 輪詢）。NTP 同步異常**不**納入紅燈判定，避免 NTP server 不可達誤報。
 - [x] **CONFIG_SYNC_URL 預設值** — `http://192.168.0.101:8080/api/config`，存於 `config/system/io_settings.json`（網頁可改寫）
 - [x] **DI 編號修正** — `services/io_service.py` 最終 `DI_DOWNLOAD=0, DI_RESET=1`（DI2 改釋出保留）
 - [x] **WS 事件追蹤改用 monotonic seq** — `deque(maxlen=50)` 飽和後 `len()` 不再變大，舊邏輯第 51 個事件起不送

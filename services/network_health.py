@@ -2,9 +2,12 @@
 網路健康監控 — 驅動 IOService 的通訊故障旗標。
 
 故障條件（任一成立 → DO0 紅燈亮）：
-  1. NTP 未同步
-  2. 主網卡未接線（operstate != up）
-  3. 主網卡無 IP
+  1. 主網卡未接線（operstate != up）
+  2. 主網卡無 IP
+
+註：NTP 不納入紅燈判定 — NTP server 不可達 / 跨網路同步延遲常導致
+誤報，且時間同步問題本質不是「網路連線異常」。NTP 異常另由 system
+log 觀察，不亮紅燈。
 """
 from __future__ import annotations
 
@@ -22,20 +25,6 @@ def _log(level: str, msg: str) -> None:
         add_log(level, msg, "io")
     except Exception:
         pass
-
-
-def _check_ntp() -> bool:
-    try:
-        out = subprocess.check_output(
-            ["timedatectl", "status"],
-            timeout=3, stderr=subprocess.DEVNULL,
-        ).decode()
-        return (
-            "System clock synchronized: yes" in out
-            or "NTP synchronized: yes" in out
-        )
-    except Exception:
-        return True  # 無法判斷時不報錯
 
 
 def _get_primary_iface() -> str:
@@ -79,11 +68,10 @@ def _monitor_loop(interval: int) -> None:
 
     while not _stop.is_set():
         iface   = _get_primary_iface()
-        ntp_ok  = _check_ntp()
         link_ok = _check_link(iface)
         ip_ok   = _check_ip(iface)
 
-        fault = not (ntp_ok and link_ok and ip_ok)
+        fault = not (link_ok and ip_ok)
 
         if fault != prev_fault:
             try:
@@ -93,7 +81,6 @@ def _monitor_loop(interval: int) -> None:
 
             if fault:
                 reasons = []
-                if not ntp_ok:  reasons.append("NTP 未同步")
                 if not link_ok: reasons.append(f"{iface} 未接線")
                 if not ip_ok:   reasons.append(f"{iface} 無 IP")
                 _log("error", f"通訊故障: {', '.join(reasons)}")
