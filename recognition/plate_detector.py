@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from model_paths import get_plate_model_engine, get_plate_model_pt
+from detection.gpu_lock import GPU_INFERENCE_LOCK
 
 
 class PlateDetector:
@@ -45,7 +46,9 @@ class PlateDetector:
             return self._detect_heuristic(image)
 
         h, w = image.shape[:2]
-        results = self.model(image, verbose=False, conf=conf)
+        # 過 process-wide GPU lock 避免跟其他 detector 並發踩到 CUDA stream race
+        with GPU_INFERENCE_LOCK:
+            results = self.model(image, verbose=False, conf=conf)
         out: List[Dict[str, Any]] = []
         for res in results:
             for box in getattr(res, "boxes", []):

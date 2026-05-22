@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 import numpy as np
 import os
 from model_paths import get_detect_model_pt
+from detection.gpu_lock import GPU_INFERENCE_LOCK
 
 
 class VehicleDetector:
@@ -163,13 +164,19 @@ class VehicleDetector:
     def detect(self, frame: np.ndarray) -> List[Dict[str, Any]]:
         """
         偵測影像中的車輛
-        
+
         Args:
             frame: BGR 影像 (numpy array)
-            
+
         Returns:
             偵測結果列表
         """
+        # 整個 inference + tensor→cpu 轉換 + truck_classifier 都序列化過 GPU lock
+        # 避免多 cam VehicleDetector instance 同時打 GPU 造成 CUDA stream race SEGV
+        with GPU_INFERENCE_LOCK:
+            return self._detect_locked(frame)
+
+    def _detect_locked(self, frame: np.ndarray) -> List[Dict[str, Any]]:
         # 執行推論
         results = self.model(
             frame,
@@ -177,17 +184,17 @@ class VehicleDetector:
             verbose=False,
             device=self.runtime_device,
         )
-        
+
         detections = []
         for result in results:
             boxes = result.boxes
             for box in boxes:
                 class_id = int(box.cls[0])
-                
+
                 # 只保留交通相關類別
                 if class_id not in self.vehicle_classes:
                     continue
-                
+
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                 confidence = float(box.conf[0])
                 

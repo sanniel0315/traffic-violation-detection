@@ -22,6 +22,7 @@ warnings.filterwarnings("ignore")
 
 from ultralytics import YOLO
 from model_paths import get_model_dir
+from detection.gpu_lock import GPU_INFERENCE_LOCK
 
 
 # 分類結果 → 顯示用中文標籤 & 車輛等效長度（停等評估用）
@@ -126,13 +127,14 @@ class TruckClassifier:
         if crop.size == 0:
             return self._default_result()
 
-        # 推論
-        results = self.model.predict(
-            source=crop,
-            imgsz=self.imgsz,
-            verbose=False,
-            device=self.device,
-        )
+        # 推論（過 process-wide GPU lock 避免跟其他 detector 並發踩到 CUDA stream race）
+        with GPU_INFERENCE_LOCK:
+            results = self.model.predict(
+                source=crop,
+                imgsz=self.imgsz,
+                verbose=False,
+                device=self.device,
+            )
 
         if not results or results[0].probs is None:
             return self._default_result()
