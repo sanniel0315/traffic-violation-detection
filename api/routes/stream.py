@@ -1657,10 +1657,11 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             break
                     _H = _get_zone_homography(_calib_zone) if _calib_zone else None
                     # P3: 速度平穩化 — N=5 滑動窗口 + median 多 sample + outlier reject
+                    # 3 個參數從 hard-code 改成 detection_config 可調 (web UI 車速設定頁)
                     _SPEED_WINDOW = 5      # 保留最近 5 個 (t, x, y) sample
-                    _SPEED_MIN_SAMPLES = 5 # 至少 5 個 sample 才報 speed (從 3 改 5：YOLO bbox warm-up，避免第一筆 raw 飆高)
-                    _SPEED_OUTLIER_FACTOR = 2.0  # 新 raw > 2x prev_speed + 30 → 視為 outlier 不採用
-                    _SPEED_ABS_CAP = 130.0  # 絕對上限 (台灣高速公路最高限速 110 + 安全 buffer)
+                    _SPEED_MIN_SAMPLES = int(detection_config.get("speed_min_samples", 5) or 5)
+                    _SPEED_OUTLIER_FACTOR = float(detection_config.get("speed_outlier_factor", 2.0) or 2.0)
+                    _SPEED_ABS_CAP = float(detection_config.get("speed_abs_cap", 130.0) or 130.0)
                     for v in vehicles:
                         b = v.get("bbox", {}) or {}
                         cx = int((b.get("x1", 0) + b.get("x2", 0)) / 2)

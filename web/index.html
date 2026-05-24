@@ -330,6 +330,11 @@
         .type-share-fill { height: 100%; }
         .type-share-value { width: 56px; text-align: right; font-size: 12px; color: #475569; }
         .el-select__popper.el-popper { z-index: 5000 !important; }
+        /* ElMessage / ElNotification 強制浮在最上層 — 避免被 el-dialog
+           / modal-overlay (z-index 2000) / lprSnapshotModal (9999) 遮住。
+           不動 .el-overlay 避免影響 el-dialog 本身層級。 */
+        .el-message { z-index: 20000 !important; }
+        .el-notification { z-index: 20000 !important; }
         .el-select-dropdown .el-select-dropdown__wrap { max-height: 320px !important; overflow-y: auto !important; }
         .stats-select-popper.el-popper { z-index: 6000 !important; }
         .stats-select-popper .el-select-dropdown__wrap { max-height: 360px !important; overflow-y: auto !important; }
@@ -3876,6 +3881,36 @@
                                 </div>
                             </div>
                             <p v-else style="font-size:12px;color:#999;text-align:center;padding:8px 0">尚未設定，請先建立 ROI</p>
+                        </div>
+                        <div v-if="page==='speed_detection'" class="analysis-setting-group">
+                            <div class="analysis-setting-head">3. 進階參數調校</div>
+                            <div style="font-size:12px;color:#64748b;margin-bottom:8px">
+                                影響車速估算的準確度與穩定性。<br>
+                                沒做 homography / trip_wire 校正時，若速度全空 (NULL) 可試把<b>絕對上限</b>調高或<b>離群閾值</b>放寬。
+                            </div>
+                            <div class="config-item">
+                                <span>校正係數 (km/h per px/s)</span>
+                                <el-input-number v-model="previewCamera.detection_config.speed_kmh_per_pxps" :min="0.01" :max="0.5" :step="0.01" :precision="3" size="small" controls-position="right" style="width:140px" @change="saveConfig"/>
+                            </div>
+                            <div class="config-item">
+                                <span>平滑因子 α</span>
+                                <el-input-number v-model="previewCamera.detection_config.speed_smooth_alpha" :min="0.1" :max="1.0" :step="0.05" :precision="2" size="small" controls-position="right" style="width:140px" @change="saveConfig"/>
+                            </div>
+                            <div class="config-item">
+                                <span>絕對上限 (km/h)</span>
+                                <el-input-number v-model="previewCamera.detection_config.speed_abs_cap" :min="50" :max="300" :step="10" size="small" controls-position="right" style="width:140px" @change="saveConfig"/>
+                            </div>
+                            <div class="config-item">
+                                <span>離群閾值 (倍率)</span>
+                                <el-input-number v-model="previewCamera.detection_config.speed_outlier_factor" :min="1.0" :max="10.0" :step="0.5" :precision="1" size="small" controls-position="right" style="width:140px" @change="saveConfig"/>
+                            </div>
+                            <div class="config-item">
+                                <span>最少採樣 frame</span>
+                                <el-input-number v-model="previewCamera.detection_config.speed_min_samples" :min="3" :max="30" :step="1" size="small" controls-position="right" style="width:140px" @change="saveConfig"/>
+                            </div>
+                            <div style="font-size:11px;color:#94a3b8;margin-top:6px">
+                                改完按 save (上方) 並重啟 traffic-api 才會被 detection thread 重新讀入。
+                            </div>
                         </div>
                     </template>
 
