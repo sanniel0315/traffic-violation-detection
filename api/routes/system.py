@@ -820,3 +820,25 @@ async def get_system_status():
         "disk": disk,
         "power": power,
     }
+
+
+@router.post("/restart-api")
+def restart_traffic_api():
+    """重啟 traffic-api.service。
+    UI 在改了 detection_config 等需要 detection thread 重讀的設定後呼叫，
+    讓 user 不必 ssh 進 Jetson 自己 systemctl。
+    用 start_new_session + DEVNULL 避免被父程序帶走；本 process 會被 systemd
+    SIGTERM 後拉新 process 起來。
+    """
+    add_log("warning", "Web UI 觸發 traffic-api 重啟", "system")
+    try:
+        subprocess.Popen(
+            ["sudo", "-n", "systemctl", "restart", "traffic-api.service"],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return {"ok": True, "message": "重啟指令已發出，服務約 30-60 秒後恢復"}
+    except Exception as e:
+        add_log("error", f"重啟 traffic-api 失敗: {e}", "system")
+        return {"ok": False, "error": str(e)}
