@@ -2454,6 +2454,10 @@ class LPRStreamTask:
         # 全字母或全數字、或字母/數字少於 2 個都拒絕
         if digits < 2 or letters < 2:
             return False
+        # 台灣車牌不使用 I / O / Q (跟 1 / 0 混淆) — 含此 3 個字母直接拒絕
+        # 擋掉常見 OCR 誤判: ODUT-123 / ROSI-381 / IAMT-610 / LBOZ-3522 等
+        if any(ch in "IOQ" for ch in plain):
+            return False
         return self._plate_layout_score(plate) >= -0.5
 
     def _score_ocr_result(self, result: Dict[str, Any], plate: str) -> float:
