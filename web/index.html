@@ -6596,9 +6596,10 @@ const app=createApp({
             }
             return 'monitor';
         };
-        // 預設導到 dashboard 而非 statistics — statistics 會拉 2M traffic_events
-        // (login 後超過 1 分鐘卡頓)。使用者自己點統計分析才 trigger loadStats。
+        // 預設登入導到統計分析頁。先前卡 1 分鐘的問題已由 statsTimeScale default
+        // 6h -> 1h + statsAutoRefresh default false 等修補解決，重新作為 landing。
         const loginLandingPage=()=>{
+            if(hasPerm('statistics')) return 'statistics';
             if(canViewDashboard.value) return 'dashboard';
             return firstAllowedPage();
         };
