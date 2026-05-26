@@ -346,6 +346,170 @@
             box-shadow: 0 12px 28px rgba(11,30,60,0.14) !important;
         }
 
+        /* —— el-radio / el-checkbox: 公務藍 checked —— */
+        .el-radio__input.is-checked .el-radio__inner,
+        .el-checkbox__input.is-checked .el-checkbox__inner {
+            background: var(--gov-primary) !important;
+            border-color: var(--gov-primary) !important;
+        }
+        .el-radio__input.is-checked + .el-radio__label,
+        .el-checkbox__input.is-checked + .el-checkbox__label {
+            color: var(--gov-primary) !important;
+            font-weight: 600;
+        }
+
+        /* —— el-progress: stroke 公務藍 —— */
+        .el-progress-bar__inner {
+            background: linear-gradient(90deg, var(--gov-primary) 0%, #0d6cb8 100%) !important;
+        }
+        .el-progress--success .el-progress-bar__inner { background: var(--gov-ok) !important; }
+        .el-progress--warning .el-progress-bar__inner { background: var(--gov-warn) !important; }
+        .el-progress--exception .el-progress-bar__inner { background: var(--gov-fault) !important; }
+
+        /* —— el-card: 對齊 .ds-card —— */
+        .el-card {
+            border-radius: 10px !important;
+            border-color: var(--gov-border) !important;
+            box-shadow: var(--shadow-sm) !important;
+            transition: box-shadow .25s ease, border-color .25s ease !important;
+        }
+        .el-card:hover {
+            box-shadow: var(--shadow-lg) !important;
+            border-color: var(--gov-primary-line) !important;
+        }
+        .el-card__header {
+            background: var(--gov-surface-2);
+            border-bottom: 1px solid var(--gov-border) !important;
+            padding: 14px 18px !important;
+            font-weight: 700;
+            color: var(--gov-text);
+        }
+
+        /* —— el-message-box (confirm dialog): 對齊 .el-dialog —— */
+        .el-message-box {
+            border-radius: 12px !important;
+            border: 1px solid var(--gov-border) !important;
+            box-shadow: 0 20px 50px rgba(11,30,60,0.32) !important;
+            overflow: hidden;
+        }
+        .el-message-box__header {
+            background: linear-gradient(135deg, var(--gov-primary) 0%, #094680 100%);
+            padding: 14px 22px !important;
+            position: relative;
+        }
+        .el-message-box__header::after {
+            content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+            background: linear-gradient(90deg, var(--gov-warn) 0%, transparent 60%);
+        }
+        .el-message-box__title {
+            color: #fff !important;
+            font-weight: 700 !important;
+            font-size: 15px !important;
+        }
+        .el-message-box__headerbtn .el-message-box__close { color: rgba(255,255,255,0.75) !important; }
+        .el-message-box__headerbtn:hover .el-message-box__close { color: #fff !important; }
+
+        /* —— el-empty: 空狀態淡化 —— */
+        .el-empty__description p {
+            color: var(--gov-muted) !important;
+            font-size: 13px;
+        }
+
+        /* —— el-loading-mask: 加 backdrop blur —— */
+        .el-loading-mask {
+            background: rgba(247,249,252,0.6) !important;
+            backdrop-filter: blur(2px);
+            -webkit-backdrop-filter: blur(2px);
+        }
+        .el-loading-spinner .path { stroke: var(--gov-primary) !important; }
+        .el-loading-spinner .el-loading-text { color: var(--gov-primary) !important; font-weight: 600; }
+
+        /* —— el-collapse: 對齊 design tokens —— */
+        .el-collapse-item__header {
+            background: var(--gov-surface-2);
+            color: var(--gov-text) !important;
+            font-weight: 600 !important;
+            border-bottom-color: var(--gov-border) !important;
+            border-radius: 6px 6px 0 0;
+        }
+        .el-collapse-item.is-active .el-collapse-item__header {
+            border-bottom-color: var(--gov-primary-line) !important;
+            color: var(--gov-primary) !important;
+        }
+
+        /* —— el-tabs: 對齊 design tokens —— */
+        .el-tabs__active-bar {
+            background: var(--gov-primary) !important;
+            height: 3px !important;
+            border-radius: 2px;
+        }
+        .el-tabs__item.is-active {
+            color: var(--gov-primary) !important;
+            font-weight: 700;
+        }
+        .el-tabs__item:hover {
+            color: var(--gov-primary) !important;
+        }
+
+        /* —— el-tooltip popper: 對齊 popper style —— */
+        .el-popper.is-dark {
+            background: #1f2a3a !important;
+            border: 1px solid #2c3a4f !important;
+            border-radius: 6px !important;
+        }
+
+        /* ═══════════════════════════════════════════════════════════════════
+           全域：scrollbar / selection / focus-visible / abbr underline
+           ═══════════════════════════════════════════════════════════════════ */
+
+        /* —— webkit scrollbar: 公務藍細條 —— */
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(11,94,168,0.18);
+            border-radius: 8px;
+            border: 2px solid transparent;
+            background-clip: padding-box;
+            transition: background .2s ease;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(11,94,168,0.32);
+            background-clip: padding-box;
+        }
+        ::-webkit-scrollbar-corner { background: transparent; }
+        /* Firefox */
+        * { scrollbar-color: rgba(11,94,168,0.25) transparent; scrollbar-width: thin; }
+
+        /* —— selection 反白: 公務藍底 + 白字 —— */
+        ::selection { background: var(--gov-primary); color: #fff; }
+        ::-moz-selection { background: var(--gov-primary); color: #fff; }
+
+        /* —— focus-visible: 全域鍵盤焦點 (除了已有自訂 focus 的 el-input/el-button) —— */
+        a:focus-visible, button:focus-visible, [role="button"]:focus-visible {
+            outline: 2px solid var(--gov-primary);
+            outline-offset: 2px;
+            border-radius: 4px;
+        }
+
+        /* —— abbr / kbd / mark 強化 —— */
+        abbr[title] { text-decoration: underline dotted var(--gov-primary-line); cursor: help; }
+        kbd {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            padding: 1px 6px;
+            background: var(--gov-surface-2);
+            border: 1px solid var(--gov-border);
+            border-bottom-width: 2px;
+            border-radius: 4px;
+            color: var(--gov-text);
+        }
+        mark {
+            background: rgba(217,119,6,0.18);
+            color: var(--gov-text);
+            padding: 0 2px;
+            border-radius: 2px;
+        }
+
         /* ───── 登入介面 v3: 多層 ambient 底圖 + 浮 orb 光暈 + grain + grid + corner mark ───── */
         .login-page {
             min-height: 100vh;
