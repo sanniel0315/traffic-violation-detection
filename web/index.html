@@ -346,6 +346,92 @@
             box-shadow: 0 12px 28px rgba(11,30,60,0.14) !important;
         }
 
+        /* —— input/select/textarea/button 字體繼承 (確保 native + EP 都統一 Noto Sans TC) —— */
+        input, select, textarea, button {
+            font-family: inherit;
+        }
+
+        /* —— data-table 內第一/二欄文字之外的數字欄用 mono 對齊 (sticky 表頭已套 tabular-nums) —— */
+        .data-table td {
+            font-family: var(--font-sans);
+        }
+        .data-table td.num,
+        .data-table td.ds-num {
+            font-family: var(--font-mono);
+            font-feature-settings: "tnum","ss01";
+            text-align: right;
+        }
+
+        /* —— ds-label / ds-hint / ds-value: 表單與卡片內小元件文字 utility —— */
+        .ds-label {
+            font-size: 12px;
+            color: var(--gov-muted);
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            font-family: var(--font-sans);
+        }
+        .ds-hint {
+            font-size: 12px;
+            color: var(--gov-muted);
+            line-height: 1.5;
+            font-family: var(--font-sans);
+        }
+        .ds-value {
+            font-family: var(--font-mono);
+            font-feature-settings: "tnum","ss01";
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* —— 修正既有 inline `font-size:12px;color:#64748b` 散在多 page，
+              加 letter-spacing 對齊 design system 視覺 —— */
+        [style*="color:#64748b"],
+        [style*="color: #64748b"] {
+            letter-spacing: 0.01em;
+        }
+
+        /* —— 修正既有 inline 用 hardcoded #1d4ed8 / #2563eb (非 design system 公務藍) —— */
+        [style*="color:#1d4ed8"], [style*="color: #1d4ed8"],
+        [style*="color:#2563eb"], [style*="color: #2563eb"] {
+            color: var(--gov-primary) !important;
+        }
+
+        /* —— filter-bar 對齊 ds-card —— */
+        .filter-bar {
+            background: var(--gov-surface);
+            border: 1px solid var(--gov-border);
+            border-radius: 10px;
+            box-shadow: var(--shadow-sm);
+            padding: 14px 16px;
+        }
+
+        /* —— camera-info / camera-card 細節 —— */
+        .camera-info {
+            padding: 14px 16px;
+        }
+        .camera-info h4 {
+            margin: 0 0 4px;
+            color: var(--gov-text);
+            font-weight: 700;
+            letter-spacing: 0.01em;
+        }
+        .camera-info p {
+            margin: 0 0 10px;
+            font-size: 13px;
+            color: var(--gov-muted);
+        }
+
+        /* —— map-header 對齊 design system —— */
+        .map-header {
+            background: linear-gradient(180deg, var(--gov-surface) 0%, var(--gov-surface-2) 100%);
+            border-bottom: 1px solid var(--gov-border);
+            padding: 14px 18px;
+            font-weight: 700;
+            color: var(--gov-text);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
         /* —— el-radio / el-checkbox: 公務藍 checked —— */
         .el-radio__input.is-checked .el-radio__inner,
         .el-checkbox__input.is-checked .el-checkbox__inner {
@@ -3265,7 +3351,24 @@
             
             <div class="content">
                 <!-- 儀表板 (主頁) -->
-                <div v-if="page==='dashboard'" class="dashboard-layout">
+                <div v-if="page==='dashboard'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">01 / OVERVIEW</div>
+                                <h1 class="ds-section-title">違規件數<b>統計</b></h1>
+                                <div class="ds-section-sub">今日違規 / 待審核 / 設備狀態 / 最近一小時事件與重點通知</div>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>今日 <b>{{ dashboard.today_violations || 0 }}</b></span>
+                                <span>待審 <b>{{ dashboard.pending_review || 0 }}</b></span>
+                                <span>離線設備 <b>{{ dashboard.offline_cameras || 0 }}</b></span>
+                                <el-switch v-model="dashboardAutoRefresh" size="small" inline-prompt active-text="自動" inactive-text="手動"/>
+                                <el-button size="small" plain @click="load"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="dashboard-layout">
                     <div class="dashboard-left">
                         <!-- 今日總覽 -->
                         <div class="card">
@@ -3367,7 +3470,8 @@
                         </div>
                     </div>
                 </div>
-                
+                </div>
+
                 <!-- 即時監控 -->
                 <div v-if="page==='monitor'">
                     <div class="ds-page-hero">
