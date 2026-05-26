@@ -1699,7 +1699,26 @@
         
         /* 攝影機 */
         .camera-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 16px; }
-        .camera-card { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .camera-card { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: box-shadow .25s ease, transform .25s ease, border-color .25s ease; border: 1px solid transparent; }
+        .camera-card:hover { box-shadow: 0 12px 30px rgba(11,94,168,0.18); transform: translateY(-2px); border-color: var(--gov-primary-line); }
+        .monitor-toolbar {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 12px; flex-wrap: wrap;
+            padding: 14px 18px;
+            margin-bottom: 16px;
+            background: var(--gov-surface);
+            border: 1px solid var(--gov-border);
+            border-radius: 10px;
+            box-shadow: var(--shadow-sm);
+        }
+        .monitor-toolbar-label {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            color: var(--gov-muted);
+            text-transform: uppercase;
+        }
         .camera-preview { position: relative; background: #000; height: 240px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
         .camera-preview img,
         .camera-preview video { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; }
@@ -2862,22 +2881,34 @@
                 
                 <!-- 即時監控 -->
                 <div v-if="page==='monitor'">
-                    <div class="card" style="margin-bottom:12px">
-                        <div class="card-body" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-                            <div style="display:flex;align-items:center;gap:8px">
-                                <span style="font-weight:600">串流模式</span>
-                                <el-radio-group v-model="monitorMode" size="small" @change="applyMonitorModeToAll">
-                                    <el-radio-button label="overlay">辨識疊加</el-radio-button>
-                                    <el-radio-button label="raw">原始畫面</el-radio-button>
-                                </el-radio-group>
-                                <el-button size="small" :type="overlayShowRoi?'primary':'default'" @click="toggleOverlayRoi" :disabled="monitorMode!=='overlay'" style="margin-left:8px">
-                                    {{ overlayShowRoi ? '✓ ROI' : 'ROI' }}
-                                </el-button>
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">02 / LIVE MONITORING</div>
+                                <h1 class="ds-section-title">即時監控</h1>
+                                <div class="ds-section-sub">全部攝影機即時影像、辨識疊加、ROI 顯示與偵測啟停切換</div>
                             </div>
-                            <div style="display:flex;align-items:center;gap:8px">
-                                <el-button size="small" @click="reloadMonitorStreams">重載串流</el-button>
-                                <span style="font-size:12px;color:#64748b">最後更新 {{ monitorUpdatedAt || '-' }}</span>
+                            <div class="ds-page-hero-meta">
+                                <span>攝影機 <b>{{ cameras.length }}</b></span>
+                                <span>線上 <b>{{ camerasOnlineCount }}</b></span>
+                                <span>偵測中 <b>{{ monitorActiveCount }}</b></span>
                             </div>
+                        </div>
+                    </div>
+                    <div class="monitor-toolbar">
+                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                            <span class="monitor-toolbar-label">串流模式</span>
+                            <el-radio-group v-model="monitorMode" size="small" @change="applyMonitorModeToAll">
+                                <el-radio-button label="overlay">辨識疊加</el-radio-button>
+                                <el-radio-button label="raw">原始畫面</el-radio-button>
+                            </el-radio-group>
+                            <el-button size="small" :type="overlayShowRoi?'primary':'default'" @click="toggleOverlayRoi" :disabled="monitorMode!=='overlay'">
+                                <svg class="text-icon" style="margin-right:4px"><use href="#i-target"/></svg>{{ overlayShowRoi ? '隱藏 ROI' : '顯示 ROI' }}
+                            </el-button>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px">
+                            <span class="monitor-toolbar-label">更新 {{ monitorUpdatedAt || '-' }}</span>
+                            <el-button size="small" plain @click="reloadMonitorStreams"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>重載串流</el-button>
                         </div>
                     </div>
                     <div class="camera-grid">
@@ -3002,15 +3033,22 @@
                 </div>
                 
                 <!-- 違規查詢 -->
-                <!-- 複合條件查詢 -->
                 <div v-if="page==='violations'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">10 / VIOLATION SEARCH</div>
+                                <h1 class="ds-section-title">違規<b>查詢</b></h1>
+                                <div class="ds-section-sub">複合條件查詢 — 時間 / 點位 / 車道 / 車牌 / 違規類型 / 速率區間</div>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>狀態 <b>良好</b></span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card">
                         <div class="card-header">
-                            <span>複合條件查詢</span>
-                            <div style="display:flex;gap:8px;align-items:center">
-                                <span>系統狀態</span>
-                                <el-tag type="success" size="small">良好</el-tag>
-                            </div>
+                            <span><svg class="text-icon"><use href="#i-filter"/></svg>複合條件查詢</span>
                         </div>
                         <div class="card-body">
                             <!-- 時間區間按鈕 -->
@@ -3209,13 +3247,22 @@
 
                 <!-- 開單管理 -->
                 <div v-if="page==='review'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">11 / TICKET REVIEW</div>
+                                <h1 class="ds-section-title">開單<b>管理</b></h1>
+                                <div class="ds-section-sub">待審違規列表 — 多人審核、改判、駁回、批次發單與後續歸檔流程</div>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>待審 <b>{{ pendingViolations.length || 0 }}</b></span>
+                                <span>狀態 <b>良好</b></span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card">
                         <div class="card-header">
-                            <span>開單管理</span>
-                            <div style="display:flex;gap:8px;align-items:center">
-                                <span>系統狀態</span>
-                                <el-tag type="success" size="small">良好</el-tag>
-                            </div>
+                            <span><svg class="text-icon"><use href="#i-clipboard"/></svg>開單管理</span>
                         </div>
                         <div class="card-body">
                             <!-- 時間區間按鈕 -->
@@ -3418,6 +3465,18 @@
                 </div>
 
                 <div v-if="page==='nx_viewer'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">18 / NX RELAY</div>
+                                <h1 class="ds-section-title">Nx 串流<b>橋接</b></h1>
+                                <div class="ds-section-sub">Nx Witness Server 連線、HTTPS:7001 代理、Nx 攝影機 RTSP 即時串流檢視</div>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>Nx 模式 <b>{{ nxSettingsModeText }}</b></span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-settings"/></svg>Nx 串流設定</span>
@@ -3483,6 +3542,20 @@
 
                 <!-- MQTT 管理 -->
                 <div v-if="page==='mqtt'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">19 / MQTT BROKER</div>
+                                <h1 class="ds-section-title">MQTT <b>整合</b></h1>
+                                <div class="ds-section-sub">Embedded / External broker、Base Topic 訂閱、即時訊息日誌與手動發佈測試</div>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>連線 <b>{{ mqttStatus.connected ? '已連線' : '未連線' }}</b></span>
+                                <span>送 <b>{{ mqttStatus.stats?.sent||0 }}</b></span>
+                                <span>收 <b>{{ mqttStatus.stats?.recv||0 }}</b></span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-radio"/></svg>MQTT Broker / Client</span>
@@ -3597,6 +3670,19 @@
 
                 <!-- 系統日誌 -->
                 <div v-if="page==='logs'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">20 / SYSTEM LOGS</div>
+                                <h1 class="ds-section-title">系統監控<b>日誌</b></h1>
+                                <div class="ds-section-sub">服務啟停、偵測流程、錯誤事件 — 多日期區間搜尋與分頁瀏覽</div>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>總計 <b>{{ logsTotal || 0 }}</b></span>
+                                <span>頁次 <b>{{ logsPage }} / {{ logsTotalPages }}</b></span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-list"/></svg>系統監控日誌</span>
@@ -3653,8 +3739,23 @@
                 
                 <!-- 統計分析 -->
                 <div v-if="page==='statistics'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">03 / TRAFFIC ANALYTICS</div>
+                                <h1 class="ds-section-title">統計<b>分析</b></h1>
+                                <div class="ds-section-sub">交通事件、流量、平均速率與車種分布 — 多維度時間 / 點位 / 車道 / 方向過濾</div>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span v-if="statsSummary?.total_events!=null">事件 <b>{{ statsSummary.total_events }}</b></span>
+                                <span v-if="statsSummary?.avg_speed!=null">平均速率 <b>{{ Number(statsSummary.avg_speed).toFixed(1) }}</b></span>
+                                <span>更新 <b>{{ statsLastUpdated || '-' }}</b></span>
+                                <el-button size="small" plain :loading="statsLoading" @click="loadStats"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>重新查詢</el-button>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card">
-                        <div class="card-header"><span>統計條件</span></div>
+                        <div class="card-header"><span><svg class="text-icon"><use href="#i-filter"/></svg>統計條件</span></div>
                         <div class="card-body">
                             <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
                                 <div style="display:flex;align-items:center;gap:8px">
@@ -3966,13 +4067,22 @@
                 
                 <!-- 車輛累犯查詢 -->
                 <div v-if="page==='repeat'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">21 / REPEAT OFFENDERS</div>
+                                <h1 class="ds-section-title">車輛累犯<b>查詢</b></h1>
+                                <div class="ds-section-sub">同一車牌違規次數累計門檻篩選 — 鎖定高風險車輛與重點稽查</div>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>累犯 <b>{{ (repeatOffenders||[]).length }}</b></span>
+                                <span>狀態 <b>良好</b></span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card">
                         <div class="card-header">
-                            <span>車輛累犯查詢</span>
-                            <div style="display:flex;gap:8px;align-items:center">
-                                <span>系統狀態</span>
-                                <el-tag type="success" size="small">良好</el-tag>
-                            </div>
+                            <span><svg class="text-icon"><use href="#i-repeat"/></svg>車輛累犯查詢</span>
                         </div>
                         <div class="card-body">
                             <!-- 時間區間按鈕 -->
@@ -4056,8 +4166,17 @@
                 
                 <!-- 一般報表 -->
                 <div v-if="page==='reports'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">14 / REPORTS</div>
+                                <h1 class="ds-section-title">一般<b>報表</b></h1>
+                                <div class="ds-section-sub">日 / 週 / 月報表 — 日期區間 + 報表類型，自動產生 + 匯出 PDF / CSV</div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card">
-                        <div class="card-header"><span>一般報表</span></div>
+                        <div class="card-header"><span><svg class="text-icon"><use href="#i-file"/></svg>一般報表</span></div>
                         <div class="card-body">
                             <div style="display:flex;gap:16px;margin-bottom:20px">
                                 <el-date-picker v-model="reportDateRange" type="daterange" start-placeholder="開始" end-placeholder="結束"/>
@@ -4076,9 +4195,22 @@
 
                 <!-- VD 車道報表（獨立頁） -->
                 <div v-if="page==='vd_report'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">15 / VD LANE REPORT</div>
+                                <h1 class="ds-section-title">VD 車道<b>報表</b></h1>
+                                <div class="ds-section-sub">交通部 VD 標準格式 — 各車道每段時間流量、平均速率、占有率、大車比例</div>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>筆數 <b>{{ filteredStatsVdLikeRows.length }}</b></span>
+                                <span>頁次 <b>{{ vdPage }} / {{ vdTotalPages }}</b></span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card">
                         <div class="card-header">
-                            <span>VD 車道報表（含車道欄位）</span>
+                            <span><svg class="text-icon"><use href="#i-road"/></svg>VD 車道報表（含車道欄位）</span>
                             <div style="display:flex;align-items:center;gap:8px">
                                 <el-button size="small" type="primary" :loading="vdLoading" :disabled="vdLoading" @click="loadVdReport(true)">重新查詢</el-button>
                                 <el-button size="small" type="success" :disabled="!filteredStatsVdLikeRows.length" @click="exportVdReportCsv">匯出 CSV</el-button>
@@ -4223,6 +4355,19 @@
                 </div>
 
                 <div v-if="page==='permission_admin'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">16 / ACCESS CONTROL</div>
+                                <h1 class="ds-section-title">權限<b>管理</b></h1>
+                                <div class="ds-section-sub">角色定義、頁面 / 功能授權矩陣與使用者帳號管理</div>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>使用者 <b>{{ (users||[]).length }}</b></span>
+                                <span>角色 <b>{{ userRole }}</b></span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card">
                         <div class="card-header"><span><svg class="text-icon"><use href="#i-lock"/></svg>權限管理</span></div>
                         <div class="card-body">
@@ -4307,12 +4452,24 @@
 
                 <!-- NVR 設定 -->
                 <div v-if="page==='frigate'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">17 / NVR INTEGRATION</div>
+                                <h1 class="ds-section-title">NVR <b>設定</b></h1>
+                                <div class="ds-section-sub">Frigate NVR 連線、攝影機列表、錄影排程、Motion 偵測、MQTT 與回放介面</div>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>Frigate <b>{{ frigateStatus.status==='online'?'已連線':'離線' }}</b></span>
+                                <span>攝影機 <b>{{ (frigateCameras||[]).length }}</b></span>
+                                <a href="/web/nvr_playback.html" target="_blank" style="text-decoration:none"><el-button type="warning" size="small"><svg class="text-icon" style="margin-right:4px"><use href="#i-film"/></svg>NVR 回放</el-button></a>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-film"/></svg>NVR 設定</span>
                             <div style="display:flex;gap:8px;align-items:center">
-                                <a href="/web/nvr_playback.html" target="_blank" style="text-decoration:none"><el-button type="warning" size="small">⏯️ NVR 回放</el-button></a>
-                                <span>連線狀態</span>
                                 <el-tag :type="frigateStatus.status==='online'?'success':'primary'" size="small">
                                     {{ frigateStatus.status==='online'?'已連線':'離線' }}
                                 </el-tag>
@@ -4982,11 +5139,23 @@
                 </div>
                 <!-- 車牌辨識 -->
                 <div v-if="page==='lpr'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">12 / LPR PIPELINE</div>
+                                <h1 class="ds-section-title">車牌<b>辨識</b></h1>
+                                <div class="ds-section-sub">圖片 / 串流即時辨識 — OCR 修復、台灣車牌格式比對、歷史紀錄與可信度過濾</div>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>OCR <b>{{ lprStatus.status==='online'?'就緒':'離線' }}</b></span>
+                                <span>歷史 <b>{{ lprHistoryTotal || 0 }}</b></span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-car"/></svg>車牌辨識 (LPR)</span>
                             <div style="display:flex;gap:8px;align-items:center">
-                                <span>狀態</span>
                                 <el-tag :type="lprStatus.status==='online'?'success':'primary'" size="small">
                                     {{ lprStatus.status==='online'?'就緒':'離線' }}
                                 </el-tag>
@@ -5362,15 +5531,19 @@
 
                 <!-- 硬體效能監測 -->
                 <div v-if="page==='hwmonitor'">
-                    <div class="card">
-                        <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-monitor"/></svg>️ Jetson 硬體效能監測</span>
-                            <div style="display:flex;gap:8px;align-items:center">
-                                <span style="font-size:12px;color:#999">{{ hwStatus.model }}</span>
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num">13 / EDGE TELEMETRY</div>
+                                <h1 class="ds-section-title">硬體效能<b>監測</b></h1>
+                                <div class="ds-section-sub">CPU / GPU / 記憶體 / 磁碟 / 溫度 — NTP 同步狀態與系統資訊</div>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>機型 <b>{{ hwStatus.model || '-' }}</b></span>
                                 <el-tag :type="hwAutoRefresh?'success':'info'" size="small" @click="hwAutoRefresh=!hwAutoRefresh" style="cursor:pointer">
-                                    {{ hwAutoRefresh ? '⏸ 自動' : '▶ 自動' }}
+                                    {{ hwAutoRefresh ? '自動更新中' : '已暫停' }}
                                 </el-tag>
-                                <el-button size="small" @click="loadHwStatus"><svg class="text-icon"><use href="#i-refresh"/></svg>重新整理</el-button>
+                                <el-button size="small" plain @click="loadHwStatus"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>重新整理</el-button>
                             </div>
                         </div>
                     </div>
@@ -6947,6 +7120,14 @@ const app=createApp({
         }[page.value]||{num:'00 / OPS', sub:''}));
         const camerasOnlineCount=computed(()=>(cameras.value||[]).filter(c=>c&&c.status==='online').length);
         const camerasEnabledCount=computed(()=>(cameras.value||[]).filter(c=>c&&c.enabled).length);
+        const monitorActiveCount=computed(()=>{
+            const det=detectionStatus.value||{}, con=congestionStatus.value||{}, lp=lprTaskStatus.value||{};
+            let n=0;
+            for(const c of (cameras.value||[])){
+                if(det[c.id]?.running || con[c.id]?.running || lp[c.id]?.running) n++;
+            }
+            return n;
+        });
         const congestionParamsForm=reactive({
             medium_threshold:0.2,
             high_threshold:0.4,
@@ -13161,7 +13342,7 @@ const app=createApp({
             if(lprVisualTimer)clearInterval(lprVisualTimer);
         });
         
-        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
+        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
