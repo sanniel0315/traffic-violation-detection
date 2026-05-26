@@ -7,12 +7,21 @@
   <link rel="stylesheet" href="/web/lib/element-plus.css?v=20260407" />
   <style>
     :root {
-      --gov-bg: #eef2f6;
-      --gov-surface: #ffffff;
-      --gov-primary: #0b5ea8;
-      --gov-text: #1f2937;
-      --gov-muted: #5b6778;
-      --gov-border: #d7dee8;
+      /* follow web/index.html 主色系，避免 iframe 內外色系斷層 */
+      --gov-bg:            #eef2f6;
+      --gov-bg-2:          #f4f7fb;
+      --gov-surface:       #ffffff;
+      --gov-surface-2:     #f7f9fc;
+      --gov-primary:       #0b5ea8;
+      --gov-primary-soft:  #eaf2fb;
+      --gov-primary-line:  #c5dbf0;
+      --gov-text:          #1f2937;
+      --gov-muted:         #5b6778;
+      --gov-mute-2:        #8b95a4;
+      --gov-border:        #d7dee8;
+      --gov-ok:            #1f9d55;
+      --gov-fault:         #c43a31;
+      --font-mono:         "IBM Plex Mono", ui-monospace, monospace;
     }
 
     *, *::before, *::after {
@@ -22,36 +31,55 @@
     body {
       margin: 0;
       padding: 0;
-      background: var(--gov-bg);
+      background: linear-gradient(180deg, #f4f7fb 0%, var(--gov-bg) 100%);
       color: var(--gov-text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC",
-        "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+      font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, -apple-system, sans-serif;
       font-size: 14px;
     }
 
-    /* Navbar */
+    /* Navbar — 統一到主頁 header 色系 (白底 blur + primary 標題 + border-bottom) */
     .navbar {
-      background: #1a2a3d;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       padding: 0 24px;
-      height: 60px;
+      height: 56px;
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
+      border-bottom: 1px solid var(--gov-border);
+      box-shadow: 0 1px 3px rgba(16,24,40,0.04);
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+
+    .navbar::before {
+      content: '';
+      width: 3px;
+      height: 22px;
+      background: linear-gradient(180deg, var(--gov-primary) 0%, var(--gov-primary-soft) 100%);
+      border-radius: 2px;
+      margin-right: 4px;
     }
 
     .navbar-title {
-      color: #ffffff;
-      font-size: 17px;
+      color: var(--gov-primary);
+      font-size: 16px;
       font-weight: 700;
-      letter-spacing: 0.02em;
+      letter-spacing: -0.005em;
       white-space: nowrap;
     }
 
     .navbar-subtitle {
-      color: #8fa8c4;
-      font-size: 12px;
+      color: var(--gov-mute-2);
+      font-size: 11.5px;
       margin-left: 4px;
       white-space: nowrap;
+      font-family: var(--font-mono);
+      letter-spacing: 0.06em;
+      padding-left: 12px;
+      border-left: 1px solid var(--gov-border);
     }
 
     /* Layout */
@@ -64,13 +92,17 @@
       gap: 16px;
     }
 
-    /* Cards */
+    /* Cards — 對齊主頁 design system */
     .card {
-      background: #ffffff;
-      border-radius: 8px;
+      background: var(--gov-surface);
+      border-radius: 10px;
       border: 1px solid var(--gov-border);
       padding: 20px 24px;
-      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+      box-shadow: 0 1px 3px rgba(16,24,40,0.06), 0 1px 2px rgba(16,24,40,0.04);
+      transition: box-shadow .25s ease;
+    }
+    .card:hover {
+      box-shadow: 0 8px 24px rgba(11,94,168,0.08), 0 2px 6px rgba(16,24,40,0.05);
     }
 
     .card-title {

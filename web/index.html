@@ -545,9 +545,118 @@
             gap: 10px;
             margin-bottom: 6px;
         }
-        /* sidebar brand → LOGO 設計 */
+        /* sidebar brand → LOGO 設計 v2 */
         .sidebar-brand.brand-logo {
-            padding: 24px 18px 20px;
+            padding: 22px 18px 18px;
+            position: relative;
+        }
+        /* 4 個邊角 bracket 裝飾 */
+        .logo-bracket {
+            position: absolute;
+            width: 10px; height: 10px;
+            border-color: var(--gov-primary);
+            border-style: solid;
+            border-width: 0;
+            opacity: 0.55;
+        }
+        .logo-bracket.tl { top: 10px; left: 10px;   border-top-width: 1.5px; border-left-width: 1.5px; }
+        .logo-bracket.tr { top: 10px; right: 10px;  border-top-width: 1.5px; border-right-width: 1.5px; }
+        .logo-bracket.bl { bottom: 10px; left: 10px;  border-bottom-width: 1.5px; border-left-width: 1.5px; }
+        .logo-bracket.br { bottom: 10px; right: 10px; border-bottom-width: 1.5px; border-right-width: 1.5px; }
+
+        /* SVG logo mark wrapper */
+        .logo-mark-wrap {
+            position: relative;
+            width: 44px; height: 44px;
+            flex-shrink: 0;
+            border-radius: 11px;
+            overflow: hidden;
+            box-shadow:
+                0 6px 18px rgba(11,94,168,0.32),
+                0 2px 6px rgba(11,94,168,0.18);
+        }
+        .logo-svg {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        /* scan line 動畫 (掃過 LOGO) */
+        .logo-scan-line {
+            position: absolute;
+            left: 0; right: 0;
+            top: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.7) 50%, transparent 100%);
+            animation: logo-scan-anim 2.6s ease-in-out infinite;
+            pointer-events: none;
+        }
+        @keyframes logo-scan-anim {
+            0%   { transform: translateY(0); opacity: 0; }
+            10%  { opacity: 1; }
+            90%  { opacity: 1; }
+            100% { transform: translateY(42px); opacity: 0; }
+        }
+        /* LED 點脈動 */
+        .logo-led {
+            transform-origin: center;
+            animation: logo-led-pulse 1.6s ease-in-out infinite;
+        }
+        @keyframes logo-led-pulse {
+            0%, 100% { opacity: 1; r: 1.8; }
+            50%      { opacity: 0.5; r: 1.4; }
+        }
+
+        /* Wordmark */
+        .brand-text-v2 {
+            position: relative;
+            padding-left: 0;
+            min-width: 0;
+            flex: 1;
+        }
+        .brand-text-v2 .brand-overline {
+            font-family: var(--font-mono);
+            font-size: 8.5px;
+            letter-spacing: 0.28em;
+            color: var(--gov-primary);
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 3px;
+        }
+        .brand-text-v2 .brand-title {
+            font-size: 18px;
+            font-weight: 800;
+            color: var(--gov-text);
+            line-height: 1.05;
+            letter-spacing: -0.015em;
+            margin-bottom: 5px;
+            background: linear-gradient(135deg, var(--gov-text) 0%, var(--gov-primary) 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .brand-text-v2 .brand-meta-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-mono);
+            font-size: 9px;
+            letter-spacing: 0.15em;
+        }
+        .brand-text-v2 .brand-meta-tag {
+            color: var(--gov-primary);
+            font-weight: 700;
+            background: var(--gov-primary-soft);
+            padding: 1px 6px;
+            border-radius: 3px;
+        }
+        .brand-text-v2 .brand-meta-sep {
+            flex: 1;
+            height: 1px;
+            background: var(--gov-border);
+        }
+        .brand-text-v2 .brand-meta-ver {
+            color: var(--gov-mute-2);
+            font-weight: 500;
         }
         .sidebar-brand .logo-mark {
             width: 38px; height: 38px;
@@ -1841,17 +1950,60 @@
     <div v-else class="layout">
         <!-- 側邊欄 -->
         <div class="sidebar">
-            <!-- sidebar brand 區 — AI 交通影像分析 LOGO -->
+            <!-- sidebar brand 區 — AI 交通影像分析 LOGO (v2) -->
             <div class="sidebar-brand brand-logo">
+                <!-- 邊角 bracket 裝飾 -->
+                <span class="logo-bracket tl"></span>
+                <span class="logo-bracket tr"></span>
+                <span class="logo-bracket bl"></span>
+                <span class="logo-bracket br"></span>
+
                 <div class="brand-row">
-                    <div class="logo-mark logo-mark-gradient">
-                        <span class="logo-mark-text">AI</span>
-                        <span class="logo-mark-corner"></span>
+                    <!-- LOGO mark: SVG geometric -->
+                    <div class="logo-mark-wrap">
+                        <svg class="logo-svg" viewBox="0 0 48 48" aria-label="AI Traffic Imaging logo">
+                            <defs>
+                                <linearGradient id="logoGrad" x1="0" y1="0" x2="1" y2="1">
+                                    <stop offset="0%"   stop-color="#3b82f6"/>
+                                    <stop offset="50%"  stop-color="#0b5ea8"/>
+                                    <stop offset="100%" stop-color="#084d8a"/>
+                                </linearGradient>
+                                <linearGradient id="logoShine" x1="0" y1="0" x2="1" y2="1">
+                                    <stop offset="0%"  stop-color="#fff" stop-opacity="0.25"/>
+                                    <stop offset="50%" stop-color="#fff" stop-opacity="0"/>
+                                </linearGradient>
+                            </defs>
+                            <!-- 主背景圓角方 -->
+                            <rect x="2" y="2" width="44" height="44" rx="11" fill="url(#logoGrad)"/>
+                            <!-- 對角高光 -->
+                            <rect x="2" y="2" width="44" height="44" rx="11" fill="url(#logoShine)"/>
+                            <!-- 內邊框 -->
+                            <rect x="3.5" y="3.5" width="41" height="41" rx="9.5" fill="none" stroke="#fff" stroke-opacity="0.15" stroke-width="0.8"/>
+                            <!-- AI 文字 -->
+                            <text x="24" y="29" text-anchor="middle" fill="#fff"
+                                  font-family="IBM Plex Mono, monospace"
+                                  font-size="17" font-weight="700"
+                                  letter-spacing="-0.04em">AI</text>
+                            <!-- 下方 scan line (代表 detection/掃描) -->
+                            <line x1="10" y1="36" x2="38" y2="36" stroke="#fff" stroke-opacity="0.35" stroke-width="0.7" stroke-dasharray="2 2"/>
+                            <!-- 右下角 LED 點 -->
+                            <circle class="logo-led" cx="39" cy="39" r="1.8" fill="#86efac"/>
+                            <!-- 左上 corner accent -->
+                            <path d="M 7 12 L 7 7 L 12 7" fill="none" stroke="#fff" stroke-opacity="0.4" stroke-width="1"/>
+                            <path d="M 36 7 L 41 7 L 41 12" fill="none" stroke="#fff" stroke-opacity="0.4" stroke-width="1"/>
+                        </svg>
+                        <span class="logo-scan-line"></span>
                     </div>
-                    <div class="brand-text">
-                        <div class="brand-accent-bar"></div>
+
+                    <!-- Wordmark -->
+                    <div class="brand-text brand-text-v2">
+                        <div class="brand-overline">AI · TRAFFIC IMAGING</div>
                         <div class="brand-title">交通影像分析</div>
-                        <div class="brand-subtitle">TRAFFIC IMAGING <b>ANALYTICS</b></div>
+                        <div class="brand-meta-row">
+                            <span class="brand-meta-tag">ANALYTICS</span>
+                            <span class="brand-meta-sep"></span>
+                            <span class="brand-meta-ver">v1.0</span>
+                        </div>
                     </div>
                 </div>
             </div>
