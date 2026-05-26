@@ -1168,107 +1168,12 @@ section:nth-of-type(6) { animation-delay: 0.44s; }
     </div>
   </section>
 
-  <!-- ─── §03 API ─── -->
+  <!-- §03 對外 REST API section 已依使用者要求移除 -->
+
+  <!-- ─── §03 HEALTH ─── -->
   <section>
     <div class="section-head">
       <span class="section-num">§ 03</span>
-      <div>
-        <h2 class="section-title">對外 REST API <b>· Programmatic access</b></h2>
-        <div class="section-sub">查 stream 列表、抓 VD 車流 / 壅塞報表（需 X-API-Key Header）</div>
-      </div>
-    </div>
-
-    <div class="api-split">
-      <div>
-        <div class="code-block"><span class="c"># 取得當前所有可用 stream + bytes 統計</span>
-<span class="k">curl</span> -H <span class="s">"X-API-Key: tvd_xxxxxxxxxxxxxxxx"</span> \
-     http://192.168.0.108:8000/api/v1/external/streams | <span class="k">jq</span> .
-
-<span class="c"># 取 VD 車流報表（CSV）</span>
-<span class="k">curl</span> -H <span class="s">"X-API-Key: tvd_xxxxxxxxxxxxxxxx"</span> \
-     <span class="s">"http://192.168.0.108:8000/api/v1/external/vd-report?\
-start_time=2026-05-26T00:00:00&amp;end_time=2026-05-26T23:59:59&amp;\
-bucket=5m&amp;format=csv"</span>
-
-<span class="c"># 取壅塞報表（JSON）</span>
-<span class="k">curl</span> -H <span class="s">"X-API-Key: tvd_xxxxxxxxxxxxxxxx"</span> \
-     <span class="s">"http://192.168.0.108:8000/api/v1/external/\
-congestion-report?bucket=1h"</span> | <span class="k">jq</span> .</div>
-      </div>
-
-      <div class="api-meta">
-        <div class="lbl">AUTHENTICATION</div>
-        <h4>X-API-Key Header</h4>
-        <p>所有對外端點皆需在 HTTP Header 帶入 API Key。Key 由系統管理員核發，依 scope 賦予存取權限。</p>
-
-        <dl>
-          <div><dt>Scope</dt>            <dd><b>streams</b> / <b>vd_report</b> / <b>congestion_report</b></dd></div>
-          <div><dt>Rate Limit</dt>       <dd>120 req / min</dd></div>
-          <div><dt>Response</dt>         <dd>JSON / CSV</dd></div>
-          <div><dt>Base URL</dt>         <dd>/api/v1/external</dd></div>
-          <div><dt>Swagger UI</dt>       <dd>:8000/docs</dd></div>
-          <div><dt>OpenAPI</dt>          <dd>:8000/openapi.json</dd></div>
-        </dl>
-      </div>
-    </div>
-
-    <!-- ── interactive documentation ── -->
-    <div class="docs-divider">
-      <div class="line"></div>
-      <div class="lbl">INTERACTIVE DOCUMENTATION · 互動文件</div>
-      <div class="line"></div>
-    </div>
-
-    <div class="doc-row">
-      <a class="doc-card" href="http://192.168.0.108:8000/docs" target="_blank" rel="noopener">
-        <span class="dc-rank">RECOMMENDED</span>
-        <h4>Swagger UI</h4>
-        <div class="dc-zh">線上互動測試</div>
-        <div class="dc-body">直接在瀏覽器試打 endpoint、查 request/response schema、複製 cURL 範例。對接時最快的探索方式。</div>
-        <span class="dc-go">/docs <span class="arrow">→</span></span>
-      </a>
-      <a class="doc-card" href="http://192.168.0.108:8000/redoc" target="_blank" rel="noopener">
-        <span class="dc-rank">READING</span>
-        <h4>ReDoc</h4>
-        <div class="dc-zh">優雅閱讀版文件</div>
-        <div class="dc-body">三欄式排版的 OpenAPI 文件。適合對接前完整瀏覽 endpoint、參數、回應格式。</div>
-        <span class="dc-go">/redoc <span class="arrow">→</span></span>
-      </a>
-      <a class="doc-card" href="http://192.168.0.108:8000/openapi.json" target="_blank" rel="noopener">
-        <span class="dc-rank">SPEC</span>
-        <h4>OpenAPI JSON</h4>
-        <div class="dc-zh">原始規格檔下載</div>
-        <div class="dc-body">機器可讀的 OpenAPI 3.x 規格，可導入 Postman / Insomnia / 自動程式碼產生器（openapi-generator）。</div>
-        <span class="dc-go">/openapi.json <span class="arrow">→</span></span>
-      </a>
-    </div>
-
-    <!-- ── auto-loaded endpoint list ── -->
-    <div class="endpoint-block">
-      <div class="eb-head">
-        <h4>External endpoints · 自動從 OpenAPI 規格載入</h4>
-        <span class="src">source: <a href="http://192.168.0.108:8000/openapi.json" target="_blank">/openapi.json</a></span>
-      </div>
-      <table class="endpoint-table">
-        <thead>
-          <tr>
-            <th>Method</th>
-            <th>Path</th>
-            <th>Summary</th>
-            <th>Auth</th>
-          </tr>
-        </thead>
-        <tbody id="endpoint-tbody">
-          <tr><td colspan="4" class="endpoint-empty" id="endpoint-status">Loading OpenAPI spec…</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- ─── §04 HEALTH ─── -->
-  <section>
-    <div class="section-head">
-      <span class="section-num">§ 04</span>
       <div>
         <h2 class="section-title">即時健康度 <b>· Live diagnostics</b></h2>
         <div class="section-sub">本頁每 15 秒自動探測 /api/health；對接機關 watchdog / Nagios / Zabbix 可用同個 endpoint</div>
@@ -1299,10 +1204,10 @@ congestion-report?bucket=1h"</span> | <span class="k">jq</span> .</div>
     </div>
   </section>
 
-  <!-- ─── §05 NETWORK ─── -->
+  <!-- ─── §04 NETWORK ─── -->
   <section style="border-bottom:none">
     <div class="section-head">
-      <span class="section-num">§ 05</span>
+      <span class="section-num">§ 04</span>
       <div>
         <h2 class="section-title">網路規格 <b>· Firewall rules</b></h2>
         <div class="section-sub">機關防火牆需開放（從機關平台到 Jetson 方向）</div>
