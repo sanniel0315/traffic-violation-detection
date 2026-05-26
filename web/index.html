@@ -742,6 +742,86 @@
             letter-spacing: 0.12em;
             text-transform: uppercase;
         }
+        .sidebar-status .ss-ver {
+            justify-content: space-between;
+            font-size: 10px;
+            color: var(--gov-mute-2);
+            letter-spacing: 0.08em;
+        }
+        .sidebar-status .ss-ver b {
+            color: var(--gov-text);
+            font-weight: 600;
+            font-feature-settings: "tnum";
+        }
+
+        /* SERVICE ONLINE 動畫 — pulse dot + 漣漪 ring + 底部 scan-line + 字體漸明 */
+        .online-pulse {
+            position: relative;
+            width: 14px;
+            height: 14px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .online-pulse-dot {
+            position: relative;
+            z-index: 2;
+            width: 7px;
+            height: 7px;
+            background: var(--gov-ok);
+            border-radius: 50%;
+            box-shadow: 0 0 6px var(--gov-ok);
+        }
+        .online-pulse-ring {
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            border: 1.5px solid var(--gov-ok);
+            opacity: 0;
+            animation: online-ring 1.8s ease-out infinite;
+        }
+        .online-pulse::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            border: 1.5px solid var(--gov-ok);
+            opacity: 0;
+            animation: online-ring 1.8s ease-out infinite;
+            animation-delay: 0.9s;
+        }
+        @keyframes online-ring {
+            0%   { transform: scale(0.6); opacity: 0.9; }
+            70%  { transform: scale(1.8); opacity: 0; }
+            100% { transform: scale(1.8); opacity: 0; }
+        }
+        .online-text {
+            position: relative;
+            color: var(--gov-ok);
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            font-size: 10.5px;
+            animation: online-breath 2.4s ease-in-out infinite;
+        }
+        .online-text::after {
+            content: '';
+            position: absolute;
+            left: 0; right: 0; bottom: -2px;
+            height: 1px;
+            background: linear-gradient(90deg, transparent 0%, var(--gov-ok) 50%, transparent 100%);
+            transform: translateX(-100%);
+            animation: online-scan 2.4s cubic-bezier(.55,.1,.45,.9) infinite;
+        }
+        @keyframes online-breath {
+            0%, 100% { opacity: 1; }
+            50%      { opacity: 0.72; }
+        }
+        @keyframes online-scan {
+            0%   { transform: translateX(-100%); }
+            50%  { transform: translateX(0); }
+            100% { transform: translateX(100%); }
+        }
 
         /* 主內容 */
         .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -1630,7 +1710,7 @@
     <div v-else class="layout">
         <!-- 側邊欄 -->
         <div class="sidebar">
-            <!-- Phase 2: brand 區 -->
+            <!-- sidebar brand 區 (移除 IP / Jetson 標示) -->
             <div class="sidebar-brand">
                 <div class="brand-row">
                     <span class="logo-mark">AI</span>
@@ -1638,7 +1718,6 @@
                         <div class="brand-title">交通影像分析</div>
                     </div>
                 </div>
-                <div class="brand-meta">JETSON · <b>192.168.0.108</b></div>
             </div>
 
             <!-- Phase 2: menu 區 wrapper (既有 menu-item 完全不動) -->
@@ -1672,12 +1751,18 @@
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='io_panel'}" @click="page='io_panel'"><svg class="nav-icon"><use href="#i-zap"/></svg><span>燈號 I/O 控制</span></div>
             </div><!-- /sidebar-menu-area -->
 
-            <!-- Phase 2: sidebar 底部 status -->
+            <!-- sidebar 底部 status (移除 NV kit 版本，改放前/後台版本) -->
             <div class="sidebar-status">
-                <div class="ss-row muted">SYSTEM</div>
-                <div class="ss-row"><span class="ds-pulse-dot"></span><b>SERVICE ONLINE</b></div>
-                <div class="ss-row">JetPack 6.0 · CUDA 12.2</div>
-                <div class="ss-row">TensorRT 8.6 · go2rtc 1.9.9</div>
+                <div class="ss-row muted">SYSTEM STATUS</div>
+                <div class="ss-row">
+                    <span class="online-pulse">
+                        <span class="online-pulse-dot"></span>
+                        <span class="online-pulse-ring"></span>
+                    </span>
+                    <b class="online-text">SERVICE ONLINE</b>
+                </div>
+                <div class="ss-row ss-ver">前台 <b id="fe-version">v1.0.0</b></div>
+                <div class="ss-row ss-ver">後台 <b id="be-version">v—</b></div>
             </div>
         </div>
 
@@ -11855,10 +11940,25 @@ const app=createApp({
         
         let timer;
         let congestionFastTimer=null;
+        // 動態抓後台版本顯示在 sidebar-status
+        const fetchBackendVersion=async()=>{
+            try{
+                const r=await fetch('/openapi.json',{cache:'no-store'});
+                if(!r.ok) return;
+                const spec=await r.json();
+                const v=spec?.info?.version;
+                if(v){
+                    const el=document.getElementById('be-version');
+                    if(el) el.textContent='v'+v;
+                }
+            }catch{}
+        };
+
         onMounted(async()=>{
             window.addEventListener('message',handleRoiEditorMessage);
             window.addEventListener('focus',handleWindowFocus);
             const ok=await checkAuth();
+            fetchBackendVersion();
             setInterval(()=>{
                 currentTime.value=new Date().toLocaleString('zh-TW');
                 statsNowMs.value=Date.now();
