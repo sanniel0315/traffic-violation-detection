@@ -138,23 +138,229 @@
         .layout { display: flex; min-height: 100vh; }
         
         /* 側邊欄 */
-        .sidebar { width: 220px; background: var(--gov-surface); border-right: 1px solid var(--gov-border); flex-shrink: 0; box-shadow: 1px 0 0 rgba(0,0,0,0.02); }
+        .sidebar {
+            width: 240px;
+            background: var(--gov-surface);
+            border-right: 1px solid var(--gov-border);
+            flex-shrink: 0;
+            box-shadow: 1px 0 0 rgba(0,0,0,0.02);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
         .sidebar-header { padding: 16px; font-weight: 700; color: var(--gov-text); border-bottom: 1px solid var(--gov-border); }
-        .menu-item { display: flex; align-items: center; padding: 12px 16px; color: var(--gov-muted); cursor: pointer; border-left: 3px solid transparent; transition: background-color .2s ease, color .2s ease, transform .18s ease, box-shadow .18s ease; font-weight: 500; }
-        .menu-item:hover { background: var(--ui-hover-bg); color: var(--ui-hover-text); transform: translateX(2px); box-shadow: inset 0 0 0 1px rgba(11,94,168,0.06); }
-        .menu-item.active { background: var(--ui-hover-bg); color: var(--gov-primary); border-left-color: var(--gov-primary); }
-        .menu-item.highlight { background: var(--gov-primary); color: #fff; border-left-color: var(--gov-primary); }
-        .menu-item.highlight:hover { background: var(--gov-primary-strong); color: #fff; transform: translateX(2px); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12); }
+
+        /* Phase 2: sidebar brand 區 (logo + 系統名 + endpoint badge) */
+        .sidebar-brand {
+            padding: 22px 18px 16px;
+            border-bottom: 1px solid var(--gov-border);
+            background: linear-gradient(180deg, var(--gov-surface) 0%, var(--gov-surface-2) 100%);
+            position: relative;
+        }
+        .sidebar-brand::after {
+            content: '';
+            position: absolute;
+            left: 0; right: 0; bottom: -1px;
+            height: 2px;
+            background: linear-gradient(90deg, var(--gov-primary) 0%, var(--gov-primary) 30%, transparent 90%);
+        }
+        .sidebar-brand .brand-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 6px;
+        }
+        .sidebar-brand .logo-mark {
+            width: 30px; height: 30px;
+            flex-shrink: 0;
+            background: var(--gov-primary);
+            border-radius: 7px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-family: var(--font-mono);
+            font-weight: 700;
+            font-size: 13px;
+            letter-spacing: -0.04em;
+            box-shadow: 0 2px 6px rgba(11,94,168,0.25);
+        }
+        .sidebar-brand .brand-title {
+            font-size: 14.5px;
+            font-weight: 700;
+            color: var(--gov-text);
+            line-height: 1.2;
+            letter-spacing: -0.005em;
+        }
+        .sidebar-brand .brand-meta {
+            font-family: var(--font-mono);
+            font-size: 9.5px;
+            letter-spacing: 0.18em;
+            color: var(--gov-mute-2);
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+        .sidebar-brand .brand-meta b {
+            color: var(--gov-primary);
+            font-weight: 600;
+        }
+
+        /* Phase 2: 中段 menu 區 — 包既有 menu-item，讓 brand/status 可 sticky */
+        .sidebar-menu-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px 0 14px;
+            scrollbar-width: thin;
+            scrollbar-color: var(--gov-border) transparent;
+        }
+        .sidebar-menu-area::-webkit-scrollbar { width: 6px; }
+        .sidebar-menu-area::-webkit-scrollbar-thumb {
+            background: var(--gov-border);
+            border-radius: 3px;
+        }
+
+        .menu-item {
+            display: flex;
+            align-items: center;
+            padding: 11px 16px;
+            color: var(--gov-muted);
+            cursor: pointer;
+            border-left: 3px solid transparent;
+            transition: background-color .2s ease, color .2s ease, transform .2s ease, box-shadow .2s ease, border-left-color .2s ease;
+            font-weight: 500;
+            font-size: 13.5px;
+            position: relative;
+        }
+        .menu-item:hover {
+            background: var(--ui-hover-bg);
+            color: var(--ui-hover-text);
+            transform: translateX(3px);
+            box-shadow: inset 0 0 0 1px rgba(11,94,168,0.06);
+        }
+        .menu-item.active {
+            background: var(--ui-hover-bg);
+            color: var(--gov-primary);
+            border-left-color: var(--gov-primary);
+            font-weight: 600;
+        }
+        .menu-item.active::before {
+            content: '';
+            position: absolute;
+            left: -3px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 3px;
+            height: 60%;
+            background: var(--gov-primary);
+            border-radius: 0 2px 2px 0;
+        }
+        .menu-item.highlight {
+            background: var(--gov-primary);
+            color: #fff;
+            border-left-color: var(--gov-primary);
+        }
+        .menu-item.highlight:hover {
+            background: var(--gov-primary-strong);
+            color: #fff;
+            transform: translateX(2px);
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
+        }
         .menu-item span { margin-left: 8px; }
-        .submenu { padding-left: 20px; }
-        .submenu .menu-item { padding: 10px 16px; font-size: 14px; }
-        .submenu .menu-item { padding: 10px 16px 10px 40px; font-size: 14px; }
-        .menu-item .arrow { margin-left: auto; font-size: 10px; transition: transform 0.2s; }
+        .submenu { padding-left: 20px; background: rgba(11,94,168,0.02); }
+        .submenu .menu-item { padding: 10px 16px; font-size: 13px; }
+        .submenu .menu-item { padding: 9px 16px 9px 40px; font-size: 12.5px; }
+        .menu-item .arrow {
+            margin-left: auto;
+            font-size: 9px;
+            transition: transform 0.2s ease;
+            color: var(--gov-mute-2);
+        }
         .menu-item .arrow.open { transform: rotate(90deg); }
-        
+
+        /* Phase 2: sidebar 底部 status (sticky) */
+        .sidebar-status {
+            border-top: 1px solid var(--gov-border);
+            background: var(--gov-surface-2);
+            padding: 12px 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            color: var(--gov-muted);
+            letter-spacing: 0.04em;
+        }
+        .sidebar-status .ss-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .sidebar-status .ss-row b {
+            color: var(--gov-text);
+            font-weight: 600;
+        }
+        .sidebar-status .ss-row.muted {
+            color: var(--gov-mute-2);
+            font-size: 9.5px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
         /* 主內容 */
         .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-        .header { background: var(--gov-surface); padding: 12px 20px; border-bottom: 1px solid var(--gov-border); display: flex; justify-content: space-between; align-items: center; }
+
+        /* Phase 2: header bar 升級對齊 landing status bar 風格 */
+        .header {
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            padding: 12px 24px;
+            border-bottom: 1px solid var(--gov-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 20;
+        }
+        .header .h-left {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .header .h-divider {
+            width: 1px; height: 18px;
+            background: var(--gov-border);
+        }
+        .header .h-system-name {
+            font-weight: 700;
+            color: var(--gov-primary);
+            font-size: 14px;
+            letter-spacing: -0.005em;
+        }
+        .header .h-clock {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--gov-text-2);
+            font-variant-numeric: tabular-nums;
+            letter-spacing: 0.02em;
+        }
+        .header .h-status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 10px;
+            background: rgba(31,157,85,0.10);
+            color: var(--gov-ok);
+            border-radius: 999px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+        }
+        .header .h-status-pill .ds-pulse-dot {
+            width: 6px; height: 6px;
+        }
         .content { flex: 1; padding: 16px; overflow-y: auto; }
         
         /* 儀表板佈局 */
@@ -895,6 +1101,19 @@
     <div v-else class="layout">
         <!-- 側邊欄 -->
         <div class="sidebar">
+            <!-- Phase 2: brand 區 -->
+            <div class="sidebar-brand">
+                <div class="brand-row">
+                    <span class="logo-mark">AI</span>
+                    <div>
+                        <div class="brand-title">交通影像分析</div>
+                    </div>
+                </div>
+                <div class="brand-meta">JETSON · <b>192.168.0.108</b></div>
+            </div>
+
+            <!-- Phase 2: menu 區 wrapper (既有 menu-item 完全不動) -->
+            <div class="sidebar-menu-area">
             <div v-if="hasPerm('map')" class="menu-item" :class="{active:page==='map'}" @click="page='map'"><span>🗺️</span><span>地圖儀錶板</span></div>
             <div v-if="canViewDashboard" class="menu-item" :class="{active:page==='dashboard'}" @click="page='dashboard'"><span>📊</span><span>違規件數統計</span></div>
             <div class="menu-item" @click="menuOpen.query=!menuOpen.query"><span>🔍</span><span>事件查詢統計</span><span class="arrow" :class="{open:menuOpen.query}">▶</span></div>
@@ -922,22 +1141,33 @@
             <div v-if="hasPerm('hwmonitor')" class="menu-item" :class="{active:page==='hwmonitor'}" @click="page='hwmonitor';loadHwStatus()"><span>🖥️</span><span>硬體效能監測</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='permission_admin'}" @click="page='permission_admin'"><span>🔐</span><span>權限管理</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='io_panel'}" @click="page='io_panel'"><span>💡</span><span>燈號 I/O 控制</span></div>
+            </div><!-- /sidebar-menu-area -->
+
+            <!-- Phase 2: sidebar 底部 status -->
+            <div class="sidebar-status">
+                <div class="ss-row muted">SYSTEM</div>
+                <div class="ss-row"><span class="ds-pulse-dot"></span><b>SERVICE ONLINE</b></div>
+                <div class="ss-row">JetPack 6.0 · CUDA 12.2</div>
+                <div class="ss-row">TensorRT 8.6 · go2rtc 1.9.9</div>
+            </div>
         </div>
-        
+
         <!-- 主內容 -->
         <div class="main">
             <div class="header">
-                <div>
+                <div class="h-left">
                     <el-select v-model="selectedArea" placeholder="區域範圍" size="small" style="width:150px">
                         <el-option label="全部區域" value="all"/>
                         <el-option label="新北市板橋" value="banqiao"/>
                         <el-option label="台北市" value="taipei"/>
                     </el-select>
                 </div>
-                <div style="display:flex;align-items:center;gap:16px">
-                    <span style="font-weight:700;color:#0b5ea8">AI交通影像分析</span>
-                    <span>系統狀態 <el-tag type="success" size="small">啟用</el-tag></span>
-                    <span>{{ currentTime }}</span>
+                <div style="display:flex;align-items:center;gap:14px">
+                    <span class="h-system-name">AI 交通影像分析</span>
+                    <span class="h-divider"></span>
+                    <span class="h-status-pill"><span class="ds-pulse-dot"></span>ONLINE</span>
+                    <span class="h-clock">{{ currentTime }}</span>
+                    <span class="h-divider"></span>
                     <el-tag size="small" type="info">{{ currentUser.username }} / {{ currentUser.role }}</el-tag>
                     <el-button size="small" @click="logout">登出</el-button>
                 </div>
