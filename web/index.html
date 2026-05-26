@@ -2030,10 +2030,44 @@
         .card { background: var(--gov-surface); border-radius: 8px; border: 1px solid var(--gov-border); box-shadow: 0 1px 2px rgba(16,24,40,0.04); margin-bottom: 16px; }
         .card-header { padding: 12px 16px; border-bottom: 1px solid var(--gov-border); font-weight: 700; color: var(--gov-text); display: flex; justify-content: space-between; align-items: center; background: var(--gov-surface-2); }
         .card-body { padding: 16px; }
-        .data-table { width: 100%; border-collapse: collapse; }
-        .data-table th, .data-table td { padding: 10px; text-align: left; border-bottom: 1px solid #edf1f6; }
-        .data-table th { background: #f3f6fb; color: var(--gov-muted); font-weight: 700; }
-        .data-table tr:hover { background: var(--ui-hover-bg); cursor: pointer; }
+        .data-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            background: var(--gov-surface);
+            font-feature-settings: "tnum","ss01";
+            font-variant-numeric: tabular-nums;
+        }
+        .data-table th, .data-table td {
+            padding: 11px 14px;
+            text-align: left;
+            border-bottom: 1px solid #edf1f6;
+            vertical-align: middle;
+        }
+        .data-table th {
+            background: var(--gov-surface-2);
+            color: var(--gov-muted);
+            font-weight: 700;
+            font-size: 12px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border-bottom: 2px solid var(--gov-border);
+            position: sticky; top: 0; z-index: 1;
+            white-space: nowrap;
+        }
+        .data-table tbody tr { transition: background .15s ease; }
+        .data-table tbody tr:hover > td {
+            background: rgba(11,94,168,0.04);
+            cursor: pointer;
+        }
+        .data-table tbody tr:last-child > td { border-bottom: none; }
+        /* 群組表頭 (rowspan/colspan) 在 thead 內 nested tr — 第二排細灰底 */
+        .data-table thead tr:nth-child(2) th {
+            background: #fafbfd;
+            font-size: 11.5px;
+            letter-spacing: 0.04em;
+            border-bottom-width: 1px;
+        }
         .thumbnail { width: 80px; height: 50px; object-fit: cover; border-radius: 4px; }
         .filter-bar { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; padding: 16px; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         
@@ -2389,23 +2423,52 @@
         .stats-select-popper.el-popper { z-index: 6000 !important; }
         .stats-select-popper .el-select-dropdown__wrap { max-height: 360px !important; overflow-y: auto !important; }
         .stats-select-popper .el-scrollbar__view { display: block !important; }
-        .stats-native-select { height: 32px; border: 1px solid #dcdfe6; border-radius: 4px; background: #fff; padding: 0 8px; color: #303133; }
-        .stats-native-select:focus { outline: none; border-color: #409eff; }
-        .stats-quick-btn { transition: all .15s ease; }
-        .stats-quick-btn.active { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+        /* native select 對齊 design system (取代 #dcdfe6 / #409eff) */
+        .stats-native-select {
+            height: 32px;
+            border: 1px solid var(--gov-border);
+            border-radius: 8px;
+            background: var(--gov-surface);
+            padding: 0 10px;
+            color: var(--gov-text);
+            font-family: var(--font-sans);
+            font-size: 13px;
+            transition: box-shadow .18s ease, border-color .18s ease;
+        }
+        .stats-native-select:hover { border-color: var(--gov-primary-line); }
+        .stats-native-select:focus {
+            outline: none;
+            border-color: var(--gov-primary);
+            box-shadow: 0 0 0 3px rgba(11,94,168,0.12);
+        }
+        /* 快捷時間按鈕 — stats / vd 統一 design system */
+        .stats-quick-btn,
         .vd-quick-btn {
-            border: 1px solid #cbd5e1;
-            background: #ffffff;
-            color: #334155;
-            border-radius: 6px;
-            font-size: 12px;
+            border: 1px solid var(--gov-border);
+            background: var(--gov-surface);
+            color: var(--gov-text);
+            border-radius: 8px;
+            font-family: var(--font-sans);
+            font-size: 12.5px;
             line-height: 1;
-            padding: 7px 10px;
+            padding: 7px 12px;
             cursor: pointer;
             transition: all .15s ease;
         }
-        .vd-quick-btn:hover { border-color: #93c5fd; background: #f8fbff; color: #1e3a8a; }
-        .vd-quick-btn.active { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+        .stats-quick-btn:hover,
+        .vd-quick-btn:hover {
+            border-color: var(--gov-primary-line);
+            background: var(--gov-primary-soft);
+            color: var(--gov-primary);
+        }
+        .stats-quick-btn.active,
+        .vd-quick-btn.active {
+            border-color: var(--gov-primary) !important;
+            background: var(--gov-primary) !important;
+            color: #fff !important;
+            font-weight: 600;
+            box-shadow: 0 2px 6px rgba(11,94,168,0.25);
+        }
         .nvr-playback-filter-grid { display:grid; grid-template-columns:repeat(6,minmax(140px,1fr)); gap:10px; align-items:end; }
         .nvr-playback-field-label { font-size:12px; color:#64748b; margin-bottom:4px; }
         .nvr-playback-quick-row { grid-column:1 / -1; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center; }
