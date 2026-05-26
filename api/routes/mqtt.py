@@ -65,10 +65,24 @@ async def mqtt_reconnect():
 async def mqtt_publish(body: MqttPublish):
     """手動發佈測試訊息"""
     if not bridge.connected():
-        raise HTTPException(status_code=503, detail="MQTT bridge 未連線")
+        st = bridge.status()
+        err = (st.get("error") or "").strip()
+        mode = st.get("mode") or "embedded"
+        host = st.get("host") or "localhost"
+        port = st.get("port") or 1883
+        if err:
+            detail = f"MQTT 未連線：{err}"
+        elif mode == "embedded":
+            detail = (
+                f"本機 broker (localhost:{port}) 未啟動。"
+                f"請在 Jetson 安裝並啟動 mosquitto：sudo apt install -y mosquitto && sudo systemctl enable --now mosquitto"
+            )
+        else:
+            detail = f"外部 broker {host}:{port} 連線失敗 — 請檢查網路與 broker 服務"
+        raise HTTPException(status_code=503, detail=detail)
     ok = bridge.publish(body.topic, body.payload, qos=body.qos, retain=body.retain)
     if not ok:
-        raise HTTPException(status_code=500, detail="publish 失敗")
+        raise HTTPException(status_code=500, detail="publish 失敗 (broker 可能剛斷線)")
     return {"status": "ok"}
 
 
