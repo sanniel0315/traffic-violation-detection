@@ -182,6 +182,7 @@
             z-index: 1;
         }
         .login-card {
+            position: relative;
             width: 100%;
             max-width: 440px;
             background: rgba(255,255,255,0.92);
@@ -196,6 +197,54 @@
                 0 4px 12px rgba(16,24,40,0.04),
                 inset 0 1px 0 rgba(255,255,255,0.8);
             animation: login-card-in 0.7s cubic-bezier(.4,.1,.2,1) both;
+            transition: box-shadow .5s ease, transform .5s ease;
+            overflow: hidden;
+        }
+        .login-card:hover {
+            box-shadow:
+                0 50px 120px rgba(11,94,168,0.18),
+                0 20px 50px rgba(16,24,40,0.10),
+                0 4px 12px rgba(16,24,40,0.05),
+                inset 0 1px 0 rgba(255,255,255,0.9);
+        }
+        /* 頂部漸層光帶 */
+        .login-shine {
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent 0%, var(--gov-primary) 25%, #3b82f6 50%, var(--gov-primary) 75%, transparent 100%);
+            border-radius: 18px 18px 0 0;
+            opacity: 0.85;
+        }
+        .login-shine::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 30%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.9) 50%, transparent 100%);
+            animation: login-shine-sweep 3.5s ease-in-out infinite;
+        }
+        @keyframes login-shine-sweep {
+            0%   { transform: translateX(0); opacity: 0; }
+            10%  { opacity: 1; }
+            90%  { opacity: 1; }
+            100% { transform: translateX(330%); opacity: 0; }
+        }
+        /* 子元素進場 staggered 動畫 */
+        .login-card > .login-brand-row,
+        .login-card > .login-form-head,
+        .login-card > .login-form-body,
+        .login-card > .login-foot {
+            animation: login-item-in 0.6s cubic-bezier(.3,.1,.2,1) both;
+        }
+        .login-card > .login-brand-row { animation-delay: 0.15s; }
+        .login-card > .login-form-head { animation-delay: 0.25s; }
+        .login-card > .login-form-body { animation-delay: 0.35s; }
+        .login-card > .login-foot      { animation-delay: 0.45s; }
+        @keyframes login-item-in {
+            from { opacity: 0; transform: translateY(8px); }
+            to   { opacity: 1; transform: translateY(0); }
         }
         @keyframes login-card-in {
             from { opacity: 0; transform: translateY(20px) scale(0.98); }
@@ -222,20 +271,13 @@
             margin-bottom: 32px;
         }
         .login-logo-mark {
-            width: 46px; height: 46px;
-            background: linear-gradient(135deg, var(--gov-primary) 0%, var(--gov-primary-strong) 100%);
-            border-radius: 11px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            color: #fff;
-            font-family: var(--font-mono);
-            font-weight: 700;
-            font-size: 18px;
-            letter-spacing: -0.04em;
-            box-shadow: 0 6px 18px rgba(11,94,168,0.32), 0 2px 4px rgba(11,94,168,0.18);
+            width: 50px; height: 50px;
+            border-radius: 12px;
             flex-shrink: 0;
+            box-shadow: 0 8px 22px rgba(11,94,168,0.32), 0 2px 5px rgba(11,94,168,0.18);
+            overflow: hidden;
         }
+        .login-logo-mark svg { display: block; width: 100%; height: 100%; }
         .login-system {
             font-size: 20px;
             font-weight: 700;
@@ -254,6 +296,29 @@
         .login-form-head {
             margin-bottom: 26px;
         }
+        .login-tag-dot {
+            display: inline-block;
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--gov-ok);
+            box-shadow: 0 0 0 3px rgba(31,157,85,0.18);
+            margin-right: 8px;
+            animation: ds-pulse 2s ease-in-out infinite;
+        }
+        .login-field-icon {
+            width: 13px; height: 13px;
+            margin-right: 6px;
+            vertical-align: -2px;
+            color: var(--gov-mute-2);
+        }
+        .login-submit-arrow {
+            width: 16px; height: 16px;
+            margin-left: 8px;
+            vertical-align: -3px;
+            transition: transform .25s ease;
+        }
+        .login-submit:hover .login-submit-arrow { transform: translateX(4px); }
+
         .login-form-tag {
             display: inline-block;
             padding: 4px 10px;
@@ -1997,15 +2062,43 @@
 <div id="app">
     <div v-if="!isAuthenticated" class="login-page">
         <div class="login-card">
-            <!-- 邊角裝飾 -->
+            <!-- 邊角裝飾 (4 角 bracket) -->
             <span class="login-corner tl"></span>
             <span class="login-corner tr"></span>
             <span class="login-corner bl"></span>
             <span class="login-corner br"></span>
 
+            <!-- 頂部光帶 -->
+            <div class="login-shine"></div>
+
             <!-- 頂部 brand -->
             <div class="login-brand-row">
-                <div class="login-logo-mark">AI</div>
+                <div class="login-logo-mark">
+                    <svg viewBox="0 0 48 48" aria-hidden="true">
+                        <defs>
+                            <linearGradient id="loginLogoGrad" x1="0" y1="0" x2="1" y2="1">
+                                <stop offset="0%"   stop-color="#3b82f6"/>
+                                <stop offset="50%"  stop-color="#0b5ea8"/>
+                                <stop offset="100%" stop-color="#084d8a"/>
+                            </linearGradient>
+                            <linearGradient id="loginLogoShine" x1="0" y1="0" x2="1" y2="1">
+                                <stop offset="0%"  stop-color="#fff" stop-opacity="0.3"/>
+                                <stop offset="55%" stop-color="#fff" stop-opacity="0"/>
+                            </linearGradient>
+                        </defs>
+                        <rect x="2" y="2" width="44" height="44" rx="12" fill="url(#loginLogoGrad)"/>
+                        <rect x="2" y="2" width="44" height="44" rx="12" fill="url(#loginLogoShine)"/>
+                        <rect x="3.5" y="3.5" width="41" height="41" rx="10.5" fill="none" stroke="#fff" stroke-opacity="0.18" stroke-width="0.8"/>
+                        <text x="24" y="30" text-anchor="middle" fill="#fff"
+                              font-family="IBM Plex Mono, monospace"
+                              font-size="18" font-weight="700"
+                              letter-spacing="-0.04em">AI</text>
+                        <line x1="10" y1="37" x2="38" y2="37" stroke="#fff" stroke-opacity="0.35" stroke-width="0.7" stroke-dasharray="2 2"/>
+                        <circle cx="40" cy="40" r="1.8" fill="#86efac"/>
+                        <path d="M 7 12 L 7 7 L 12 7"  fill="none" stroke="#fff" stroke-opacity="0.45" stroke-width="1"/>
+                        <path d="M 36 7 L 41 7 L 41 12" fill="none" stroke="#fff" stroke-opacity="0.45" stroke-width="1"/>
+                    </svg>
+                </div>
                 <div>
                     <div class="login-system">交通影像分析</div>
                     <div class="login-system-en">TRAFFIC IMAGING ANALYTICS</div>
@@ -2014,24 +2107,35 @@
 
             <!-- 主體 form -->
             <div class="login-form-head">
-                <div class="login-form-tag">SECURE LOGIN · 安全登入</div>
+                <div class="login-form-tag">
+                    <span class="login-tag-dot"></span>SECURE LOGIN · 安全登入
+                </div>
                 <h2>歡迎回來</h2>
                 <p>請使用授權帳號登入系統管理介面</p>
             </div>
             <el-form @submit.prevent class="login-form-body">
                 <div class="login-field">
-                    <label>帳號</label>
+                    <label>
+                        <svg class="login-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        帳號
+                    </label>
                     <el-input v-model="loginForm.username" autocomplete="username" placeholder="username" size="large"/>
                 </div>
                 <div class="login-field">
-                    <label>密碼</label>
+                    <label>
+                        <svg class="login-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        密碼
+                    </label>
                     <el-input v-model="loginForm.password" type="password" show-password autocomplete="current-password" @keyup.enter="login" placeholder="••••••••" size="large"/>
                 </div>
-                <el-button :loading="authLoading" type="primary" @click="login" size="large" class="login-submit">登入 →</el-button>
+                <el-button :loading="authLoading" type="primary" @click="login" size="large" class="login-submit">
+                    <span>登入</span>
+                    <svg class="login-submit-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                </el-button>
             </el-form>
 
             <div class="login-foot">
-                <span class="login-foot-doc">DOC v1.0 · 2026-05-26</span>
+                <span class="login-foot-doc" id="login-foot-version">DOC v1.0 · 2026-05-26</span>
                 <span class="login-foot-sep"></span>
                 <a href="/web/agency_landing.html" target="_blank">機關平台對接文件 →</a>
             </div>
@@ -12344,8 +12448,13 @@ const app=createApp({
                 const d=await r.json();
                 const feEl=document.getElementById('fe-version');
                 const beEl=document.getElementById('be-version');
+                const footEl=document.getElementById('login-foot-version');
                 if(feEl && d.frontend) feEl.textContent='v'+d.frontend;
                 if(beEl && d.backend)  beEl.textContent='v'+d.backend;
+                if(footEl && d.frontend){
+                    const date=d.build_date || '';
+                    footEl.textContent='DOC v'+d.frontend + (date?(' · '+date):'');
+                }
             }catch{
                 // fallback: 從 openapi.json info.version 取 (沒 commit hash)
                 try{
