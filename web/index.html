@@ -684,6 +684,25 @@
         .menu-item.active .nav-icon { opacity: 1; }
         .menu-item.active .nav-icon { color: var(--gov-primary); }
         .menu-item.highlight .nav-icon { color: #fff; opacity: 0.95; }
+
+        /* Phase 3c: inline text icon (card-header / 標題 / label) */
+        .text-icon {
+            width: 15px;
+            height: 15px;
+            flex-shrink: 0;
+            color: currentColor;
+            vertical-align: -3px;
+            margin-right: 6px;
+            display: inline-block;
+        }
+        /* Phase 3c: button-only icon (取代 emoji-only el-button) */
+        .btn-icon {
+            width: 14px;
+            height: 14px;
+            color: currentColor;
+            vertical-align: -2px;
+            display: inline-block;
+        }
         .submenu { padding-left: 20px; background: rgba(11,94,168,0.02); }
         .submenu .menu-item { padding: 10px 16px; font-size: 13px; }
         .submenu .menu-item { padding: 9px 16px 9px 40px; font-size: 12.5px; }
@@ -1524,6 +1543,30 @@
     <symbol id="i-activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
     <symbol id="i-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 7-8 13-8 13s-8-6-8-13a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.6 3 3 0 0 1 1 2.4V18h6v-1a3 3 0 0 1 1-2.4A7 7 0 0 0 12 2z"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></symbol>
+    <symbol id="i-people" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z"/></symbol>
+    <symbol id="i-add" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></symbol>
+    <symbol id="i-run" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4" r="2"/><path d="m4.5 16.5 4-7 4 4-3 6.5M14.5 11.5l2-2 3 2-1 4 2 4M9 9l5.5-1.5"/></symbol>
+    <symbol id="i-dot" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="12" r="5"/></symbol>
+    <symbol id="i-car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17v-5l2-5h14l2 5v5M5 17h14M6 17v2M18 17v2"/><circle cx="7" cy="14" r="1.5"/><circle cx="17" cy="14" r="1.5"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+    <symbol id="i-thermo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0z"/></symbol>
+    <symbol id="i-disk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-compass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m16.24 7.76-2.12 6.36-6.36 2.12 2.12-6.36 6.36-2.12z"/></symbol>
   </defs>
 </svg>
 
@@ -1802,7 +1845,7 @@
                                     @error="handleMonitorStreamError(c)"
                                 ></video>
                                 <img v-else-if="c.enabled && c.showStream" :src="getMonitorMediaUrl(c)" @load="handleMonitorStreamLoad(c)" @error="handleMonitorStreamError(c)">
-                                <div v-else style="color:#666" @click.stop="if(c.enabled){c.showStream=true;streamKey=Date.now();}">📹 {{ c.enabled?'無影像，點擊重試':'攝影機已關閉' }}</div>
+                                <div v-else style="color:#666" @click.stop="if(c.enabled){c.showStream=true;streamKey=Date.now();}"><svg class="text-icon"><use href="#i-video"/></svg>{{ c.enabled?'無影像，點擊重試':'攝影機已關閉' }}</div>
                                 <svg v-if="overlayShowRoi && resolveCameraStreamMode(c)==='overlay' && monitorZoneOverlayItems(c).length" class="monitor-roi-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                                     <g v-for="item in monitorZoneOverlayItems(c)" :key="`mroi-${c.id}-${item.key}`">
                                         <polygon :points="item.points" :fill="item.fill" :stroke="item.stroke" stroke-width="0.35"></polygon>
@@ -2018,7 +2061,7 @@
                                         <td>{{ v.license_plate || '-' }}</td>
                                         <td>{{ v.violation_name }}</td>
                                         <td><img v-if="v.image_path" :src="v.image_path" class="thumbnail" @click="showDetail(v)"></td>
-                                        <td><el-button circle size="small" @click="showDetail(v)">👁</el-button></td>
+                                        <td><el-button circle size="small" @click="showDetail(v)"><svg class="btn-icon"><use href="#i-eye"/></svg></el-button></td>
                                     </tr>
                                     <tr v-if="!violations.length">
                                         <td colspan="7" style="text-align:center;color:#999;padding:40px">(無資料)</td>
@@ -2038,7 +2081,7 @@
                     </div>
                     <div class="card">
                         <div class="card-header">
-                            <span>✅ 辨識成果（車牌 / 車速 / 車種）</span>
+                            <span><svg class="text-icon" style="color:var(--gov-ok)"><use href="#i-check"/></svg>辨識成果（車牌 / 車速 / 車種）</span>
                             <div style="display:flex;gap:8px;align-items:center">
                                 <el-input v-model="recognitionQuery" size="small" style="width:180px" placeholder="搜尋車牌 / 車種 / 事件"/>
                                 <el-input-number v-model="recognitionResultLimit" :min="10" :max="200" :step="10" size="small" />
@@ -2220,7 +2263,7 @@
                                         <td>{{ v.license_plate || '-' }}</td>
                                         <td>{{ v.violation_name }}</td>
                                         <td><img v-if="v.image_path" :src="v.image_path" class="thumbnail" @click="showDetail(v)"></td>
-                                        <td><el-button circle size="small" @click="showDetail(v)">👁</el-button></td>
+                                        <td><el-button circle size="small" @click="showDetail(v)"><svg class="btn-icon"><use href="#i-eye"/></svg></el-button></td>
                                     </tr>
                                     <tr v-if="!pendingViolations.length">
                                         <td colspan="7" style="text-align:center;color:#999;padding:40px">(無資料)</td>
@@ -2268,7 +2311,7 @@
                                     <div class="camera-list-title-row">
                                         <h3 style="margin:0">{{ c.name }}</h3>
                                     </div>
-                                    <div class="camera-list-location">📍 {{ c.location || '未設定位置' }}</div>
+                                    <div class="camera-list-location"><svg class="text-icon"><use href="#i-pin"/></svg>{{ c.location || '未設定位置' }}</div>
                                     <div class="camera-list-source">{{ c.source }}</div>
                                     <div class="camera-list-tags">
                                         <el-tag :type="c.status==='online'?'success':'info'" size="small">{{ c.status==='online'?'線上':'離線' }}</el-tag>
@@ -2309,7 +2352,7 @@
                 <div v-if="page==='nx_viewer'">
                     <div class="card">
                         <div class="card-header">
-                            <span>⚙️ Nx 串流設定</span>
+                            <span><svg class="text-icon"><use href="#i-settings"/></svg>Nx 串流設定</span>
                             <div style="display:flex;gap:8px;align-items:center">
                                 <el-tag size="small" :type="nxSettingsModeType">{{ nxSettingsModeText }}</el-tag>
                                 <el-button size="small" @click="loadNxSettings">重新載入</el-button>
@@ -2356,7 +2399,7 @@
                     </div>
                     <div class="card">
                         <div class="card-header">
-                            <span>🎥 Nx 攝影機串流</span>
+                            <span><svg class="text-icon"><use href="#i-film"/></svg>Nx 攝影機串流</span>
                         </div>
                         <div class="card-body">
                             <nx-camera-viewer :key="nxViewerKey"></nx-camera-viewer>
@@ -2368,7 +2411,7 @@
                 <div v-if="page==='mqtt'">
                     <div class="card">
                         <div class="card-header">
-                            <span>📡 MQTT Broker / Client</span>
+                            <span><svg class="text-icon"><use href="#i-radio"/></svg>MQTT Broker / Client</span>
                             <div style="display:flex;gap:8px;align-items:center">
                                 <el-tag :type="mqttStatus.connected ? 'success' : 'danger'" size="small">
                                     {{ mqttStatus.connected ? '已連線' : '未連線' }}
@@ -2406,9 +2449,9 @@
                                     <el-button type="primary" size="small" @click="saveMqttSettings">儲存 + 重連</el-button>
                                 </el-form-item>
                             </el-form>
-                            <div v-if="mqttStatus.error" style="color:#f56c6c;margin-bottom:8px">⚠️ {{ mqttStatus.error }}</div>
+                            <div v-if="mqttStatus.error" style="color:#f56c6c;margin-bottom:8px"><svg class="text-icon" style="color:var(--gov-warn)"><use href="#i-alert"/></svg>{{ mqttStatus.error }}</div>
                             <div v-if="mqttStatus.mode==='embedded'" style="padding:8px 12px;background:#ecf5ff;border-radius:6px;margin-bottom:8px;font-size:13px">
-                                💡 Embedded 模式：外部設備用 <code>tcp://{{ mqttHostIp }}:1883</code> 連線（WebSocket 用 9001）；topic 可訂 <code>{{ mqttSettings.base_topic||'traffic' }}/#</code>
+                                <svg class="text-icon" style="color:var(--gov-warn)"><use href="#i-bulb"/></svg>Embedded 模式：外部設備用 <code>tcp://{{ mqttHostIp }}:1883</code> 連線（WebSocket 用 9001）；topic 可訂 <code>{{ mqttSettings.base_topic||'traffic' }}/#</code>
                             </div>
                         </div>
                     </div>
@@ -2416,7 +2459,7 @@
                     <!-- 手動發佈測試 -->
                     <div class="card" style="margin-top:12px">
                         <div class="card-header">
-                            <span>✉️ 手動發佈訊息測試</span>
+                            <span><svg class="text-icon"><use href="#i-mail"/></svg>手動發佈訊息測試</span>
                         </div>
                         <div class="card-body">
                             <el-form inline label-width="80px">
@@ -2426,7 +2469,7 @@
                             </el-form>
                             <el-input v-model="mqttPublishForm.payload" type="textarea" :rows="3" placeholder='Payload (JSON 或字串，例如 {"msg":"hello"})'></el-input>
                             <div style="display:flex;justify-content:flex-end;margin-top:12px;gap:8px;clear:both">
-                                <el-button type="primary" size="default" @click="mqttManualPublish">📤 發佈測試訊息</el-button>
+                                <el-button type="primary" size="default" @click="mqttManualPublish"><svg class="text-icon"><use href="#i-up"/></svg>發佈測試訊息</el-button>
                             </div>
                         </div>
                     </div>
@@ -2434,7 +2477,7 @@
                     <!-- 即時訊息日誌（左 Sent / 右 Received）-->
                     <div class="card" style="margin-top:12px">
                         <div class="card-header">
-                            <span>📜 即時訊息日誌</span>
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>即時訊息日誌</span>
                             <div style="display:flex;gap:8px;align-items:center">
                                 <el-switch v-model="mqttLogAutoRefresh" active-text="自動刷新 2s"/>
                                 <el-button size="small" @click="loadMqttMessages">重新載入</el-button>
@@ -2444,7 +2487,7 @@
                         <div class="card-body">
                             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
                                 <div>
-                                    <div style="font-weight:600;margin-bottom:6px">📤 已發送 (最近 {{ mqttSent.length }} 筆)</div>
+                                    <div style="font-weight:600;margin-bottom:6px"><svg class="text-icon"><use href="#i-up"/></svg>已發送 (最近 {{ mqttSent.length }} 筆)</div>
                                     <div style="height:420px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;background:#f8fafc">
                                         <div v-for="(m,i) in mqttSent.slice().reverse()" :key="'s'+i" style="padding:6px 0;border-bottom:1px dashed #e2e8f0">
                                             <div style="color:#64748b">{{ new Date(m.ts*1000).toLocaleTimeString('zh-TW') }} · QoS{{m.qos}}<span v-if="m.retain"> · RETAIN</span></div>
@@ -2455,7 +2498,7 @@
                                     </div>
                                 </div>
                                 <div>
-                                    <div style="font-weight:600;margin-bottom:6px">📥 已接收 (最近 {{ mqttRecv.length }} 筆)</div>
+                                    <div style="font-weight:600;margin-bottom:6px"><svg class="text-icon"><use href="#i-down"/></svg>已接收 (最近 {{ mqttRecv.length }} 筆)</div>
                                     <div style="height:420px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;background:#f8fafc">
                                         <div v-for="(m,i) in mqttRecv.slice().reverse()" :key="'r'+i" style="padding:6px 0;border-bottom:1px dashed #e2e8f0">
                                             <div style="color:#64748b">{{ new Date(m.ts*1000).toLocaleTimeString('zh-TW') }} · QoS{{m.qos}}</div>
@@ -2474,7 +2517,7 @@
                 <div v-if="page==='logs'">
                     <div class="card">
                         <div class="card-header">
-                            <span>📜 系統監控日誌</span>
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>系統監控日誌</span>
                             <div style="display:flex;gap:8px;align-items:center">
                                 <span style="font-size:12px;color:#64748b">每頁</span>
                                 <select v-model.number="logsPageSize" class="stats-native-select" style="width:90px">
@@ -2483,8 +2526,8 @@
                                     <option :value="500">500</option>
                                 </select>
                                 <el-tag size="small" type="info">第 {{ logsPage }} / {{ logsTotalPages }} 頁</el-tag>
-                                <el-button size="small" @click="loadSystemLogs">🔄 重新整理</el-button>
-                                <el-button size="small" type="primary" @click="clearSystemLogs">🗑️ 清除</el-button>
+                                <el-button size="small" @click="loadSystemLogs"><svg class="text-icon"><use href="#i-refresh"/></svg>重新整理</el-button>
+                                <el-button size="small" type="primary" @click="clearSystemLogs"><svg class="text-icon"><use href="#i-trash"/></svg>清除</el-button>
                             </div>
                         </div>
                         <div class="card-body" style="padding-bottom:8px">
@@ -3099,7 +3142,7 @@
 
                 <div v-if="page==='permission_admin'">
                     <div class="card">
-                        <div class="card-header"><span>🔐 權限管理</span></div>
+                        <div class="card-header"><span><svg class="text-icon"><use href="#i-lock"/></svg>權限管理</span></div>
                         <div class="card-body">
                             <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
                                 <span style="font-size:13px;color:#334155">目前登入角色</span>
@@ -3129,7 +3172,7 @@
                     </div>
                     <div class="card" style="margin-top:12px">
                         <div class="card-header">
-                            <span>👥 使用者管理</span>
+                            <span><svg class="text-icon"><use href="#i-people"/></svg>使用者管理</span>
                             <div style="display:flex;gap:8px">
                                 <el-button size="small" @click="loadUsers" :disabled="!isAdmin">重新載入</el-button>
                                 <el-button type="primary" size="small" @click="openUserCreateDialog" :disabled="!isAdmin">新增使用者</el-button>
@@ -3184,7 +3227,7 @@
                 <div v-if="page==='frigate'">
                     <div class="card">
                         <div class="card-header">
-                            <span>🎬 NVR 設定</span>
+                            <span><svg class="text-icon"><use href="#i-film"/></svg>NVR 設定</span>
                             <div style="display:flex;gap:8px;align-items:center">
                                 <a href="/web/nvr_playback.html" target="_blank" style="text-decoration:none"><el-button type="warning" size="small">⏯️ NVR 回放</el-button></a>
                                 <span>連線狀態</span>
@@ -3197,7 +3240,7 @@
                             <!-- 連線資訊 -->
                             <div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap">
                                 <div style="flex:1;min-width:200px">
-                                    <div style="font-weight:bold;margin-bottom:8px">🌐 連線設定</div>
+                                    <div style="font-weight:bold;margin-bottom:8px"><svg class="text-icon"><use href="#i-globe"/></svg>連線設定</div>
                                     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
                                         <span style="width:80px">主機:</span>
                                         <el-input v-model="frigateConfig.host" placeholder="nvr" style="width:150px" size="small"/>
@@ -3209,7 +3252,7 @@
                                     <el-button type="primary" size="small" @click="testNVRConnection">測試連線</el-button>
                                 </div>
                                 <div style="flex:1;min-width:200px" v-if="frigateStatus.status==='online'">
-                                    <div style="font-weight:bold;margin-bottom:8px">📊 系統資訊</div>
+                                    <div style="font-weight:bold;margin-bottom:8px"><svg class="text-icon"><use href="#i-bar"/></svg>系統資訊</div>
                                     <p style="font-size:13px;color:#666">版本: {{ frigateStatus.version }}</p>
                                     <p style="font-size:13px;color:#666">攝影機: {{ frigateStatus.cameras?.length || 0 }} 台</p>
                                     <p style="font-size:13px;color:#666">偵測器: TensorRT</p>
@@ -3218,7 +3261,7 @@
 
                             <!-- 錄影設定 -->
                             <div style="border-top:1px solid #eee;padding-top:16px;margin-bottom:20px">
-                                <div style="font-weight:bold;margin-bottom:12px">🎥 錄影設定</div>
+                                <div style="font-weight:bold;margin-bottom:12px"><svg class="text-icon"><use href="#i-film"/></svg>錄影設定</div>
                                 <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
                                     <div style="display:flex;gap:8px;align-items:center">
                                         <span>錄影模式:</span>
@@ -3282,7 +3325,7 @@
 
                             <!-- Motion / 偵測設定 -->
                             <div style="border-top:1px solid #eee;padding-top:16px;margin-bottom:20px">
-                                <div style="font-weight:bold;margin-bottom:12px">🏃 Motion / 偵測設定</div>
+                                <div style="font-weight:bold;margin-bottom:12px"><svg class="text-icon"><use href="#i-run"/></svg>Motion / 偵測設定</div>
                                 <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
                                     <div style="display:flex;gap:8px;align-items:center">
                                         <span>Threshold:</span>
@@ -3310,7 +3353,7 @@
                             <!-- MQTT 設定 -->
                             <div style="border-top:1px solid #eee;padding-top:16px;margin-bottom:20px">
                                 <div style="font-weight:bold;margin-bottom:12px">
-                                    📡 MQTT 設定 (Home Assistant 整合)
+                                    <svg class="text-icon"><use href="#i-radio"/></svg>MQTT 設定 (Home Assistant 整合)
                                     <el-switch v-model="frigateConfig.mqtt_enabled" style="margin-left:12px"/>
                                 </div>
                                 <div v-if="frigateConfig.mqtt_enabled" style="display:flex;gap:16px;flex-wrap:wrap">
@@ -3345,10 +3388,10 @@
                     <!-- NVR 攝影機列表 -->
                     <div class="card">
                         <div class="card-header">
-                            <span>📹 NVR 攝影機</span>
+                            <span><svg class="text-icon"><use href="#i-video"/></svg>NVR 攝影機</span>
                             <div style="display:flex;gap:8px">
-                                <el-button type="warning" size="small" :disabled="nvrRestarting" @click="showAddNVRCamera">➕ 新增</el-button>
-                                <el-button type="success" size="small" :disabled="nvrRestarting" @click="syncCamerasToNVR">🔄 同步攝影機</el-button>
+                                <el-button type="warning" size="small" :disabled="nvrRestarting" @click="showAddNVRCamera"><svg class="text-icon"><use href="#i-add"/></svg>新增</el-button>
+                                <el-button type="success" size="small" :disabled="nvrRestarting" @click="syncCamerasToNVR"><svg class="text-icon"><use href="#i-refresh"/></svg>同步攝影機</el-button>
                                 <el-button type="primary" size="small" :disabled="nvrRestarting" @click="loadNVRCameras">重新載入</el-button>
                             </div>
                         </div>
@@ -3670,7 +3713,7 @@
                                                         <el-option :value="1.5" label="1.5x"/>
                                                         <el-option :value="2" label="2x"/>
                                                     </el-select>
-                                                    <el-button size="small" :disabled="!nvrPlaybackPlayerUrl" @click="captureNvrPlaybackFrame">📷 快照</el-button>
+                                                    <el-button size="small" :disabled="!nvrPlaybackPlayerUrl" @click="captureNvrPlaybackFrame"><svg class="text-icon"><use href="#i-camera"/></svg>快照</el-button>
                                                 </div>
                                                 <div class="nvr-replay-control-group">
                                                     <span class="nvr-replay-time-text">{{ formatPlaybackClock(nvrPlaybackCurrentSec) }} / {{ formatPlaybackClock(nvrPlaybackDurationSec) }}</span>
@@ -3767,7 +3810,7 @@
                     <!-- NVR Motion 事件（獨立於違規事件查詢） -->
                     <div class="card">
                         <div class="card-header">
-                            <span>📝 即時偵測事件列表（車輛通過 ROI）</span>
+                            <span><svg class="text-icon"><use href="#i-edit"/></svg>即時偵測事件列表（車輛通過 ROI）</span>
                             <el-button type="primary" size="small" :loading="nvrEventsLoading" @click="loadNVREvents()">
                                 {{ nvrEventsLoading ? '查詢中...' : '查詢' }}
                             </el-button>
@@ -3859,7 +3902,7 @@
                 <div v-if="page==='lpr'">
                     <div class="card">
                         <div class="card-header">
-                            <span>🚗 車牌辨識 (LPR)</span>
+                            <span><svg class="text-icon"><use href="#i-car"/></svg>車牌辨識 (LPR)</span>
                             <div style="display:flex;gap:8px;align-items:center">
                                 <span>狀態</span>
                                 <el-tag :type="lprStatus.status==='online'?'success':'primary'" size="small">
@@ -3871,7 +3914,7 @@
                             <div style="display:flex;gap:20px;flex-wrap:wrap">
                                 <!-- 上傳測試 -->
                                 <div style="flex:1;min-width:300px">
-                                    <div style="font-weight:bold;margin-bottom:12px">📤 上傳圖片測試</div>
+                                    <div style="font-weight:bold;margin-bottom:12px"><svg class="text-icon"><use href="#i-up"/></svg>上傳圖片測試</div>
                                     <div style="border:2px dashed #ddd;border-radius:8px;padding:20px;text-align:center;margin-bottom:12px">
                                         <input type="file" ref="lprFileInput" accept="image/*" @change="handleLprFile" style="display:none">
                                         <el-button type="primary" @click="$refs.lprFileInput.click()">選擇圖片</el-button>
@@ -3887,7 +3930,7 @@
                                 
                                 <!-- 辨識結果 -->
                                 <div style="flex:1;min-width:300px">
-                                    <div style="font-weight:bold;margin-bottom:12px">📋 辨識結果</div>
+                                    <div style="font-weight:bold;margin-bottom:12px"><svg class="text-icon"><use href="#i-clipboard"/></svg>辨識結果</div>
                                     <div style="background:#f5f5f5;border-radius:8px;padding:20px;min-height:150px">
                                         <div v-if="lprResult.plate_number" style="text-align:center">
                                             <div style="font-size:32px;font-weight:bold;color:#409eff;letter-spacing:4px;margin-bottom:12px">
@@ -3909,7 +3952,7 @@
                             
                             <!-- 串流辨識 -->
                             <div style="border-top:1px solid #eee;margin-top:20px;padding-top:20px">
-                                <div style="font-weight:bold;margin-bottom:12px">📹 串流持續辨識</div>
+                                <div style="font-weight:bold;margin-bottom:12px"><svg class="text-icon"><use href="#i-video"/></svg>串流持續辨識</div>
                                 <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
                                     <select v-model="lprCameraId" class="stats-native-select" style="width:220px">
                                         <option :value="null">選擇攝影機</option>
@@ -3922,12 +3965,12 @@
                                         ⏹ 停止
                                     </el-button>
                                     <el-button type="primary" @click="recognizeFromCamera" :loading="lprLoading" :disabled="!lprCameraId">
-                                        📷 單次擷取
+                                        <svg class="text-icon"><use href="#i-camera"/></svg>單次擷取
                                     </el-button>
                                 </div>
                                 <div v-if="lprStreamRunning" style="margin-top:12px;padding:12px;background:#e8f5e9;border-radius:8px">
                                     <div style="display:flex;gap:20px;align-items:center">
-                                        <span style="color:#2e7d32;font-weight:bold">🔵 辨識中...</span>
+                                        <span style="color:#2e7d32;font-weight:bold"><svg class="text-icon" style="color:var(--gov-primary)"><use href="#i-dot"/></svg>辨識中...</span>
                                         <span>已處理: {{ lprStreamStatus.total_frames || 0 }} 幀</span>
                                         <span>車輛數: {{ lprStreamStatus.vehicles_detected || 0 }}</span>
                                         <span>車牌框: {{ lprStreamStatus.plate_boxes_detected || 0 }}</span>
@@ -3941,7 +3984,7 @@
                                 <!-- 視覺化串流 -->
                                 <div style="margin-top:16px">
                                     <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
-                                        <span style="font-weight:bold">🎥 視覺化串流</span>
+                                        <span style="font-weight:bold"><svg class="text-icon"><use href="#i-film"/></svg>視覺化串流</span>
                                         <el-switch v-model="showLprVisual" @change="toggleLprVisual"/>
                                     </div>
                                     <div v-if="showLprVisual && lprCameraId" style="background:#000;border-radius:8px;overflow:hidden">
@@ -3955,10 +3998,10 @@
                     
                     <div class="card">
                         <div class="card-header">
-                            <span>📜 車牌辨識歷史</span>
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>車牌辨識歷史</span>
                             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                                 <a href="/web/lpr_verify.html" target="_blank" style="text-decoration:none">
-                                    <el-button type="primary" size="small">🔍 車種驗證</el-button>
+                                    <el-button type="primary" size="small"><svg class="text-icon"><use href="#i-search"/></svg> 車種驗證</el-button>
                                 </a>
                                 <el-tag type="info" effect="plain">新版介面</el-tag>
                                 <el-tag effect="plain">攝影機 {{ lprHistoryCameraOptions.length }} 台</el-tag>
@@ -4082,7 +4125,7 @@
 
                     <div class="card">
                         <div class="card-header">
-                            <span>🧪 OCR Debug</span>
+                            <span><svg class="text-icon"><use href="#i-target"/></svg> OCR Debug</span>
                             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                                 <el-button size="small" @click="refreshLprDebugStatuses">刷新狀態</el-button>
                                 <span style="font-size:12px;color:#64748b">共 {{ lprDebugRows.length }} 台</span>
@@ -4131,7 +4174,7 @@
 
                     <div class="card">
                         <div class="card-header">
-                            <span>✅ 辨識成果（車牌 / 車速 / 車種）</span>
+                            <span><svg class="text-icon" style="color:var(--gov-ok)"><use href="#i-check"/></svg>辨識成果（車牌 / 車速 / 車種）</span>
                             <div style="display:flex;gap:8px;align-items:center">
                                 <el-input v-model="recognitionQuery" size="small" style="width:180px" placeholder="搜尋車牌 / 車種 / 事件"/>
                                 <el-input-number v-model="recognitionResultLimit" :min="10" :max="200" :step="10" size="small" />
@@ -4239,19 +4282,19 @@
                 <div v-if="page==='hwmonitor'">
                     <div class="card">
                         <div class="card-header">
-                            <span>🖥️ Jetson 硬體效能監測</span>
+                            <span><svg class="text-icon"><use href="#i-monitor"/></svg>️ Jetson 硬體效能監測</span>
                             <div style="display:flex;gap:8px;align-items:center">
                                 <span style="font-size:12px;color:#999">{{ hwStatus.model }}</span>
                                 <el-tag :type="hwAutoRefresh?'success':'info'" size="small" @click="hwAutoRefresh=!hwAutoRefresh" style="cursor:pointer">
                                     {{ hwAutoRefresh ? '⏸ 自動' : '▶ 自動' }}
                                 </el-tag>
-                                <el-button size="small" @click="loadHwStatus">🔄 重新整理</el-button>
+                                <el-button size="small" @click="loadHwStatus"><svg class="text-icon"><use href="#i-refresh"/></svg>重新整理</el-button>
                             </div>
                         </div>
                     </div>
                     <div class="card">
                         <div class="card-header">
-                            <span>🕒 NTP 同步設定</span>
+                            <span><svg class="text-icon"><use href="#i-clock"/></svg> NTP 同步設定</span>
                             <div style="display:flex;gap:8px;align-items:center">
                                 <el-tag size="small" :type="ntpSettings.runtime?.synced===true?'success':(ntpSettings.runtime?.synced===false?'warning':'info')">
                                     {{ ntpSettings.runtime?.synced===true?'已同步':(ntpSettings.runtime?.synced===false?'未同步':'未知') }}
@@ -4292,7 +4335,7 @@
                     <div class="monitor-grid">
                         <!-- CPU -->
                         <div class="monitor-card">
-                            <h4>🔲 CPU <span style="font-size:12px;color:#999">{{ hwStatus.cpu?.cores || 0 }} 核心 · {{ hwStatus.cpu?.freq_mhz || 0 }} MHz</span></h4>
+                            <h4><svg class="text-icon"><use href="#i-monitor"/></svg> CPU <span style="font-size:12px;color:#999">{{ hwStatus.cpu?.cores || 0 }} 核心 · {{ hwStatus.cpu?.freq_mhz || 0 }} MHz</span></h4>
                             <div class="gauge-wrap">
                                 <div class="gauge-ring">
                                     <svg width="120" height="120" viewBox="0 0 120 120">
@@ -4312,7 +4355,7 @@
                         </div>
                         <!-- GPU -->
                         <div class="monitor-card">
-                            <h4>🎮 GPU <span style="font-size:12px;color:#999">{{ hwStatus.gpu?.freq_mhz || 0 }} MHz</span></h4>
+                            <h4><svg class="text-icon"><use href="#i-cpu"/></svg> GPU <span style="font-size:12px;color:#999">{{ hwStatus.gpu?.freq_mhz || 0 }} MHz</span></h4>
                             <div class="gauge-wrap">
                                 <div class="gauge-ring">
                                     <svg width="120" height="120" viewBox="0 0 120 120">
@@ -4332,7 +4375,7 @@
                         </div>
                         <!-- 記憶體 -->
                         <div class="monitor-card">
-                            <h4>💾 記憶體 <span style="font-size:12px;color:#999">{{ hwStatus.memory?.used_mb || 0 }} / {{ hwStatus.memory?.total_mb || 0 }} MB</span></h4>
+                            <h4><svg class="text-icon"><use href="#i-disk"/></svg> 記憶體 <span style="font-size:12px;color:#999">{{ hwStatus.memory?.used_mb || 0 }} / {{ hwStatus.memory?.total_mb || 0 }} MB</span></h4>
                             <div class="gauge-wrap">
                                 <div class="gauge-ring">
                                     <svg width="120" height="120" viewBox="0 0 120 120">
@@ -4355,7 +4398,7 @@
                         </div>
                         <!-- 磁碟 -->
                         <div class="monitor-card">
-                            <h4>💿 磁碟 <span style="font-size:12px;color:#999">{{ hwStatus.disk?.used_gb || 0 }} / {{ hwStatus.disk?.total_gb || 0 }} GB</span></h4>
+                            <h4><svg class="text-icon"><use href="#i-disk"/></svg> 磁碟 <span style="font-size:12px;color:#999">{{ hwStatus.disk?.used_gb || 0 }} / {{ hwStatus.disk?.total_gb || 0 }} GB</span></h4>
                             <div class="gauge-wrap">
                                 <div class="gauge-ring">
                                     <svg width="120" height="120" viewBox="0 0 120 120">
@@ -4380,7 +4423,7 @@
                     <!-- 溫度 -->
                     <div class="card">
                         <div class="card-header">
-                            <span>🌡️ 溫度感測器</span>
+                            <span><svg class="text-icon"><use href="#i-thermo"/></svg>️ 溫度感測器</span>
                             <el-tag :type="hwStatus.temp_level==='critical'?'primary':hwStatus.temp_level==='warning'?'warning':'success'" size="small">
                                 最高 {{ hwStatus.max_temp || 0 }}°C
                             </el-tag>
@@ -4408,7 +4451,7 @@
                             <div class="hw-info-row"><span style="color:#666">GPU 頻率</span><span>{{ hwStatus.gpu?.freq_mhz || 0 }} MHz</span></div>
                             <div class="hw-info-row"><span style="color:#666">總記憶體</span><span>{{ hwStatus.memory?.total_mb || 0 }} MB</span></div>
                             <div class="hw-info-row"><span style="color:#666">磁碟空間</span><span>{{ hwStatus.disk?.total_gb || 0 }} GB (可用 {{ hwStatus.disk?.free_gb || 0 }} GB)</span></div>
-                            <div class="hw-info-row" v-for="(val, key) in (hwStatus.power||{})" :key="key"><span style="color:#666">⚡ {{ key }}</span><span>{{ val }} mW</span></div>
+                            <div class="hw-info-row" v-for="(val, key) in (hwStatus.power||{})" :key="key"><span style="color:#666"><svg class="text-icon" style="color:var(--gov-warn)"><use href="#i-zap"/></svg> {{ key }}</span><span>{{ val }} mW</span></div>
                         </div>
                     </div>
                 </div>
@@ -4421,7 +4464,7 @@
     <div class="modal-overlay" v-if="showPreviewModal" @click.self="closePreview">
         <div class="modal-box">
             <div class="modal-header">
-                <h3>📹 {{ previewCamera?.name }}</h3>
+                <h3><svg class="text-icon"><use href="#i-video"/></svg>{{ previewCamera?.name }}</h3>
                 <el-button circle @click="closePreview">✕</el-button>
             </div>
             <div class="modal-content">
@@ -4432,7 +4475,7 @@
                 </div>
                 <div class="modal-sidebar">
                     <template v-if="page==='cameras'">
-                        <div class="section-title">🎯 偵測功能</div>
+                        <div class="section-title"><svg class="text-icon"><use href="#i-target"/></svg> 偵測功能</div>
                         <div class="config-item"><span>闘紅燈</span><el-switch v-model="previewCamera.detection_config.red_light" @change="saveConfig"/></div>
                         <div class="config-item"><span>超速</span><el-switch v-model="previewCamera.detection_config.speeding" @change="saveConfig"/></div>
                         <div class="config-item"><span>違規停車</span><el-switch v-model="previewCamera.detection_config.illegal_parking" @change="saveConfig"/></div>
@@ -4441,7 +4484,7 @@
                         <div class="config-item" v-if="previewCamera.detection_config.speeding"><span>速限</span><el-input-number v-model="previewCamera.detection_config.speed_limit" :min="20" :max="120" size="small" @change="saveConfig"/></div>
                     </template>
                     <template v-if="page==='traffic_flow_settings' || page==='speed_detection'">
-                        <div class="section-title">{{ page==='speed_detection'?'🚗 車速設定':'🛣️ 車流設定' }}</div>
+                        <div class="section-title">{{ page==='speed_detection'?'<svg class="text-icon"><use href="#i-car"/></svg>車速設定':'<svg class="text-icon"><use href="#i-road"/></svg>️ 車流設定' }}</div>
                         <div class="analysis-setting-group">
                             <div class="analysis-setting-head">1. ROI 區域編輯</div>
                             <el-button type="warning" size="small" style="width:100%" @click="openRoiEditor(previewCamera.id)">開啟 ROI 編輯器</el-button>
@@ -4668,7 +4711,7 @@
                                         <el-button size="small" type="primary" plain
                                             @click="autoCalibrateCamera(previewCamera?.id, item.zone.lane_no || 1, item.zone.calibration_width_m || 3.5, item.zone.calibration_length_m || 10)"
                                             style="margin-top:6px">
-                                            🎯 自動校正 (vanishing point)
+                                            <svg class="text-icon"><use href="#i-target"/></svg> 自動校正 (vanishing point)
                                         </el-button>
                                         <div style="font-size:11px;color:#94a3b8;width:100%">
                                             一鍵：偵測道路消失點 → 自動建 4 點 + 寬長 → 立即可用真實 km/h
@@ -4736,7 +4779,7 @@
                     </template>
 
                     <template v-if="page==='congestion_detection'">
-                        <div class="section-title">🚦 壅塞設定</div>
+                        <div class="section-title"><svg class="text-icon" style="color:var(--gov-warn)"><use href="#i-alert"/></svg> 壅塞設定</div>
                         <div class="analysis-setting-group">
                             <div class="analysis-setting-head">1. ROI 來源</div>
                             <el-button type="warning" size="small" style="width:100%" @click="openRoiEditor(previewCamera.id)">開啟 ROI 編輯器</el-button>
@@ -4827,10 +4870,10 @@
                     <el-button type="success" :loading="detectionStartLoading[previewCamera?.id]===true" @click="startDetection(previewCamera.id)" v-if="!detectionStatus[previewCamera?.id]?.running">▶️ 啟動</el-button>
                     <el-button type="primary" @click="stopDetection(previewCamera.id)" v-else>⏹️ 停止</el-button>
                     <span style="font-size:12px;color:#475569;margin-left:8px;margin-right:8px">壅塞偵測</span>
-                    <el-button type="warning" :loading="congestionStartLoading[previewCamera?.id]===true" @click="startCongestion(previewCamera.id)" v-if="!congestionStatus[previewCamera?.id]?.running">🚦 啟動</el-button>
+                    <el-button type="warning" :loading="congestionStartLoading[previewCamera?.id]===true" @click="startCongestion(previewCamera.id)" v-if="!congestionStatus[previewCamera?.id]?.running"><svg class="text-icon" style="color:var(--gov-warn)"><use href="#i-alert"/></svg> 啟動</el-button>
                     <el-button @click="stopCongestion(previewCamera.id)" v-else>停止</el-button>
                     <span style="font-size:12px;color:#475569;margin-left:8px;margin-right:8px">LPR</span>
-                    <el-button type="success" :loading="lprStartLoading[previewCamera?.id]===true" @click="startLprByCamera(previewCamera.id)" v-if="!isLprRunning(previewCamera?.id)">🚗 啟動</el-button>
+                    <el-button type="success" :loading="lprStartLoading[previewCamera?.id]===true" @click="startLprByCamera(previewCamera.id)" v-if="!isLprRunning(previewCamera?.id)"><svg class="text-icon"><use href="#i-car"/></svg>啟動</el-button>
                     <el-button type="primary" @click="stopLprByCamera(previewCamera.id)" v-else>停止</el-button>
                 </div>
                 <div v-if="page==='speed_detection'">
@@ -4842,11 +4885,11 @@
                     <el-button type="primary" @click="stopDetection(previewCamera.id)" v-else>⏹️ 停止車流/車速偵測</el-button>
                 </div>
                 <div v-if="page==='congestion_detection'">
-                    <el-button type="warning" :loading="congestionStartLoading[previewCamera?.id]===true" @click="startCongestion(previewCamera.id)" v-if="!congestionStatus[previewCamera?.id]?.running">🚦 啟動壅塞偵測</el-button>
+                    <el-button type="warning" :loading="congestionStartLoading[previewCamera?.id]===true" @click="startCongestion(previewCamera.id)" v-if="!congestionStatus[previewCamera?.id]?.running"><svg class="text-icon" style="color:var(--gov-warn)"><use href="#i-alert"/></svg> 啟動壅塞偵測</el-button>
                     <el-button @click="stopCongestion(previewCamera.id)" v-else>停止壅塞偵測</el-button>
                 </div>
                 <div>
-                    <el-button @click="refreshPreview">🔄 重整</el-button>
+                    <el-button @click="refreshPreview"><svg class="text-icon"><use href="#i-refresh"/></svg>重整</el-button>
                     <el-button type="primary" @click="closePreview">完成</el-button>
                 </div>
             </div>
@@ -5090,18 +5133,18 @@
     <!-- 即時偵測事件：左照片 + 右影片 -->
     <el-dialog v-model="eventClipDialog.visible" :title="eventClipDialog.title" width="1280px" @closed="eventClipDialog.url=''">
         <div v-if="eventClipDialog.errorMsg" style="background:#fef0f0;color:#f56c6c;padding:12px;border-radius:6px;margin-bottom:8px">
-            ⚠️ {{ eventClipDialog.errorMsg }}
+            <svg class="text-icon" style="color:var(--gov-warn)"><use href="#i-alert"/></svg>{{ eventClipDialog.errorMsg }}
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start">
             <div>
-                <div style="font-size:13px;color:#64748b;margin-bottom:6px">📸 事件當下截圖（綠框=偵測 bbox）</div>
+                <div style="font-size:13px;color:#64748b;margin-bottom:6px"><svg class="text-icon"><use href="#i-camera"/></svg> 事件當下截圖（綠框=偵測 bbox）</div>
                 <img v-if="eventClipDialog.snapshotUrl"
                      :src="eventClipDialog.snapshotUrl"
                      style="width:100%;background:#000;border-radius:4px;display:block">
                 <div v-else style="background:#f1f5f9;padding:40px;text-align:center;color:#94a3b8;border-radius:4px">無截圖</div>
             </div>
             <div>
-                <div style="font-size:13px;color:#64748b;margin-bottom:6px">🎬 同時段錄影（事件時間 ±15 秒）</div>
+                <div style="font-size:13px;color:#64748b;margin-bottom:6px"><svg class="text-icon"><use href="#i-film"/></svg>同時段錄影（事件時間 ±15 秒）</div>
                 <video v-if="eventClipDialog.url"
                        :src="eventClipDialog.url"
                        controls autoplay
@@ -5209,7 +5252,7 @@
         <el-row :gutter="12" align="middle" style="margin-bottom:12px;">
             <el-col :span="6">
                 <el-select v-model="selectedId" placeholder="選擇攝影機" style="width:100%" :loading="loadingDevices" @change="onCameraChange">
-                    <el-option v-for="d in devices" :key="d.id" :label="d.name + (d.status==='Online' ? ' 🟢' : ' 🔴')" :value="d.id" />
+                    <el-option v-for="d in devices" :key="d.id" :label="d.name + (d.status==='Online' ? ' <svg class="text-icon" style="color:var(--gov-ok)"><use href="#i-dot"/></svg>' : ' <svg class="text-icon" style="color:var(--gov-fault)"><use href="#i-dot"/></svg>')" :value="d.id" />
                 </el-select>
             </el-col>
             <el-col :span="7">
@@ -6198,7 +6241,7 @@ const app=createApp({
                     else if(dir==='right')mv='right';
                 }
                 let ln = String(laneNo||'').trim() || 'unknown';
-                // ❌ 移除舊邏輯：lane_no=1 → left 是錯誤猜測
+                // <svg class="text-icon" style="color:var(--gov-fault)"><use href="#i-x"/></svg> 移除舊邏輯：lane_no=1 → left 是錯誤猜測
                 return {lane:mv,movement:mv,laneNo:ln,direction:dir};
             };
             let camObj=null;
@@ -7647,7 +7690,7 @@ const app=createApp({
             list.push({
                 key:'nvr-status',
                 tone:frigateStatus.status==='online'?'success':'warn',
-                icon:frigateStatus.status==='online'?'📡':'⚠️',
+                icon:frigateStatus.status==='online'?'<svg class="text-icon"><use href="#i-radio"/></svg>':'<svg class="text-icon" style="color:var(--gov-warn)"><use href="#i-alert"/></svg>️',
                 title:frigateStatus.status==='online'?'NVR 已連線':'NVR 連線中斷',
                 text:frigateStatus.status==='online'
                     ? `Frigate ${frigateStatus.version||'-'} · ${frigateStatus.cameras?.length||0} 台攝影機在線`
@@ -7657,7 +7700,7 @@ const app=createApp({
             list.push({
                 key:'filter',
                 tone:'info',
-                icon:'🧭',
+                icon:'<svg class="text-icon"><use href="#i-compass"/></svg>',
                 title:'目前查詢視角',
                 text:`${nvrPlaybackFilter.camera ? (nvrCameraDisplayName({name:nvrPlaybackFilter.camera}) || nvrPlaybackFilter.camera) : '全部攝影機'} · ${nvrPlaybackFilter.source==='motion'?'Motion 事件':nvrPlaybackFilter.source==='recording'?'全時錄影':'全來源'}`,
                 meta:`時間窗 ${nvrPlaybackFilter.timeFrom||'-'} ~ ${nvrPlaybackFilter.timeTo||'-'}`,
@@ -7666,7 +7709,7 @@ const app=createApp({
                 list.push({
                     key:'current',
                     tone:'neutral',
-                    icon:'🎬',
+                    icon:'<svg class="text-icon"><use href="#i-film"/></svg>',
                     title:'目前片段',
                     text:`${nvrEventCameraDisplayName({camera:nvrPlaybackCurrent.value.camera}) || nvrPlaybackCurrent.value.camera || '-'} · ${nvrPlaybackCurrent.value.label||'未分類'}`,
                     meta:`${formatNVRTime(nvrPlaybackCurrent.value.start_time)} · ${formatPlaybackDuration(nvrPlaybackCurrent.value.duration_sec)}`,
@@ -7676,7 +7719,7 @@ const app=createApp({
                 list.push({
                     key:'latest',
                     tone:'info',
-                    icon:'🕘',
+                    icon:'<svg class="text-icon"><use href="#i-clock"/></svg>',
                     title:'最新回放命中',
                     text:`${nvrEventCameraDisplayName({camera:nvrPlaybackLatestRow.value.camera}) || nvrPlaybackLatestRow.value.camera || '-'} · ${nvrPlaybackLatestRow.value.label||'-'}`,
                     meta:formatNVRTime(nvrPlaybackLatestRow.value.start_time),
@@ -8157,7 +8200,7 @@ const app=createApp({
             if(!map)return;
             cameras.value.forEach(c=>{
                 if(c.lat&&c.lng){
-                    const icon=L.divIcon({className:'',html:`<div style="background:${c.status==='online'?'#27ae60':'#0f766e'};width:24px;height:24px;border-radius:50%;border:2px solid #fff;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px">📹</div>`});
+                    const icon=L.divIcon({className:'',html:`<div style="background:${c.status==='online'?'#27ae60':'#0f766e'};width:24px;height:24px;border-radius:50%;border:2px solid #fff;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px"><svg class="text-icon"><use href="#i-video"/></svg></div>`});
                     L.marker([c.lat,c.lng],{icon}).addTo(map).bindPopup(c.name);
                 }
             });
