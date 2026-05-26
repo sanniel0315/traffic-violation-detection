@@ -545,39 +545,100 @@
             gap: 10px;
             margin-bottom: 6px;
         }
+        /* sidebar brand → LOGO 設計 */
+        .sidebar-brand.brand-logo {
+            padding: 24px 18px 20px;
+        }
         .sidebar-brand .logo-mark {
-            width: 30px; height: 30px;
+            width: 38px; height: 38px;
             flex-shrink: 0;
             background: var(--gov-primary);
-            border-radius: 7px;
+            border-radius: 9px;
             display: inline-flex;
             align-items: center;
             justify-content: center;
             color: #fff;
             font-family: var(--font-mono);
             font-weight: 700;
-            font-size: 13px;
+            font-size: 15px;
             letter-spacing: -0.04em;
             box-shadow: 0 2px 6px rgba(11,94,168,0.25);
         }
+        .logo-mark-gradient {
+            background: linear-gradient(135deg, var(--gov-primary) 0%, #2563eb 45%, var(--gov-primary-strong) 100%) !important;
+            position: relative;
+            overflow: hidden;
+            box-shadow:
+                0 6px 16px rgba(11,94,168,0.32),
+                0 2px 4px rgba(11,94,168,0.18),
+                inset 0 1px 0 rgba(255,255,255,0.18) !important;
+        }
+        .logo-mark-gradient::before {
+            content: '';
+            position: absolute;
+            inset: -2px;
+            background: linear-gradient(135deg, transparent 0%, rgba(255,255,255,0.18) 40%, transparent 70%);
+            animation: logo-shine 4s ease-in-out infinite;
+            pointer-events: none;
+        }
+        @keyframes logo-shine {
+            0%, 100% { transform: translateX(-100%) translateY(-100%); }
+            50%      { transform: translateX(100%) translateY(100%); }
+        }
+        .logo-mark-text {
+            position: relative;
+            z-index: 1;
+            font-family: var(--font-mono);
+            font-weight: 700;
+            font-size: 16px;
+            letter-spacing: -0.04em;
+            color: #fff;
+        }
+        .logo-mark-corner {
+            position: absolute;
+            bottom: 4px; right: 4px;
+            width: 5px; height: 5px;
+            background: #fff;
+            opacity: 0.85;
+            border-radius: 1px;
+            box-shadow: 0 0 4px rgba(255,255,255,0.8);
+            animation: logo-corner-pulse 2s ease-in-out infinite;
+        }
+        @keyframes logo-corner-pulse {
+            0%, 100% { opacity: 0.4; }
+            50%      { opacity: 1; }
+        }
+        .sidebar-brand .brand-text {
+            position: relative;
+            padding-left: 10px;
+            min-width: 0;
+        }
+        .sidebar-brand .brand-accent-bar {
+            position: absolute;
+            left: 0; top: 2px; bottom: 2px;
+            width: 2px;
+            background: linear-gradient(180deg, var(--gov-primary) 0%, transparent 100%);
+            border-radius: 2px;
+        }
         .sidebar-brand .brand-title {
-            font-size: 14.5px;
+            font-size: 15px;
             font-weight: 700;
             color: var(--gov-text);
             line-height: 1.2;
             letter-spacing: -0.005em;
+            margin-bottom: 3px;
         }
-        .sidebar-brand .brand-meta {
+        .sidebar-brand .brand-subtitle {
             font-family: var(--font-mono);
-            font-size: 9.5px;
+            font-size: 8.5px;
             letter-spacing: 0.18em;
             color: var(--gov-mute-2);
-            text-transform: uppercase;
-            margin-top: 4px;
+            font-weight: 400;
+            line-height: 1.2;
         }
-        .sidebar-brand .brand-meta b {
+        .sidebar-brand .brand-subtitle b {
             color: var(--gov-primary);
-            font-weight: 600;
+            font-weight: 700;
         }
 
         /* Phase 2: 中段 menu 區 — 包既有 menu-item，讓 brand/status 可 sticky */
@@ -858,19 +919,81 @@
         .header .h-status-pill {
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-            padding: 4px 10px;
+            gap: 9px;
+            padding: 4px 11px 4px 9px;
             background: rgba(31,157,85,0.10);
             color: var(--gov-ok);
             border-radius: 999px;
             font-family: var(--font-mono);
             font-size: 11px;
             font-weight: 700;
-            letter-spacing: 0.1em;
+            letter-spacing: 0.12em;
+            position: relative;
+            overflow: hidden;
         }
-        .header .h-status-pill .ds-pulse-dot {
+        /* NAV BAR ONLINE 動畫 — pill 內掃光 + dot 雙環呼吸 + 文字微 fade */
+        .header .h-status-pill::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, transparent 0%, rgba(31,157,85,0.18) 50%, transparent 100%);
+            transform: translateX(-100%);
+            animation: pill-sweep 3.2s ease-in-out infinite;
+        }
+        .header .h-status-pill .pill-dot {
+            position: relative;
+            width: 8px; height: 8px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .header .h-status-pill .pill-dot-core {
             width: 6px; height: 6px;
+            background: var(--gov-ok);
+            border-radius: 50%;
+            box-shadow: 0 0 6px var(--gov-ok);
+            position: relative; z-index: 2;
         }
+        .header .h-status-pill .pill-dot::before,
+        .header .h-status-pill .pill-dot::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            border: 1.2px solid var(--gov-ok);
+            opacity: 0;
+            animation: pill-ring 1.8s ease-out infinite;
+        }
+        .header .h-status-pill .pill-dot::after {
+            animation-delay: 0.9s;
+        }
+        .header .h-status-pill .pill-text {
+            position: relative;
+            animation: pill-text-fade 2.4s ease-in-out infinite;
+        }
+        @keyframes pill-sweep {
+            0%   { transform: translateX(-100%); }
+            50%  { transform: translateX(100%); }
+            100% { transform: translateX(100%); }
+        }
+        @keyframes pill-ring {
+            0%   { transform: scale(0.6); opacity: 0.85; }
+            70%  { transform: scale(2.2); opacity: 0; }
+            100% { transform: scale(2.2); opacity: 0; }
+        }
+        @keyframes pill-text-fade {
+            0%, 100% { opacity: 1; letter-spacing: 0.12em; }
+            50%      { opacity: 0.7; letter-spacing: 0.18em; }
+        }
+        /* fault state (對應 sidebar service-state.fault) — 之後可以擴充 */
+        .header .h-status-pill.fault {
+            background: rgba(196,58,49,0.10);
+            color: var(--gov-fault);
+        }
+        .header .h-status-pill.fault .pill-dot-core { background: var(--gov-fault); box-shadow: 0 0 6px var(--gov-fault); }
+        .header .h-status-pill.fault .pill-dot::before,
+        .header .h-status-pill.fault .pill-dot::after { border-color: var(--gov-fault); animation-duration: 1.1s; }
+        .header .h-status-pill.fault::before { background: linear-gradient(90deg, transparent 0%, rgba(196,58,49,0.22) 50%, transparent 100%); animation-duration: 1.6s; }
         .content { flex: 1; padding: 16px; overflow-y: auto; }
         
         /* 儀表板佈局 */
@@ -1689,12 +1812,17 @@
     <div v-else class="layout">
         <!-- 側邊欄 -->
         <div class="sidebar">
-            <!-- sidebar brand 區 (移除 IP / Jetson 標示) -->
-            <div class="sidebar-brand">
+            <!-- sidebar brand 區 — AI 交通影像分析 LOGO -->
+            <div class="sidebar-brand brand-logo">
                 <div class="brand-row">
-                    <span class="logo-mark">AI</span>
-                    <div>
+                    <div class="logo-mark logo-mark-gradient">
+                        <span class="logo-mark-text">AI</span>
+                        <span class="logo-mark-corner"></span>
+                    </div>
+                    <div class="brand-text">
+                        <div class="brand-accent-bar"></div>
                         <div class="brand-title">交通影像分析</div>
+                        <div class="brand-subtitle">TRAFFIC IMAGING <b>ANALYTICS</b></div>
                     </div>
                 </div>
             </div>
@@ -1758,7 +1886,10 @@
                 <div style="display:flex;align-items:center;gap:14px">
                     <span class="h-system-name">AI 交通影像分析</span>
                     <span class="h-divider"></span>
-                    <span class="h-status-pill"><span class="ds-pulse-dot"></span>ONLINE</span>
+                    <span class="h-status-pill" id="header-status-pill">
+                        <span class="pill-dot"><span class="pill-dot-core"></span></span>
+                        <span class="pill-text" id="header-status-text">ONLINE</span>
+                    </span>
                     <span class="h-clock">{{ currentTime }}</span>
                     <span class="h-divider"></span>
                     <el-tag size="small" type="info">{{ currentUser.username }} / {{ currentUser.role }}</el-tag>
@@ -11937,27 +12068,37 @@ const app=createApp({
             }catch{}
         };
 
-        // 持續健康度探測 — 失敗就切換 sidebar-status 為紅色「連線異常」
+        // 持續健康度探測 — sidebar service-state + nav bar h-status-pill 同步切換
         const probeServiceHealth=async()=>{
             const state=document.getElementById('service-state');
             const txt=document.getElementById('online-text');
             const beEl=document.getElementById('be-version');
-            if(!state||!txt) return;
+            const navPill=document.getElementById('header-status-pill');
+            const navTxt=document.getElementById('header-status-text');
+            const setFault=(msg)=>{
+                if(state){ state.classList.add('fault'); }
+                if(txt){ txt.textContent=msg||'SERVICE 連線異常'; }
+                if(navPill){ navPill.classList.add('fault'); }
+                if(navTxt){ navTxt.textContent='OFFLINE'; }
+            };
+            const setOnline=()=>{
+                if(state){ state.classList.remove('fault'); }
+                if(txt){ txt.textContent='SERVICE ONLINE'; }
+                if(navPill){ navPill.classList.remove('fault'); }
+                if(navTxt){ navTxt.textContent='ONLINE'; }
+            };
             try{
                 const ctrl=new AbortController();
                 const t=setTimeout(()=>ctrl.abort(),4000);
                 const r=await fetch('/api/health',{cache:'no-store',signal:ctrl.signal});
                 clearTimeout(t);
                 if(r.ok){
-                    state.classList.remove('fault');
-                    txt.textContent='SERVICE ONLINE';
+                    setOnline();
                 }else{
-                    state.classList.add('fault');
-                    txt.textContent='SERVICE 連線異常 ('+r.status+')';
+                    setFault('SERVICE 連線異常 ('+r.status+')');
                 }
             }catch{
-                state.classList.add('fault');
-                txt.textContent='SERVICE 連線異常';
+                setFault('SERVICE 連線異常');
                 if(beEl) beEl.textContent='v—';
             }
         };
