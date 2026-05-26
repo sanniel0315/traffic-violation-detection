@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OCR 微服務 — YOLO 字元偵測"""
+"""OCR 微服務 — YOLO 字元偵測 + 台灣車牌格式修復"""
 import cv2
 import numpy as np
 import re
@@ -9,6 +9,102 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 
 _char_model = None
+
+
+# ─── 台灣車牌格式修復 ───
+# OCR 字元相似誤判修正 (字母 → 數字 / 數字 → 字母)
+_TO_DIGIT = {"O": "0", "Q": "0", "D": "0", "U": "0",
+             "I": "1", "L": "1", "Z": "2", "S": "5",
+             "G": "6", "T": "7", "B": "8"}
+_TO_ALPHA = {"0": "O", "1": "I", "2": "Z", "4": "A",
+             "5": "S", "6": "G", "7": "T", "8": "B"}
+
+# 台灣車牌常見格式 (len, [letter_positions, digit_positions])
+# 格式: (total_len, (字母位置 set, 數字位置 set))，dash 位置由 split_idx 決定
+_PLATE_FORMATS = [
+    # 7 碼: ABC-1234 / 1234-ABC / AB1-2345 / 12-3456 等
+    (7, (frozenset({0,1,2}), frozenset({3,4,5,6})), 3),  # AAA-DDDD (新式 3+4)
+    (7, (frozenset({4,5,6}), frozenset({0,1,2,3})), 4),  # DDDD-AAA
+    (7, (frozenset({0,1}),   frozenset({2,3,4,5,6})), 2), # AA-DDDDD (機車部分)
+    # 6 碼: AB-1234 / 1234-AB / ABC-123 / 123-ABC / A1-2345 / A12-345
+    (6, (frozenset({0,1,2}), frozenset({3,4,5})), 3),  # AAA-DDD
+    (6, (frozenset({3,4,5}), frozenset({0,1,2})), 3),  # DDD-AAA
+    (6, (frozenset({0,1}),   frozenset({2,3,4,5})), 2),  # AA-DDDD
+    (6, (frozenset({4,5}),   frozenset({0,1,2,3})), 4),  # DDDD-AA
+    (6, (frozenset({0}),     frozenset({1,2,3,4,5})), 1),  # A-DDDDD (少見)
+    # 5 碼: AB-123 / 123-AB / 機車舊式
+    (5, (frozenset({0,1,2}), frozenset({3,4})), 3),  # AAA-DD
+    (5, (frozenset({0,1}),   frozenset({2,3,4})), 2),  # AA-DDD
+    (5, (frozenset({3,4}),   frozenset({0,1,2})), 3),  # DDD-AA
+]
+
+
+_PLATE_LETTERS_BLACKLIST = frozenset('IOQ')  # 台灣車牌不使用 I/O/Q
+
+
+def _repair_plate(text: str) -> tuple:
+    """嘗試把 raw OCR text 修復成符合台灣車牌格式的形式。
+    回傳 (修復後 text with dash, score 0-1, matched)。
+    matched=True 條件:
+      1. 對到 _PLATE_FORMATS 內一個格式
+      2. swap 次數 <= 2
+      3. letter 部分不含 I/O/Q (台灣車牌規範)
+    """
+    if not text:
+        return (text, 0.0, False)
+    raw = re.sub(r'[^A-Z0-9]', '', text.upper())
+    n = len(raw)
+    best = None
+    for total, (letters_set, digits_set), split in _PLATE_FORMATS:
+        if n != total:
+            continue
+        repaired_chars = []
+        swap_count = 0
+        ok = True
+        for i, ch in enumerate(raw):
+            target_is_letter = i in letters_set
+            target_is_digit  = i in digits_set
+            is_letter = ch.isalpha()
+            is_digit  = ch.isdigit()
+            if target_is_letter and is_letter:
+                repaired_chars.append(ch)
+            elif target_is_digit and is_digit:
+                repaired_chars.append(ch)
+            elif target_is_letter and is_digit:
+                mapped = _TO_ALPHA.get(ch)
+                if mapped:
+                    repaired_chars.append(mapped); swap_count += 1
+                else:
+                    ok = False; break
+            elif target_is_digit and is_letter:
+                mapped = _TO_DIGIT.get(ch)
+                if mapped:
+                    repaired_chars.append(mapped); swap_count += 1
+                else:
+                    ok = False; break
+            else:
+                ok = False; break
+        if not ok:
+            continue
+        # letter 部分檢查 I/O/Q
+        letter_chars = [repaired_chars[i] for i in letters_set]
+        has_blacklist = any(c in _PLATE_LETTERS_BLACKLIST for c in letter_chars)
+        # score: swap=0 → 1.0；每 swap 扣 0.25；blacklist 扣 0.4
+        score = 1.0 - swap_count * 0.25 - (0.4 if has_blacklist else 0.0)
+        score = max(0.0, score)
+        # matched 條件: 不含 blacklist letters 且 swap <= 2
+        is_matched = (not has_blacklist) and (swap_count <= 2)
+        repaired = ''.join(repaired_chars[:split]) + '-' + ''.join(repaired_chars[split:])
+        if best is None or score > best[1]:
+            best = (repaired, score, is_matched)
+    if best:
+        return best
+    # 沒對到任何格式 — 回傳原始 (加 dash 嘗試切 3-4 / 4-3 / 2-4 等)
+    if n == 7:
+        return (raw[:3] + '-' + raw[3:], 0.0, False)
+    if n == 6:
+        return (raw[:3] + '-' + raw[3:], 0.0, False)
+    return (raw, 0.0, False)
 
 
 def get_char_model():
@@ -63,10 +159,36 @@ def ocr_plate(img_bytes: bytes) -> dict:
     chars = [(x, ch, cf) for x, ch, cf in chars if ch != '-']
     if not chars:
         return {"text": None, "confidence": 0.0, "time": dt}
+
+    # 個別字元 conf < 0.4 過濾 — 避免單一糊字拖低整體判斷
+    chars = [(x, ch, cf) for x, ch, cf in chars if cf >= 0.4]
+    if not chars:
+        return {"text": None, "confidence": 0.0, "time": dt}
+
     chars.sort(key=lambda c: c[0])
-    text = ''.join(c[1] for c in chars)
+    raw_text = ''.join(c[1] for c in chars)
     avg_conf = sum(c[2] for c in chars) / len(chars)
-    return {"text": text, "confidence": round(avg_conf, 3), "time": round(dt, 3), "chars": len(chars)}
+
+    # 台灣車牌格式修復 + 字元相似性 swap
+    repaired_text, repair_score, matched = _repair_plate(raw_text)
+    if matched:
+        # 符合格式 — 用修復後 text，conf 加權 (原 OCR conf × repair score)
+        final_text = repaired_text
+        final_conf = avg_conf * (0.6 + 0.4 * repair_score)
+    else:
+        # 不合台灣車牌格式 — 大幅降權，pipeline 端 min_confidence filter 會自動丟
+        final_text = repaired_text  # 仍含 dash 方便人眼判讀
+        final_conf = avg_conf * 0.35
+
+    return {
+        "text": final_text,
+        "raw_text": raw_text,
+        "confidence": round(final_conf, 3),
+        "raw_confidence": round(avg_conf, 3),
+        "matched_format": matched,
+        "time": round(dt, 3),
+        "chars": len(chars),
+    }
 
 
 class OCRHandler(BaseHTTPRequestHandler):
