@@ -170,6 +170,182 @@
 
         /* 數字 / IP / port / URL 統一用 mono — 全站舊 code 不需動,新元件用 .ds-num-data */
 
+        /* ═══════════════════════════════════════════════════════════════════
+           Element Plus 全域視覺統一 (套用 design system / 公務藍 / mono)
+           ═══════════════════════════════════════════════════════════════════ */
+
+        /* —— el-button: rounded, primary 公務藍漸層, hover lift, focus ring —— */
+        .el-button {
+            border-radius: 8px !important;
+            font-weight: 600 !important;
+            letter-spacing: 0.02em;
+            transition: transform .15s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease !important;
+        }
+        .el-button:hover:not(.is-disabled):not(.is-loading) {
+            transform: translateY(-1px);
+        }
+        .el-button:active:not(.is-disabled) {
+            transform: translateY(0);
+        }
+        .el-button--primary {
+            background: linear-gradient(135deg, var(--gov-primary) 0%, #094680 100%) !important;
+            border-color: var(--gov-primary) !important;
+            box-shadow: 0 2px 6px rgba(11,94,168,0.25);
+        }
+        .el-button--primary:hover:not(.is-disabled) {
+            box-shadow: 0 6px 16px rgba(11,94,168,0.32);
+            background: linear-gradient(135deg, #0d6cb8 0%, #0b5ea8 100%) !important;
+        }
+        .el-button--success { background: var(--gov-ok) !important; border-color: var(--gov-ok) !important; }
+        .el-button--warning { background: var(--gov-warn) !important; border-color: var(--gov-warn) !important; }
+        .el-button--danger  { background: var(--gov-fault) !important; border-color: var(--gov-fault) !important; }
+        .el-button.is-plain.el-button--primary {
+            color: var(--gov-primary) !important;
+            background: var(--gov-primary-soft) !important;
+            border-color: var(--gov-primary-line) !important;
+        }
+        .el-button.is-plain:hover:not(.is-disabled) {
+            box-shadow: 0 4px 10px rgba(11,30,60,0.08);
+        }
+        .el-button:focus-visible {
+            outline: 2px solid var(--gov-primary);
+            outline-offset: 2px;
+        }
+
+        /* —— el-tag: design system 配色, rounded pill, mono 數字 —— */
+        .el-tag {
+            border-radius: 999px !important;
+            font-weight: 600 !important;
+            letter-spacing: 0.02em;
+            border: 1px solid transparent !important;
+        }
+        .el-tag.el-tag--primary {
+            background: var(--gov-primary-soft) !important;
+            color: var(--gov-primary) !important;
+            border-color: var(--gov-primary-line) !important;
+        }
+        .el-tag.el-tag--success {
+            background: rgba(31,157,85,0.10) !important;
+            color: var(--gov-ok) !important;
+            border-color: rgba(31,157,85,0.25) !important;
+        }
+        .el-tag.el-tag--warning {
+            background: rgba(217,119,6,0.10) !important;
+            color: var(--gov-warn) !important;
+            border-color: rgba(217,119,6,0.25) !important;
+        }
+        .el-tag.el-tag--danger {
+            background: rgba(196,58,49,0.10) !important;
+            color: var(--gov-fault) !important;
+            border-color: rgba(196,58,49,0.25) !important;
+        }
+        .el-tag.el-tag--info {
+            background: var(--gov-surface-2) !important;
+            color: var(--gov-muted) !important;
+            border-color: var(--gov-border) !important;
+        }
+
+        /* —— el-input / textarea: 細邊 + focus 公務藍光暈 —— */
+        .el-input__wrapper, .el-textarea__inner {
+            box-shadow: 0 0 0 1px var(--gov-border) inset !important;
+            border-radius: 8px !important;
+            transition: box-shadow .18s ease !important;
+        }
+        .el-input__wrapper:hover, .el-textarea__inner:hover {
+            box-shadow: 0 0 0 1px var(--gov-primary-line) inset !important;
+        }
+        .el-input.is-focus .el-input__wrapper,
+        .el-input__wrapper.is-focus,
+        .el-textarea__inner:focus {
+            box-shadow: 0 0 0 1px var(--gov-primary) inset, 0 0 0 3px rgba(11,94,168,0.12) !important;
+        }
+
+        /* —— el-select: focus 同 input —— */
+        .el-select .el-input__wrapper.is-focus,
+        .el-select .el-input.is-focus .el-input__wrapper {
+            box-shadow: 0 0 0 1px var(--gov-primary) inset, 0 0 0 3px rgba(11,94,168,0.12) !important;
+        }
+
+        /* —— el-table: 表頭公務藍底 + row hover + border radius —— */
+        .el-table {
+            --el-table-border-color: var(--gov-border);
+            --el-table-header-bg-color: var(--gov-surface-2);
+            --el-table-row-hover-bg-color: rgba(11,94,168,0.04);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .el-table th.el-table__cell {
+            background: var(--gov-surface-2) !important;
+            color: var(--gov-muted) !important;
+            font-weight: 700 !important;
+            letter-spacing: 0.04em;
+            font-size: 12.5px;
+            border-bottom: 2px solid var(--gov-border) !important;
+        }
+        .el-table tr:hover > td {
+            background: rgba(11,94,168,0.04) !important;
+        }
+
+        /* —— el-pagination: active 公務藍 —— */
+        .el-pagination .el-pager li.is-active {
+            background: var(--gov-primary) !important;
+            color: #fff !important;
+            border-radius: 6px;
+        }
+        .el-pagination .btn-prev, .el-pagination .btn-next {
+            border-radius: 6px !important;
+        }
+
+        /* —— el-switch active: 公務藍 (預設綠) —— */
+        .el-switch.is-checked .el-switch__core {
+            background: var(--gov-primary) !important;
+            border-color: var(--gov-primary) !important;
+        }
+
+        /* —— el-radio-button active: 公務藍漸層 —— */
+        .el-radio-button__original-radio:checked + .el-radio-button__inner {
+            background: linear-gradient(135deg, var(--gov-primary) 0%, #094680 100%) !important;
+            border-color: var(--gov-primary) !important;
+            box-shadow: -1px 0 0 0 var(--gov-primary) !important;
+        }
+
+        /* —— el-form-item label: 對齊 design system tone —— */
+        .el-form-item__label {
+            color: var(--gov-text) !important;
+            font-weight: 600 !important;
+        }
+
+        /* —— stats-quick-btn active (公務藍): 保留既有 .stats-quick-btn 樣式微調 —— */
+        .stats-quick-btn.active {
+            background: var(--gov-primary) !important;
+            color: #fff !important;
+            border-color: var(--gov-primary) !important;
+        }
+
+        /* —— el-date-picker / el-time-picker focus —— */
+        .el-date-editor.el-input .el-input__wrapper.is-focus,
+        .el-date-editor .el-input__wrapper.is-focus {
+            box-shadow: 0 0 0 1px var(--gov-primary) inset, 0 0 0 3px rgba(11,94,168,0.12) !important;
+        }
+
+        /* —— el-message / el-notification: 公務藍 accent stripe —— */
+        .el-message {
+            border-radius: 8px !important;
+            border: 1px solid var(--gov-border) !important;
+            box-shadow: 0 8px 24px rgba(11,30,60,0.12) !important;
+        }
+        .el-message--success { border-left: 4px solid var(--gov-ok) !important; }
+        .el-message--warning { border-left: 4px solid var(--gov-warn) !important; }
+        .el-message--error   { border-left: 4px solid var(--gov-fault) !important; }
+        .el-message--info    { border-left: 4px solid var(--gov-primary) !important; }
+
+        /* —— Element Plus dropdown: 對齊 dialog backdrop style —— */
+        .el-popper.is-light {
+            border-radius: 8px !important;
+            border: 1px solid var(--gov-border) !important;
+            box-shadow: 0 12px 28px rgba(11,30,60,0.14) !important;
+        }
+
         /* ───── 登入介面 v3: 多層 ambient 底圖 + 浮 orb 光暈 + grain + grid + corner mark ───── */
         .login-page {
             min-height: 100vh;
