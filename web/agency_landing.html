@@ -529,6 +529,183 @@ section {
 }
 .api-meta dd b { color: var(--gov-primary); font-weight: 700; }
 
+/* ───────── §03b Swagger / OpenAPI ───────── */
+.docs-divider {
+  display: flex; align-items: center; gap: 16px;
+  margin: 48px 0 24px;
+}
+.docs-divider .line {
+  flex: 1; height: 1px; background: var(--gov-border);
+}
+.docs-divider .lbl {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 0.28em;
+  color: var(--gov-primary);
+  text-transform: uppercase;
+}
+.doc-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 36px;
+}
+.doc-card {
+  position: relative;
+  display: block;
+  padding: 22px 22px 24px;
+  background: var(--gov-surface);
+  border: 1px solid var(--gov-border);
+  border-radius: 10px;
+  color: inherit;
+  text-decoration: none;
+  box-shadow: var(--shadow-sm);
+  transition: all .25s ease;
+}
+.doc-card:hover {
+  border-color: var(--gov-primary);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+  text-decoration: none;
+}
+.doc-card .dc-rank {
+  display: inline-block;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--gov-primary);
+  background: var(--gov-primary-soft);
+  padding: 3px 9px;
+  border-radius: 4px;
+  margin-bottom: 14px;
+}
+.doc-card h4 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--gov-text);
+  letter-spacing: -0.01em;
+  margin-bottom: 4px;
+  line-height: 1.2;
+}
+.doc-card .dc-zh {
+  font-size: 12px;
+  color: var(--gov-muted);
+  margin-bottom: 12px;
+}
+.doc-card .dc-body {
+  font-size: 12.5px;
+  color: var(--gov-text-2);
+  line-height: 1.6;
+  margin-bottom: 18px;
+}
+.doc-card .dc-go {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gov-primary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.doc-card .dc-go .arrow {
+  display: inline-block;
+  transition: transform .25s ease;
+}
+.doc-card:hover .dc-go .arrow { transform: translateX(4px); }
+
+.endpoint-block {
+  background: var(--gov-surface);
+  border: 1px solid var(--gov-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.endpoint-block .eb-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 16px 22px;
+  background: var(--gov-surface-2);
+  border-bottom: 1px solid var(--gov-border);
+}
+.endpoint-block .eb-head h4 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--gov-text);
+  letter-spacing: 0.005em;
+}
+.endpoint-block .eb-head .src {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  color: var(--gov-muted);
+}
+.endpoint-block .eb-head .src a { color: var(--gov-primary); }
+.endpoint-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.endpoint-table th, .endpoint-table td {
+  text-align: left;
+  padding: 11px 22px;
+  border-bottom: 1px solid var(--gov-border);
+  vertical-align: middle;
+}
+.endpoint-table tr:last-child td { border-bottom: none; }
+.endpoint-table th {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--gov-muted);
+  font-weight: 700;
+  background: var(--gov-surface-2);
+}
+.endpoint-table td.method { width: 80px; }
+.endpoint-table td.path {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12.5px;
+  color: var(--gov-text);
+  font-weight: 500;
+  width: 36%;
+}
+.endpoint-table td.summary { color: var(--gov-text-2); }
+.endpoint-table td.scope {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  color: var(--gov-primary);
+  width: 130px;
+}
+.endpoint-table td.scope .pill {
+  display: inline-block;
+  background: var(--gov-primary-soft);
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.06em;
+}
+.method-tag {
+  display: inline-block;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 3px 8px;
+  border-radius: 4px;
+  color: #fff;
+  min-width: 54px;
+  text-align: center;
+}
+.method-tag.GET    { background: #1f9d55; }
+.method-tag.POST   { background: #0b5ea8; }
+.method-tag.PUT    { background: #d97706; }
+.method-tag.DELETE { background: #c43a31; }
+.method-tag.PATCH  { background: #7e22ce; }
+
+.endpoint-empty {
+  text-align: center;
+  padding: 24px;
+  color: var(--gov-muted);
+  font-size: 13px;
+}
+.endpoint-empty.error { color: var(--gov-fault); }
+
 /* ───────── §04 HEALTH ───────── */
 .metric-row {
   display: grid;
@@ -999,6 +1176,58 @@ congestion-report?bucket=1h"</span> | <span class="k">jq</span> .</div>
         </dl>
       </div>
     </div>
+
+    <!-- ── interactive documentation ── -->
+    <div class="docs-divider">
+      <div class="line"></div>
+      <div class="lbl">INTERACTIVE DOCUMENTATION · 互動文件</div>
+      <div class="line"></div>
+    </div>
+
+    <div class="doc-row">
+      <a class="doc-card" href="http://192.168.0.108:8000/docs" target="_blank" rel="noopener">
+        <span class="dc-rank">RECOMMENDED</span>
+        <h4>Swagger UI</h4>
+        <div class="dc-zh">線上互動測試</div>
+        <div class="dc-body">直接在瀏覽器試打 endpoint、查 request/response schema、複製 cURL 範例。對接時最快的探索方式。</div>
+        <span class="dc-go">/docs <span class="arrow">→</span></span>
+      </a>
+      <a class="doc-card" href="http://192.168.0.108:8000/redoc" target="_blank" rel="noopener">
+        <span class="dc-rank">READING</span>
+        <h4>ReDoc</h4>
+        <div class="dc-zh">優雅閱讀版文件</div>
+        <div class="dc-body">三欄式排版的 OpenAPI 文件。適合對接前完整瀏覽 endpoint、參數、回應格式。</div>
+        <span class="dc-go">/redoc <span class="arrow">→</span></span>
+      </a>
+      <a class="doc-card" href="http://192.168.0.108:8000/openapi.json" target="_blank" rel="noopener">
+        <span class="dc-rank">SPEC</span>
+        <h4>OpenAPI JSON</h4>
+        <div class="dc-zh">原始規格檔下載</div>
+        <div class="dc-body">機器可讀的 OpenAPI 3.x 規格，可導入 Postman / Insomnia / 自動程式碼產生器（openapi-generator）。</div>
+        <span class="dc-go">/openapi.json <span class="arrow">→</span></span>
+      </a>
+    </div>
+
+    <!-- ── auto-loaded endpoint list ── -->
+    <div class="endpoint-block">
+      <div class="eb-head">
+        <h4>External endpoints · 自動從 OpenAPI 規格載入</h4>
+        <span class="src">source: <a href="http://192.168.0.108:8000/openapi.json" target="_blank">/openapi.json</a></span>
+      </div>
+      <table class="endpoint-table">
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>Path</th>
+            <th>Summary</th>
+            <th>Auth</th>
+          </tr>
+        </thead>
+        <tbody id="endpoint-tbody">
+          <tr><td colspan="4" class="endpoint-empty" id="endpoint-status">Loading OpenAPI spec…</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
   <!-- ─── §04 HEALTH ─── -->
@@ -1198,6 +1427,62 @@ async function probeStreams(){
 }
 probeStreams();
 setInterval(probeStreams, 20000);
+
+// ─── load OpenAPI spec and render external endpoint table ───
+async function loadOpenApiEndpoints(){
+  const tbody  = document.getElementById('endpoint-tbody');
+  const status = document.getElementById('endpoint-status');
+  const escape = s => String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const host = (location.host && !location.host.startsWith('file'))
+    ? location.origin
+    : 'http://192.168.0.108:8000';
+  try {
+    const r = await fetch(host + '/openapi.json', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const spec = await r.json();
+    const rows = [];
+    const paths = spec.paths || {};
+    Object.keys(paths).sort().forEach(p => {
+      // 只列對外 endpoint：/api/v1/external 或 /api/health 等 public 端點
+      if (!(p.startsWith('/api/v1/external') || p === '/api/health')) return;
+      const ops = paths[p];
+      ['get','post','put','delete','patch'].forEach(m => {
+        if (!ops[m]) return;
+        const op = ops[m];
+        const summary = op.summary || op.description || '';
+        const securitySchemes = (op.security && op.security.length) ? op.security : (spec.security || []);
+        const requiresAuth = securitySchemes.some(s => Object.keys(s||{}).length > 0);
+        // FastAPI 對 require_scope dependency 通常不帶到 OpenAPI security，這裡用路徑模式 fallback：
+        const isExternal = p.startsWith('/api/v1/external');
+        const authBadge = (isExternal && p !== '/api/health')
+          ? '<span class="pill">X-API-Key</span>'
+          : '<span style="color:var(--gov-muted)">public</span>';
+        rows.push({
+          method: m.toUpperCase(),
+          path: p,
+          summary,
+          auth: authBadge,
+        });
+      });
+    });
+    if (!rows.length) {
+      status.textContent = '在 OpenAPI 規格內沒找到對外 endpoint（/api/v1/external/*）';
+      return;
+    }
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td class="method"><span class="method-tag ${r.method}">${r.method}</span></td>
+        <td class="path">${escape(r.path)}</td>
+        <td class="summary">${escape(r.summary)}</td>
+        <td class="scope">${r.auth}</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    status.classList.add('error');
+    status.textContent = '載入 OpenAPI 失敗：' + (e.message || e) + '（請確認 traffic-api 服務運作中）';
+  }
+}
+loadOpenApiEndpoints();
 </script>
 
 </body>
