@@ -514,7 +514,7 @@
         
         /* 側邊欄 */
         .sidebar {
-            width: 240px;
+            width: var(--sidebar-w, 240px);
             background: var(--gov-surface);
             border-right: 1px solid var(--gov-border);
             flex-shrink: 0;
@@ -522,6 +522,96 @@
             display: flex;
             flex-direction: column;
             position: relative;
+            transition: width .22s cubic-bezier(.4,.1,.2,1);
+        }
+        .sidebar.dragging {
+            transition: none !important;
+            user-select: none;
+        }
+        /* collapsed: icon-only 64px */
+        .sidebar.collapsed {
+            width: 64px;
+        }
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-item .arrow,
+        .sidebar.collapsed .brand-text,
+        .sidebar.collapsed .sidebar-status,
+        .sidebar.collapsed .logo-bracket,
+        .sidebar.collapsed .submenu {
+            display: none !important;
+        }
+        .sidebar.collapsed .menu-item {
+            justify-content: center;
+            padding: 12px 0;
+            border-left: 3px solid transparent;
+        }
+        .sidebar.collapsed .menu-item.active::before { display: none; }
+        .sidebar.collapsed .menu-item .nav-icon {
+            width: 20px;
+            height: 20px;
+            opacity: 0.95;
+        }
+        .sidebar.collapsed .sidebar-brand {
+            padding: 18px 0;
+            display: flex;
+            justify-content: center;
+        }
+        .sidebar.collapsed .brand-row { gap: 0; }
+        .sidebar.collapsed .logo-mark-wrap { width: 38px; height: 38px; }
+
+        /* resize handle (right edge) */
+        .sidebar-resizer {
+            position: absolute;
+            top: 0; right: -3px;
+            width: 6px;
+            height: 100%;
+            cursor: ew-resize;
+            z-index: 10;
+            background: transparent;
+            transition: background .15s ease;
+        }
+        .sidebar-resizer::after {
+            content: '';
+            position: absolute;
+            right: 2px; top: 50%;
+            transform: translateY(-50%);
+            width: 2px; height: 36px;
+            background: var(--gov-border);
+            border-radius: 2px;
+            transition: background .15s ease;
+        }
+        .sidebar-resizer:hover { background: rgba(11,94,168,0.05); }
+        .sidebar-resizer:hover::after { background: var(--gov-primary); height: 48px; }
+        .sidebar.collapsed .sidebar-resizer { display: none; }
+
+        /* collapse toggle button (floating on right edge) */
+        .sidebar-toggle {
+            position: absolute;
+            top: 26px; right: -13px;
+            width: 26px; height: 26px;
+            background: var(--gov-surface);
+            border: 1px solid var(--gov-border);
+            border-radius: 50%;
+            z-index: 15;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(16,24,40,0.08);
+            transition: all .18s ease;
+            color: var(--gov-muted);
+            padding: 0;
+        }
+        .sidebar-toggle svg {
+            width: 14px; height: 14px;
+            transition: transform .22s ease;
+        }
+        .sidebar.collapsed .sidebar-toggle svg { transform: rotate(180deg); }
+        .sidebar-toggle:hover {
+            background: var(--gov-primary);
+            border-color: var(--gov-primary);
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(11,94,168,0.3);
         }
         .sidebar-header { padding: 16px; font-weight: 700; color: var(--gov-text); border-bottom: 1px solid var(--gov-border); }
 
@@ -2052,6 +2142,14 @@
                 <div class="ss-row ss-ver">前台 <b id="fe-version">v1.0.0</b></div>
                 <div class="ss-row ss-ver">後台 <b id="be-version">v—</b></div>
             </div>
+
+            <!-- 拖拉拉寬 handle + 收合按鈕 -->
+            <span class="sidebar-resizer" id="sidebar-resizer" aria-hidden="true"></span>
+            <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-label="收合 / 展開側邊欄">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M15 18l-6-6 6-6"/>
+                </svg>
+            </button>
         </div>
 
         <!-- 主內容 -->
@@ -12284,6 +12382,54 @@ const app=createApp({
             }
         };
 
+        // sidebar 收合 + 拖拉拉寬 (含 localStorage 記住偏好)
+        const initSidebarUX=()=>{
+            const sb=document.querySelector('.sidebar');
+            if(!sb) return;
+            const SIDEBAR_MIN=180, SIDEBAR_MAX=420;
+            const savedW=parseInt(localStorage.getItem('sidebarWidth')||'',10);
+            if(!Number.isNaN(savedW) && savedW>=SIDEBAR_MIN && savedW<=SIDEBAR_MAX){
+                sb.style.setProperty('--sidebar-w',savedW+'px');
+            }
+            if(localStorage.getItem('sidebarCollapsed')==='1'){
+                sb.classList.add('collapsed');
+            }
+            // toggle button
+            const toggle=document.getElementById('sidebar-toggle');
+            toggle?.addEventListener('click',()=>{
+                sb.classList.toggle('collapsed');
+                localStorage.setItem('sidebarCollapsed', sb.classList.contains('collapsed')?'1':'0');
+            });
+            // resize drag
+            const resizer=document.getElementById('sidebar-resizer');
+            let dragging=false;
+            resizer?.addEventListener('mousedown',(e)=>{
+                if(sb.classList.contains('collapsed')) return;
+                dragging=true;
+                sb.classList.add('dragging');
+                document.body.style.cursor='ew-resize';
+                e.preventDefault();
+            });
+            window.addEventListener('mousemove',(e)=>{
+                if(!dragging) return;
+                const w=Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, e.clientX));
+                sb.style.setProperty('--sidebar-w',w+'px');
+            });
+            window.addEventListener('mouseup',()=>{
+                if(!dragging) return;
+                dragging=false;
+                sb.classList.remove('dragging');
+                document.body.style.cursor='';
+                const w=parseInt(getComputedStyle(sb).width,10);
+                if(!Number.isNaN(w)) localStorage.setItem('sidebarWidth',String(w));
+            });
+            // 雙擊 resizer 回 default 240
+            resizer?.addEventListener('dblclick',()=>{
+                sb.style.setProperty('--sidebar-w','240px');
+                localStorage.setItem('sidebarWidth','240');
+            });
+        };
+
         onMounted(async()=>{
             window.addEventListener('message',handleRoiEditorMessage);
             window.addEventListener('focus',handleWindowFocus);
@@ -12291,6 +12437,8 @@ const app=createApp({
             fetchBackendVersion();
             probeServiceHealth();
             setInterval(probeServiceHealth,10000);
+            // 等 Vue render 完 DOM 後 init sidebar UX
+            setTimeout(initSidebarUX, 100);
             setInterval(()=>{
                 currentTime.value=new Date().toLocaleString('zh-TW');
                 statsNowMs.value=Date.now();
