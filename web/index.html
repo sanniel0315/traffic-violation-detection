@@ -5477,6 +5477,8 @@
                                                 class="nvr-replay-video"
                                                 controls
                                                 autoplay
+                                                muted
+                                                playsinline
                                                 preload="metadata"
                                                 @loadedmetadata="onNvrPlaybackVideoLoaded"
                                                 @timeupdate="onNvrPlaybackVideoTimeUpdate"
@@ -7007,7 +7009,7 @@
                 <div style="font-size:13px;color:#64748b;margin-bottom:6px"><svg class="text-icon"><use href="#i-film"/></svg>同時段錄影（事件時間 ±15 秒）</div>
                 <video v-if="eventClipDialog.url"
                        :src="eventClipDialog.url"
-                       controls autoplay
+                       controls autoplay muted playsinline preload="auto"
                        @error="onEventClipError"
                        style="width:100%;background:#000;max-height:60vh;border-radius:4px;display:block">
                 </video>
