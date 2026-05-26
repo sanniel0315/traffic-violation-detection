@@ -36,11 +36,31 @@
 }
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
 html, body { height:100%; overflow:hidden; }
-body { font-family: "Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif; background:var(--bg-deepest); color:var(--text-primary); font-size:13px; }
-::-webkit-scrollbar { width:6px; height:6px; }
-::-webkit-scrollbar-track { background:transparent; }
-::-webkit-scrollbar-thumb { background:rgba(255,255,255,.12); border-radius:3px; }
-::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,.2); }
+body {
+  font-family: "Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  background: var(--bg-deepest);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-feature-settings: "tnum","ss01";
+}
+/* mono 字體 utility (跟主頁對齊) — 給 IP / port / timestamp */
+.mono, .num, .timestamp { font-family: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace; font-variant-numeric: tabular-nums; }
+/* scrollbar 對齊主頁公務藍細條 (dark theme 改用淡色) */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(148,163,184,0.18);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background .2s ease;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.32); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+* { scrollbar-color: rgba(148,163,184,0.25) transparent; scrollbar-width: thin; }
+/* selection 公務藍底（跟主頁一致） */
+::selection { background: #0b5ea8; color: #fff; }
+::-moz-selection { background: #0b5ea8; color: #fff; }
 
 /* ── Shell Layout ── */
 .app-shell {
