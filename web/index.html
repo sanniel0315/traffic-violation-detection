@@ -349,6 +349,9 @@
         }
         .login-pwd-toggle:active { transform: translateY(-50%) scale(0.92); }
         .login-pwd-toggle svg { width: 18px; height: 18px; display: block; }
+        /* size="small" 變體 — 對應 el-input size=small (32px) */
+        .login-pwd-toggle.pwd-toggle-sm { padding: 4px 6px; right: 4px; }
+        .login-pwd-toggle.pwd-toggle-sm svg { width: 14px; height: 14px; }
 
         .login-form-tag {
             display: inline-block;
@@ -408,9 +411,23 @@
             font-size: 11.5px;
             color: var(--gov-mute-2);
         }
+        .login-foot-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
         .login-foot-doc {
             font-family: var(--font-mono);
             letter-spacing: 0.08em;
+            color: var(--gov-muted);
+            font-size: 11.5px;
+            font-weight: 600;
+        }
+        .login-foot-date {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--gov-mute-2);
+            letter-spacing: 0.12em;
         }
         .login-foot-sep {
             flex: 1;
@@ -605,8 +622,54 @@
             border-radius: 4px;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; background: linear-gradient(180deg, #f4f7fb 0%, var(--gov-bg) 100%); color: var(--gov-text); }
-        .layout { display: flex; min-height: 100vh; }
+        body {
+            font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+            background:
+                radial-gradient(ellipse 50% 40% at 15% 12%, rgba(11,94,168,0.07) 0%, transparent 60%),
+                radial-gradient(ellipse 45% 45% at 88% 88%, rgba(16,185,129,0.05) 0%, transparent 60%),
+                linear-gradient(180deg, #f4f7fb 0%, var(--gov-bg) 100%);
+            color: var(--gov-text);
+            position: relative;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        /* 主頁 ambient 底圖 — 兩個浮動圓圈 + 動態 + 不影響主內容 */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -220px; right: -200px;
+            width: 600px; height: 600px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(11,94,168,0.10) 0%, transparent 70%);
+            animation: page-amb-a 28s ease-in-out infinite;
+            pointer-events: none;
+            z-index: 0;
+        }
+        body::after {
+            content: '';
+            position: fixed;
+            bottom: -260px; left: -180px;
+            width: 700px; height: 700px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 70%);
+            animation: page-amb-b 34s ease-in-out infinite;
+            pointer-events: none;
+            z-index: 0;
+        }
+        @keyframes page-amb-a {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            50%      { transform: translate(-80px, 100px) scale(1.12); }
+        }
+        @keyframes page-amb-b {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            50%      { transform: translate(70px, -70px) scale(1.18); }
+        }
+        .layout {
+            display: flex;
+            min-height: 100vh;
+            position: relative;
+            z-index: 1;
+        }
         
         /* 側邊欄 */
         .sidebar {
@@ -2172,7 +2235,10 @@
             </el-form>
 
             <div class="login-foot">
-                <span class="login-foot-doc" id="login-foot-version">DOC v1.0 · 2026-05-26</span>
+                <div class="login-foot-info">
+                    <span class="login-foot-doc" id="login-foot-version">DOC v1.0.0</span>
+                    <span class="login-foot-date" id="login-foot-date">2026-05-26</span>
+                </div>
                 <span class="login-foot-sep"></span>
                 <a href="/web/agency_landing.html" target="_blank">機關平台對接文件 →</a>
             </div>
@@ -2985,7 +3051,13 @@
                                 </div>
                                 <div>
                                     <div style="font-size:12px;color:#64748b;margin-bottom:6px">密碼</div>
-                                    <el-input v-model="nxSettings.password" type="password" show-password autocomplete="new-password" placeholder="password"/>
+                                    <div class="login-pwd-wrap">
+                                        <el-input v-model="nxSettings.password" :type="showNxPassword?'text':'password'" autocomplete="new-password" placeholder="password"/>
+                                        <button type="button" class="login-pwd-toggle" @click="showNxPassword=!showNxPassword" :title="showNxPassword?'隱藏':'顯示'">
+                                            <svg v-if="!showNxPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                                            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-10-7-10-7a19.77 19.77 0 0 1 4.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 10 7 10 7a19.79 19.79 0 0 1-3.18 4.42"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
+                                        </button>
+                                    </div>
                                 </div>
                                 <div>
                                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
@@ -3049,7 +3121,15 @@
                                 <el-form-item label="Host"><el-input v-model="mqttSettings.host" size="small" style="width:180px" placeholder="broker.example.com"/></el-form-item>
                                 <el-form-item label="Port"><el-input-number v-model="mqttSettings.port" :min="1" :max="65535" size="small"/></el-form-item>
                                 <el-form-item label="帳號"><el-input v-model="mqttSettings.username" size="small" style="width:140px"/></el-form-item>
-                                <el-form-item label="密碼"><el-input v-model="mqttSettings.password" type="password" show-password size="small" style="width:140px"/></el-form-item>
+                                <el-form-item label="密碼">
+                                    <div class="login-pwd-wrap" style="width:140px">
+                                        <el-input v-model="mqttSettings.password" :type="showMqttPassword?'text':'password'" size="small"/>
+                                        <button type="button" class="login-pwd-toggle pwd-toggle-sm" @click="showMqttPassword=!showMqttPassword" :title="showMqttPassword?'隱藏':'顯示'">
+                                            <svg v-if="!showMqttPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                                            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-10-7-10-7a19.77 19.77 0 0 1 4.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 10 7 10 7a19.79 19.79 0 0 1-3.18 4.42"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
+                                        </button>
+                                    </div>
+                                </el-form-item>
                             </el-form>
                             <el-form label-width="110px" inline>
                                 <el-form-item label="Base Topic"><el-input v-model="mqttSettings.base_topic" size="small" style="width:150px"/></el-form-item>
@@ -5610,7 +5690,15 @@
                 <el-form-item label="IP"><el-input v-model="cameraForm.ip"/></el-form-item>
                 <el-row :gutter="12">
                     <el-col :span="12"><el-form-item label="帳號"><el-input v-model="cameraForm.username"/></el-form-item></el-col>
-                    <el-col :span="12"><el-form-item label="密碼"><el-input v-model="cameraForm.password" type="password" show-password/></el-form-item></el-col>
+                    <el-col :span="12"><el-form-item label="密碼">
+                        <div class="login-pwd-wrap">
+                            <el-input v-model="cameraForm.password" :type="showCameraFormPassword?'text':'password'"/>
+                            <button type="button" class="login-pwd-toggle" @click="showCameraFormPassword=!showCameraFormPassword" :title="showCameraFormPassword?'隱藏':'顯示'">
+                                <svg v-if="!showCameraFormPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-10-7-10-7a19.77 19.77 0 0 1 4.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 10 7 10 7a19.79 19.79 0 0 1-3.18 4.42"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
+                            </button>
+                        </div>
+                    </el-form-item></el-col>
                 </el-row>
                 <el-row :gutter="12">
                     <el-col :span="12"><el-form-item label="埠號"><el-input v-model="cameraForm.port"/></el-form-item></el-col>
@@ -5784,7 +5872,15 @@
             </el-row>
             <el-row :gutter="12">
                 <el-col :span="12"><el-form-item label="帳號"><el-input v-model="frigateCameraForm.username" placeholder="admin"/></el-form-item></el-col>
-                <el-col :span="12"><el-form-item label="密碼"><el-input v-model="frigateCameraForm.password" type="password" show-password/></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="密碼">
+                    <div class="login-pwd-wrap">
+                        <el-input v-model="frigateCameraForm.password" :type="showFrigateCameraFormPassword?'text':'password'"/>
+                        <button type="button" class="login-pwd-toggle" @click="showFrigateCameraFormPassword=!showFrigateCameraFormPassword" :title="showFrigateCameraFormPassword?'隱藏':'顯示'">
+                            <svg v-if="!showFrigateCameraFormPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-10-7-10-7a19.77 19.77 0 0 1 4.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 10 7 10 7a19.79 19.79 0 0 1-3.18 4.42"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
+                        </button>
+                    </div>
+                </el-form-item></el-col>
             </el-row>
             <el-form-item label="串流路徑"><el-input v-model="frigateCameraForm.stream_path" placeholder="stream1"/></el-form-item>
             <div style="background:#f5f7fa;padding:10px 14px;border-radius:6px;margin-bottom:16px;font-size:13px">
@@ -6094,6 +6190,11 @@ const app=createApp({
         const currentUser=reactive({username:'',role:''});
         const loginForm=reactive({username:'admin',password:''});
         const showLoginPassword=ref(false);
+        // 其他位置的 password 明碼切換 ref
+        const showNxPassword=ref(false);
+        const showMqttPassword=ref(false);
+        const showCameraFormPassword=ref(false);
+        const showFrigateCameraFormPassword=ref(false);
         const isAuthenticated=computed(()=>authReady.value && !!currentUser.username);
         const users=ref([]);
         const showUserCreateDialog=ref(false);
@@ -12487,12 +12588,11 @@ const app=createApp({
                 const feEl=document.getElementById('fe-version');
                 const beEl=document.getElementById('be-version');
                 const footEl=document.getElementById('login-foot-version');
+                const dateEl=document.getElementById('login-foot-date');
                 if(feEl && d.frontend) feEl.textContent='v'+d.frontend;
                 if(beEl && d.backend)  beEl.textContent='v'+d.backend;
-                if(footEl && d.frontend){
-                    const date=d.build_date || '';
-                    footEl.textContent='DOC v'+d.frontend + (date?(' · '+date):'');
-                }
+                if(footEl && d.frontend) footEl.textContent='DOC v'+d.frontend;
+                if(dateEl && d.build_date) dateEl.textContent=d.build_date;
             }catch{
                 // fallback: 從 openapi.json info.version 取 (沒 commit hash)
                 try{
@@ -12663,7 +12763,7 @@ const app=createApp({
             if(lprVisualTimer)clearInterval(lprVisualTimer);
         });
         
-        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
+        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
