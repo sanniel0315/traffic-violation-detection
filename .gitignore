@@ -81,3 +81,10 @@ data/violations.db.bak
 
 # 執行時自動回寫，僅 timestamp churn — 由 _default_ntp_settings() fallback 處理
 config/system/ntp_settings.json
+
+# AI agent 工作目錄 / 暫存
+.claude/
+temp_pdf_pages/
+
+# 個人文件 (root 層 PDF) — 真要納入版本請放 docs/
+/*.pdf

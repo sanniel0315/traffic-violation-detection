@@ -1,0 +1,62 @@
+name: Trivy Security Scan
+
+# 觸發條件：當推送到 main 分支或發起 PR 時執行
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  trivy-scan:
+    name: Trivy Vulnerability Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 取得最新版的程式碼
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. 檔案系統掃描（Table 格式，方便在 Log 中閱讀）
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          # 掃到 CRITICAL/HIGH 漏洞時讓 Pipeline 失敗
+          exit-code: '1'
+          # 忽略尚未有修補程式的漏洞，避免無謂的阻擋
+          ignore-unfixed: true
+          # 掃描作業系統層與應用程式依賴套件
+          vuln-type: 'os,library'
+          # 只關注極度危險與高危險的漏洞
+          severity: 'CRITICAL,HIGH'
+
+      # 3. 掃描 Dockerfile 本身的設定問題（misconfig）
+      - name: Run Trivy config scan on Dockerfile
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+      # 4. 產生 SARIF 報告（無論前面步驟是否失敗都執行）
+      - name: Run Trivy scanner (SARIF output)
+        uses: aquasecurity/trivy-action@master
+        if: always()
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      # 5. 上傳結果到 GitHub Security 儀表板
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
