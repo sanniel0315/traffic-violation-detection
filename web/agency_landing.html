@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>邊緣交通影像服務 / EDGE TRAFFIC IMAGING</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* follow web/index.html 原本政府色系 */
+  --gov-bg:             #eef2f6;
+  --gov-bg-2:           #f4f7fb;
+  --gov-surface:        #ffffff;
+  --gov-surface-2:      #f7f9fc;
+  --gov-border:         #d7dee8;
+  --gov-border-strong:  #b8c4d4;
+  --gov-text:           #1f2937;
+  --gov-text-2:         #344151;
+  --gov-muted:          #5b6778;
+  --gov-mute-2:         #8b95a4;
+  --gov-primary:        #0b5ea8;
+  --gov-primary-strong: #084d8a;
+  --gov-primary-soft:   #eaf2fb;
+  --gov-primary-line:   #c5dbf0;
+  --gov-ok:             #1f9d55;
+  --gov-warn:           #d97706;
+  --gov-fault:          #c43a31;
+
+  --shadow-sm:  0 1px 2px rgba(16,24,40,0.04);
+  --shadow:     0 1px 3px rgba(16,24,40,0.06), 0 1px 2px rgba(16,24,40,0.04);
+  --shadow-lg:  0 8px 24px rgba(11,94,168,0.08), 0 2px 6px rgba(16,24,40,0.05);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  background: linear-gradient(180deg, #f4f7fb 0%, var(--gov-bg) 100%);
+  color: var(--gov-text);
+  font-size: 14px;
+  line-height: 1.65;
+  min-height: 100vh;
+  font-feature-settings: "kern", "liga", "ss01";
+}
+
+::selection { background: var(--gov-primary); color: #fff; }
+
+code, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-feature-settings: "ss01","ss02"; }
+
+a { color: var(--gov-primary); text-decoration: none; }
+a:hover { color: var(--gov-primary-strong); text-decoration: underline; text-underline-offset: 3px; }
+
+/* ───────── status bar ───────── */
+.status-bar {
+  position: sticky; top: 0; z-index: 50;
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--gov-border);
+  padding: 10px 32px;
+  font-size: 12px;
+  color: var(--gov-muted);
+  display: flex; align-items: center; gap: 18px;
+  letter-spacing: 0.02em;
+}
+.status-bar .dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--gov-ok);
+  box-shadow: 0 0 0 3px rgba(31,157,85,0.18);
+  animation: pulse 2s ease-in-out infinite;
+}
+.status-bar .sep { color: var(--gov-mute-2); opacity: 0.55; }
+.status-bar b { color: var(--gov-text); font-weight: 600; }
+.status-bar .live {
+  color: var(--gov-primary);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.status-bar .right { margin-left: auto; font-family: "IBM Plex Mono", monospace; font-size: 11.5px; }
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(31,157,85,0.18); }
+  50%      { box-shadow: 0 0 0 6px rgba(31,157,85,0); }
+}
+
+/* ───────── wrap ───────── */
+.wrap { max-width: 1380px; margin: 0 auto; padding: 0 32px; }
+
+section {
+  position: relative;
+  padding: 88px 0 72px;
+  border-bottom: 1px solid var(--gov-border);
+}
+
+.section-head {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 28px;
+  align-items: start;
+  margin-bottom: 40px;
+}
+.section-num {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: var(--gov-primary);
+  padding-top: 18px;
+  border-top: 2px solid var(--gov-primary);
+  display: inline-block;
+  width: fit-content;
+}
+.section-title {
+  font-size: 38px;
+  font-weight: 300;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: var(--gov-text);
+  margin-bottom: 6px;
+}
+.section-title b { font-weight: 700; color: var(--gov-primary); }
+.section-sub {
+  font-size: 14px;
+  color: var(--gov-muted);
+  letter-spacing: 0.02em;
+}
+
+/* ───────── HERO ───────── */
+.hero {
+  padding: 84px 0 96px;
+}
+.hero-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  background: var(--gov-primary-soft);
+  border: 1px solid var(--gov-primary-line);
+  color: var(--gov-primary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  margin-bottom: 32px;
+  border-radius: 999px;
+  font-family: "IBM Plex Mono", monospace;
+}
+.hero-tag .marker {
+  width: 6px; height: 6px;
+  background: var(--gov-primary);
+  border-radius: 50%;
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(280px, 1fr);
+  gap: 64px;
+  align-items: end;
+}
+.hero h1 {
+  font-size: clamp(48px, 7.2vw, 96px);
+  font-weight: 300;
+  line-height: 1.02;
+  letter-spacing: -0.025em;
+  color: var(--gov-text);
+  margin-bottom: 28px;
+}
+.hero h1 b {
+  font-weight: 700;
+  color: var(--gov-primary);
+}
+.hero h1 .en {
+  display: block;
+  margin-top: 14px;
+  font-size: 0.32em;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  color: var(--gov-muted);
+  font-family: "IBM Plex Mono", monospace;
+}
+.hero p {
+  font-size: 15.5px;
+  color: var(--gov-text-2);
+  line-height: 1.75;
+  max-width: 620px;
+}
+.hero p b { color: var(--gov-primary); font-weight: 600; }
+
+.hero-meta {
+  background: var(--gov-surface);
+  border: 1px solid var(--gov-border);
+  border-radius: 10px;
+  padding: 24px 26px;
+  box-shadow: var(--shadow);
+}
+.hero-meta-head {
+  font-size: 11px;
+  letter-spacing: 0.25em;
+  font-weight: 700;
+  color: var(--gov-primary);
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--gov-border);
+  margin-bottom: 16px;
+}
+.hero-meta dl {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 8px 16px;
+  font-size: 12.5px;
+  margin-bottom: 16px;
+}
+.hero-meta dl:last-child { margin-bottom: 0; }
+.hero-meta dt {
+  color: var(--gov-muted);
+  letter-spacing: 0.08em;
+  font-weight: 500;
+}
+.hero-meta dd {
+  color: var(--gov-text);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+  font-weight: 500;
+}
+.hero-meta dd b { color: var(--gov-primary); font-weight: 700; }
+
+/* ───────── §01 STREAMS ───────── */
+.stream-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+.stream-card {
+  background: var(--gov-surface);
+  border: 1px solid var(--gov-border);
+  border-radius: 10px;
+  padding: 26px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow .25s ease, border-color .25s ease, transform .2s ease;
+  position: relative;
+  overflow: hidden;
+}
+.stream-card:hover {
+  box-shadow: var(--shadow-lg);
+  border-color: var(--gov-primary-line);
+  transform: translateY(-2px);
+}
+.stream-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 3px;
+  background: var(--gov-primary);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform .35s cubic-bezier(.5,.1,.2,1);
+}
+.stream-card:hover::before { transform: scaleX(1); }
+
+.sc-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 18px;
+}
+.sc-id {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: var(--gov-mute-2);
+  text-transform: uppercase;
+}
+.sc-live {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-family: "IBM Plex Mono", monospace;
+}
+.sc-live.online {
+  background: rgba(31,157,85,0.10);
+  color: var(--gov-ok);
+}
+.sc-live.offline {
+  background: rgba(196,58,49,0.10);
+  color: var(--gov-fault);
+}
+.sc-live .ldot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.sc-live.online .ldot {
+  box-shadow: 0 0 0 3px rgba(31,157,85,0.15);
+  animation: pulse-ok 2s ease-in-out infinite;
+}
+@keyframes pulse-ok {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(31,157,85,0.18); }
+  50%      { box-shadow: 0 0 0 6px rgba(31,157,85,0); }
+}
+
+.sc-name {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--gov-text);
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  margin-bottom: 4px;
+}
+.sc-cn {
+  font-size: 13px;
+  color: var(--gov-muted);
+  margin-bottom: 18px;
+}
+.sc-spec {
+  font-size: 12px;
+  color: var(--gov-text-2);
+  background: var(--gov-surface-2);
+  border: 1px solid var(--gov-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  font-family: "IBM Plex Mono", monospace;
+  line-height: 1.6;
+}
+.sc-spec b { color: var(--gov-primary); font-weight: 700; }
+.sc-spec .sep { color: var(--gov-border-strong); margin: 0 6px; }
+
+.sc-urls { display: flex; flex-direction: column; gap: 6px; }
+.url-row {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--gov-bg-2);
+  border: 1px solid var(--gov-border);
+  border-radius: 6px;
+  font-size: 12px;
+  transition: all .18s ease;
+}
+.url-row:hover {
+  background: var(--gov-primary-soft);
+  border-color: var(--gov-primary-line);
+}
+.url-row .proto {
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--gov-primary);
+  font-weight: 700;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+}
+.url-row .url {
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--gov-text-2);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.copy-btn {
+  background: var(--gov-surface);
+  border: 1px solid var(--gov-border);
+  color: var(--gov-muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  padding: 4px 9px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all .15s ease;
+}
+.copy-btn:hover {
+  background: var(--gov-primary);
+  border-color: var(--gov-primary);
+  color: #fff;
+}
+.copy-btn.ok {
+  background: var(--gov-ok);
+  border-color: var(--gov-ok);
+  color: #fff;
+}
+
+/* ───────── §02 PROTOCOLS ───────── */
+.proto-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+}
+.proto-card {
+  position: relative;
+  padding: 26px 22px 28px;
+  background: var(--gov-surface);
+  border: 1px solid var(--gov-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow .25s ease;
+}
+.proto-card:hover { box-shadow: var(--shadow-lg); }
+
+.pc-rank {
+  display: inline-block;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--gov-primary);
+  background: var(--gov-primary-soft);
+  padding: 3px 9px;
+  border-radius: 4px;
+  margin-bottom: 14px;
+}
+.proto-card h3 {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--gov-text);
+  letter-spacing: -0.01em;
+  margin-bottom: 4px;
+}
+.pc-zh {
+  font-size: 12.5px;
+  color: var(--gov-muted);
+  letter-spacing: 0.05em;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px dashed var(--gov-border);
+}
+.pc-body {
+  font-size: 13px;
+  color: var(--gov-text-2);
+  line-height: 1.7;
+  margin-bottom: 16px;
+}
+.pc-use {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--gov-mute-2);
+  letter-spacing: 0.2em;
+  margin-bottom: 8px;
+}
+.pc-list { font-size: 12.5px; color: var(--gov-text-2); line-height: 1.85; }
+.pc-list div { padding-left: 14px; position: relative; }
+.pc-list div::before {
+  content: '';
+  position: absolute; left: 0; top: 11px;
+  width: 6px; height: 1px;
+  background: var(--gov-primary);
+}
+
+/* ───────── §03 API ───────── */
+.api-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 48px;
+  align-items: start;
+}
+.code-block {
+  background: #0f172a;
+  color: #cbd5e1;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 22px 24px 24px 56px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.85;
+  overflow-x: auto;
+  position: relative;
+  box-shadow: var(--shadow);
+}
+.code-block::before {
+  content: '$';
+  position: absolute;
+  top: 22px; left: 24px;
+  color: #60a5fa;
+  font-weight: 700;
+}
+.code-block .c { color: #64748b; }    /* comment */
+.code-block .k { color: #60a5fa; }    /* verb */
+.code-block .s { color: #86efac; }    /* string */
+.code-block .p { color: #fde68a; }    /* prop */
+
+.api-meta { font-size: 13.5px; line-height: 1.75; color: var(--gov-text-2); }
+.api-meta h4 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--gov-text);
+  margin-bottom: 6px;
+  letter-spacing: -0.005em;
+}
+.api-meta .lbl {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  color: var(--gov-primary);
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.api-meta p { margin-bottom: 22px; color: var(--gov-text-2); }
+.api-meta dl {
+  background: var(--gov-surface);
+  border: 1px solid var(--gov-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.api-meta dl > div {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  border-bottom: 1px solid var(--gov-border);
+}
+.api-meta dl > div:last-child { border-bottom: none; }
+.api-meta dt {
+  padding: 11px 14px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--gov-muted);
+  background: var(--gov-surface-2);
+  border-right: 1px solid var(--gov-border);
+}
+.api-meta dd {
+  padding: 11px 14px;
+  font-size: 12.5px;
+  color: var(--gov-text);
+  font-family: "IBM Plex Mono", monospace;
+}
+.api-meta dd b { color: var(--gov-primary); font-weight: 700; }
+
+/* ───────── §04 HEALTH ───────── */
+.metric-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+.metric {
+  background: var(--gov-surface);
+  border: 1px solid var(--gov-border);
+  border-radius: 10px;
+  padding: 22px 22px 24px;
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  transition: box-shadow .25s ease;
+}
+.metric:hover { box-shadow: var(--shadow-lg); }
+.metric .m-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: var(--gov-muted);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.metric .m-val {
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--gov-text);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  font-family: "IBM Plex Mono", monospace;
+}
+.metric .m-val .unit {
+  font-size: 14px;
+  color: var(--gov-muted);
+  margin-left: 6px;
+  font-weight: 500;
+}
+.metric .m-sub {
+  margin-top: 12px;
+  font-size: 11.5px;
+  color: var(--gov-mute-2);
+  letter-spacing: 0.05em;
+}
+.metric.online .m-val { color: var(--gov-ok); }
+.metric.fault .m-val  { color: var(--gov-fault); }
+.metric.online::before, .metric.fault::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 3px;
+  border-radius: 10px 10px 0 0;
+}
+.metric.online::before { background: var(--gov-ok); }
+.metric.fault::before  { background: var(--gov-fault); }
+
+/* ───────── §05 NETWORK ───────── */
+.fw-table {
+  width: 100%;
+  background: var(--gov-surface);
+  border: 1px solid var(--gov-border);
+  border-radius: 10px;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+.fw-table th, .fw-table td {
+  text-align: left;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--gov-border);
+}
+.fw-table tr:last-child td { border-bottom: none; }
+.fw-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--gov-primary);
+  font-weight: 700;
+  background: var(--gov-surface-2);
+}
+.fw-table td { color: var(--gov-text-2); font-size: 13.5px; }
+.fw-table td b {
+  color: var(--gov-text);
+  font-weight: 700;
+  font-family: "IBM Plex Mono", monospace;
+}
+.fw-table td .proto-tag {
+  display: inline-block;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--gov-primary);
+  background: var(--gov-primary-soft);
+  padding: 2px 8px;
+  margin-right: 8px;
+  border-radius: 4px;
+}
+
+/* ───────── footer ───────── */
+.foot {
+  background: var(--gov-text);
+  color: #cbd5e1;
+  padding: 64px 0 56px;
+  margin-top: 24px;
+}
+.foot a { color: #93c5fd; }
+.foot a:hover { color: #fff; }
+.foot-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 56px;
+  align-items: start;
+}
+.foot h5 {
+  font-size: 11px;
+  font-weight: 700;
+  color: #93c5fd;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+.foot .brand {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #fff;
+  letter-spacing: -0.005em;
+  margin-bottom: 8px;
+}
+.foot .brand span { color: #93c5fd; font-weight: 400; }
+.foot .blurb {
+  font-size: 12.5px;
+  color: #94a3b8;
+  line-height: 1.7;
+  max-width: 440px;
+}
+.foot .links { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.foot .ver {
+  font-size: 11px;
+  color: #64748b;
+  letter-spacing: 0.12em;
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid #1e293b;
+}
+
+/* ───────── animations ───────── */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.hero, section { animation: rise .8s cubic-bezier(.3,.1,.2,1) both; }
+.hero { animation-delay: 0.05s; }
+section:nth-of-type(2) { animation-delay: 0.12s; }
+section:nth-of-type(3) { animation-delay: 0.20s; }
+section:nth-of-type(4) { animation-delay: 0.28s; }
+section:nth-of-type(5) { animation-delay: 0.36s; }
+section:nth-of-type(6) { animation-delay: 0.44s; }
+
+/* ───────── responsive ───────── */
+@media (max-width: 1100px) {
+  .hero-grid  { grid-template-columns: 1fr; gap: 36px; }
+  .stream-grid{ grid-template-columns: 1fr; }
+  .proto-grid { grid-template-columns: repeat(2, 1fr); }
+  .api-split  { grid-template-columns: 1fr; gap: 32px; }
+  .metric-row { grid-template-columns: repeat(2, 1fr); }
+  .foot-grid  { grid-template-columns: 1fr; gap: 32px; }
+}
+@media (max-width: 640px) {
+  .wrap { padding: 0 18px; }
+  .status-bar { padding: 10px 18px; flex-wrap: wrap; gap: 12px; font-size: 11px; }
+  .section-head { grid-template-columns: 1fr; gap: 16px; }
+  .section-title { font-size: 28px; }
+  .proto-grid { grid-template-columns: 1fr; }
+  .url-row { grid-template-columns: 52px 1fr; }
+  .url-row .copy-btn { grid-column: 1 / -1; justify-self: end; }
+}
+</style>
+</head>
+<body>
+
+<!-- ─── STATUS BAR ─── -->
+<div class="status-bar">
+  <span class="dot" aria-hidden="true"></span>
+  <span class="live">SERVICE ONLINE</span>
+  <span class="sep">/</span>
+  <b>Jetson AGX Orin</b>
+  <span class="sep">/</span>
+  HOST <b style="font-family:'IBM Plex Mono',monospace">192.168.0.108</b>
+  <span class="sep">/</span>
+  <span class="mono">JetPack 6.0 · CUDA 12.2 · TRT 8.6</span>
+  <span class="right"><span id="local-clock">--:--:--</span> UTC+08</span>
+</div>
+
+<div class="wrap">
+
+  <!-- ─── HERO ─── -->
+  <section class="hero">
+    <span class="hero-tag"><span class="marker"></span>AGENCY DELIVERABLE / 對機關平台交付</span>
+    <div class="hero-grid">
+      <div>
+        <h1>
+          邊緣交通<b>影像服務</b>
+          <span class="en">EDGE TRAFFIC IMAGING SERVICE</span>
+        </h1>
+        <p>
+          為機關平台、既設 NVR / VMS、研究單位提供 <b>RTSP / HLS / MJPEG / WebRTC</b> 多協定即時影像轉發。
+          搭配對外 REST 報表 API 與健康檢查端點。所有串流在 Jetson 邊緣節點完成 H.264 passthrough 不重編碼，
+          <b>延遲低、規格透明、可程式化整合</b>。
+        </p>
+      </div>
+      <div class="hero-meta">
+        <div class="hero-meta-head">SYSTEM ENDPOINT</div>
+        <dl>
+          <dt>Host</dt>      <dd><b>192.168.0.108</b></dd>
+          <dt>API</dt>       <dd>:8000 (REST)</dd>
+          <dt>RTSP</dt>      <dd>:8554 (TCP)</dd>
+          <dt>HTTP</dt>      <dd>:1984 (HLS / MJPEG)</dd>
+        </dl>
+        <dl>
+          <dt>Codec</dt>     <dd>H.264 Main/High</dd>
+          <dt>Res.</dt>      <dd>1920 × 1080</dd>
+          <dt>FPS</dt>       <dd>≥ 15</dd>
+          <dt>Latency</dt>   <dd>RTSP ≈ 200 ms</dd>
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── §01 STREAMS ─── -->
+  <section>
+    <div class="section-head">
+      <span class="section-num">§ 01</span>
+      <div>
+        <h2 class="section-title">即時影像清單 <b>· Active streams</b></h2>
+        <div class="section-sub">目前對外開放的 3 條串流（2026-05-26 經 RTSP DESCRIBE 全部回應 200 OK）</div>
+      </div>
+    </div>
+
+    <div class="stream-grid">
+
+      <!-- cam_1 -->
+      <article class="stream-card">
+        <div class="sc-head">
+          <span class="sc-id">STREAM 01</span>
+          <span class="sc-live online" data-cam="cam_1"><span class="ldot"></span>LIVE</span>
+        </div>
+        <div class="sc-name">cam_1</div>
+        <div class="sc-cn">匝道攝影機 · Axis ramp-cam</div>
+        <div class="sc-spec">
+          <b>H.264</b> · High @ 4.1
+          <span class="sep">·</span>
+          <b>1920×1080</b>
+          <span class="sep">·</span>
+          <b>30 fps</b>
+        </div>
+        <div class="sc-urls">
+          <div class="url-row">
+            <span class="proto">RTSP</span>
+            <span class="url">rtsp://192.168.0.108:8554/cam_1</span>
+            <button class="copy-btn" data-copy="rtsp://192.168.0.108:8554/cam_1">COPY</button>
+          </div>
+          <div class="url-row">
+            <span class="proto">HLS</span>
+            <span class="url">http://192.168.0.108:1984/api/stream.m3u8?src=cam_1</span>
+            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/stream.m3u8?src=cam_1">COPY</button>
+          </div>
+          <div class="url-row">
+            <span class="proto">MJPEG</span>
+            <span class="url">http://192.168.0.108:1984/api/stream.mjpeg?src=cam_1</span>
+            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/stream.mjpeg?src=cam_1">COPY</button>
+          </div>
+          <div class="url-row">
+            <span class="proto">WS</span>
+            <span class="url">http://192.168.0.108:1984/api/ws?src=cam_1</span>
+            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/ws?src=cam_1">COPY</button>
+          </div>
+        </div>
+      </article>
+
+      <!-- cam_2 -->
+      <article class="stream-card">
+        <div class="sc-head">
+          <span class="sc-id">STREAM 02</span>
+          <span class="sc-live online" data-cam="cam_2"><span class="ldot"></span>LIVE</span>
+        </div>
+        <div class="sc-name">cam_2</div>
+        <div class="sc-cn">台 62 基隆段隧道口 · Samsung tunnel-cam</div>
+        <div class="sc-spec">
+          <b>H.264</b> · Main @ 4.0
+          <span class="sep">·</span>
+          <b>1920×1080</b>
+          <span class="sep">·</span>
+          <b>30 fps</b>
+        </div>
+        <div class="sc-urls">
+          <div class="url-row">
+            <span class="proto">RTSP</span>
+            <span class="url">rtsp://192.168.0.108:8554/cam_2</span>
+            <button class="copy-btn" data-copy="rtsp://192.168.0.108:8554/cam_2">COPY</button>
+          </div>
+          <div class="url-row">
+            <span class="proto">HLS</span>
+            <span class="url">http://192.168.0.108:1984/api/stream.m3u8?src=cam_2</span>
+            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/stream.m3u8?src=cam_2">COPY</button>
+          </div>
+          <div class="url-row">
+            <span class="proto">MJPEG</span>
+            <span class="url">http://192.168.0.108:1984/api/stream.mjpeg?src=cam_2</span>
+            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/stream.mjpeg?src=cam_2">COPY</button>
+          </div>
+          <div class="url-row">
+            <span class="proto">WS</span>
+            <span class="url">http://192.168.0.108:1984/api/ws?src=cam_2</span>
+            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/ws?src=cam_2">COPY</button>
+          </div>
+        </div>
+      </article>
+
+      <!-- cam_6 -->
+      <article class="stream-card">
+        <div class="sc-head">
+          <span class="sc-id">STREAM 03</span>
+          <span class="sc-live online" data-cam="cam_6"><span class="ldot"></span>LIVE</span>
+        </div>
+        <div class="sc-name">cam_6</div>
+        <div class="sc-cn">台 62 LPR · Samsung lpr-cam</div>
+        <div class="sc-spec">
+          <b>H.264</b> · High @ 4.0
+          <span class="sep">·</span>
+          <b>1920×1080</b>
+          <span class="sep">·</span>
+          <b>30 fps</b>
+        </div>
+        <div class="sc-urls">
+          <div class="url-row">
+            <span class="proto">RTSP</span>
+            <span class="url">rtsp://192.168.0.108:8554/cam_6</span>
+            <button class="copy-btn" data-copy="rtsp://192.168.0.108:8554/cam_6">COPY</button>
+          </div>
+          <div class="url-row">
+            <span class="proto">HLS</span>
+            <span class="url">http://192.168.0.108:1984/api/stream.m3u8?src=cam_6</span>
+            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/stream.m3u8?src=cam_6">COPY</button>
+          </div>
+          <div class="url-row">
+            <span class="proto">MJPEG</span>
+            <span class="url">http://192.168.0.108:1984/api/stream.mjpeg?src=cam_6</span>
+            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/stream.mjpeg?src=cam_6">COPY</button>
+          </div>
+          <div class="url-row">
+            <span class="proto">WS</span>
+            <span class="url">http://192.168.0.108:1984/api/ws?src=cam_6</span>
+            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/ws?src=cam_6">COPY</button>
+          </div>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ─── §02 PROTOCOLS ─── -->
+  <section>
+    <div class="section-head">
+      <span class="section-num">§ 02</span>
+      <div>
+        <h2 class="section-title">傳輸協定 <b>· Choose your transport</b></h2>
+        <div class="section-sub">依機關平台 / 客戶端能力選擇最合適的協定</div>
+      </div>
+    </div>
+
+    <div class="proto-grid">
+      <article class="proto-card">
+        <span class="pc-rank">首選 / PRIMARY</span>
+        <h3>RTSP</h3>
+        <div class="pc-zh">即時串流協定</div>
+        <div class="pc-body">業界主流，多數 VMS / NVR 與監控錄影設備原生支援。Jetson 經 go2rtc 直接 passthrough，無重編碼延遲低。</div>
+        <div class="pc-use">RECOMMENDED FOR</div>
+        <div class="pc-list">
+          <div>機關既設 NVR / VMS</div>
+          <div>低延遲監看牆</div>
+          <div>長時間錄影歸檔</div>
+        </div>
+      </article>
+
+      <article class="proto-card">
+        <span class="pc-rank">WEB</span>
+        <h3>HLS</h3>
+        <div class="pc-zh">HTTP Live Streaming</div>
+        <div class="pc-body">Apple 標準，現代瀏覽器、行動裝置原生播放。基於 HTTP 易穿透防火牆，延遲較高（5-10 秒）。</div>
+        <div class="pc-use">RECOMMENDED FOR</div>
+        <div class="pc-list">
+          <div>Web Dashboard 嵌入</div>
+          <div>跨平台行動裝置</div>
+          <div>外網 / VPN 後存取</div>
+        </div>
+      </article>
+
+      <article class="proto-card">
+        <span class="pc-rank">LEGACY</span>
+        <h3>MJPEG</h3>
+        <div class="pc-zh">Motion JPEG over HTTP</div>
+        <div class="pc-body">老學派但通用，純 JPEG 連續傳送。每幀獨立解碼支援度極廣。代價是頻寬高（10+ Mbps/cam），需 go2rtc 端開啟轉碼。</div>
+        <div class="pc-use">RECOMMENDED FOR</div>
+        <div class="pc-list">
+          <div>低資源 / 老舊 NVR</div>
+          <div>截圖 / 影像分析 pipeline</div>
+          <div>不支援 H.264 解碼設備</div>
+        </div>
+      </article>
+
+      <article class="proto-card">
+        <span class="pc-rank">REALTIME</span>
+        <h3>WebRTC</h3>
+        <div class="pc-zh">即時點對點傳輸</div>
+        <div class="pc-body">最低延遲（~200ms），瀏覽器 P2P 拉流。需 STUN / TURN 協商。go2rtc /api/ws 信令交換。</div>
+        <div class="pc-use">RECOMMENDED FOR</div>
+        <div class="pc-list">
+          <div>即時遙控 / 互動場景</div>
+          <div>低延遲 web 監看</div>
+          <div>多人協作觀看</div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- ─── §03 API ─── -->
+  <section>
+    <div class="section-head">
+      <span class="section-num">§ 03</span>
+      <div>
+        <h2 class="section-title">對外 REST API <b>· Programmatic access</b></h2>
+        <div class="section-sub">查 stream 列表、抓 VD 車流 / 壅塞報表（需 X-API-Key Header）</div>
+      </div>
+    </div>
+
+    <div class="api-split">
+      <div>
+        <div class="code-block"><span class="c"># 取得當前所有可用 stream + bytes 統計</span>
+<span class="k">curl</span> -H <span class="s">"X-API-Key: tvd_xxxxxxxxxxxxxxxx"</span> \
+     http://192.168.0.108:8000/api/v1/external/streams | <span class="k">jq</span> .
+
+<span class="c"># 取 VD 車流報表（CSV）</span>
+<span class="k">curl</span> -H <span class="s">"X-API-Key: tvd_xxxxxxxxxxxxxxxx"</span> \
+     <span class="s">"http://192.168.0.108:8000/api/v1/external/vd-report?\
+start_time=2026-05-26T00:00:00&amp;end_time=2026-05-26T23:59:59&amp;\
+bucket=5m&amp;format=csv"</span>
+
+<span class="c"># 取壅塞報表（JSON）</span>
+<span class="k">curl</span> -H <span class="s">"X-API-Key: tvd_xxxxxxxxxxxxxxxx"</span> \
+     <span class="s">"http://192.168.0.108:8000/api/v1/external/\
+congestion-report?bucket=1h"</span> | <span class="k">jq</span> .</div>
+      </div>
+
+      <div class="api-meta">
+        <div class="lbl">AUTHENTICATION</div>
+        <h4>X-API-Key Header</h4>
+        <p>所有對外端點皆需在 HTTP Header 帶入 API Key。Key 由系統管理員核發，依 scope 賦予存取權限。</p>
+
+        <dl>
+          <div><dt>Scope</dt>            <dd><b>streams</b> / <b>vd_report</b> / <b>congestion_report</b></dd></div>
+          <div><dt>Rate Limit</dt>       <dd>120 req / min</dd></div>
+          <div><dt>Response</dt>         <dd>JSON / CSV</dd></div>
+          <div><dt>Base URL</dt>         <dd>/api/v1/external</dd></div>
+          <div><dt>Swagger UI</dt>       <dd>:8000/docs</dd></div>
+          <div><dt>OpenAPI</dt>          <dd>:8000/openapi.json</dd></div>
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── §04 HEALTH ─── -->
+  <section>
+    <div class="section-head">
+      <span class="section-num">§ 04</span>
+      <div>
+        <h2 class="section-title">即時健康度 <b>· Live diagnostics</b></h2>
+        <div class="section-sub">本頁每 15 秒自動探測 /api/health；對接機關 watchdog / Nagios / Zabbix 可用同個 endpoint</div>
+      </div>
+    </div>
+
+    <div class="metric-row">
+      <div class="metric online" id="metric-api">
+        <div class="m-lbl">API 服務</div>
+        <div class="m-val" id="metric-api-val">ONLINE</div>
+        <div class="m-sub" id="metric-api-sub">/api/health · 200 OK</div>
+      </div>
+      <div class="metric online">
+        <div class="m-lbl">轉發串流</div>
+        <div class="m-val">3<span class="unit">cams</span></div>
+        <div class="m-sub">go2rtc · port 8554 / 1984</div>
+      </div>
+      <div class="metric">
+        <div class="m-lbl">RESPONSE TIME</div>
+        <div class="m-val" id="metric-rtt-val">— <span class="unit">ms</span></div>
+        <div class="m-sub">API health round-trip</div>
+      </div>
+      <div class="metric">
+        <div class="m-lbl">UPDATED</div>
+        <div class="m-val" style="font-size:26px" id="metric-time-val">--:--:--</div>
+        <div class="m-sub">last probe</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── §05 NETWORK ─── -->
+  <section style="border-bottom:none">
+    <div class="section-head">
+      <span class="section-num">§ 05</span>
+      <div>
+        <h2 class="section-title">網路規格 <b>· Firewall rules</b></h2>
+        <div class="section-sub">機關防火牆需開放（從機關平台到 Jetson 方向）</div>
+      </div>
+    </div>
+
+    <table class="fw-table">
+      <thead>
+        <tr>
+          <th style="width:90px">Proto</th>
+          <th style="width:100px">Port</th>
+          <th style="width:220px">Service</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="proto-tag">TCP</span></td><td><b>8000</b></td><td>traffic-api</td><td>REST API · 對外報表 · 健康檢查 · Swagger</td></tr>
+        <tr><td><span class="proto-tag">TCP</span></td><td><b>8554</b></td><td>go2rtc RTSP</td><td>RTSP 拉流 · 機關平台主要對接通道</td></tr>
+        <tr><td><span class="proto-tag">TCP</span></td><td><b>1984</b></td><td>go2rtc HTTP</td><td>HLS / MJPEG / WebRTC 信令</td></tr>
+        <tr><td><span class="proto-tag">UDP</span></td><td><b>dynamic</b></td><td>WebRTC media</td><td>WebRTC 媒體流 · 由 STUN / TURN 協商</td></tr>
+      </tbody>
+    </table>
+
+    <p style="margin-top:20px;font-size:13px;color:var(--gov-muted);line-height:1.7;max-width:780px">
+      WebRTC 媒體流走 UDP，若機關防火牆有嚴格限制，建議改用 RTSP（TCP 8554）作為主要對接方式。
+      所有 TCP port 預設綁定全介面，若需限制存取來源 IP，請告知系統管理員設定 iptables 規則。
+    </p>
+  </section>
+
+</div><!-- /wrap -->
+
+<!-- ─── FOOTER ─── -->
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h5>SYSTEM</h5>
+        <div class="brand">邊緣交通影像服務<br><span>EDGE TRAFFIC IMAGING SERVICE</span></div>
+        <p class="blurb">Jetson AGX Orin · JetPack 6.0 · CUDA 12.2 · TensorRT 8.6 · go2rtc 1.9.9 · FastAPI 0.115。本服務為機關平台對接交付件。</p>
+      </div>
+      <div>
+        <h5>QUICK LINKS</h5>
+        <div class="links">
+          <a href="http://192.168.0.108:8000/docs" target="_blank">Swagger UI</a>
+          <a href="http://192.168.0.108:8000/redoc" target="_blank">ReDoc</a>
+          <a href="http://192.168.0.108:8000/openapi.json" target="_blank">OpenAPI Spec</a>
+          <a href="http://192.168.0.108:8000/api/health" target="_blank">/api/health</a>
+        </div>
+      </div>
+      <div>
+        <h5>REFERENCE</h5>
+        <div class="links">
+          <a href="#">docs/AGENCY_INTEGRATION.md</a>
+          <a href="#">docs/EXTERNAL_API.md</a>
+          <a href="#">RUNBOOK.md</a>
+        </div>
+      </div>
+    </div>
+    <div class="ver">
+      DOC v1.0 · BUILD 2026-05-26 · HOST 192.168.0.108 · AGENCY DELIVERABLE
+    </div>
+  </div>
+</footer>
+
+<script>
+// ─── live clock ───
+function updateClock(){
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  document.getElementById('local-clock').textContent =
+    pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+// ─── copy buttons ───
+document.querySelectorAll('.copy-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const url = btn.getAttribute('data-copy');
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = url; document.body.appendChild(ta);
+      ta.select(); document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    const orig = btn.textContent;
+    btn.textContent = 'COPIED';
+    btn.classList.add('ok');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('ok'); }, 1400);
+  });
+});
+
+// ─── health probe ───
+async function probeHealth(){
+  const apiEl    = document.getElementById('metric-api');
+  const apiValEl = document.getElementById('metric-api-val');
+  const apiSubEl = document.getElementById('metric-api-sub');
+  const rttEl    = document.getElementById('metric-rtt-val');
+  const timeEl   = document.getElementById('metric-time-val');
+  const t0 = performance.now();
+  try {
+    const url = (location.host && !location.host.startsWith('file'))
+      ? '/api/health'
+      : 'http://192.168.0.108:8000/api/health';
+    const r = await fetch(url, { cache: 'no-store' });
+    const dt = Math.round(performance.now() - t0);
+    if (r.ok) {
+      apiEl.classList.remove('fault'); apiEl.classList.add('online');
+      apiValEl.textContent = 'ONLINE';
+      apiSubEl.textContent = '/api/health · ' + r.status + ' OK';
+      rttEl.innerHTML = dt + ' <span class="unit">ms</span>';
+    } else {
+      apiEl.classList.remove('online'); apiEl.classList.add('fault');
+      apiValEl.textContent = 'DEGRADED';
+      apiSubEl.textContent = '/api/health · ' + r.status;
+      rttEl.innerHTML = dt + ' <span class="unit">ms</span>';
+    }
+  } catch {
+    apiEl.classList.remove('online'); apiEl.classList.add('fault');
+    apiValEl.textContent = 'OFFLINE';
+    apiSubEl.textContent = 'no response';
+    rttEl.innerHTML = '— <span class="unit">ms</span>';
+  }
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  timeEl.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+probeHealth();
+setInterval(probeHealth, 15000);
+
+// ─── cam LIVE indicator via go2rtc ───
+async function probeStreams(){
+  try {
+    const host = (location.host && !location.host.startsWith('file'))
+      ? location.hostname
+      : '192.168.0.108';
+    const r = await fetch(`http://${host}:1984/api/streams`, { cache: 'no-store' });
+    if (!r.ok) return;
+    const d = await r.json();
+    ['cam_1','cam_2','cam_6'].forEach(name => {
+      const info = d[name];
+      const tag = document.querySelector(`[data-cam="${name}"]`);
+      if (!tag) return;
+      const ps = (info && info.producers) ? info.producers : [];
+      const bytes = ps[0] && ps[0].bytes_recv;
+      if (bytes && bytes > 0) {
+        tag.classList.remove('offline'); tag.classList.add('online');
+        tag.innerHTML = '<span class="ldot"></span>LIVE';
+      } else {
+        tag.classList.remove('online'); tag.classList.add('offline');
+        tag.innerHTML = '<span class="ldot"></span>OFFLINE';
+      }
+    });
+  } catch {}
+}
+probeStreams();
+setInterval(probeStreams, 20000);
+</script>
+
+</body>
+</html>
