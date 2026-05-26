@@ -38,13 +38,53 @@ html { scroll-behavior: smooth; }
 
 body {
   font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
-  background: linear-gradient(180deg, #f4f7fb 0%, var(--gov-bg) 100%);
+  background:
+    radial-gradient(ellipse 50% 40% at 90% 5%, rgba(11,94,168,0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 45% 40% at 5% 95%, rgba(16,185,129,0.05) 0%, transparent 60%),
+    linear-gradient(180deg, #f4f7fb 0%, var(--gov-bg) 100%);
   color: var(--gov-text);
   font-size: 14px;
   line-height: 1.65;
   min-height: 100vh;
   font-feature-settings: "kern", "liga", "ss01";
+  position: relative;
+  overflow-x: hidden;
 }
+
+/* 現代方格底圖 — subtle, 不搶 content */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(to right,  rgba(11,94,168,0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(11,94,168,0.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, black 0%, transparent 100%);
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, black 0%, transparent 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 浮動 orb 光暈 (右上 + 左下) */
+body::after {
+  content: '';
+  position: fixed;
+  top: -240px; right: -220px;
+  width: 620px; height: 620px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(11,94,168,0.10) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+  animation: ag-orb-a 30s ease-in-out infinite;
+}
+@keyframes ag-orb-a {
+  0%,100% { transform: translate(0,0) scale(1); }
+  50%     { transform: translate(-60px, 80px) scale(1.12); }
+}
+
+/* wrap / footer 提到 z-index 1 確保在 ambient 上 (status-bar 既有 sticky 不動) */
+.wrap, .foot { position: relative; z-index: 1; }
 
 ::selection { background: var(--gov-primary); color: #fff; }
 
