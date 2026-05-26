@@ -13274,6 +13274,8 @@ const app=createApp({
         };
 
         // 持續健康度探測 — sidebar service-state + nav bar h-status-pill 同步切換
+        // 加防誤判保險：單次失敗不立刻 fault，連續 3 次才切換 (避免暫時負載高造成閃爍)
+        let _healthFailStreak = 0;
         const probeServiceHealth=async()=>{
             const state=document.getElementById('service-state');
             const txt=document.getElementById('online-text');
@@ -13292,17 +13294,34 @@ const app=createApp({
                 if(navPill){ navPill.classList.remove('fault'); }
                 if(navTxt){ navTxt.textContent='ONLINE'; }
             };
-            try{
+            const tryOne=async(timeoutMs)=>{
                 const ctrl=new AbortController();
-                const t=setTimeout(()=>ctrl.abort(),4000);
-                const r=await fetch('/api/health',{cache:'no-store',signal:ctrl.signal});
-                clearTimeout(t);
-                if(r.ok){
-                    setOnline();
-                }else{
-                    setFault('SERVICE 連線異常 ('+r.status+')');
+                const t=setTimeout(()=>ctrl.abort(),timeoutMs);
+                try{
+                    const r=await fetch('/api/health',{cache:'no-store',signal:ctrl.signal});
+                    return {ok:r.ok, status:r.status};
+                }finally{
+                    clearTimeout(t);
                 }
-            }catch{
+            };
+            let last={ok:false, status:0};
+            try{
+                last=await tryOne(8000);  // 4s → 8s，給 Jetson 高負載時喘息
+            }catch{ last={ok:false, status:0, aborted:true}; }
+            if(last.ok){
+                _healthFailStreak=0;
+                setOnline();
+                return;
+            }
+            _healthFailStreak++;
+            if(_healthFailStreak<3){
+                // 還在容錯區間，保留上一次狀態文字（不切 fault），不更動 UI
+                return;
+            }
+            // 連續 3 次失敗才切 fault
+            if(last.status>0){
+                setFault('SERVICE 連線異常 ('+last.status+')');
+            }else{
                 setFault('SERVICE 連線異常');
                 if(beEl) beEl.textContent='v—';
             }
