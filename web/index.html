@@ -12,8 +12,14 @@
     <link rel="stylesheet" href="/web/lib/element-plus.css?v=20260407">
     <link rel="stylesheet" href="/web/lib/leaflet.css?v=20260407"/>
     <script src="/web/lib/leaflet.js?v=20260407"></script>
+
+    <!-- design system: 共用字體 (Phase 1 全站升級 — 對齊 agency landing 風格) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root{
+            /* 既有原色系 — 不動 */
             --gov-bg: #eef2f6;
             --gov-surface: #ffffff;
             --gov-surface-2: #f7f9fc;
@@ -27,7 +33,106 @@
             --ui-hover-shadow: 0 2px 8px rgba(11,94,168,0.12);
             --el-color-primary: var(--gov-primary);
             --el-color-primary-dark-2: var(--gov-primary-strong);
+
+            /* design system 補充 token (Phase 1, follow agency landing) */
+            --gov-bg-2:           #f4f7fb;
+            --gov-border-strong:  #b8c4d4;
+            --gov-text-2:         #344151;
+            --gov-mute-2:         #8b95a4;
+            --gov-primary-soft:   #eaf2fb;
+            --gov-primary-line:   #c5dbf0;
+            --gov-ok:             #1f9d55;
+            --gov-warn:           #d97706;
+            --gov-fault:          #c43a31;
+            --shadow-sm:          0 1px 2px rgba(16,24,40,0.04);
+            --shadow:             0 1px 3px rgba(16,24,40,0.06), 0 1px 2px rgba(16,24,40,0.04);
+            --shadow-lg:          0 8px 24px rgba(11,94,168,0.08), 0 2px 6px rgba(16,24,40,0.05);
+            --font-mono:          "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+            --font-sans:          "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
         }
+
+        /* design system 共用 utility class (Phase 1 — 之後 redesign 各 page 時可直接用) */
+        .ds-mono      { font-family: var(--font-mono); font-feature-settings: "ss01","ss02"; }
+        .ds-num-data  { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+        .ds-section-num {
+            font-family: var(--font-mono);
+            font-size: 12px; font-weight: 600;
+            letter-spacing: 0.2em;
+            color: var(--gov-primary);
+            padding-top: 14px;
+            border-top: 2px solid var(--gov-primary);
+            display: inline-block;
+        }
+        .ds-section-title {
+            font-size: 32px;
+            font-weight: 300;
+            line-height: 1.2;
+            letter-spacing: -0.015em;
+            color: var(--gov-text);
+        }
+        .ds-section-title b { font-weight: 700; color: var(--gov-primary); }
+        .ds-section-sub {
+            font-size: 13px;
+            color: var(--gov-muted);
+            margin-top: 4px;
+            letter-spacing: 0.01em;
+        }
+        .ds-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 10px;
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.18em;
+            color: var(--gov-primary);
+            background: var(--gov-primary-soft);
+            border: 1px solid var(--gov-primary-line);
+            border-radius: 999px;
+        }
+        .ds-card {
+            background: var(--gov-surface);
+            border: 1px solid var(--gov-border);
+            border-radius: 10px;
+            box-shadow: var(--shadow-sm);
+            transition: box-shadow .25s ease, border-color .25s ease, transform .2s ease;
+        }
+        .ds-card.hoverable:hover {
+            box-shadow: var(--shadow-lg);
+            border-color: var(--gov-primary-line);
+            transform: translateY(-1px);
+        }
+        .ds-pulse-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--gov-ok);
+            box-shadow: 0 0 0 3px rgba(31,157,85,0.18);
+            animation: ds-pulse 2s ease-in-out infinite;
+            display: inline-block;
+        }
+        @keyframes ds-pulse {
+            0%, 100% { box-shadow: 0 0 0 3px rgba(31,157,85,0.18); }
+            50%      { box-shadow: 0 0 0 6px rgba(31,157,85,0); }
+        }
+        .ds-method-tag {
+            display: inline-block;
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            padding: 3px 8px;
+            border-radius: 4px;
+            color: #fff;
+            min-width: 54px;
+            text-align: center;
+        }
+        .ds-method-tag.GET    { background: var(--gov-ok); }
+        .ds-method-tag.POST   { background: var(--gov-primary); }
+        .ds-method-tag.PUT    { background: var(--gov-warn); }
+        .ds-method-tag.DELETE { background: var(--gov-fault); }
+
+        /* 數字 / IP / port / URL 統一用 mono — 全站舊 code 不需動,新元件用 .ds-num-data */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; background: linear-gradient(180deg, #f4f7fb 0%, var(--gov-bg) 100%); color: var(--gov-text); }
         .layout { display: flex; min-height: 100vh; }
