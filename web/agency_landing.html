@@ -6,7 +6,7 @@
 <title>邊緣交通影像服務 / EDGE TRAFFIC IMAGING</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
 <style>
 :root {
   /* follow web/index.html 原本政府色系 */
@@ -88,7 +88,7 @@ body::after {
 
 ::selection { background: var(--gov-primary); color: #fff; }
 
-code, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-feature-settings: "ss01","ss02"; }
+code, .mono { font-family: inherit; }
 
 a { color: var(--gov-primary); text-decoration: none; }
 a:hover { color: var(--gov-primary-strong); text-decoration: underline; text-underline-offset: 3px; }
@@ -119,7 +119,7 @@ a:hover { color: var(--gov-primary-strong); text-decoration: underline; text-und
   font-weight: 700;
   letter-spacing: 0.08em;
 }
-.status-bar .right { margin-left: auto; font-family: "IBM Plex Mono", monospace; font-size: 11.5px; }
+.status-bar .right { margin-left: auto; font-family: inherit; font-size: 12px; font-variant-numeric: tabular-nums; }
 
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 0 3px rgba(31,157,85,0.18); }
@@ -143,7 +143,7 @@ section {
   margin-bottom: 40px;
 }
 .section-num {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.2em;
@@ -185,7 +185,7 @@ section {
   letter-spacing: 0.22em;
   margin-bottom: 32px;
   border-radius: 999px;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
 }
 .hero-tag .marker {
   width: 6px; height: 6px;
@@ -260,7 +260,7 @@ section {
 }
 .hero-meta dd {
   color: var(--gov-text);
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 13px;
   font-weight: 500;
 }
@@ -303,7 +303,7 @@ section {
   margin-bottom: 18px;
 }
 .sc-id {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.18em;
@@ -317,7 +317,7 @@ section {
   letter-spacing: 0.12em;
   padding: 4px 10px;
   border-radius: 999px;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
 }
 .sc-live.online {
   background: rgba(31,157,85,0.10);
@@ -362,7 +362,7 @@ section {
   border-radius: 6px;
   padding: 10px 12px;
   margin-bottom: 16px;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   line-height: 1.6;
 }
 .sc-spec b { color: var(--gov-primary); font-weight: 700; }
@@ -386,14 +386,14 @@ section {
   border-color: var(--gov-primary-line);
 }
 .url-row .proto {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   color: var(--gov-primary);
   font-weight: 700;
   font-size: 10.5px;
   letter-spacing: 0.12em;
 }
 .url-row .url {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   color: var(--gov-text-2);
   font-size: 11.5px;
   white-space: nowrap;
@@ -404,7 +404,7 @@ section {
   background: var(--gov-surface);
   border: 1px solid var(--gov-border);
   color: var(--gov-muted);
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.15em;
@@ -443,7 +443,7 @@ section {
 
 .pc-rank {
   display: inline-block;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.18em;
@@ -504,7 +504,7 @@ section {
   border: 1px solid #1e293b;
   border-radius: 10px;
   padding: 22px 24px 24px 56px;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 12.5px;
   line-height: 1.85;
   overflow-x: auto;
@@ -566,7 +566,7 @@ section {
   padding: 11px 14px;
   font-size: 12.5px;
   color: var(--gov-text);
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
 }
 .api-meta dd b { color: var(--gov-primary); font-weight: 700; }
 
@@ -579,7 +579,7 @@ section {
   flex: 1; height: 1px; background: var(--gov-border);
 }
 .docs-divider .lbl {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 11px; font-weight: 600;
   letter-spacing: 0.28em;
   color: var(--gov-primary);
@@ -611,7 +611,7 @@ section {
 }
 .doc-card .dc-rank {
   display: inline-block;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 10px; font-weight: 700;
   letter-spacing: 0.2em;
   color: var(--gov-primary);
@@ -640,7 +640,7 @@ section {
   margin-bottom: 18px;
 }
 .doc-card .dc-go {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 12px;
   font-weight: 600;
   color: var(--gov-primary);
@@ -674,7 +674,7 @@ section {
   letter-spacing: 0.005em;
 }
 .endpoint-block .eb-head .src {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 11px;
   color: var(--gov-muted);
 }
@@ -701,7 +701,7 @@ section {
 }
 .endpoint-table td.method { width: 80px; }
 .endpoint-table td.path {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 12.5px;
   color: var(--gov-text);
   font-weight: 500;
@@ -709,7 +709,7 @@ section {
 }
 .endpoint-table td.summary { color: var(--gov-text-2); }
 .endpoint-table td.scope {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 11px;
   color: var(--gov-primary);
   width: 130px;
@@ -723,7 +723,7 @@ section {
 }
 .method-tag {
   display: inline-block;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -777,7 +777,7 @@ section {
   color: var(--gov-text);
   letter-spacing: -0.02em;
   line-height: 1.1;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
 }
 .metric .m-val .unit {
   font-size: 14px;
@@ -831,11 +831,11 @@ section {
 .fw-table td b {
   color: var(--gov-text);
   font-weight: 700;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
 }
 .fw-table td .proto-tag {
   display: inline-block;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: inherit;
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.18em;
