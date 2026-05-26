@@ -1057,9 +1057,15 @@ async def get_nvr_recordings(
         return {"items": [], "error": str(e)}
 
 
-@router.get("/recordings/play")
+@router.api_route("/recordings/play", methods=["GET", "HEAD"])
 def play_nvr_recording(src: str, request: Request):
-    """代理錄影播放內容（支援 Range）"""
+    """代理錄影播放內容（支援 Range、HEAD 探測）
+
+    GET — 串流回傳影片內容（含 Range 部分傳輸）
+    HEAD — 僅探查 upstream 是否存在、回傳 Content-Length，不下載 body
+            前端 onEventClipError 用 HEAD 探錯（404/錄影段不存在/length=0）
+    """
+    is_head = request.method == "HEAD"
     try:
         target = unquote(str(src or "").strip())
         if not target:
@@ -1086,11 +1092,25 @@ def play_nvr_recording(src: str, request: Request):
         last_error = None
         for url in candidates:
             try:
-                r = requests.get(url, timeout=40, stream=True, headers=upstream_headers)
-                if r.status_code in (200, 206):
-                    upstream = r
-                    break
-                r.close()
+                if is_head:
+                    r = requests.head(url, timeout=10, headers=upstream_headers, allow_redirects=True)
+                    if r.status_code in (200, 206):
+                        upstream = r
+                        break
+                    # frigate 某些版本 HEAD 不支援 → fallback GET stream + 立刻關閉
+                    if r.status_code == 405:
+                        r.close()
+                        r = requests.get(url, timeout=10, stream=True, headers=upstream_headers)
+                        if r.status_code in (200, 206):
+                            upstream = r
+                            break
+                    r.close()
+                else:
+                    r = requests.get(url, timeout=40, stream=True, headers=upstream_headers)
+                    if r.status_code in (200, 206):
+                        upstream = r
+                        break
+                    r.close()
             except Exception as e:
                 last_error = e
         if upstream is None:
@@ -1106,6 +1126,15 @@ def play_nvr_recording(src: str, request: Request):
             v = upstream.headers.get(k)
             if v:
                 headers[k] = v
+        ct = upstream.headers.get("content-type", "video/mp4")
+
+        # HEAD: 不回 body — 關掉 upstream stream，回 200 + headers
+        if is_head:
+            try:
+                upstream.close()
+            except Exception:
+                pass
+            return Response(status_code=upstream.status_code, headers=headers, media_type=ct)
 
         def _iter():
             try:
@@ -1117,7 +1146,7 @@ def play_nvr_recording(src: str, request: Request):
 
         return StreamingResponse(
             _iter(),
-            media_type=upstream.headers.get("content-type", "video/mp4"),
+            media_type=ct,
             headers=headers,
             status_code=upstream.status_code,
         )
