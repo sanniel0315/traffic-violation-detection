@@ -79,8 +79,18 @@ class MqttBridge:
         return merged
 
     # ---------- connection ----------
+    _REASON_CODE_TEXT = {
+        0: "成功",
+        1: "拒絕：protocol version 不支援",
+        2: "拒絕：client_id 無效",
+        3: "拒絕：broker 不可用",
+        4: "拒絕：username / password 錯誤",
+        5: "拒絕：未授權",
+    }
+
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
-        if reason_code == 0:
+        rc = int(reason_code) if hasattr(reason_code, "__int__") else reason_code
+        if rc == 0:
             self._connected = True
             self._conn_err = ""
             for pat in (self.settings.get("subscribe_patterns") or []):
@@ -91,7 +101,9 @@ class MqttBridge:
             print(f"[mqtt] connected to {self.settings.get('host')}:{self.settings.get('port')}", flush=True)
         else:
             self._connected = False
-            self._conn_err = f"reason_code={reason_code}"
+            text = self._REASON_CODE_TEXT.get(rc, f"reason_code={rc}")
+            self._conn_err = f"broker 拒絕連線 ({text})"
+            print(f"[mqtt] connect rejected: {self._conn_err}", flush=True)
 
     def _on_disconnect(self, client, userdata, reason_code, properties=None, *args):
         self._connected = False
@@ -109,6 +121,23 @@ class MqttBridge:
         })
         self.stats["recv"] += 1
 
+    @staticmethod
+    def _tcp_probe(host: str, port: int, timeout: float = 1.5) -> tuple:
+        """同步 TCP probe，回 (ok, error_message)。
+        用來在 connect_async 之前確認 broker 是否真的在 listen，
+        避免 paho 連不上又無法清楚回報失敗原因（reactor 內 silent fail）。
+        """
+        import socket
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True, ""
+        except ConnectionRefusedError:
+            return False, "connection refused"
+        except socket.timeout:
+            return False, f"connect timeout {timeout}s"
+        except OSError as e:
+            return False, f"{e.__class__.__name__}: {e}"
+
     def reconnect(self) -> bool:
         with self._lock:
             # 斷開舊連線
@@ -122,8 +151,30 @@ class MqttBridge:
                 self._connected = False
 
             if self.settings.get("mode") == "off":
+                self._conn_err = ""
                 return False
 
+            mode = self.settings.get("mode") or "embedded"
+            host = self.settings.get("host") or "localhost"
+            port = int(self.settings.get("port") or 1883)
+            # embedded 模式強制 host=localhost
+            if mode == "embedded":
+                host = "localhost"
+
+            # ── TCP probe：先確認 broker 有 listen，否則給明確錯誤訊息 ──
+            probe_ok, probe_err = self._tcp_probe(host, port, timeout=1.5)
+            if not probe_ok:
+                if mode == "embedded":
+                    self._conn_err = (
+                        f"本機 broker (localhost:{port}) 無回應 — {probe_err}。"
+                        f"請確認 mosquitto 已安裝且運行：sudo systemctl status mosquitto"
+                    )
+                else:
+                    self._conn_err = f"外部 broker {host}:{port} 無回應 — {probe_err}"
+                self.stats["errors"] += 1
+                print(f"[mqtt] {self._conn_err}", flush=True)
+                # 仍然發起非同步連線，paho 內部會持續嘗試 reconnect
+                # 但 status 上會立即顯示明確錯誤訊息給 UI
             try:
                 client_id = self.settings.get("client_id") or f"traffic-api-{int(time.time())}"
                 c = mqtt.Client(
@@ -138,15 +189,10 @@ class MqttBridge:
                 c.on_connect = self._on_connect
                 c.on_disconnect = self._on_disconnect
                 c.on_message = self._on_message
-                host = self.settings.get("host") or "localhost"
-                port = int(self.settings.get("port") or 1883)
-                # embedded 模式強制 host=localhost
-                if self.settings.get("mode") == "embedded":
-                    host = "localhost"
                 c.connect_async(host, port, keepalive=30)
                 c.loop_start()
                 self._client = c
-                return True
+                return probe_ok
             except Exception as e:
                 self._conn_err = str(e)
                 self.stats["errors"] += 1
