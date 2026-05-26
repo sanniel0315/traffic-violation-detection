@@ -134,20 +134,174 @@
 
         /* 數字 / IP / port / URL 統一用 mono — 全站舊 code 不需動,新元件用 .ds-num-data */
 
-        /* ───── 登入介面 v2: 單欄白卡浮動 + 美感 ───── */
+        /* ───── 登入介面 v3: 多層 ambient 底圖 + 浮 orb 光暈 + grain + grid + corner mark ───── */
         .login-page {
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             background:
-                radial-gradient(ellipse 60% 50% at 20% 20%, rgba(11,94,168,0.10) 0%, transparent 60%),
-                radial-gradient(ellipse 50% 50% at 80% 80%, rgba(16,185,129,0.06) 0%, transparent 60%),
-                radial-gradient(ellipse 70% 50% at 50% 50%, rgba(11,94,168,0.04) 0%, transparent 70%),
-                linear-gradient(160deg, #f8fafc 0%, #eef2f6 60%, #e2e8f0 100%);
+                radial-gradient(ellipse 60% 50% at 20% 20%, rgba(11,94,168,0.12) 0%, transparent 60%),
+                radial-gradient(ellipse 50% 50% at 80% 80%, rgba(16,185,129,0.08) 0%, transparent 60%),
+                radial-gradient(ellipse 70% 50% at 50% 50%, rgba(99,102,241,0.05) 0%, transparent 70%),
+                linear-gradient(160deg, #f8fafc 0%, #eef2f6 60%, #dde6f0 100%);
             padding: 24px;
             position: relative;
             overflow: hidden;
+        }
+
+        /* dotted grid 細格背景 (mask 在邊緣淡出) */
+        .login-bg-grid {
+            position: absolute;
+            inset: 0;
+            background-image: radial-gradient(circle at 1px 1px, rgba(11,94,168,0.13) 1px, transparent 1px);
+            background-size: 28px 28px;
+            -webkit-mask-image: radial-gradient(ellipse 80% 70% at center, black 0%, transparent 85%);
+            mask-image: radial-gradient(ellipse 80% 70% at center, black 0%, transparent 85%);
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.55;
+        }
+
+        /* SVG noise grain — 微微紙感 */
+        .login-bg-grain {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.05;
+            mix-blend-mode: multiply;
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.4' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+        }
+
+        /* 多顆 floating glow orbs (blurred circle) */
+        .login-bg-orbs {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            overflow: hidden;
+        }
+        .login-bg-orbs .orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(60px);
+            opacity: 0.7;
+        }
+        .login-bg-orbs .orb-a {
+            width: 420px; height: 420px;
+            left: 8%; top: 12%;
+            background: radial-gradient(circle, rgba(11,94,168,0.32) 0%, transparent 65%);
+            animation: orb-float-a 28s ease-in-out infinite;
+        }
+        .login-bg-orbs .orb-b {
+            width: 340px; height: 340px;
+            right: 10%; top: 45%;
+            background: radial-gradient(circle, rgba(34,197,94,0.22) 0%, transparent 65%);
+            animation: orb-float-b 34s ease-in-out infinite;
+        }
+        .login-bg-orbs .orb-c {
+            width: 280px; height: 280px;
+            left: 48%; bottom: 8%;
+            background: radial-gradient(circle, rgba(99,102,241,0.20) 0%, transparent 65%);
+            animation: orb-float-c 40s ease-in-out infinite;
+        }
+        @keyframes orb-float-a {
+            0%,100% { transform: translate(0,0) scale(1); }
+            33%     { transform: translate(60px, 80px) scale(1.08); }
+            66%     { transform: translate(-40px, 120px) scale(0.95); }
+        }
+        @keyframes orb-float-b {
+            0%,100% { transform: translate(0,0) scale(1); }
+            33%     { transform: translate(-80px, -60px) scale(1.1); }
+            66%     { transform: translate(50px, 40px) scale(0.92); }
+        }
+        @keyframes orb-float-c {
+            0%,100% { transform: translate(0,0) scale(1); }
+            50%     { transform: translate(70px, -90px) scale(1.12); }
+        }
+
+        /* 角落 ASCII / mono mark — editorial 質感 */
+        .login-corner-mark {
+            position: absolute;
+            z-index: 0;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            letter-spacing: 0.25em;
+            color: var(--gov-mute-2);
+            text-transform: uppercase;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            pointer-events: none;
+            user-select: none;
+            animation: lcm-fade-in 1.2s ease-out both;
+        }
+        .login-corner-mark.tl { top: 22px; left: 26px; }
+        .login-corner-mark.tr { top: 22px; right: 26px; }
+        .login-corner-mark.bl { bottom: 22px; left: 26px; }
+        .login-corner-mark.br { bottom: 22px; right: 26px; }
+        .lcm-bracket { color: var(--gov-primary); opacity: 0.7; }
+        .lcm-text { color: var(--gov-muted); }
+        .lcm-dot-live {
+            display: inline-block;
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--gov-ok);
+            box-shadow: 0 0 0 3px rgba(31,157,85,0.2);
+            margin-right: 4px;
+            animation: ds-pulse 2s ease-in-out infinite;
+        }
+        @keyframes lcm-fade-in {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+        }
+
+        /* SVG decoration ornaments — 4 個角落抽象圖案 */
+        .login-decor {
+            position: absolute;
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.55;
+        }
+        .login-decor-tl { top: -40px;   left: -40px;  width: 240px; height: 240px; }
+        .login-decor-tr { top: 40px;    right: 30px;  width: 200px; height: 200px; opacity: 0.45; }
+        .login-decor-bl { bottom: 30px; left: 40px;   width: 200px; height: 200px; opacity: 0.45; }
+        .login-decor-br { bottom: -30px; right: -30px; width: 240px; height: 240px; opacity: 0.50; }
+
+        /* radar 環擴張動畫 */
+        .radar-ring {
+            transform-origin: center;
+            transform-box: fill-box;
+            opacity: 0;
+            animation: radar-expand 3s ease-out infinite;
+        }
+        .radar-ring.r1 { animation-delay: 0s; }
+        .radar-ring.r2 { animation-delay: 1s; }
+        .radar-ring.r3 { animation-delay: 2s; }
+        @keyframes radar-expand {
+            0%   { transform: scale(0.3); opacity: 0.7; }
+            70%  { opacity: 0.3; }
+            100% { transform: scale(2.6); opacity: 0; }
+        }
+        /* sweep 旋轉 */
+        .radar-sweep {
+            transform-origin: 120px 120px;
+            animation: radar-rotate 4s linear infinite;
+        }
+        @keyframes radar-rotate {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 720px) {
+            .login-decor-tl, .login-decor-br { width: 180px; height: 180px; opacity: 0.35; }
+            .login-decor-tr, .login-decor-bl { width: 140px; height: 140px; opacity: 0.3; }
+        }
+        @media (max-width: 720px) {
+            .login-corner-mark { font-size: 9px; letter-spacing: 0.18em; }
+            .login-corner-mark.tl, .login-corner-mark.tr { top: 14px; }
+            .login-corner-mark.bl, .login-corner-mark.br { bottom: 14px; }
         }
         /* 背景動態 ambient 圓圈裝飾 */
         .login-page::before {
@@ -183,6 +337,7 @@
         }
         .login-card {
             position: relative;
+            z-index: 2;
             width: 100%;
             max-width: 440px;
             background: rgba(255,255,255,0.92);
@@ -2155,6 +2310,96 @@
 
 <div id="app">
     <div v-if="!isAuthenticated" class="login-page">
+        <!-- 視覺背景層 (不影響互動) -->
+        <div class="login-bg-grid" aria-hidden="true"></div>
+        <div class="login-bg-grain" aria-hidden="true"></div>
+        <div class="login-bg-orbs" aria-hidden="true">
+            <span class="orb orb-a"></span>
+            <span class="orb orb-b"></span>
+            <span class="orb orb-c"></span>
+        </div>
+        <!-- SVG 裝飾圖案 (camera scope + radar + network grid) -->
+        <svg class="login-decor login-decor-tl" viewBox="0 0 240 240" aria-hidden="true">
+            <defs>
+                <radialGradient id="decorFade1" cx="50%" cy="50%" r="50%">
+                    <stop offset="0%"  stop-color="var(--gov-primary)" stop-opacity="0.45"/>
+                    <stop offset="100%" stop-color="var(--gov-primary)" stop-opacity="0"/>
+                </radialGradient>
+            </defs>
+            <!-- camera scope: 同心圓 + 十字準星 -->
+            <circle cx="120" cy="120" r="100" fill="none" stroke="#0b5ea8" stroke-width="0.6" stroke-opacity="0.45" stroke-dasharray="3 5"/>
+            <circle cx="120" cy="120" r="70"  fill="none" stroke="#0b5ea8" stroke-width="0.7" stroke-opacity="0.55"/>
+            <circle cx="120" cy="120" r="40"  fill="none" stroke="#0b5ea8" stroke-width="0.9" stroke-opacity="0.7"/>
+            <circle cx="120" cy="120" r="6"   fill="#0b5ea8" fill-opacity="0.6"/>
+            <line x1="0"   y1="120" x2="240" y2="120" stroke="#0b5ea8" stroke-opacity="0.3" stroke-width="0.4"/>
+            <line x1="120" y1="0"   x2="120" y2="240" stroke="#0b5ea8" stroke-opacity="0.3" stroke-width="0.4"/>
+            <!-- 4 個 tick marks -->
+            <line x1="120" y1="8"   x2="120" y2="18"  stroke="#0b5ea8" stroke-opacity="0.6" stroke-width="1"/>
+            <line x1="120" y1="222" x2="120" y2="232" stroke="#0b5ea8" stroke-opacity="0.6" stroke-width="1"/>
+            <line x1="8"   y1="120" x2="18"  y2="120" stroke="#0b5ea8" stroke-opacity="0.6" stroke-width="1"/>
+            <line x1="222" y1="120" x2="232" y2="120" stroke="#0b5ea8" stroke-opacity="0.6" stroke-width="1"/>
+        </svg>
+
+        <svg class="login-decor login-decor-br" viewBox="0 0 240 240" aria-hidden="true">
+            <!-- radar pulse: 3 個延遲擴張的環 -->
+            <g class="radar-rings">
+                <circle cx="120" cy="120" r="30" fill="none" stroke="#0b5ea8" stroke-width="0.9" class="radar-ring r1"/>
+                <circle cx="120" cy="120" r="30" fill="none" stroke="#0b5ea8" stroke-width="0.9" class="radar-ring r2"/>
+                <circle cx="120" cy="120" r="30" fill="none" stroke="#0b5ea8" stroke-width="0.9" class="radar-ring r3"/>
+            </g>
+            <!-- 中心 -->
+            <circle cx="120" cy="120" r="5" fill="#0b5ea8" fill-opacity="0.55"/>
+            <circle cx="120" cy="120" r="2" fill="#0b5ea8"/>
+            <!-- sweep beam -->
+            <g class="radar-sweep">
+                <path d="M 120 120 L 120 20 A 100 100 0 0 1 220 120 Z" fill="url(#sweepGrad)" fill-opacity="0.18"/>
+            </g>
+            <defs>
+                <linearGradient id="sweepGrad" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%"  stop-color="#0b5ea8" stop-opacity="0.5"/>
+                    <stop offset="100%" stop-color="#0b5ea8" stop-opacity="0"/>
+                </linearGradient>
+            </defs>
+        </svg>
+
+        <!-- 右上 / 左下 抽象節點圖樣 -->
+        <svg class="login-decor login-decor-tr" viewBox="0 0 200 200" aria-hidden="true">
+            <!-- network nodes -->
+            <line x1="40"  y1="40"  x2="120" y2="80" stroke="#0b5ea8" stroke-opacity="0.3" stroke-width="0.5"/>
+            <line x1="120" y1="80"  x2="160" y2="40" stroke="#0b5ea8" stroke-opacity="0.3" stroke-width="0.5"/>
+            <line x1="120" y1="80"  x2="100" y2="160" stroke="#0b5ea8" stroke-opacity="0.3" stroke-width="0.5"/>
+            <line x1="100" y1="160" x2="40"  y2="140" stroke="#0b5ea8" stroke-opacity="0.3" stroke-width="0.5"/>
+            <circle cx="40"  cy="40"  r="4" fill="#0b5ea8" fill-opacity="0.55"/>
+            <circle cx="120" cy="80"  r="6" fill="#0b5ea8" fill-opacity="0.7"/>
+            <circle cx="160" cy="40"  r="4" fill="#0b5ea8" fill-opacity="0.55"/>
+            <circle cx="100" cy="160" r="5" fill="#0b5ea8" fill-opacity="0.6"/>
+            <circle cx="40"  cy="140" r="4" fill="#0b5ea8" fill-opacity="0.55"/>
+        </svg>
+
+        <svg class="login-decor login-decor-bl" viewBox="0 0 200 200" aria-hidden="true">
+            <!-- 線網格 (lane / road 隱喻) -->
+            <line x1="30"  y1="0" x2="30"  y2="200" stroke="#0b5ea8" stroke-opacity="0.18" stroke-width="0.6"/>
+            <line x1="100" y1="0" x2="100" y2="200" stroke="#0b5ea8" stroke-opacity="0.30" stroke-width="0.8"/>
+            <line x1="170" y1="0" x2="170" y2="200" stroke="#0b5ea8" stroke-opacity="0.18" stroke-width="0.6"/>
+            <!-- 虛線車道 -->
+            <line x1="65"  y1="0" x2="65"  y2="200" stroke="#0b5ea8" stroke-opacity="0.35" stroke-width="0.5" stroke-dasharray="6 6"/>
+            <line x1="135" y1="0" x2="135" y2="200" stroke="#0b5ea8" stroke-opacity="0.35" stroke-width="0.5" stroke-dasharray="6 6"/>
+            <!-- 移動車輛 (dots) -->
+            <circle r="3" fill="#0b5ea8" fill-opacity="0.75" class="lane-dot dot-a">
+                <animate attributeName="cy" from="-10" to="210" dur="6s" repeatCount="indefinite"/>
+                <animate attributeName="cx" values="65;65" dur="6s" repeatCount="indefinite"/>
+            </circle>
+            <circle r="3" fill="#0b5ea8" fill-opacity="0.55" class="lane-dot dot-b">
+                <animate attributeName="cy" from="-30" to="190" dur="8s" repeatCount="indefinite"/>
+                <animate attributeName="cx" values="135;135" dur="8s" repeatCount="indefinite"/>
+            </circle>
+        </svg>
+        <!-- 角落 ASCII 標記 -->
+        <div class="login-corner-mark tl"><span class="lcm-bracket">[</span>01<span class="lcm-bracket">]</span> <span class="lcm-text">EDGE NODE</span></div>
+        <div class="login-corner-mark tr"><span class="lcm-text">v1.0</span> <span class="lcm-bracket">/</span> <span class="lcm-text">2026</span></div>
+        <div class="login-corner-mark bl"><span class="lcm-text">SECURE</span> <span class="lcm-bracket">·</span> <span class="lcm-text">GOV ACCESS</span></div>
+        <div class="login-corner-mark br"><span class="lcm-text">JETSON AGX ORIN</span> <span class="lcm-bracket">·</span> <span class="lcm-dot-live"></span><span class="lcm-text">ACTIVE</span></div>
+
         <div class="login-card">
             <!-- 邊角裝飾 (4 角 bracket) -->
             <span class="login-corner tl"></span>
