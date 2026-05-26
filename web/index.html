@@ -6029,7 +6029,12 @@ const app=createApp({
             }
             return 'monitor';
         };
-        const loginLandingPage=()=>hasPerm('statistics')?'statistics':firstAllowedPage();
+        // 預設導到 dashboard 而非 statistics — statistics 會拉 2M traffic_events
+        // (login 後超過 1 分鐘卡頓)。使用者自己點統計分析才 trigger loadStats。
+        const loginLandingPage=()=>{
+            if(canViewDashboard.value) return 'dashboard';
+            return firstAllowedPage();
+        };
         const page=ref('dashboard');
         const currentTime=ref('');
         const menuOpen=reactive({query:true,analysis:true});
