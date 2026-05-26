@@ -200,10 +200,11 @@ section {
   align-items: end;
 }
 .hero h1 {
-  font-size: clamp(48px, 7.2vw, 96px);
-  font-weight: 300;
-  line-height: 1.02;
-  letter-spacing: -0.025em;
+  font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  font-size: clamp(44px, 6.8vw, 88px);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
   color: var(--gov-text);
   margin-bottom: 28px;
 }
@@ -214,11 +215,11 @@ section {
 .hero h1 .en {
   display: block;
   margin-top: 14px;
+  font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
   font-size: 0.32em;
   font-weight: 500;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.22em;
   color: var(--gov-muted);
-  font-family: "IBM Plex Mono", monospace;
 }
 .hero p {
   font-size: 15.5px;
@@ -932,12 +933,6 @@ section:nth-of-type(6) { animation-delay: 0.44s; }
 <div class="status-bar">
   <span class="dot" aria-hidden="true"></span>
   <span class="live">SERVICE ONLINE</span>
-  <span class="sep">/</span>
-  <b>Jetson AGX Orin</b>
-  <span class="sep">/</span>
-  HOST <b style="font-family:'IBM Plex Mono',monospace">192.168.0.108</b>
-  <span class="sep">/</span>
-  <span class="mono">JetPack 6.0 · CUDA 12.2 · TRT 8.6</span>
   <span class="right"><span id="local-clock">--:--:--</span> UTC+08</span>
 </div>
 
