@@ -133,6 +133,411 @@
         .ds-method-tag.DELETE { background: var(--gov-fault); }
 
         /* 數字 / IP / port / URL 統一用 mono — 全站舊 code 不需動,新元件用 .ds-num-data */
+
+        /* ───── Phase 3a: 登入介面 redesign ───── */
+        .login-page {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background:
+                radial-gradient(ellipse at 85% 15%, rgba(11,94,168,0.06) 0%, transparent 55%),
+                radial-gradient(ellipse at 10% 90%, rgba(11,94,168,0.04) 0%, transparent 55%),
+                linear-gradient(180deg, #f4f7fb 0%, var(--gov-bg) 100%);
+            padding: 24px;
+            position: relative;
+        }
+        .login-page::after {
+            content: '';
+            position: absolute; inset: 0;
+            pointer-events: none;
+            background-image: linear-gradient(rgba(11,94,168,0.025) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(11,94,168,0.025) 1px, transparent 1px);
+            background-size: 60px 60px;
+            mask-image: radial-gradient(ellipse at center, black 0%, transparent 80%);
+        }
+        .login-card {
+            position: relative;
+            z-index: 1;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+            width: 100%;
+            max-width: 920px;
+            background: var(--gov-surface);
+            border: 1px solid var(--gov-border);
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: 0 30px 80px rgba(11,94,168,0.12), 0 12px 30px rgba(16,24,40,0.08);
+        }
+        .login-brand {
+            background:
+                radial-gradient(ellipse at 80% 110%, rgba(255,255,255,0.08) 0%, transparent 50%),
+                linear-gradient(160deg, #0b5ea8 0%, #084d8a 55%, #053a6b 100%);
+            color: #fff;
+            padding: 38px 36px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+            overflow: hidden;
+        }
+        .login-brand::before {
+            content: '';
+            position: absolute; right: -60px; top: -60px;
+            width: 220px; height: 220px;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 50%;
+        }
+        .login-brand::after {
+            content: '';
+            position: absolute; right: -30px; top: 60px;
+            width: 120px; height: 120px;
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 50%;
+        }
+        .login-logo-row {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 36px;
+            position: relative;
+            z-index: 1;
+        }
+        .login-logo-mark {
+            width: 48px; height: 48px;
+            background: rgba(255,255,255,0.18);
+            border: 1px solid rgba(255,255,255,0.25);
+            backdrop-filter: blur(4px);
+            border-radius: 10px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-family: var(--font-mono);
+            font-weight: 700;
+            font-size: 20px;
+            letter-spacing: -0.04em;
+        }
+        .login-system {
+            font-size: 22px;
+            font-weight: 700;
+            color: #fff;
+            line-height: 1.1;
+            letter-spacing: -0.01em;
+        }
+        .login-system-en {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            color: rgba(255,255,255,0.65);
+            letter-spacing: 0.22em;
+            margin-top: 4px;
+        }
+        .login-tagline {
+            font-size: 13.5px;
+            color: rgba(255,255,255,0.82);
+            line-height: 1.85;
+            font-weight: 400;
+            position: relative;
+            z-index: 1;
+            border-left: 2px solid rgba(255,255,255,0.3);
+            padding-left: 14px;
+        }
+        .login-brand-bottom {
+            position: relative;
+            z-index: 1;
+            padding-top: 28px;
+            border-top: 1px solid rgba(255,255,255,0.12);
+        }
+        .login-meta-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .login-meta-row .ds-pulse-dot {
+            background: #4ade80;
+            box-shadow: 0 0 0 3px rgba(74,222,128,0.25);
+        }
+        .login-meta-row .ds-pulse-dot {
+            animation: ds-pulse-light 2s ease-in-out infinite;
+        }
+        @keyframes ds-pulse-light {
+            0%, 100% { box-shadow: 0 0 0 3px rgba(74,222,128,0.25); }
+            50%      { box-shadow: 0 0 0 6px rgba(74,222,128,0); }
+        }
+        .login-status-text {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.22em;
+            color: #4ade80;
+        }
+        .login-meta-dl {
+            display: grid;
+            grid-template-columns: 90px 1fr;
+            row-gap: 8px;
+            font-family: var(--font-mono);
+            font-size: 11.5px;
+            margin: 0;
+        }
+        .login-meta-dl dt {
+            color: rgba(255,255,255,0.5);
+            letter-spacing: 0.18em;
+            font-size: 10px;
+        }
+        .login-meta-dl dd {
+            color: #fff;
+            font-weight: 500;
+        }
+
+        .login-form-pane {
+            padding: 48px 42px 38px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .login-form-head {
+            margin-bottom: 30px;
+        }
+        .login-form-tag {
+            display: inline-block;
+            padding: 4px 10px;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.22em;
+            color: var(--gov-primary);
+            background: var(--gov-primary-soft);
+            border: 1px solid var(--gov-primary-line);
+            border-radius: 999px;
+            margin-bottom: 18px;
+        }
+        .login-form-head h2 {
+            font-size: 30px;
+            font-weight: 700;
+            color: var(--gov-text);
+            letter-spacing: -0.015em;
+            line-height: 1.15;
+            margin-bottom: 6px;
+        }
+        .login-form-head p {
+            font-size: 13px;
+            color: var(--gov-muted);
+        }
+        .login-form-body { display: flex; flex-direction: column; gap: 16px; }
+        .login-field { display: flex; flex-direction: column; gap: 6px; }
+        .login-field label {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            letter-spacing: 0.18em;
+            color: var(--gov-muted);
+            text-transform: uppercase;
+        }
+        .login-field .el-input__wrapper {
+            box-shadow: 0 0 0 1px var(--gov-border) inset !important;
+            background: var(--gov-bg-2) !important;
+            transition: all .2s ease;
+        }
+        .login-field .el-input__wrapper:hover {
+            box-shadow: 0 0 0 1px var(--gov-border-strong) inset !important;
+        }
+        .login-field .el-input.is-focus .el-input__wrapper,
+        .login-field .el-input__wrapper.is-focus {
+            box-shadow: 0 0 0 2px var(--gov-primary) inset !important;
+            background: var(--gov-surface) !important;
+        }
+        .login-foot {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 28px;
+            padding-top: 20px;
+            border-top: 1px dashed var(--gov-border);
+            font-size: 11.5px;
+            color: var(--gov-mute-2);
+        }
+        .login-foot-doc {
+            font-family: var(--font-mono);
+            letter-spacing: 0.08em;
+        }
+        .login-foot-sep {
+            flex: 1;
+            height: 1px;
+            background: var(--gov-border);
+        }
+        .login-foot a {
+            color: var(--gov-primary);
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .login-foot a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+        @media (max-width: 720px) {
+            .login-card { grid-template-columns: 1fr; max-width: 460px; }
+            .login-brand { padding: 30px 28px; }
+            .login-form-pane { padding: 36px 28px 28px; }
+            .login-logo-row { margin-bottom: 22px; }
+        }
+
+        /* ───── Phase 3b: dashboard KPI / cards 升級 ───── */
+        .stats-kpi {
+            border: 1px solid var(--gov-border);
+            border-radius: 10px;
+            padding: 18px 20px;
+            background: var(--gov-surface);
+            box-shadow: var(--shadow-sm);
+            position: relative;
+            transition: box-shadow .25s ease, transform .2s ease, border-color .25s ease;
+            overflow: hidden;
+        }
+        .stats-kpi::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; width: 4px; height: 100%;
+            background: var(--gov-primary);
+            opacity: 0;
+            transition: opacity .25s ease;
+        }
+        .stats-kpi:hover {
+            box-shadow: var(--shadow-lg);
+            border-color: var(--gov-primary-line);
+            transform: translateY(-1px);
+        }
+        .stats-kpi:hover::before { opacity: 1; }
+        .stats-kpi .label {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--gov-muted);
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+        .stats-kpi .value {
+            font-family: var(--font-mono);
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--gov-text);
+            line-height: 1;
+            letter-spacing: -0.02em;
+            font-variant-numeric: tabular-nums;
+        }
+        .stats-kpi .hint {
+            font-size: 11px;
+            color: var(--gov-mute-2);
+            margin-top: 10px;
+            letter-spacing: 0.02em;
+        }
+
+        /* card header 加大標題感 */
+        .card {
+            background: var(--gov-surface);
+            border-radius: 10px;
+            border: 1px solid var(--gov-border);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: 16px;
+            overflow: hidden;
+            transition: box-shadow .25s ease;
+        }
+        .card:hover { box-shadow: var(--shadow); }
+        .card-header {
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--gov-border);
+            font-weight: 700;
+            color: var(--gov-text);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--gov-surface-2);
+            font-size: 14px;
+            letter-spacing: 0.005em;
+        }
+
+        /* event-stats 升級 */
+        .event-stats {
+            background: var(--gov-surface);
+            border-radius: 10px;
+            padding: 18px 20px;
+            border: 1px solid var(--gov-border);
+            box-shadow: var(--shadow-sm);
+        }
+        .event-stats h4 {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--gov-muted);
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            margin-bottom: 14px;
+        }
+
+        /* status-card 升級成 metric 風 */
+        .status-card {
+            background: var(--gov-surface);
+            border-radius: 10px;
+            padding: 22px 20px;
+            border: 1px solid var(--gov-border);
+            box-shadow: var(--shadow-sm);
+            transition: box-shadow .25s ease, transform .2s ease, border-color .25s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .status-card:hover {
+            background: var(--gov-surface);
+            box-shadow: var(--shadow-lg);
+            border-color: var(--gov-primary-line);
+            transform: translateY(-1px);
+        }
+        .status-card h4 {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--gov-muted);
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .status-card .subtitle {
+            color: var(--gov-mute-2);
+            font-size: 11.5px;
+            margin-bottom: 18px;
+            letter-spacing: 0.02em;
+        }
+
+        /* violation-list 升級 */
+        .violation-list {
+            background: var(--gov-surface);
+            border-radius: 10px;
+            flex: 1;
+            border: 1px solid var(--gov-border);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .violation-list-header {
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--gov-border);
+            font-weight: 700;
+            color: var(--gov-text);
+            background: var(--gov-surface-2);
+            font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .violation-list-header::after {
+            content: 'LIVE';
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.18em;
+            color: var(--gov-ok);
+            background: rgba(31,157,85,0.10);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; background: linear-gradient(180deg, #f4f7fb 0%, var(--gov-bg) 100%); color: var(--gov-text); }
         .layout { display: flex; min-height: 100vh; }
@@ -1080,21 +1485,59 @@
 </head>
 <body>
 <div id="app">
-    <div v-if="!isAuthenticated" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f1f5f9;padding:20px">
-        <div class="card" style="width:100%;max-width:420px">
-            <div class="card-header"><span>🔐 AI交通影像分析</span></div>
-            <div class="card-body">
-                <el-form @submit.prevent>
-                    <el-form-item label="帳號" label-width="70px">
-                        <el-input v-model="loginForm.username" autocomplete="username"/>
-                    </el-form-item>
-                    <el-form-item label="密碼" label-width="70px">
-                        <el-input v-model="loginForm.password" type="password" show-password autocomplete="current-password" @keyup.enter="login"/>
-                    </el-form-item>
-                    <div style="display:flex;justify-content:flex-end;gap:8px">
-                        <el-button :loading="authLoading" type="primary" @click="login">登入</el-button>
+    <div v-if="!isAuthenticated" class="login-page">
+        <div class="login-card">
+            <!-- 左側：深色 brand panel -->
+            <div class="login-brand">
+                <div class="login-brand-top">
+                    <div class="login-logo-row">
+                        <div class="login-logo-mark">AI</div>
+                        <div>
+                            <div class="login-system">交通影像分析</div>
+                            <div class="login-system-en">TRAFFIC IMAGING ANALYTICS</div>
+                        </div>
                     </div>
+                    <div class="login-tagline">
+                        Jetson 邊緣節點 / 即時違規偵測<br>
+                        車流 / 車速 / 壅塞 / 車牌辨識
+                    </div>
+                </div>
+                <div class="login-brand-bottom">
+                    <div class="login-meta-row">
+                        <span class="ds-pulse-dot"></span>
+                        <span class="login-status-text">SERVICE ONLINE</span>
+                    </div>
+                    <dl class="login-meta-dl">
+                        <dt>HOST</dt>   <dd>192.168.0.108</dd>
+                        <dt>PLATFORM</dt><dd>JETSON AGX ORIN</dd>
+                        <dt>JETPACK</dt><dd>6.0 · CUDA 12.2</dd>
+                    </dl>
+                </div>
+            </div>
+
+            <!-- 右側：登入表單 -->
+            <div class="login-form-pane">
+                <div class="login-form-head">
+                    <div class="login-form-tag">SECURE LOGIN · 安全登入</div>
+                    <h2>歡迎回來</h2>
+                    <p>請使用授權帳號登入系統管理介面</p>
+                </div>
+                <el-form @submit.prevent class="login-form-body">
+                    <div class="login-field">
+                        <label>帳號</label>
+                        <el-input v-model="loginForm.username" autocomplete="username" placeholder="username" size="large"/>
+                    </div>
+                    <div class="login-field">
+                        <label>密碼</label>
+                        <el-input v-model="loginForm.password" type="password" show-password autocomplete="current-password" @keyup.enter="login" placeholder="••••••••" size="large"/>
+                    </div>
+                    <el-button :loading="authLoading" type="primary" @click="login" size="large" style="width:100%;margin-top:8px;font-weight:600;letter-spacing:0.05em">登入 →</el-button>
                 </el-form>
+                <div class="login-foot">
+                    <span class="login-foot-doc">DOC v1.0 · 2026-05-26</span>
+                    <span class="login-foot-sep"></span>
+                    <a href="/web/agency_landing.html" target="_blank">機關平台對接文件 →</a>
+                </div>
             </div>
         </div>
     </div>
