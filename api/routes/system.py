@@ -822,6 +822,51 @@ async def get_system_status():
     }
 
 
+# cache git version 在 module load 時讀一次（避免每次 request 都 fork git）
+def _read_git_version() -> Dict[str, str]:
+    base = "1.0.0"
+    info: Dict[str, str] = {"base": base, "commit": "", "build_date": "", "version": base}
+    try:
+        h = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(PROJECT_ROOT),
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode().strip()
+        if h:
+            info["commit"] = h
+            info["version"] = f"{base}-{h}"
+    except Exception:
+        pass
+    try:
+        d = subprocess.check_output(
+            ["git", "log", "-1", "--format=%cd", "--date=short"],
+            cwd=str(PROJECT_ROOT),
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode().strip()
+        if d:
+            info["build_date"] = d
+    except Exception:
+        pass
+    return info
+
+_GIT_VERSION_CACHE = _read_git_version()
+
+
+@router.get("/version")
+def get_version():
+    """前後台共用版號 — 兩者用同一個 git commit hash 對齊。"""
+    v = _GIT_VERSION_CACHE
+    return {
+        "frontend": v["version"],
+        "backend":  v["version"],
+        "base":     v["base"],
+        "commit":   v["commit"],
+        "build_date": v["build_date"],
+    }
+
+
 @router.post("/restart-api")
 def restart_traffic_api():
     """重啟 traffic-api.service。
