@@ -134,170 +134,125 @@
 
         /* 數字 / IP / port / URL 統一用 mono — 全站舊 code 不需動,新元件用 .ds-num-data */
 
-        /* ───── Phase 3a: 登入介面 redesign ───── */
+        /* ───── 登入介面 v2: 單欄白卡浮動 + 美感 ───── */
         .login-page {
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             background:
-                radial-gradient(ellipse at 85% 15%, rgba(11,94,168,0.06) 0%, transparent 55%),
-                radial-gradient(ellipse at 10% 90%, rgba(11,94,168,0.04) 0%, transparent 55%),
-                linear-gradient(180deg, #f4f7fb 0%, var(--gov-bg) 100%);
+                radial-gradient(ellipse 60% 50% at 20% 20%, rgba(11,94,168,0.10) 0%, transparent 60%),
+                radial-gradient(ellipse 50% 50% at 80% 80%, rgba(16,185,129,0.06) 0%, transparent 60%),
+                radial-gradient(ellipse 70% 50% at 50% 50%, rgba(11,94,168,0.04) 0%, transparent 70%),
+                linear-gradient(160deg, #f8fafc 0%, #eef2f6 60%, #e2e8f0 100%);
             padding: 24px;
             position: relative;
+            overflow: hidden;
+        }
+        /* 背景動態 ambient 圓圈裝飾 */
+        .login-page::before {
+            content: '';
+            position: absolute;
+            top: -150px; left: -150px;
+            width: 500px; height: 500px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(11,94,168,0.08) 0%, transparent 70%);
+            animation: login-float-a 18s ease-in-out infinite;
         }
         .login-page::after {
             content: '';
-            position: absolute; inset: 0;
-            pointer-events: none;
-            background-image: linear-gradient(rgba(11,94,168,0.025) 1px, transparent 1px),
-                              linear-gradient(90deg, rgba(11,94,168,0.025) 1px, transparent 1px);
-            background-size: 60px 60px;
-            mask-image: radial-gradient(ellipse at center, black 0%, transparent 80%);
+            position: absolute;
+            bottom: -200px; right: -200px;
+            width: 600px; height: 600px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 70%);
+            animation: login-float-b 22s ease-in-out infinite;
         }
-        .login-card {
+        @keyframes login-float-a {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            50%      { transform: translate(80px, 60px) scale(1.1); }
+        }
+        @keyframes login-float-b {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            50%      { transform: translate(-60px, -40px) scale(1.15); }
+        }
+        /* grid pattern overlay */
+        .login-page > .login-card {
             position: relative;
             z-index: 1;
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+        }
+        .login-card {
             width: 100%;
-            max-width: 920px;
-            background: var(--gov-surface);
-            border: 1px solid var(--gov-border);
-            border-radius: 14px;
-            overflow: hidden;
-            box-shadow: 0 30px 80px rgba(11,94,168,0.12), 0 12px 30px rgba(16,24,40,0.08);
+            max-width: 440px;
+            background: rgba(255,255,255,0.92);
+            border: 1px solid rgba(215,222,232,0.8);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: 18px;
+            padding: 42px 38px 32px;
+            box-shadow:
+                0 40px 100px rgba(11,94,168,0.14),
+                0 16px 40px rgba(16,24,40,0.08),
+                0 4px 12px rgba(16,24,40,0.04),
+                inset 0 1px 0 rgba(255,255,255,0.8);
+            animation: login-card-in 0.7s cubic-bezier(.4,.1,.2,1) both;
         }
-        .login-brand {
-            background:
-                radial-gradient(ellipse at 80% 110%, rgba(255,255,255,0.08) 0%, transparent 50%),
-                linear-gradient(160deg, #0b5ea8 0%, #084d8a 55%, #053a6b 100%);
-            color: #fff;
-            padding: 38px 36px;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            position: relative;
-            overflow: hidden;
+        @keyframes login-card-in {
+            from { opacity: 0; transform: translateY(20px) scale(0.98); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
         }
-        .login-brand::before {
-            content: '';
-            position: absolute; right: -60px; top: -60px;
-            width: 220px; height: 220px;
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 50%;
+        /* 四個邊角 accent 標 */
+        .login-corner {
+            position: absolute;
+            width: 14px; height: 14px;
+            border-color: var(--gov-primary);
+            border-style: solid;
+            border-width: 0;
+            opacity: 0.7;
         }
-        .login-brand::after {
-            content: '';
-            position: absolute; right: -30px; top: 60px;
-            width: 120px; height: 120px;
-            border: 1px solid rgba(255,255,255,0.06);
-            border-radius: 50%;
-        }
-        .login-logo-row {
+        .login-corner.tl { top: 12px; left: 12px;  border-top-width: 1.5px; border-left-width: 1.5px;  border-top-left-radius: 4px; }
+        .login-corner.tr { top: 12px; right: 12px; border-top-width: 1.5px; border-right-width: 1.5px; border-top-right-radius: 4px; }
+        .login-corner.bl { bottom: 12px; left: 12px;  border-bottom-width: 1.5px; border-left-width: 1.5px;  border-bottom-left-radius: 4px; }
+        .login-corner.br { bottom: 12px; right: 12px; border-bottom-width: 1.5px; border-right-width: 1.5px; border-bottom-right-radius: 4px; }
+
+        .login-brand-row {
             display: flex;
             align-items: center;
             gap: 14px;
-            margin-bottom: 36px;
-            position: relative;
-            z-index: 1;
+            margin-bottom: 32px;
         }
         .login-logo-mark {
-            width: 48px; height: 48px;
-            background: rgba(255,255,255,0.18);
-            border: 1px solid rgba(255,255,255,0.25);
-            backdrop-filter: blur(4px);
-            border-radius: 10px;
+            width: 46px; height: 46px;
+            background: linear-gradient(135deg, var(--gov-primary) 0%, var(--gov-primary-strong) 100%);
+            border-radius: 11px;
             display: inline-flex;
             align-items: center;
             justify-content: center;
             color: #fff;
             font-family: var(--font-mono);
             font-weight: 700;
-            font-size: 20px;
+            font-size: 18px;
             letter-spacing: -0.04em;
+            box-shadow: 0 6px 18px rgba(11,94,168,0.32), 0 2px 4px rgba(11,94,168,0.18);
+            flex-shrink: 0;
         }
         .login-system {
-            font-size: 22px;
+            font-size: 20px;
             font-weight: 700;
-            color: #fff;
+            color: var(--gov-text);
             line-height: 1.1;
             letter-spacing: -0.01em;
         }
         .login-system-en {
             font-family: var(--font-mono);
-            font-size: 10.5px;
-            color: rgba(255,255,255,0.65);
+            font-size: 10px;
+            color: var(--gov-mute-2);
             letter-spacing: 0.22em;
             margin-top: 4px;
         }
-        .login-tagline {
-            font-size: 13.5px;
-            color: rgba(255,255,255,0.82);
-            line-height: 1.85;
-            font-weight: 400;
-            position: relative;
-            z-index: 1;
-            border-left: 2px solid rgba(255,255,255,0.3);
-            padding-left: 14px;
-        }
-        .login-brand-bottom {
-            position: relative;
-            z-index: 1;
-            padding-top: 28px;
-            border-top: 1px solid rgba(255,255,255,0.12);
-        }
-        .login-meta-row {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 16px;
-        }
-        .login-meta-row .ds-pulse-dot {
-            background: #4ade80;
-            box-shadow: 0 0 0 3px rgba(74,222,128,0.25);
-        }
-        .login-meta-row .ds-pulse-dot {
-            animation: ds-pulse-light 2s ease-in-out infinite;
-        }
-        @keyframes ds-pulse-light {
-            0%, 100% { box-shadow: 0 0 0 3px rgba(74,222,128,0.25); }
-            50%      { box-shadow: 0 0 0 6px rgba(74,222,128,0); }
-        }
-        .login-status-text {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.22em;
-            color: #4ade80;
-        }
-        .login-meta-dl {
-            display: grid;
-            grid-template-columns: 90px 1fr;
-            row-gap: 8px;
-            font-family: var(--font-mono);
-            font-size: 11.5px;
-            margin: 0;
-        }
-        .login-meta-dl dt {
-            color: rgba(255,255,255,0.5);
-            letter-spacing: 0.18em;
-            font-size: 10px;
-        }
-        .login-meta-dl dd {
-            color: #fff;
-            font-weight: 500;
-        }
 
-        .login-form-pane {
-            padding: 48px 42px 38px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-        }
         .login-form-head {
-            margin-bottom: 30px;
+            margin-bottom: 26px;
         }
         .login-form-tag {
             display: inline-block;
@@ -372,12 +327,27 @@
             text-decoration: none;
         }
         .login-foot a:hover { text-decoration: underline; text-underline-offset: 3px; }
+        .login-submit {
+            width: 100%;
+            margin-top: 14px;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            background: linear-gradient(135deg, var(--gov-primary) 0%, var(--gov-primary-strong) 100%) !important;
+            border: none !important;
+            box-shadow: 0 6px 20px rgba(11,94,168,0.28), 0 2px 4px rgba(11,94,168,0.16);
+            transition: all .25s ease;
+        }
+        .login-submit:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 28px rgba(11,94,168,0.36), 0 2px 6px rgba(11,94,168,0.2);
+        }
+        .login-submit:active {
+            transform: translateY(0);
+        }
 
-        @media (max-width: 720px) {
-            .login-card { grid-template-columns: 1fr; max-width: 460px; }
-            .login-brand { padding: 30px 28px; }
-            .login-form-pane { padding: 36px 28px 28px; }
-            .login-logo-row { margin-bottom: 22px; }
+        @media (max-width: 480px) {
+            .login-card { padding: 32px 24px 24px; max-width: 100%; }
+            .login-brand-row { margin-bottom: 24px; }
         }
 
         /* ───── Phase 3b: dashboard KPI / cards 升級 ───── */
@@ -1676,57 +1646,43 @@
 <div id="app">
     <div v-if="!isAuthenticated" class="login-page">
         <div class="login-card">
-            <!-- 左側：深色 brand panel -->
-            <div class="login-brand">
-                <div class="login-brand-top">
-                    <div class="login-logo-row">
-                        <div class="login-logo-mark">AI</div>
-                        <div>
-                            <div class="login-system">交通影像分析</div>
-                            <div class="login-system-en">TRAFFIC IMAGING ANALYTICS</div>
-                        </div>
-                    </div>
-                    <div class="login-tagline">
-                        Jetson 邊緣節點 / 即時違規偵測<br>
-                        車流 / 車速 / 壅塞 / 車牌辨識
-                    </div>
-                </div>
-                <div class="login-brand-bottom">
-                    <div class="login-meta-row">
-                        <span class="ds-pulse-dot"></span>
-                        <span class="login-status-text">SERVICE ONLINE</span>
-                    </div>
-                    <dl class="login-meta-dl">
-                        <dt>HOST</dt>   <dd>192.168.0.108</dd>
-                        <dt>PLATFORM</dt><dd>JETSON AGX ORIN</dd>
-                        <dt>JETPACK</dt><dd>6.0 · CUDA 12.2</dd>
-                    </dl>
+            <!-- 邊角裝飾 -->
+            <span class="login-corner tl"></span>
+            <span class="login-corner tr"></span>
+            <span class="login-corner bl"></span>
+            <span class="login-corner br"></span>
+
+            <!-- 頂部 brand -->
+            <div class="login-brand-row">
+                <div class="login-logo-mark">AI</div>
+                <div>
+                    <div class="login-system">交通影像分析</div>
+                    <div class="login-system-en">TRAFFIC IMAGING ANALYTICS</div>
                 </div>
             </div>
 
-            <!-- 右側：登入表單 -->
-            <div class="login-form-pane">
-                <div class="login-form-head">
-                    <div class="login-form-tag">SECURE LOGIN · 安全登入</div>
-                    <h2>歡迎回來</h2>
-                    <p>請使用授權帳號登入系統管理介面</p>
+            <!-- 主體 form -->
+            <div class="login-form-head">
+                <div class="login-form-tag">SECURE LOGIN · 安全登入</div>
+                <h2>歡迎回來</h2>
+                <p>請使用授權帳號登入系統管理介面</p>
+            </div>
+            <el-form @submit.prevent class="login-form-body">
+                <div class="login-field">
+                    <label>帳號</label>
+                    <el-input v-model="loginForm.username" autocomplete="username" placeholder="username" size="large"/>
                 </div>
-                <el-form @submit.prevent class="login-form-body">
-                    <div class="login-field">
-                        <label>帳號</label>
-                        <el-input v-model="loginForm.username" autocomplete="username" placeholder="username" size="large"/>
-                    </div>
-                    <div class="login-field">
-                        <label>密碼</label>
-                        <el-input v-model="loginForm.password" type="password" show-password autocomplete="current-password" @keyup.enter="login" placeholder="••••••••" size="large"/>
-                    </div>
-                    <el-button :loading="authLoading" type="primary" @click="login" size="large" style="width:100%;margin-top:8px;font-weight:600;letter-spacing:0.05em">登入 →</el-button>
-                </el-form>
-                <div class="login-foot">
-                    <span class="login-foot-doc">DOC v1.0 · 2026-05-26</span>
-                    <span class="login-foot-sep"></span>
-                    <a href="/web/agency_landing.html" target="_blank">機關平台對接文件 →</a>
+                <div class="login-field">
+                    <label>密碼</label>
+                    <el-input v-model="loginForm.password" type="password" show-password autocomplete="current-password" @keyup.enter="login" placeholder="••••••••" size="large"/>
                 </div>
+                <el-button :loading="authLoading" type="primary" @click="login" size="large" class="login-submit">登入 →</el-button>
+            </el-form>
+
+            <div class="login-foot">
+                <span class="login-foot-doc">DOC v1.0 · 2026-05-26</span>
+                <span class="login-foot-sep"></span>
+                <a href="/web/agency_landing.html" target="_blank">機關平台對接文件 →</a>
             </div>
         </div>
     </div>
@@ -4592,7 +4548,11 @@
                         <div class="config-item" v-if="previewCamera.detection_config.speeding"><span>速限</span><el-input-number v-model="previewCamera.detection_config.speed_limit" :min="20" :max="120" size="small" @change="saveConfig"/></div>
                     </template>
                     <template v-if="page==='traffic_flow_settings' || page==='speed_detection'">
-                        <div class="section-title">{{ page==='speed_detection'?'<svg class="text-icon"><use href="#i-car"/></svg>車速設定':'<svg class="text-icon"><use href="#i-road"/></svg>️ 車流設定' }}</div>
+                        <div class="section-title">
+                            <svg v-if="page==='speed_detection'" class="text-icon"><use href="#i-car"/></svg>
+                            <svg v-else class="text-icon"><use href="#i-road"/></svg>
+                            {{ page==='speed_detection' ? '車速設定' : '車流設定' }}
+                        </div>
                         <div class="analysis-setting-group">
                             <div class="analysis-setting-head">1. ROI 區域編輯</div>
                             <el-button type="warning" size="small" style="width:100%" @click="openRoiEditor(previewCamera.id)">開啟 ROI 編輯器</el-button>
@@ -5360,7 +5320,7 @@
         <el-row :gutter="12" align="middle" style="margin-bottom:12px;">
             <el-col :span="6">
                 <el-select v-model="selectedId" placeholder="選擇攝影機" style="width:100%" :loading="loadingDevices" @change="onCameraChange">
-                    <el-option v-for="d in devices" :key="d.id" :label="d.name + (d.status==='Online' ? ' <svg class="text-icon" style="color:var(--gov-ok)"><use href="#i-dot"/></svg>' : ' <svg class="text-icon" style="color:var(--gov-fault)"><use href="#i-dot"/></svg>')" :value="d.id" />
+                    <el-option v-for="d in devices" :key="d.id" :label="d.name + (d.status==='Online' ? ' (在線)' : ' (離線)')" :value="d.id" />
                 </el-select>
             </el-col>
             <el-col :span="7">
@@ -7798,7 +7758,7 @@ const app=createApp({
             list.push({
                 key:'nvr-status',
                 tone:frigateStatus.status==='online'?'success':'warn',
-                icon:frigateStatus.status==='online'?'<svg class="text-icon"><use href="#i-radio"/></svg>':'<svg class="text-icon" style="color:var(--gov-warn)"><use href="#i-alert"/></svg>️',
+                icon:frigateStatus.status==='online'?'●':'!',
                 title:frigateStatus.status==='online'?'NVR 已連線':'NVR 連線中斷',
                 text:frigateStatus.status==='online'
                     ? `Frigate ${frigateStatus.version||'-'} · ${frigateStatus.cameras?.length||0} 台攝影機在線`
@@ -8308,7 +8268,7 @@ const app=createApp({
             if(!map)return;
             cameras.value.forEach(c=>{
                 if(c.lat&&c.lng){
-                    const icon=L.divIcon({className:'',html:`<div style="background:${c.status==='online'?'#27ae60':'#0f766e'};width:24px;height:24px;border-radius:50%;border:2px solid #fff;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px"><svg class="text-icon"><use href="#i-video"/></svg></div>`});
+                    const icon=L.divIcon({className:'',html:`<div style="background:${c.status==='online'?'#27ae60':'#0f766e'};width:24px;height:24px;border-radius:50%;border:2px solid #fff;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700">●</div>`});
                     L.marker([c.lat,c.lng],{icon}).addTo(map).bindPopup(c.name);
                 }
             });
