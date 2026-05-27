@@ -46,9 +46,54 @@
             --gov-fault:          #c43a31;
             --shadow-sm:          0 1px 2px rgba(16,24,40,0.04);
             --shadow:             0 1px 3px rgba(16,24,40,0.06), 0 1px 2px rgba(16,24,40,0.04);
-            --shadow-lg:          0 8px 24px rgba(11,94,168,0.08), 0 2px 6px rgba(16,24,40,0.05);
+            --shadow-md:          0 4px 12px rgba(11,30,60,0.06);
+            --shadow-lg:          0 10px 28px rgba(11,30,60,0.10);
+            --shadow-xl:          0 18px 48px rgba(11,30,60,0.18);
             --font-mono:          "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
             --font-sans:          "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+
+            /* ─── Type scale (微調 polish，保留現有字體) ─── */
+            --fs-caption:    11px;     /* mono label / hint */
+            --fs-micro:      12px;     /* 輔助說明 */
+            --fs-small:      13px;     /* 表格次要 / 副資訊 */
+            --fs-body:       14px;     /* 主文字 baseline */
+            --fs-body-lg:    15px;     /* card 內主訊息 */
+            --fs-t1:         17px;     /* card title */
+            --fs-t2:         22px;     /* section sub-title */
+            --fs-t3:         28px;     /* page h1 (從 32 收斂) */
+            --fs-hero:       40px;     /* landing only */
+            --fs-mono-data:  12px;     /* 表格內數字 */
+            --fs-mono-num:   14px;     /* KPI 副值 */
+            --fs-mono-big:   32px;     /* KPI 主數字 */
+
+            /* ─── Line height ─── */
+            --lh-tight:   1.2;
+            --lh-snug:    1.35;
+            --lh-normal:  1.5;
+            --lh-relaxed: 1.65;     /* 中文 body 預設，閱讀舒適 */
+
+            /* ─── Letter-spacing ─── */
+            --ls-tighter: -0.025em;  /* hero */
+            --ls-tight:   -0.015em;  /* t3 / t2 */
+            --ls-near:    -0.005em;  /* t1 */
+            --ls-base:     0;
+            --ls-wide:     0.04em;
+            --ls-mono:     0.06em;
+            --ls-label:    0.18em;   /* mono uppercase label */
+
+            /* ─── Spacing (4px grid) ─── */
+            --sp-1: 4px;   --sp-2: 8px;   --sp-3: 12px;  --sp-4: 14px;
+            --sp-5: 16px;  --sp-6: 18px;  --sp-7: 20px;  --sp-8: 24px;
+            --sp-9: 28px;  --sp-10: 32px; --sp-11: 40px; --sp-12: 48px;
+
+            /* ─── Radius scale ─── */
+            --r-inner:  4px;
+            --r-chip:   6px;
+            --r-base:   8px;     /* input / button / small card */
+            --r-card:   10px;    /* card 預設 */
+            --r-modal:  12px;    /* dialog / modal */
+            --r-hero:   16px;
+            --r-pill:   999px;
             /* 全站文字層級統一 (sidebar / content / dialog 用同一套) */
             --ui-text-main:       var(--gov-text);      /* 主標題、KPI 數字、表格內容 */
             --ui-text-sub:        var(--gov-text-2);    /* 次要資訊、欄位 label */
@@ -4100,7 +4145,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">01 / OVERVIEW</div>
                                 <h1 class="ds-section-title">違規件數<b>統計</b></h1>
-                                <div class="ds-section-sub">即時違規偵測、開單作業、24 小時趨勢與系統健康</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>最後更新 <b>{{ currentTime.slice(11,16) }}</b></span>
@@ -4256,7 +4300,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">02 / LIVE MONITORING</div>
                                 <h1 class="ds-section-title">即時監控</h1>
-                                <div class="ds-section-sub">全部攝影機即時影像、辨識疊加、ROI 顯示與偵測啟停切換</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>攝影機 <b>{{ cameras.length }}</b></span>
@@ -4409,7 +4452,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">10 / VIOLATION SEARCH</div>
                                 <h1 class="ds-section-title">違規<b>查詢</b></h1>
-                                <div class="ds-section-sub">複合條件查詢 — 時間 / 點位 / 車道 / 車牌 / 違規類型 / 速率區間</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>狀態 <b>良好</b></span>
@@ -4622,7 +4664,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">11 / TICKET REVIEW</div>
                                 <h1 class="ds-section-title">開單<b>管理</b></h1>
-                                <div class="ds-section-sub">待審違規列表 — 多人審核、改判、駁回、批次發單與後續歸檔流程</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>待審 <b>{{ pendingViolations.length || 0 }}</b></span>
@@ -4760,7 +4801,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">{{ cameraPageHero.num }}</div>
                                 <h1 class="ds-section-title">{{ analysisPageTitle }}</h1>
-                                <div class="ds-section-sub">{{ cameraPageHero.sub }}</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>攝影機 <b>{{ cameras.length }}</b></span>
@@ -4840,7 +4880,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">18 / NX RELAY</div>
                                 <h1 class="ds-section-title">Nx 串流<b>橋接</b></h1>
-                                <div class="ds-section-sub">Nx Witness Server 連線、HTTPS:7001 代理、Nx 攝影機 RTSP 即時串流檢視</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>Nx 模式 <b>{{ nxSettingsModeText }}</b></span>
@@ -4917,7 +4956,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">19 / MQTT BROKER</div>
                                 <h1 class="ds-section-title">MQTT <b>整合</b></h1>
-                                <div class="ds-section-sub">Embedded / External broker、Base Topic 訂閱、即時訊息日誌與手動發佈測試</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>連線 <b>{{ mqttStatus.connected ? '已連線' : '未連線' }}</b></span>
@@ -5045,7 +5083,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">20 / SYSTEM LOGS</div>
                                 <h1 class="ds-section-title">系統監控<b>日誌</b></h1>
-                                <div class="ds-section-sub">服務啟停、偵測流程、錯誤事件 — 多日期區間搜尋與分頁瀏覽</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>總計 <b>{{ logsTotal || 0 }}</b></span>
@@ -5114,7 +5151,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">03 / TRAFFIC ANALYTICS</div>
                                 <h1 class="ds-section-title">統計<b>分析</b></h1>
-                                <div class="ds-section-sub">交通事件、流量、平均速率與車種分布 — 多維度時間 / 點位 / 車道 / 方向過濾</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span v-if="statsSummary?.total_events!=null">事件 <b>{{ statsSummary.total_events }}</b></span>
@@ -5442,7 +5478,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">21 / REPEAT OFFENDERS</div>
                                 <h1 class="ds-section-title">車輛累犯<b>查詢</b></h1>
-                                <div class="ds-section-sub">同一車牌違規次數累計門檻篩選 — 鎖定高風險車輛與重點稽查</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>累犯 <b>{{ (repeatOffenders||[]).length }}</b></span>
@@ -5541,7 +5576,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">14 / REPORTS</div>
                                 <h1 class="ds-section-title">一般<b>報表</b></h1>
-                                <div class="ds-section-sub">日 / 週 / 月報表 — 日期區間 + 報表類型，自動產生 + 匯出 PDF / CSV</div>
                             </div>
                         </div>
                     </div>
@@ -5570,7 +5604,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">15 / VD LANE REPORT</div>
                                 <h1 class="ds-section-title">VD 車道<b>報表</b></h1>
-                                <div class="ds-section-sub">交通部 VD 標準格式 — 各車道每段時間流量、平均速率、占有率、大車比例</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>筆數 <b>{{ filteredStatsVdLikeRows.length }}</b></span>
@@ -5730,7 +5763,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">16 / ACCESS CONTROL</div>
                                 <h1 class="ds-section-title">權限<b>管理</b></h1>
-                                <div class="ds-section-sub">角色定義、頁面 / 功能授權矩陣與使用者帳號管理</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>使用者 <b>{{ (users||[]).length }}</b></span>
@@ -5827,7 +5859,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">17 / NVR INTEGRATION</div>
                                 <h1 class="ds-section-title">NVR <b>設定</b></h1>
-                                <div class="ds-section-sub">Frigate NVR 連線、攝影機列表、錄影排程、Motion 偵測、MQTT 與回放介面</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>Frigate <b>{{ frigateStatus.status==='online'?'已連線':'離線' }}</b></span>
@@ -6516,7 +6547,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">12 / LPR PIPELINE</div>
                                 <h1 class="ds-section-title">車牌<b>辨識</b></h1>
-                                <div class="ds-section-sub">圖片 / 串流即時辨識 — OCR 修復、台灣車牌格式比對、歷史紀錄與可信度過濾</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>OCR <b>{{ lprStatus.status==='online'?'就緒':'離線' }}</b></span>
@@ -6898,7 +6928,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">13 / EDGE TELEMETRY</div>
                                 <h1 class="ds-section-title">硬體效能<b>監測</b></h1>
-                                <div class="ds-section-sub">CPU / GPU / 記憶體 / 磁碟 / 溫度 — NTP 同步狀態與系統資訊</div>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>機型 <b>{{ hwStatus.model || '-' }}</b></span>
