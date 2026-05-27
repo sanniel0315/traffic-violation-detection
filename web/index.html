@@ -49,6 +49,115 @@
             --shadow-lg:          0 8px 24px rgba(11,94,168,0.08), 0 2px 6px rgba(16,24,40,0.05);
             --font-mono:          "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
             --font-sans:          "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+            --ui-text-main:       var(--gov-text);
+            --ui-text-sub:        var(--gov-text-2);
+            --ui-text-muted:      var(--gov-muted);
+            --ui-text-faint:      var(--gov-mute-2);
+            --ui-sidebar-text:    var(--gov-text-2);
+            --ui-sidebar-muted:   var(--gov-muted);
+        }
+
+        html, body, #app, .layout, .main, .content {
+            color: var(--ui-text-main);
+        }
+
+        .content {
+            background: var(--gov-bg);
+        }
+
+        .content p,
+        .content td,
+        .content li,
+        .content label,
+        .content .el-form-item__content,
+        .content .el-checkbox,
+        .content .el-radio,
+        .content .el-input__inner,
+        .content .el-select__selected-item,
+        .content .el-textarea__inner {
+            color: var(--ui-text-main);
+        }
+
+        .content small,
+        .content .hint,
+        .content .sub,
+        .content .meta,
+        .content .label,
+        .content .el-input__placeholder,
+        .content .el-select__placeholder {
+            color: var(--ui-text-muted);
+        }
+
+        .sidebar,
+        .sidebar-brand,
+        .sidebar-menu-area,
+        .sidebar-status {
+            color: var(--ui-sidebar-text);
+        }
+
+        .sidebar .menu-item,
+        .sidebar .brand-subtitle,
+        .sidebar .brand-meta-ver,
+        .sidebar-status,
+        .sidebar-status .ss-row.muted {
+            color: var(--ui-sidebar-muted);
+        }
+
+        .sidebar .menu-item:hover,
+        .sidebar .menu-item.active {
+            color: var(--gov-primary);
+        }
+
+        .sidebar .menu-item.highlight,
+        .sidebar .menu-item.highlight:hover {
+            color: #fff;
+        }
+
+        .content [style*="color:#0f172a"],
+        .content [style*="color: #0f172a"],
+        .content [style*="color:#111827"],
+        .content [style*="color: #111827"] {
+            color: var(--ui-text-main) !important;
+        }
+
+        .content [style*="color:#334155"],
+        .content [style*="color: #334155"],
+        .content [style*="color:#475569"],
+        .content [style*="color: #475569"] {
+            color: var(--ui-text-sub) !important;
+        }
+
+        .content [style*="color:#64748b"],
+        .content [style*="color: #64748b"],
+        .content [style*="color:#666"],
+        .content [style*="color: #666"] {
+            color: var(--ui-text-muted) !important;
+        }
+
+        .content [style*="color:#94a3b8"],
+        .content [style*="color: #94a3b8"],
+        .content [style*="color:#999"],
+        .content [style*="color: #999"],
+        .content [style*="color:#99a4b5"],
+        .content [style*="color: #99a4b5"] {
+            color: var(--ui-text-faint) !important;
+        }
+
+        .content .el-slider__runway {
+            background-color: var(--gov-border) !important;
+        }
+
+        .content .el-slider__bar {
+            background-color: var(--gov-primary) !important;
+        }
+
+        .content .el-slider__button {
+            border-color: var(--gov-primary) !important;
+            background: var(--gov-surface) !important;
+        }
+
+        .content input[type="range"] {
+            accent-color: var(--gov-primary);
         }
 
         /* design system 共用 utility class (Phase 1 — 之後 redesign 各 page 時可直接用) */
@@ -2680,13 +2789,10 @@
         .hw-info-row { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; border-bottom: 1px solid #f5f5f5; }
         .hw-info-row:last-child { border-bottom: none; }
         .stats-kpi-grid { display: grid; grid-template-columns: repeat(5, minmax(140px, 1fr)); gap: 12px; }
-        .stats-kpi { border: 1px solid #e6edf5; border-radius: 8px; padding: 12px; background: #fafcff; }
-        .stats-kpi .label { font-size: 12px; color: #64748b; margin-bottom: 6px; }
-        .stats-kpi .value { font-size: 24px; font-weight: 700; color: #0f172a; line-height: 1; }
-        .stats-kpi .hint { font-size: 11px; color: #94a3b8; margin-top: 6px; }
+        /* .stats-kpi 樣式已在 line 1402 (Phase 3b dashboard KPI 升級) 定義 — 此處不再覆寫 */
         .trend-header { display:flex; align-items:center; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
-        .trend-legend-dot { width:12px; height:12px; border-radius:3px; background:linear-gradient(180deg,#1d4ed8,#38bdf8); box-shadow:0 0 0 1px rgba(29,78,216,.2) inset; }
-        .trend-chart-shell { position: relative; height: 340px; padding: 10px 10px 42px 10px; border: 1px solid #dbe7f6; border-radius: 14px; background: linear-gradient(180deg,#fcfdff 0%,#edf5ff 100%); overflow: visible; }
+        .trend-legend-dot { width:12px; height:12px; border-radius:3px; background:linear-gradient(180deg,var(--gov-primary),#0d6cb8); box-shadow:0 0 0 1px rgba(11,94,168,.25) inset; }
+        .trend-chart-shell { position: relative; height: 340px; padding: 10px 10px 42px 10px; border: 1px solid var(--gov-border); border-radius: 14px; background: linear-gradient(180deg,var(--gov-surface) 0%,var(--gov-surface-2) 100%); overflow: visible; }
         .trend-grid { position:absolute; inset:10px 10px 42px 10px; pointer-events:none; background-image: linear-gradient(to right, rgba(148,163,184,.12) 1px, transparent 1px); background-size: 12.5% 100%; }
         .trend-grid-line { position:absolute; left:0; right:0; height:1px; background: rgba(100,116,139,.2); }
         .trend-bars { position:absolute; inset:10px 10px 42px 10px; display:flex; align-items:flex-end; gap:6px; z-index:2; }
@@ -2695,13 +2801,18 @@
         .trend-bar {
             width:100%;
             border-radius: 10px 10px 4px 4px;
-            background: linear-gradient(180deg,rgba(56,189,248,.35) 0%,rgba(37,99,235,.55) 90%);
-            box-shadow: 0 1px 3px rgba(37,99,235,.14);
+            background: linear-gradient(180deg, rgba(11,94,168,0.4) 0%, rgba(11,94,168,0.75) 90%);
+            box-shadow: 0 1px 3px rgba(11,94,168,0.18);
             transition: transform .12s ease, filter .12s ease, box-shadow .12s ease, background .12s ease;
             cursor: pointer;
         }
         .trend-bar-col:hover .trend-bar,
-        .trend-bar.active { transform: translateY(-1px); filter: saturate(1.04); box-shadow: 0 3px 8px rgba(37,99,235,.18); background: linear-gradient(180deg,rgba(56,189,248,.55) 0%,rgba(37,99,235,.78) 90%); }
+        .trend-bar.active {
+            transform: translateY(-1px);
+            filter: saturate(1.08);
+            box-shadow: 0 3px 10px rgba(11,94,168,0.28);
+            background: linear-gradient(180deg, rgba(11,94,168,0.6) 0%, rgba(11,94,168,0.95) 90%);
+        }
         .trend-tooltip {
             position:absolute;
             bottom: calc(100% + 14px);
