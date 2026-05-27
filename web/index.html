@@ -7397,6 +7397,7 @@
             <div class="nvr-restart-spinner"></div>
             <div style="font-weight:700;color:#0f172a">NVR 重啟中</div>
             <div style="font-size:12px;color:#64748b">系統鎖定中，請稍候...</div>
+            <el-button size="small" type="info" @click="nvrRestarting=false" style="margin-top:14px">取消等待（NVR 仍在背景重啟）</el-button>
         </div>
     </div>
 
@@ -12652,7 +12653,7 @@ const app=createApp({
             }
         };
         const syncCamerasToNVR=async()=>{try{const r=await fetch('/api/frigate/sync-cameras',{method:'POST'});const d=await r.json();if(d.status==='success'){ElementPlus.ElMessage.success(d.message);loadNVRCameras();}else{ElementPlus.ElMessage.error(d.message);}}catch(e){ElementPlus.ElMessage.error('同步失敗');}};
-        const waitForNVRRestartStable=async(timeoutMs=120000,intervalMs=2000,minSuccessMs=5000)=>{
+        const waitForNVRRestartStable=async(timeoutMs=45000,intervalMs=2000,minSuccessMs=4000)=>{
             const started=Date.now();
             let seenOffline=false;
             let onlineStreak=0;
