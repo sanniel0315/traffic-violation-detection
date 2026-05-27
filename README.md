@@ -42,6 +42,55 @@
 
 ---
 
+## 🆕 最近更新 (2026-05)
+
+### Dashboard V3 主頁重做
+- 移除資訊重複（hero meta / KPI / service health 三處不再顯示同資料）
+- 3 個焦點 KPI（今日違規 / 待審核 / 系統健康）+ 4 服務 dot 縮寫
+- 24h 違規趨勢柱狀圖（後端 `hourly_buckets`，台北時區 hour-of-day）
+- 違規明細 full-width table（時間 / 車牌 / 違規類型 / 地點）
+- 後端 `/api/dashboard` 新欄位：`offline_cameras` (真實故障) / `disabled_cameras` (主動關閉) / `enabled_cameras` / `hourly_buckets`
+- 系統健康 KPI 自動 unlock guard（Frigate uptime > 60s 自動 reset 卡死的 NVR 重啟 overlay）
+
+### Design System 全站套用
+- 公務藍 `#0b5ea8` + Noto Sans TC + IBM Plex Mono 統一 token
+- 16 個 page hero block（編號 / 標題 / sub / meta tags）
+- Element Plus 全元件覆寫：button / tag / input / table / dialog / message-box / scrollbar / selection
+- 11 個 dialog 統一視覺：公務藍漸層 header + 黃 accent stripe + backdrop blur
+- camera-card / list-item hover micro-interaction
+- 全域 inline color tokenization：`[style*="color:#xxx"]` 抓 hardcode 顏色強制換 design tokens
+
+### LPR 辨識優化
+- OCR service 加台灣車牌格式修復 `_repair_plate`（含 I/O/Q blacklist）
+- LPR pipeline `_is_plausible_plate` 雙層過濾，擋 OCR 常見誤判
+- 配合既有 `_PLATE_FORMATS`（7 種台灣車牌格式組合）
+
+### MQTT 整合強化
+- TCP probe + reason_code 翻譯：broker 未啟動時顯示 actionable hint
+- publish endpoint 503 訊息明確（提示用戶安裝 mosquitto 或檢查網路）
+- subscribe pattern 預設 `traffic/#`（含自己 publish 的 echo + 外部設備上報）
+- embedded mode + external mode 切換
+
+### CI/CD 自動部署
+- Jetson self-hosted runner (label: `self-hosted, linux, arm64, jetson, gpu, cuda`)
+- workflow `Jetson Device Verification`：GPU/CUDA/Python/YOLO/DB/API/Frigate 8 steps verify
+- 自動 deploy step：verify 通過 + main branch push → `git pull production` + `sudo systemctl restart traffic-api` + 驗 commit hash
+- Trivy security scan：Dockerfile USER + permissions security-events:write 已過
+
+### Frigate / NVR 修補
+- `/api/frigate/recordings/play` 加 HEAD method 支援（前端 onError 探錯用，舊版 405）
+- video tag 加 `muted` 屬性繞 browser autoplay policy
+- offline_cameras 邏輯區分「真實故障」vs「主動關閉」
+- camera record.enabled 預設 false 修補腳本（cam_2/3/4/6）
+
+### Health Probe 防誤判
+- `/api/health` probe timeout 4s → 8s
+- 連續 3 次失敗才切 fault（避免 Jetson CPU spike 誤判）
+
+完整 commit log: `git log --oneline -30`
+
+---
+
 
 ## 🎯 速度偵測精度方案
 
@@ -324,11 +373,61 @@ docker tag traffic-api:<old_tag> traffic-api:latest
 
 ## 📤 推送流程
 
-已整理完整操作文件：[`推送流程.md`](./推送流程.md)
+### 一鍵自動部署（推薦）
+
+CI/CD pipeline 已設好 — 開發機 `git push origin main` 後**完全自動**：
+
+```
+dev PC                  GitHub                    Jetson (self-hosted runner)
+   │                       │                              │
+   │ git push ────────────►│                              │
+   │                       │ trigger workflow ────────────►│
+   │                       │                              │ ✓ GPU/CUDA check
+   │                       │                              │ ✓ Python/YOLO test
+   │                       │                              │ ✓ DB schema
+   │                       │                              │ ✓ API endpoints
+   │                       │                              │ ✓ Frigate connect
+   │                       │                              │ ✓ Smoke check
+   │                       │                              │
+   │                       │ verify pass → auto deploy ──►│ git pull production
+   │                       │                              │ sudo restart traffic-api
+   │                       │                              │ verify commit hash
+   │                       │◄─────────── result ──────────│
+```
+
+**workflow 配置**：[.github/workflows/jetson-verify.yml](.github/workflows/jetson-verify.yml)
+
+**runner 狀態**：
+```bash
+gh api repos/<owner>/<repo>/actions/runners
+# 預期 jetson-agx-orin status=online
+```
+
+**手動觸發 workflow**：
+```bash
+gh workflow run "Jetson Device Verification"
+```
+
+### 手動 deploy（fallback）
+
+```bash
+# 從 dev PC ssh 進 Jetson
+ssh ubuntu@192.168.0.108 "cd ~/traffic-violation-detection && git pull origin main && sudo systemctl restart traffic-api"
+
+# 或從 dev PC 透過 API trigger restart (NOPASSWD sudo 已設)
+curl -X POST http://192.168.0.108:8000/api/system/restart-api
+
+# 驗證部署版本
+curl http://192.168.0.108:8000/api/system/version
+```
+
+### 完整流程文件
+
+詳細步驟與離線部署：[`推送流程.md`](./推送流程.md)
 
 內容包含：
-- GitHub SSH 金鑰設定與驗證
-- 專案推送標準步驟（branch/commit/push）
+- GitHub SSH 金鑰設定與驗證（dev PC + Jetson 雙邊）
+- self-hosted runner 安裝與 systemd service
 - 設定備份流程（`config/settings_backup.json`）
 - Docker 有網打包、現場離線部署流程
 
@@ -972,4 +1071,4 @@ MIT License
 
 ---
 
-*最後更新: 2026-04-09*
+*最後更新: 2026-05-27*
