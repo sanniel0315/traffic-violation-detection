@@ -3504,36 +3504,34 @@
         .schedule-day { width: 60px; font-size: 12px; color: #334155; background: #f8fafc; font-weight: 700; }
         .schedule-cell { width: 28px; height: 24px; cursor: pointer; background: #f1f5f9; transition: background-color .12s ease; }
         .schedule-cell.active { background: #0b5ea8; }
-        .nvr-restart-overlay {
+        /* NVR 重啟提示改成右下角 corner toast (不擋畫面) */
+        .nvr-restart-toast {
             position: fixed;
-            inset: 0;
-            background: rgba(15, 23, 42, 0.45);
+            right: 18px; bottom: 18px;
             z-index: 4000;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            backdrop-filter: blur(1px);
+            display: flex; align-items: center; gap: 10px;
+            padding: 10px 16px;
+            background: var(--gov-surface);
+            border: 1px solid var(--gov-primary-line);
+            border-left: 3px solid var(--gov-warn);
+            border-radius: 8px;
+            box-shadow: 0 8px 22px rgba(11,30,60,0.18);
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--gov-text);
+            font-weight: 600;
+            animation: ds-fade-in .2s ease-out;
         }
-        .nvr-restart-box {
-            background: #ffffff;
-            border: 1px solid #d7dee8;
-            border-radius: 12px;
-            padding: 20px 24px;
-            min-width: 260px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 12px;
-            box-shadow: 0 12px 28px rgba(15,23,42,0.2);
-        }
-        .nvr-restart-spinner {
-            width: 40px;
-            height: 40px;
-            border: 4px solid #dbeafe;
-            border-top-color: #0b5ea8;
+        .nvr-restart-toast:hover { box-shadow: 0 10px 28px rgba(11,30,60,0.24); }
+        .nvr-restart-toast-spin {
+            width: 14px; height: 14px;
+            border: 2px solid var(--gov-primary-soft);
+            border-top-color: var(--gov-primary);
             border-radius: 50%;
             animation: nvrSpin 0.9s linear infinite;
+            display: inline-block;
         }
+        .nvr-restart-toast-msg { font-family: var(--font-sans); letter-spacing: 0.01em; }
         @keyframes nvrSpin {
             from { transform: rotate(0deg); }
             to { transform: rotate(360deg); }
@@ -7528,13 +7526,10 @@
         </div>
     </div>
 
-    <div v-if="nvrRestarting" class="nvr-restart-overlay">
-        <div class="nvr-restart-box">
-            <div class="nvr-restart-spinner"></div>
-            <div style="font-weight:700;color:#0f172a">NVR 重啟中</div>
-            <div style="font-size:12px;color:#64748b">系統鎖定中，請稍候...</div>
-            <el-button size="small" type="info" @click="nvrRestarting=false" style="margin-top:14px">取消等待（NVR 仍在背景重啟）</el-button>
-        </div>
+    <!-- NVR 重啟改用右下角 corner toast (不擋畫面)，避免 user 被全屏 overlay 鎖死 -->
+    <div v-if="nvrRestarting" class="nvr-restart-toast" @click="nvrRestarting=false" title="點擊關閉">
+        <span class="nvr-restart-toast-spin"></span>
+        <span class="nvr-restart-toast-msg">NVR 重啟中 · 背景進行 (點擊關閉)</span>
     </div>
 
     <!-- 違規詳情彈窗 -->
