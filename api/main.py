@@ -286,9 +286,17 @@ async def dashboard():
         today_v = db.query(Violation).filter(Violation.created_at >= today).count()
         pending = db.query(Violation).filter(Violation.status == "pending").count()
         total_v = db.query(Violation).count()
-        total_cam = db.query(Camera).count()
-        online_cam = db.query(Camera).filter(Camera.status == "online").count()
-        offline_cam = max(0, total_cam - online_cam)
+
+        # Camera 狀態統計 — 區分「啟用」(user 想跑的) 跟「故障離線」(實際斷線)
+        # 注意：enabled=False 表 user 主動關閉，不算故障離線
+        all_cams = db.query(Camera).all()
+        total_cam = len(all_cams)
+        enabled_cams = [c for c in all_cams if getattr(c, "enabled", True)]
+        enabled_count = len(enabled_cams)
+        online_cam = sum(1 for c in enabled_cams if (c.status or "").lower() == "online")
+        # offline_cameras 只計算「啟用但離線」(真實故障，需立即檢查)
+        offline_cam = max(0, enabled_count - online_cam)
+        disabled_cam = total_cam - enabled_count
 
         # 24h trend buckets (hour=0..23 按本地時間 = 台北 UTC+8)
         rows = (db.query(Violation)
@@ -315,7 +323,9 @@ async def dashboard():
             "pending_review": pending,
             "total_violations": total_v,
             "online_cameras": online_cam,
-            "offline_cameras": offline_cam,
+            "offline_cameras": offline_cam,       # 真實故障 (enabled=True 但 status=offline)
+            "disabled_cameras": disabled_cam,     # user 主動關閉 (enabled=False)
+            "enabled_cameras": enabled_count,
             "total_cameras": total_cam,
             "hourly_buckets": hourly_buckets,
         }
