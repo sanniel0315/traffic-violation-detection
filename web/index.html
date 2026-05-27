@@ -3324,6 +3324,133 @@
             .nvr-main-badge-grid { grid-template-columns:1fr; }
             .nvr-right-summary { grid-template-columns:1fr 1fr; }
         }
+
+        /* 最終色彩統一：讓側欄與主內容使用同一套文字層級。 */
+        .sidebar {
+            color: var(--ui-sidebar-text);
+        }
+        .sidebar .sidebar-header,
+        .sidebar .sidebar-brand-text,
+        .sidebar .menu-section-title {
+            color: var(--ui-sidebar-muted);
+        }
+        .sidebar .menu-item,
+        .sidebar .sidebar-version-row,
+        .sidebar .sidebar-status-label {
+            color: var(--ui-sidebar-text);
+        }
+        .sidebar .menu-item.active,
+        .sidebar .menu-item:hover {
+            color: var(--gov-primary-strong);
+        }
+        .main,
+        .content,
+        .content :where(p, td, li, label, h1, h2, h3, h4, h5, h6, .el-form-item__label, .el-form-item__content, .el-checkbox, .el-radio, .el-input__inner, .el-select__selected-item, .el-textarea__inner) {
+            color: var(--ui-text-main);
+        }
+        .content :where(.muted, .subtext, .help-text, .hint, .desc, .description, .el-input__count, .el-select__placeholder, .el-empty__description) {
+            color: var(--ui-text-muted) !important;
+        }
+        .content [style*="color:#0f172a"],
+        .content [style*="color: #0f172a"],
+        .content [style*="color:#111827"],
+        .content [style*="color: #111827"] {
+            color: var(--ui-text-main) !important;
+        }
+        .content [style*="color:#334155"],
+        .content [style*="color: #334155"],
+        .content [style*="color:#475569"],
+        .content [style*="color: #475569"] {
+            color: var(--ui-text-sub) !important;
+        }
+        .content [style*="color:#64748b"],
+        .content [style*="color: #64748b"],
+        .content [style*="color:#666"],
+        .content [style*="color: #666"] {
+            color: var(--ui-text-muted) !important;
+        }
+        .content [style*="color:#94a3b8"],
+        .content [style*="color: #94a3b8"],
+        .content [style*="color:#999"],
+        .content [style*="color: #999"],
+        .content [style*="color:#99a4b5"],
+        .content [style*="color: #99a4b5"],
+        .content [style*="color:#909399"],
+        .content [style*="color: #909399"] {
+            color: var(--ui-text-faint) !important;
+        }
+        .content [style*="color:#1d4ed8"],
+        .content [style*="color: #1d4ed8"],
+        .content [style*="color:#2563eb"],
+        .content [style*="color: #2563eb"],
+        .content [style*="color:#0369a1"],
+        .content [style*="color: #0369a1"],
+        .content [style*="color:#409eff"],
+        .content [style*="color: #409eff"] {
+            color: var(--gov-primary-strong) !important;
+        }
+        .status-card .subtitle,
+        .camera-info p,
+        .camera-list-location,
+        .camera-list-source,
+        .camera-list-feature-row .feature-label,
+        .nx-placeholder,
+        .analysis-setting-head,
+        .analysis-setting-tip,
+        .analysis-zone-name,
+        .detail-info-item .label,
+        .monitor-card h4,
+        .gauge-ring .unit,
+        .hw-info-row,
+        .stats-kpi .hint,
+        .trend-axis-item,
+        .camera-rank-count,
+        .type-share-value,
+        .nvr-playback-field-label,
+        .nvr-playback-item-sub,
+        .nvr-playback-item-meta,
+        .nvr-player-meta-item .k,
+        .nvr-playback-empty,
+        .nvr-replay-tick,
+        .nvr-replay-time-text,
+        .nvr-right-summary-k,
+        .nvr-notify-text,
+        .nvr-notify-meta,
+        .schedule-grid th {
+            color: var(--ui-text-muted);
+        }
+        .stats-kpi .label,
+        .trend-active-title,
+        .camera-rank-name,
+        .type-share-name,
+        .nvr-player-meta-item,
+        .nvr-right-tab,
+        .schedule-day {
+            color: var(--ui-text-sub);
+        }
+        .stats-kpi .value,
+        .trend-active-value,
+        .nvr-playback-item-title,
+        .nvr-player-meta-item .v,
+        .nvr-right-summary-v,
+        .nvr-notify-title {
+            color: var(--ui-text-main);
+        }
+        .nvr-right-tab.active {
+            color: var(--gov-primary-strong);
+        }
+        .content .el-slider__runway {
+            background-color: var(--gov-border) !important;
+        }
+        .content .el-slider__bar {
+            background-color: var(--gov-primary) !important;
+        }
+        .content .el-slider__button {
+            border-color: var(--gov-primary) !important;
+        }
+        .content input[type="range"] {
+            accent-color: var(--gov-primary);
+        }
     </style>
 </head>
 <body>
