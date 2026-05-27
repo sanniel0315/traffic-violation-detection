@@ -49,12 +49,14 @@
             --shadow-lg:          0 8px 24px rgba(11,94,168,0.08), 0 2px 6px rgba(16,24,40,0.05);
             --font-mono:          "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
             --font-sans:          "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
-            --ui-text-main:       var(--gov-text);
-            --ui-text-sub:        var(--gov-text-2);
-            --ui-text-muted:      var(--gov-muted);
-            --ui-text-faint:      var(--gov-mute-2);
-            --ui-sidebar-text:    var(--gov-text-2);
-            --ui-sidebar-muted:   var(--gov-muted);
+            /* 全站文字層級統一 (sidebar / content / dialog 用同一套) */
+            --ui-text-main:       var(--gov-text);      /* 主標題、KPI 數字、表格內容 */
+            --ui-text-sub:        var(--gov-text-2);    /* 次要資訊、欄位 label */
+            --ui-text-muted:      var(--gov-muted);     /* hint / sub / meta */
+            --ui-text-faint:      var(--gov-mute-2);    /* 弱化提示 / placeholder */
+            /* sidebar 用同樣 token，視覺一致 */
+            --ui-sidebar-text:    var(--ui-text-main);
+            --ui-sidebar-muted:   var(--ui-text-muted);
         }
 
         html, body, #app, .layout, .main, .content {

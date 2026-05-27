@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>戰情室 · 違規件數統計</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root{
+    --wr-bg-deep:    #06090f;
+    --wr-bg-panel:   #0d141f;
+    --wr-bg-elevate: #15202e;
+    --wr-border:     rgba(255,255,255,0.07);
+    --wr-border-2:   rgba(255,255,255,0.12);
+    --wr-text-pri:   #e6edf6;
+    --wr-text-sub:   #8b97aa;
+    --wr-text-faint: #5a6678;
+    --wr-cyan:       #4fc3f7;
+    --wr-cyan-2:     #22d3ee;
+    --wr-ok:         #22c55e;
+    --wr-warn:       #f59e0b;
+    --wr-fault:      #ef4444;
+    --wr-purple:     #a78bfa;
+    --font-mono:     "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+    --font-sans:     "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--wr-bg-deep);color:var(--wr-text-pri);font-family:var(--font-sans);font-size:14px;min-height:100vh}
+body{
+    background:
+        radial-gradient(circle at 0% 0%, rgba(79,195,247,0.06) 0%, transparent 40%),
+        radial-gradient(circle at 100% 100%, rgba(167,139,250,0.05) 0%, transparent 40%),
+        var(--wr-bg-deep);
+    padding:18px 22px 22px;
+    overflow-x:hidden;
+}
+::selection{background:var(--wr-cyan);color:var(--wr-bg-deep)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:4px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.18)}
+
+/* ───────── ribbon (header) ───────── */
+.wr-ribbon{
+    display:flex;align-items:center;gap:18px;
+    padding:12px 18px 14px;
+    border-bottom:1px solid var(--wr-border);
+    background:linear-gradient(180deg,rgba(79,195,247,0.03) 0%,transparent 100%);
+    margin-bottom:18px;
+    position:relative;
+}
+.wr-ribbon::after{
+    content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;
+    background:linear-gradient(90deg,var(--wr-cyan) 0%,transparent 30%,transparent 70%,var(--wr-purple) 100%);
+    opacity:0.5;
+}
+.live-pill{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:0.16em;color:var(--wr-ok)}
+.live-pill .dot{width:8px;height:8px;border-radius:50%;background:var(--wr-ok);box-shadow:0 0 0 0 rgba(34,197,94,0.6);animation:livePulse 1.4s ease-out infinite}
+@keyframes livePulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,0.7)}100%{box-shadow:0 0 0 8px rgba(34,197,94,0)}}
+.wr-title{flex:1;display:flex;align-items:baseline;gap:14px;min-width:0}
+.wr-title h1{font-family:var(--font-mono);font-size:18px;font-weight:600;letter-spacing:0.14em;color:var(--wr-text-pri)}
+.wr-title .subtitle{font-size:13px;color:var(--wr-text-sub);letter-spacing:0.02em}
+.wr-clock{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.wr-clock .time{font-family:var(--font-mono);font-size:24px;font-weight:600;color:var(--wr-text-pri);letter-spacing:0.04em;font-variant-numeric:tabular-nums}
+.wr-clock .date{font-family:var(--font-mono);font-size:11px;color:var(--wr-text-faint);letter-spacing:0.12em}
+
+/* ───────── KPI strip ───────── */
+.kpi-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+.kpi-card{
+    position:relative;
+    background:linear-gradient(180deg,var(--wr-bg-elevate) 0%,var(--wr-bg-panel) 100%);
+    border:1px solid var(--wr-border);
+    border-radius:6px;
+    padding:18px 20px 16px;
+    overflow:hidden;
+    transition:border-color .25s ease, transform .25s ease;
+}
+.kpi-card::before{
+    content:'';position:absolute;top:0;left:0;right:0;height:2px;
+    background:linear-gradient(90deg,transparent,var(--kpi-accent,var(--wr-cyan)),transparent);
+    opacity:0.65;
+}
+.kpi-card:hover{border-color:var(--kpi-accent,var(--wr-cyan));transform:translateY(-2px)}
+.kpi-card .label{
+    display:flex;align-items:center;gap:6px;
+    font-family:var(--font-mono);font-size:10.5px;font-weight:600;letter-spacing:0.2em;
+    color:var(--wr-text-sub);text-transform:uppercase;margin-bottom:14px;
+}
+.kpi-card .label .glyph{font-size:11px;color:var(--kpi-accent,var(--wr-cyan))}
+.kpi-card .value{
+    font-family:var(--font-mono);font-size:44px;font-weight:600;
+    color:var(--wr-text-pri);line-height:1;
+    font-variant-numeric:tabular-nums;letter-spacing:-0.02em;
+    text-shadow:0 0 18px var(--kpi-glow,rgba(79,195,247,0.18));
+}
+.kpi-card .delta{display:inline-flex;align-items:center;gap:4px;margin-top:8px;font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:0.06em}
+.kpi-card .delta.up{color:var(--wr-warn)}
+.kpi-card .delta.down{color:var(--wr-ok)}
+.kpi-card .sub{font-size:11.5px;color:var(--wr-text-faint);margin-top:4px;letter-spacing:0.02em}
+.kpi-card.kpi-warn{--kpi-accent:var(--wr-warn);--kpi-glow:rgba(245,158,11,0.22)}
+.kpi-card.kpi-cyan{--kpi-accent:var(--wr-cyan);--kpi-glow:rgba(79,195,247,0.22)}
+.kpi-card.kpi-ok{--kpi-accent:var(--wr-ok);--kpi-glow:rgba(34,197,94,0.22)}
+.kpi-card.kpi-purple{--kpi-accent:var(--wr-purple);--kpi-glow:rgba(167,139,250,0.22)}
+.kpi-spark{position:absolute;right:14px;bottom:10px;width:80px;height:32px;opacity:0.8}
+
+/* ───────── grid main ───────── */
+.wr-grid{display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:14px}
+.wr-grid-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px}
+@media (max-width:1280px){
+    .wr-grid{grid-template-columns:1fr}
+    .wr-grid-row{grid-template-columns:1fr 1fr}
+}
+
+/* card 通用 */
+.panel{
+    background:var(--wr-bg-panel);
+    border:1px solid var(--wr-border);
+    border-radius:6px;
+    overflow:hidden;
+    position:relative;
+}
+.panel:hover{border-color:var(--wr-border-2)}
+.panel-head{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:14px 18px 12px;
+    border-bottom:1px solid var(--wr-border);
+}
+.panel-head .title{display:flex;flex-direction:column;gap:3px;min-width:0}
+.panel-head .title .label{font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.22em;color:var(--wr-text-faint);text-transform:uppercase}
+.panel-head .title .name{font-size:14px;font-weight:700;color:var(--wr-text-pri);letter-spacing:0.01em}
+.panel-head .meta{display:flex;gap:14px;align-items:center}
+.panel-head .meta-item{display:flex;flex-direction:column;align-items:flex-end;gap:1px}
+.panel-head .meta-item .k{font-family:var(--font-mono);font-size:10px;letter-spacing:0.16em;color:var(--wr-text-faint);text-transform:uppercase}
+.panel-head .meta-item .v{font-family:var(--font-mono);font-size:14px;font-weight:600;color:var(--wr-cyan);font-variant-numeric:tabular-nums}
+.panel-body{padding:16px 18px}
+
+/* trend chart panel */
+#trendChart{height:240px !important}
+.trend-stats{display:flex;gap:14px;margin-top:10px;padding:8px 0 0;border-top:1px dashed var(--wr-border)}
+.trend-stat{flex:1;display:flex;flex-direction:column;gap:2px}
+.trend-stat .k{font-family:var(--font-mono);font-size:10px;letter-spacing:0.16em;color:var(--wr-text-faint);text-transform:uppercase}
+.trend-stat .v{font-family:var(--font-mono);font-size:18px;font-weight:600;color:var(--wr-text-pri);font-variant-numeric:tabular-nums}
+.trend-stat.peak .v{color:var(--wr-warn)}
+
+/* live feed */
+.live-feed{max-height:420px;overflow-y:auto;padding:8px 0}
+.feed-item{
+    display:grid;grid-template-columns:62px 1fr auto;align-items:center;gap:10px;
+    padding:9px 18px;
+    border-left:2px solid transparent;
+    transition:background .2s ease, border-color .2s ease;
+    animation:feedEnter .4s ease-out;
+}
+@keyframes feedEnter{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.feed-item:hover{background:rgba(255,255,255,0.02);border-left-color:var(--wr-cyan)}
+.feed-item.type-red{border-left-color:var(--wr-fault)}
+.feed-item.type-speed{border-left-color:var(--wr-warn)}
+.feed-item.type-park{border-left-color:var(--wr-purple)}
+.feed-time{font-family:var(--font-mono);font-size:11.5px;color:var(--wr-text-faint);font-variant-numeric:tabular-nums;letter-spacing:0.04em}
+.feed-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.feed-plate{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--wr-text-pri);letter-spacing:0.06em}
+.feed-loc{font-size:11px;color:var(--wr-text-sub)}
+.feed-type{
+    font-family:var(--font-mono);font-size:10.5px;font-weight:700;letter-spacing:0.1em;
+    padding:3px 8px;border-radius:3px;
+}
+.feed-type.red{background:rgba(239,68,68,0.14);color:var(--wr-fault);border:1px solid rgba(239,68,68,0.3)}
+.feed-type.speed{background:rgba(245,158,11,0.14);color:var(--wr-warn);border:1px solid rgba(245,158,11,0.3)}
+.feed-type.park{background:rgba(167,139,250,0.14);color:var(--wr-purple);border:1px solid rgba(167,139,250,0.3)}
+
+/* heatmap 7×24 */
+.heatmap{display:flex;flex-direction:column;gap:3px;padding:8px 0}
+.heatmap-row{display:grid;grid-template-columns:32px repeat(24,1fr);gap:3px;align-items:center}
+.heatmap-day{font-family:var(--font-mono);font-size:10px;color:var(--wr-text-faint);text-align:right;padding-right:6px;letter-spacing:0.04em}
+.heatmap-cell{
+    aspect-ratio:1;border-radius:2px;background:rgba(255,255,255,0.04);
+    transition:transform .15s ease, background .2s ease;
+    cursor:pointer;
+}
+.heatmap-cell:hover{transform:scale(1.4);z-index:2;outline:1px solid var(--wr-cyan)}
+.heatmap-axis{display:grid;grid-template-columns:32px repeat(24,1fr);gap:3px;margin-top:6px;font-family:var(--font-mono);font-size:9px;color:var(--wr-text-faint);text-align:center}
+.heatmap-axis span:first-child{visibility:hidden}
+.heatmap-legend{display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-top:8px;font-family:var(--font-mono);font-size:10px;color:var(--wr-text-faint);letter-spacing:0.08em}
+.heatmap-legend .scale{display:flex;gap:2px}
+.heatmap-legend .scale i{width:14px;height:10px;border-radius:1px;display:block}
+
+/* donut + breakdown */
+.donut-wrap{display:flex;align-items:center;gap:18px;padding:8px 0}
+#donutChart{width:160px !important;height:160px !important;flex:0 0 160px}
+.donut-legend{flex:1;display:flex;flex-direction:column;gap:10px}
+.donut-row{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px}
+.donut-dot{width:10px;height:10px;border-radius:2px;display:inline-block}
+.donut-label{font-size:13px;color:var(--wr-text-pri);font-weight:500}
+.donut-pct{font-family:var(--font-mono);font-size:14px;font-weight:600;color:var(--wr-text-pri);font-variant-numeric:tabular-nums}
+.donut-count{font-family:var(--font-mono);font-size:11px;color:var(--wr-text-faint);font-variant-numeric:tabular-nums;letter-spacing:0.04em}
+
+/* cameras grid */
+.cam-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;padding:6px 0}
+.cam-tile{
+    position:relative;background:var(--wr-bg-elevate);border:1px solid var(--wr-border);
+    border-radius:5px;padding:10px 12px;
+    transition:border-color .2s ease, transform .15s ease;
+    cursor:pointer;
+}
+.cam-tile:hover{border-color:var(--wr-cyan);transform:translateY(-1px)}
+.cam-tile.offline{opacity:0.5}
+.cam-tile.offline .cam-status-dot{background:var(--wr-fault);box-shadow:0 0 8px rgba(239,68,68,0.5);animation:none}
+.cam-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.cam-name{font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--wr-text-pri);letter-spacing:0.04em}
+.cam-status-dot{
+    width:7px;height:7px;border-radius:50%;background:var(--wr-ok);
+    box-shadow:0 0 6px var(--wr-ok);
+    animation:livePulse 2s ease-out infinite;
+}
+.cam-loc{font-size:11px;color:var(--wr-text-sub);margin-bottom:8px;min-height:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cam-metric{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10.5px;color:var(--wr-text-faint);letter-spacing:0.04em}
+.cam-metric b{color:var(--wr-cyan);font-weight:600;font-variant-numeric:tabular-nums}
+
+/* speed gauge */
+.speed-gauge{display:flex;align-items:center;gap:20px;padding:6px 0}
+.speed-circle{position:relative;width:140px;height:140px;flex:0 0 140px}
+.speed-circle svg{transform:rotate(-90deg);width:100%;height:100%}
+.speed-circle .bg-ring{fill:none;stroke:rgba(255,255,255,0.06);stroke-width:8}
+.speed-circle .val-ring{fill:none;stroke:url(#speedGrad);stroke-width:8;stroke-linecap:round;transition:stroke-dasharray .6s ease}
+.speed-num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+.speed-num .v{font-family:var(--font-mono);font-size:32px;font-weight:600;color:var(--wr-text-pri);font-variant-numeric:tabular-nums;letter-spacing:-0.02em}
+.speed-num .u{font-family:var(--font-mono);font-size:10px;color:var(--wr-text-faint);letter-spacing:0.18em}
+.speed-meta{flex:1;display:flex;flex-direction:column;gap:8px}
+.speed-meta-row{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:6px 0;border-bottom:1px dashed var(--wr-border)}
+.speed-meta-row:last-child{border-bottom:none}
+.speed-meta-row .k{font-family:var(--font-mono);font-size:10.5px;color:var(--wr-text-faint);letter-spacing:0.12em;text-transform:uppercase}
+.speed-meta-row .v{font-family:var(--font-mono);font-size:14px;font-weight:600;color:var(--wr-text-pri);font-variant-numeric:tabular-nums;text-align:right}
+
+/* service ribbon */
+.service-ribbon{
+    display:flex;gap:24px;align-items:center;
+    padding:14px 22px;
+    background:linear-gradient(180deg,transparent 0%,var(--wr-bg-panel) 100%);
+    border:1px solid var(--wr-border);border-radius:6px;
+    margin-top:14px;
+}
+.svc-item{display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:11.5px;letter-spacing:0.06em}
+.svc-item .dot{width:8px;height:8px;border-radius:50%}
+.svc-item.ok .dot{background:var(--wr-ok);box-shadow:0 0 6px var(--wr-ok);animation:livePulse 2s ease-out infinite}
+.svc-item.fault .dot{background:var(--wr-fault);box-shadow:0 0 6px var(--wr-fault)}
+.svc-item.idle .dot{background:var(--wr-text-faint)}
+.svc-item .lbl{color:var(--wr-text-sub)}
+.svc-item .val{color:var(--wr-text-pri);font-weight:600;margin-left:4px}
+.svc-spacer{flex:1}
+.svc-uptime{font-family:var(--font-mono);font-size:10.5px;color:var(--wr-text-faint);letter-spacing:0.08em}
+
+/* scan-line decorative overlay (subtle) */
+.scan-line{
+    position:fixed;left:0;right:0;top:0;height:2px;
+    background:linear-gradient(90deg,transparent,var(--wr-cyan),transparent);
+    opacity:0.15;
+    animation:scanSweep 8s linear infinite;
+    pointer-events:none;z-index:100;
+}
+@keyframes scanSweep{0%{transform:translateY(0)}100%{transform:translateY(100vh)}}
+
+/* tweaks panel */
+.tweaks{position:fixed;bottom:14px;right:14px;background:var(--wr-bg-elevate);border:1px solid var(--wr-border-2);border-radius:6px;padding:10px 14px;display:flex;gap:14px;align-items:center;font-family:var(--font-mono);font-size:11px;color:var(--wr-text-sub);z-index:50}
+.tweaks label{display:flex;align-items:center;gap:6px;cursor:pointer}
+.tweaks input[type=checkbox]{accent-color:var(--wr-cyan)}
+</style>
+</head>
+<body>
+
+<div class="scan-line" id="scanLine"></div>
+
+<!-- ribbon -->
+<div class="wr-ribbon">
+    <span class="live-pill"><span class="dot"></span>LIVE</span>
+    <div class="wr-title">
+        <h1>TRAFFIC COMMAND CENTER</h1>
+        <span class="subtitle">違規件數統計 · 即時戰情</span>
+    </div>
+    <div class="wr-clock">
+        <div class="time" id="clockTime">14:32:18</div>
+        <div class="date" id="clockDate">2026·05·27 WED</div>
+    </div>
+</div>
+
+<!-- KPI strip (4) -->
+<div class="kpi-strip">
+    <div class="kpi-card kpi-warn">
+        <div class="label"><span class="glyph">◆</span>今日違規 · TODAY</div>
+        <div class="value" id="kpiToday">354</div>
+        <div class="delta up">↗ +12 vs 昨日</div>
+        <canvas class="kpi-spark" id="sparkToday"></canvas>
+    </div>
+    <div class="kpi-card kpi-cyan">
+        <div class="label"><span class="glyph">◆</span>待審核 · PENDING</div>
+        <div class="value" id="kpiPending">38,712</div>
+        <div class="sub">尚未開單 · 需要審核</div>
+        <canvas class="kpi-spark" id="sparkPending"></canvas>
+    </div>
+    <div class="kpi-card kpi-ok">
+        <div class="label"><span class="glyph">◆</span>系統健康 · HEALTH</div>
+        <div class="value" id="kpiHealth">4/4</div>
+        <div class="sub">all systems nominal</div>
+    </div>
+    <div class="kpi-card kpi-purple">
+        <div class="label"><span class="glyph">◆</span>峰值時段 · PEAK</div>
+        <div class="value" id="kpiPeak">14:00</div>
+        <div class="sub">35 件 · 過去 24h</div>
+    </div>
+</div>
+
+<!-- Row 1: 24h trend + live feed -->
+<div class="wr-grid">
+    <div class="panel">
+        <div class="panel-head">
+            <div class="title">
+                <span class="label">24H TREND · AREA</span>
+                <span class="name">過去 24 小時違規趨勢</span>
+            </div>
+            <div class="meta">
+                <div class="meta-item"><span class="k">total</span><span class="v" id="trendTotal">235</span></div>
+                <div class="meta-item"><span class="k">peak</span><span class="v" id="trendPeakLabel">14:00</span></div>
+                <div class="meta-item"><span class="k">avg/h</span><span class="v" id="trendAvg">9.8</span></div>
+            </div>
+        </div>
+        <div class="panel-body">
+            <canvas id="trendChart"></canvas>
+            <div class="trend-stats">
+                <div class="trend-stat"><span class="k">闖紅燈</span><span class="v">98</span></div>
+                <div class="trend-stat"><span class="k">超速</span><span class="v">76</span></div>
+                <div class="trend-stat"><span class="k">違停</span><span class="v">42</span></div>
+                <div class="trend-stat peak"><span class="k">PEAK HOUR</span><span class="v">35</span></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-head">
+            <div class="title">
+                <span class="label">LIVE FEED · STREAMING</span>
+                <span class="name">即時違規紀錄</span>
+            </div>
+            <div class="meta">
+                <div class="meta-item"><span class="k">incoming</span><span class="v" id="feedCount">--</span></div>
+            </div>
+        </div>
+        <div class="live-feed" id="liveFeed"></div>
+    </div>
+</div>
+
+<!-- Row 2: heatmap (full width) -->
+<div class="panel" style="margin-bottom:14px">
+    <div class="panel-head">
+        <div class="title">
+            <span class="label">WEEKLY HEATMAP · 7 DAY × 24 HOUR</span>
+            <span class="name">過去 7 天每小時違規密度</span>
+        </div>
+        <div class="meta">
+            <div class="meta-item"><span class="k">7d total</span><span class="v" id="heatTotal">1,847</span></div>
+            <div class="meta-item"><span class="k">hottest</span><span class="v" id="heatHot">週五 18:00</span></div>
+        </div>
+    </div>
+    <div class="panel-body">
+        <div class="heatmap" id="heatmap"></div>
+        <div class="heatmap-axis" id="heatmapAxis"></div>
+        <div class="heatmap-legend">
+            <span>LESS</span>
+            <span class="scale" id="heatLegend"></span>
+            <span>MORE</span>
+        </div>
+    </div>
+</div>
+
+<!-- Row 3: 3 panels (donut + cameras + speed gauge) -->
+<div class="wr-grid-row">
+    <div class="panel">
+        <div class="panel-head">
+            <div class="title">
+                <span class="label">VIOLATION MIX · TODAY</span>
+                <span class="name">違規類型分布</span>
+            </div>
+        </div>
+        <div class="panel-body">
+            <div class="donut-wrap">
+                <canvas id="donutChart"></canvas>
+                <div class="donut-legend" id="donutLegend"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-head">
+            <div class="title">
+                <span class="label">CAMERAS · LIVE GRID</span>
+                <span class="name">攝影機即時狀態</span>
+            </div>
+            <div class="meta">
+                <div class="meta-item"><span class="k">online</span><span class="v" id="camOnline">5/6</span></div>
+            </div>
+        </div>
+        <div class="panel-body">
+            <div class="cam-grid" id="camGrid"></div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-head">
+            <div class="title">
+                <span class="label">SPEED MONITOR · AVG</span>
+                <span class="name">平均車速 (km/h)</span>
+            </div>
+            <div class="meta">
+                <div class="meta-item"><span class="k">samples</span><span class="v" id="spdSamples">1,243</span></div>
+            </div>
+        </div>
+        <div class="panel-body">
+            <div class="speed-gauge">
+                <div class="speed-circle">
+                    <svg viewBox="0 0 100 100">
+                        <defs>
+                            <linearGradient id="speedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" stop-color="#4fc3f7"/>
+                                <stop offset="100%" stop-color="#a78bfa"/>
+                            </linearGradient>
+                        </defs>
+                        <circle class="bg-ring" cx="50" cy="50" r="42"/>
+                        <circle class="val-ring" id="spdRing" cx="50" cy="50" r="42" stroke-dasharray="0 264" />
+                    </svg>
+                    <div class="speed-num"><div class="v" id="spdValue">68.4</div><div class="u">KM / H</div></div>
+                </div>
+                <div class="speed-meta">
+                    <div class="speed-meta-row"><span class="k">max</span><span></span><span class="v">128.7</span></div>
+                    <div class="speed-meta-row"><span class="k">min</span><span></span><span class="v">12.3</span></div>
+                    <div class="speed-meta-row"><span class="k">>限速</span><span></span><span class="v" style="color:var(--wr-warn)">76 件</span></div>
+                    <div class="speed-meta-row"><span class="k">small/large</span><span></span><span class="v">82% / 18%</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- service ribbon -->
+<div class="service-ribbon">
+    <div class="svc-item ok"><span class="dot"></span><span class="lbl">API</span><span class="val">:8000</span></div>
+    <div class="svc-item ok"><span class="dot"></span><span class="lbl">MQTT</span><span class="val">:1883</span></div>
+    <div class="svc-item ok"><span class="dot"></span><span class="lbl">Frigate</span><span class="val">:5000</span></div>
+    <div class="svc-item ok"><span class="dot"></span><span class="lbl">LPR</span><span class="val">:8010</span></div>
+    <div class="svc-item ok"><span class="dot"></span><span class="lbl">IO</span><span class="val">:8011</span></div>
+    <div class="svc-spacer"></div>
+    <div class="svc-uptime">UPTIME · <span id="uptimeVal">21h 47m</span></div>
+    <div class="svc-uptime">COMMIT · <span style="color:var(--wr-cyan)">240cdcb</span></div>
+</div>
+
+<!-- Tweaks panel -->
+<div class="tweaks">
+    <label><input type="checkbox" id="tweakScanLine" checked> scan-line</label>
+    <label><input type="checkbox" id="tweakLiveAuto" checked> live feed</label>
+    <label>density
+        <select id="tweakDensity" style="background:var(--wr-bg-deep);color:var(--wr-text-pri);border:1px solid var(--wr-border-2);padding:2px 6px;font-family:var(--font-mono);font-size:10px">
+            <option value="compact">compact</option>
+            <option value="comfy" selected>comfy</option>
+        </select>
+    </label>
+</div>
+
+<script>
+// ───────── clock ─────────
+function tickClock(){
+    const d = new Date();
+    const z = n => String(n).padStart(2,'0');
+    document.getElementById('clockTime').textContent = `${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`;
+    const dow = ['SUN','MON','TUE','WED','THU','FRI','SAT'][d.getDay()];
+    document.getElementById('clockDate').textContent = `${d.getFullYear()}·${z(d.getMonth()+1)}·${z(d.getDate())} ${dow}`;
+}
+tickClock(); setInterval(tickClock, 1000);
+
+// ───────── helper: chart defaults ─────────
+Chart.defaults.color = '#5a6678';
+Chart.defaults.font.family = "'IBM Plex Mono', monospace";
+Chart.defaults.font.size = 10;
+Chart.defaults.borderColor = 'rgba(255,255,255,0.05)';
+
+// ───────── 24h trend area chart ─────────
+const trendData = [4,2,1,0,1,3,8,18,28,24,19,22,28,33,35,29,24,18,15,12,9,6,4,3];
+const trendHours = trendData.map((_,i)=>`${String(i).padStart(2,'0')}:00`);
+const peakIdx = trendData.indexOf(Math.max(...trendData));
+const trendCtx = document.getElementById('trendChart').getContext('2d');
+const trendGrad = trendCtx.createLinearGradient(0,0,0,240);
+trendGrad.addColorStop(0,'rgba(79,195,247,0.45)');
+trendGrad.addColorStop(1,'rgba(79,195,247,0)');
+new Chart(trendCtx, {
+    type:'line',
+    data:{
+        labels: trendHours,
+        datasets:[{
+            data: trendData,
+            borderColor:'#4fc3f7',
+            borderWidth:2,
+            backgroundColor: trendGrad,
+            fill:true,
+            tension:0.35,
+            pointBackgroundColor: trendData.map((v,i)=> i===peakIdx ? '#f59e0b' : 'transparent'),
+            pointBorderColor: trendData.map((v,i)=> i===peakIdx ? '#f59e0b' : 'transparent'),
+            pointRadius: trendData.map((v,i)=> i===peakIdx ? 5 : 0),
+            pointHoverRadius: 6,
+        }]
+    },
+    options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{backgroundColor:'#15202e',titleColor:'#e6edf6',bodyColor:'#8b97aa',borderColor:'#4fc3f7',borderWidth:1,padding:8}},
+        scales:{
+            x:{grid:{color:'rgba(255,255,255,0.03)'},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:7}},
+            y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:10}}
+        }
+    }
+});
+
+// ───────── donut chart ─────────
+const donutData = [
+    {label:'闖紅燈', count:98, color:'#ef4444'},
+    {label:'超速',   count:76, color:'#f59e0b'},
+    {label:'違停',   count:42, color:'#a78bfa'},
+    {label:'未戴安全帽',count:18, color:'#4fc3f7'},
+    {label:'逆向',   count:9,  color:'#22d3ee'},
+];
+const donutTotal = donutData.reduce((a,b)=>a+b.count,0);
+new Chart(document.getElementById('donutChart'), {
+    type:'doughnut',
+    data:{labels:donutData.map(d=>d.label),datasets:[{data:donutData.map(d=>d.count),backgroundColor:donutData.map(d=>d.color),borderColor:'#0d141f',borderWidth:2}]},
+    options:{responsive:false,plugins:{legend:{display:false},tooltip:{backgroundColor:'#15202e',titleColor:'#e6edf6',bodyColor:'#8b97aa',borderColor:'#4fc3f7',borderWidth:1}},cutout:'68%'}
+});
+document.getElementById('donutLegend').innerHTML = donutData.map(d=>`
+    <div class="donut-row">
+        <span class="donut-dot" style="background:${d.color}"></span>
+        <span class="donut-label">${d.label}</span>
+        <div>
+            <span class="donut-pct">${Math.round(d.count/donutTotal*100)}%</span>
+            <div class="donut-count">${d.count} 件</div>
+        </div>
+    </div>
+`).join('');
+
+// ───────── sparklines on KPI ─────────
+function spark(id, data, color){
+    new Chart(document.getElementById(id), {
+        type:'line',
+        data:{labels:data.map((_,i)=>i),datasets:[{data,borderColor:color,borderWidth:1.5,fill:false,tension:0.35,pointRadius:0}]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:false}},scales:{x:{display:false},y:{display:false}}}
+    });
+}
+spark('sparkToday', [12,18,14,22,26,30,28,34,38,42,36,40], '#f59e0b');
+spark('sparkPending', [38000,38050,38120,38180,38250,38300,38400,38500,38600,38680,38700,38712], '#4fc3f7');
+
+// ───────── heatmap 7×24 ─────────
+const days = ['週日','週一','週二','週三','週四','週五','週六'];
+const heatmapEl = document.getElementById('heatmap');
+function getColor(v, max){
+    if (v===0) return 'rgba(255,255,255,0.04)';
+    const p = v/max;
+    // gradient cyan → amber → red
+    if (p < 0.33) return `rgba(79,195,247,${0.2+p*1.4})`;
+    if (p < 0.66) return `rgba(245,158,11,${0.3+p*0.9})`;
+    return `rgba(239,68,68,${0.5+p*0.5})`;
+}
+const heatData = days.map(() => Array.from({length:24}, () => Math.floor(Math.random()*Math.random()*40)));
+// 強化 peak (週五 18:00 / 週四 17:00 等)
+heatData[5][18] = 38; heatData[5][8] = 32; heatData[4][17] = 34; heatData[2][14] = 28;
+const heatMax = Math.max(...heatData.flat());
+days.forEach((day,r) => {
+    const row = document.createElement('div'); row.className='heatmap-row';
+    row.innerHTML = `<span class="heatmap-day">${day}</span>` + Array.from({length:24}, (_,c) => {
+        const v = heatData[r][c];
+        return `<span class="heatmap-cell" style="background:${getColor(v,heatMax)}" title="${day} ${String(c).padStart(2,'0')}:00 · ${v} 件"></span>`;
+    }).join('');
+    heatmapEl.appendChild(row);
+});
+// axis
+document.getElementById('heatmapAxis').innerHTML = '<span></span>' + Array.from({length:24},(_,i) => `<span>${i%6===0 ? String(i).padStart(2,'0') : ''}</span>`).join('');
+// legend
+document.getElementById('heatLegend').innerHTML = [0.1, 0.3, 0.5, 0.7, 0.9].map(p =>
+    `<i style="background:${getColor(p*heatMax,heatMax)}"></i>`
+).join('');
+
+// ───────── cameras grid ─────────
+const cams = [
+    {name:'cam_2', loc:'台62基隆段 隧道口', status:'online', speed:62, flow:14},
+    {name:'cam_6', loc:'台62 LPR 取締點',  status:'online', speed:58, flow:8},
+    {name:'cam_7', loc:'國 8 高架引道',     status:'online', speed:71, flow:11},
+    {name:'cam_1', loc:'匝道攝影機',         status:'offline', speed:0,  flow:0},
+    {name:'cam_3', loc:'平面道 62_1',         status:'offline', speed:0,  flow:0},
+    {name:'cam_4', loc:'雪隧西口',           status:'online', speed:55, flow:6},
+];
+document.getElementById('camGrid').innerHTML = cams.map(c => `
+    <div class="cam-tile ${c.status==='offline'?'offline':''}">
+        <div class="cam-head">
+            <span class="cam-name">${c.name}</span>
+            <span class="cam-status-dot"></span>
+        </div>
+        <div class="cam-loc">${c.loc}</div>
+        <div class="cam-metric">
+            <span>SPEED <b>${c.speed||'--'}</b></span>
+            <span>FLOW <b>${c.flow||'--'}</b></span>
+        </div>
+    </div>
+`).join('');
+
+// ───────── speed gauge ─────────
+function setSpeedGauge(v, max){
+    const ring = document.getElementById('spdRing');
+    const c = 2*Math.PI*42;  // circumference
+    const ratio = v/max;
+    ring.setAttribute('stroke-dasharray', `${c*ratio} ${c}`);
+}
+setSpeedGauge(68.4, 120);
+
+// ───────── live feed ─────────
+const feedPlates = ['ABC-1234','DEF-5678','GHI-9012','JKL-3456','MNO-7890','PQR-1357','STU-2468','VWX-9753','YZA-1593','BCD-7531'];
+const feedLocs   = ['台62基隆段 K3.5','台62 LPR 取締點','國 8 高架引道','雪隧西口','匝道攝影機'];
+const feedTypes  = [
+    {key:'red',   label:'紅燈', cls:'type-red'},
+    {key:'speed', label:'超速', cls:'type-speed'},
+    {key:'park',  label:'違停', cls:'type-park'},
+];
+let feedCount = 0;
+function addFeed(initial=false){
+    const t = new Date();
+    const z = n => String(n).padStart(2,'0');
+    const ts = `${z(t.getHours())}:${z(t.getMinutes())}:${z(t.getSeconds())}`;
+    const plate = feedPlates[Math.floor(Math.random()*feedPlates.length)];
+    const loc = feedLocs[Math.floor(Math.random()*feedLocs.length)];
+    const typ = feedTypes[Math.floor(Math.random()*feedTypes.length)];
+    const extra = typ.key==='speed' ? `${(70+Math.random()*30).toFixed(0)} km/h` : '';
+    const el = document.createElement('div');
+    el.className = `feed-item ${typ.cls}`;
+    el.innerHTML = `
+        <span class="feed-time">${ts}</span>
+        <div class="feed-main">
+            <span class="feed-plate">${plate}</span>
+            <span class="feed-loc">${loc}${extra?' · '+extra:''}</span>
+        </div>
+        <span class="feed-type ${typ.key}">${typ.label}</span>
+    `;
+    const feed = document.getElementById('liveFeed');
+    feed.insertBefore(el, feed.firstChild);
+    while (feed.childElementCount > 14) feed.removeChild(feed.lastChild);
+    feedCount++;
+    document.getElementById('feedCount').textContent = feedCount;
+}
+// 預載 8 筆
+for (let i = 0; i < 8; i++) addFeed(true);
+let liveInterval = setInterval(()=>{ if (document.getElementById('tweakLiveAuto').checked) addFeed(); }, 3500);
+
+// ───────── tweaks ─────────
+document.getElementById('tweakScanLine').addEventListener('change', e => {
+    document.getElementById('scanLine').style.display = e.target.checked ? 'block' : 'none';
+});
+document.getElementById('tweakDensity').addEventListener('change', e => {
+    document.body.style.padding = e.target.value === 'compact' ? '12px 14px 14px' : '18px 22px 22px';
+});
+</script>
+</body>
+</html>
