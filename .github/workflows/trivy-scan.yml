@@ -7,6 +7,11 @@ on:
   pull_request:
     branches: [ "main", "master" ]
 
+# 上傳 SARIF 到 Security 標籤需要 security-events:write
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   trivy-scan:
     name: Trivy Vulnerability Scan
