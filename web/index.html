@@ -11235,6 +11235,17 @@ const app=createApp({
                     recentViolations.value=vItems.slice(0,20);
                 }
                 await syncFeatureStatus();
+                // 保險: NVR 重啟 overlay 卡死自動解 — 若 Frigate uptime > 60s 表示沒在重啟
+                if(nvrRestarting.value){
+                    try{
+                        const r=await fetch('/api/frigate/status',{cache:'no-store'});
+                        const d=await r.json();
+                        if(d?.status==='online' && Number(d?.uptime||0)>60){
+                            nvrRestarting.value=false;
+                            console.warn('[guard] nvrRestarting 卡死，Frigate uptime '+d.uptime+'s 已自動解鎖');
+                        }
+                    }catch(_){}
+                }
             }catch(e){}
         };
         const loadCameras=async()=>{
