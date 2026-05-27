@@ -64,6 +64,14 @@ RUN pip install --no-cache-dir -i https://pypi.org/simple/ \
 
 WORKDIR /workspace
 
+# 非 root 使用者執行 (Trivy DS-0002 / CIS Docker Benchmark)
+# 注意: 實際在 Jetson host 系統上 traffic-api 是 systemd service 跑，
+# 此 USER 指令主要用於容器化部署場景。GPU device access 仍由 host
+# permission 控制 (--device=/dev/nvgpu 或 nvidia-runtime)。
+RUN useradd --create-home --shell /bin/bash --uid 1000 appuser \
+    && chown -R appuser:appuser /workspace
+USER appuser
+
 EXPOSE 8000
 
 # 健康檢查
