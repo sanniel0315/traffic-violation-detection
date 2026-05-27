@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import threading
 from zoneinfo import ZoneInfo
@@ -273,16 +273,51 @@ async def system_info():
 
 @app.get("/api/dashboard")
 async def dashboard():
+    """主頁儀錶板 — KPI + 24h trend buckets"""
     from api.models import SessionLocal, Violation, Camera
+    from sqlalchemy import func
     db = SessionLocal()
     try:
-        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        now = datetime.utcnow()
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        d24h_ago = now - timedelta(hours=24)
+
+        # KPI
+        today_v = db.query(Violation).filter(Violation.created_at >= today).count()
+        pending = db.query(Violation).filter(Violation.status == "pending").count()
+        total_v = db.query(Violation).count()
+        total_cam = db.query(Camera).count()
+        online_cam = db.query(Camera).filter(Camera.status == "online").count()
+        offline_cam = max(0, total_cam - online_cam)
+
+        # 24h trend buckets (hour=0..23 按本地時間 = 台北 UTC+8)
+        rows = (db.query(Violation)
+                  .filter(Violation.created_at >= d24h_ago)
+                  .with_entities(Violation.created_at)
+                  .all())
+        bucket_map: dict = {}
+        for (ts,) in rows:
+            if ts is None:
+                continue
+            # 台北時區 hour-of-day (UTC + 8)
+            local = ts + timedelta(hours=8)
+            key = local.hour
+            bucket_map[key] = bucket_map.get(key, 0) + 1
+        # 從現在往前 24 小時順序 (從 24h 前 → 現在)
+        cursor = (now + timedelta(hours=8) - timedelta(hours=23)).hour
+        hourly_buckets = []
+        for i in range(24):
+            h = (cursor + i) % 24
+            hourly_buckets.append({"hour": h, "count": bucket_map.get(h, 0)})
+
         return {
-            "today_violations": db.query(Violation).filter(Violation.created_at >= today).count(),
-            "pending_review": db.query(Violation).filter(Violation.status == "pending").count(),
-            "total_violations": db.query(Violation).count(),
-            "online_cameras": db.query(Camera).filter(Camera.status == "online").count(),
-            "total_cameras": db.query(Camera).count()
+            "today_violations": today_v,
+            "pending_review": pending,
+            "total_violations": total_v,
+            "online_cameras": online_cam,
+            "offline_cameras": offline_cam,
+            "total_cameras": total_cam,
+            "hourly_buckets": hourly_buckets,
         }
     finally:
         db.close()
