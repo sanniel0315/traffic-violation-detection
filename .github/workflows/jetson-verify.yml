@@ -189,3 +189,40 @@ jobs:
         run: |
           [ -f /tmp/api_pid.txt ] && kill $(cat /tmp/api_pid.txt) 2>/dev/null || true
           rm -f /tmp/api_pid.txt
+
+      # ══════════════════════════════════════════════════════════════════
+      # ── 9. 自動部署到 production ──
+      # 只在 main branch push 時 deploy (避免 PR / 手動 dispatch 誤觸發)
+      # ══════════════════════════════════════════════════════════════════
+      - name: Deploy to production
+        if: success() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          set -e
+          PROD=/home/ubuntu/traffic-violation-detection
+          echo "=== Deploy to $PROD ==="
+          cd "$PROD"
+          BEFORE=$(git rev-parse --short HEAD)
+          git fetch origin main
+          git reset --hard origin/main
+          AFTER=$(git rev-parse --short HEAD)
+          echo "commit: $BEFORE → $AFTER"
+
+          if [ "$BEFORE" = "$AFTER" ]; then
+            echo "no change, skip restart"
+            exit 0
+          fi
+
+          echo "=== restart traffic-api ==="
+          sudo -n systemctl restart traffic-api.service
+          sleep 6
+          echo "=== verify deployed version ==="
+          for i in $(seq 1 20); do
+            if curl -sf --max-time 3 http://localhost:8000/api/system/version 2>/dev/null | grep -q "$AFTER"; then
+              echo "✓ Production now at commit $AFTER"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Production verify failed — version mismatch after restart"
+          curl -s http://localhost:8000/api/system/version || true
+          exit 1
