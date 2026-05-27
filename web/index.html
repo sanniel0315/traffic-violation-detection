@@ -12834,11 +12834,47 @@ const app=createApp({
             }
             return false;
         };
+        // 全域 watchdog：nvrRestarting=true 時啟動 5s 輪詢，
+        // 偵測 Frigate uptime > 60s 自動解鎖 — 不依賴 dashboard auto refresh
+        let _nvrWatchdog=null;
+        const startNvrWatchdog=()=>{
+            if(_nvrWatchdog)return;
+            const started=Date.now();
+            _nvrWatchdog=setInterval(async()=>{
+                if(!nvrRestarting.value){
+                    clearInterval(_nvrWatchdog); _nvrWatchdog=null;
+                    return;
+                }
+                // 超過 60s 強制解 (避免任何邊界情況卡死)
+                if(Date.now()-started > 60000){
+                    console.warn('[nvr-watchdog] 60s timeout 強制解鎖');
+                    nvrRestarting.value=false;
+                    clearInterval(_nvrWatchdog); _nvrWatchdog=null;
+                    return;
+                }
+                try{
+                    const r=await fetch('/api/frigate/status',{cache:'no-store'});
+                    const d=await r.json();
+                    if(d?.status==='online' && Number(d?.uptime||0)>60){
+                        console.warn('[nvr-watchdog] Frigate uptime '+d.uptime+'s，自動解鎖');
+                        nvrRestarting.value=false;
+                        clearInterval(_nvrWatchdog); _nvrWatchdog=null;
+                    }
+                }catch(_){}
+            },5000);
+        };
+        // 暴露給 console 手動解鎖 (緊急用)：F12 跑 window.unblockNvr()
+        window.unblockNvr=()=>{
+            nvrRestarting.value=false;
+            if(_nvrWatchdog){clearInterval(_nvrWatchdog);_nvrWatchdog=null;}
+            console.log('[unblockNvr] manually cleared');
+        };
         const restartNVR=async(skipConfirm=false)=>{
             if(nvrRestarting.value)return;
             if(!skipConfirm && !confirm('確定要重啟 NVR？'))return;
             const restartStartedAt=Date.now();
             nvrRestarting.value=true;
+            startNvrWatchdog();  // 啟動獨立 watchdog，避免主邏輯卡住
             try{
                 const r=await fetch('/api/frigate/restart',{method:'POST'});
                 const d=await r.json().catch(()=>({}));
