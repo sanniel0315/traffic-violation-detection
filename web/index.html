@@ -8462,16 +8462,16 @@ const app=createApp({
         });
         const systemAllHealthy=computed(()=>{
             return (dashboard.value?.offline_cameras||0)===0
-                && (frigateStatus.value?.status||'')==='online'
+                && (frigateStatus?.status||'')==='online'
                 && (mqttStatus?.connected||false)
-                && (lprStatus.value?.status||'')==='online';
+                && (lprStatus?.status||'')==='online';
         });
         const systemHealthSummary=computed(()=>{
             const down = [];
             if((dashboard.value?.offline_cameras||0)>0) down.push('攝影機');
-            if((frigateStatus.value?.status||'')!=='online') down.push('NVR');
+            if((frigateStatus?.status||'')!=='online') down.push('NVR');
             if(!mqttStatus?.connected) down.push('MQTT');
-            if((lprStatus.value?.status||'')!=='online') down.push('LPR');
+            if((lprStatus?.status||'')!=='online') down.push('LPR');
             if(down.length===0) return '全部正常';
             return down.length+' 服務異常';
         });
