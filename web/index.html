@@ -743,6 +743,98 @@
             letter-spacing: 0.04em;
         }
 
+        /* —— dashboard V3 layout —— */
+        .ds-kpi-grid.ds-kpi-3col {
+            grid-template-columns: repeat(3, 1fr);
+        }
+        @media (max-width: 980px) {
+            .ds-kpi-grid.ds-kpi-3col { grid-template-columns: 1fr; }
+        }
+        .ds-dashboard-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+        @media (max-width: 1100px) {
+            .ds-dashboard-row { grid-template-columns: 1fr; }
+        }
+        /* service dots (KPI 卡片內健康指示) */
+        .ds-svc-dots {
+            display: flex; gap: 6px; align-items: center;
+        }
+        .ds-svc-dot {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 36px;
+            height: 22px;
+            padding: 0 8px;
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            border-radius: 11px;
+            background: var(--gov-primary-soft);
+            color: var(--gov-primary);
+            border: 1px solid var(--gov-primary-line);
+        }
+        .ds-svc-dot.down {
+            background: rgba(196,58,49,0.10);
+            color: var(--gov-fault);
+            border-color: rgba(196,58,49,0.30);
+        }
+
+        /* violation table (full-width) */
+        .ds-violation-table {
+            font-size: 13px;
+        }
+        .ds-vrow {
+            display: grid;
+            grid-template-columns: 70px 110px 110px 1fr 28px;
+            gap: 14px;
+            padding: 12px 22px;
+            border-bottom: 1px solid var(--gov-border);
+            align-items: center;
+            cursor: pointer;
+            transition: background .15s ease;
+        }
+        .ds-vrow.header {
+            cursor: default;
+            background: var(--gov-surface-2);
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--gov-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 10px 22px;
+            border-bottom: 2px solid var(--gov-border);
+        }
+        .ds-vrow:not(.header):hover { background: rgba(11,94,168,0.04); }
+        .ds-vrow:last-child { border-bottom: none; }
+        .ds-vrow-time {
+            font-family: var(--font-mono);
+            font-variant-numeric: tabular-nums;
+            color: var(--gov-muted);
+            font-weight: 600;
+        }
+        .ds-vrow-plate {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            color: var(--gov-text);
+        }
+        .ds-vrow-loc {
+            color: var(--gov-text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        @media (max-width: 720px) {
+            .ds-vrow { grid-template-columns: 1fr 1fr; gap: 6px; padding: 10px 16px; }
+            .ds-vrow.header { display: none; }
+        }
+
         /* —— violation list (右側) —— */
         .ds-violation-list {
             max-height: 480px;
@@ -3344,8 +3436,10 @@
             color: var(--gov-primary-strong);
         }
         .main,
-        .content,
-        .content :where(p, td, li, label, h1, h2, h3, h4, h5, h6, .el-form-item__label, .el-form-item__content, .el-checkbox, .el-radio, .el-input__inner, .el-select__selected-item, .el-textarea__inner) {
+        .content {
+            color: var(--ui-text-main);
+        }
+        .content :where(p, td, li, label, .el-form-item__label, .el-checkbox, .el-radio, .el-input__inner, .el-select__selected-item, .el-textarea__inner) {
             color: var(--ui-text-main);
         }
         .content :where(.muted, .subtext, .help-text, .hint, .desc, .description, .el-input__count, .el-select__placeholder, .el-empty__description) {
@@ -3450,6 +3544,23 @@
         }
         .content input[type="range"] {
             accent-color: var(--gov-primary);
+        }
+        .content :where(.ds-kpi-card, .stats-kpi, .status-card, .card, .nvr-notify-item) {
+            min-width: 0;
+        }
+        .content :where(.ds-kpi-label, .ds-kpi-value, .ds-kpi-hint, .ds-svc-name, .ds-svc-stat, .ds-trend-meta-label, .ds-trend-meta-value, .stats-kpi .label, .stats-kpi .value, .stats-kpi .hint, .status-card h4, .status-card .subtitle, .nvr-notify-title, .nvr-notify-text, .nvr-notify-meta) {
+            position: relative;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+        .content :where(.ds-kpi-label, .ds-kpi-hint, .ds-svc-name, .stats-kpi .label, .stats-kpi .hint, .status-card .subtitle, .nvr-notify-text, .nvr-notify-meta) {
+            line-height: 1.45;
+        }
+        .content :where(.ds-kpi-value, .ds-svc-stat, .ds-trend-meta-value, .stats-kpi .value, .nvr-notify-title) {
+            line-height: 1.15;
+        }
+        .content :where(.ds-kpi-value, .stats-kpi .value) {
+            margin-bottom: 8px;
         }
     </style>
 </head>
@@ -3837,99 +3948,89 @@
             </div>
             
             <div class="content">
-                <!-- 儀表板 (主頁) -->
+                <!-- 儀表板 (主頁) — V3: 一致層級 / 不重複資訊 -->
                 <div v-if="page==='dashboard'">
+                    <!-- Hero: 不放數字，避免跟下方 KPI 重複 -->
                     <div class="ds-page-hero">
                         <div class="ds-page-hero-row">
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num">01 / OVERVIEW</div>
                                 <h1 class="ds-section-title">違規件數<b>統計</b></h1>
-                                <div class="ds-section-sub">今日違規 / 待審核 / 設備狀態 / 最近一小時事件與重點通知</div>
+                                <div class="ds-section-sub">即時違規偵測、開單作業、24 小時趨勢與系統健康</div>
                             </div>
                             <div class="ds-page-hero-meta">
-                                <span>今日 <b>{{ dashboard.today_violations || 0 }}</b></span>
-                                <span>待審 <b>{{ dashboard.pending_review || 0 }}</b></span>
-                                <span>離線設備 <b>{{ dashboard.offline_cameras || 0 }}</b></span>
+                                <span>最後更新 <b>{{ currentTime.slice(11,16) }}</b></span>
                                 <el-switch v-model="dashboardAutoRefresh" size="small" inline-prompt active-text="自動" inactive-text="手動"/>
                                 <el-button size="small" plain @click="load"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
                             </div>
                         </div>
                     </div>
-                    <!-- KPI grid: 4 個現代化 card with design system -->
-                    <div class="ds-kpi-grid">
+
+                    <!-- KPI Row: 3 個焦點 (今日違規 / 待審核 / 系統健康) -->
+                    <div class="ds-kpi-grid ds-kpi-3col">
                         <div class="ds-kpi-card" :class="{warn:(dashboard.today_violations||0)>50}">
                             <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-alert"/></svg>今日違規</div>
                             <div class="ds-kpi-value">{{ dashboard.today_violations || 0 }}</div>
                             <div class="ds-kpi-hint">截至 {{ currentTime.slice(11,16) }} 累計</div>
-                            <div class="ds-kpi-spark" :style="{'--pct': Math.min(100, ((dashboard.today_violations||0)/100)*100) + '%'}"></div>
+                            <a class="ds-kpi-action" @click="page='violations'">查看明細 →</a>
                         </div>
                         <div class="ds-kpi-card" :class="{warn:(dashboard.pending_review||0)>100}">
                             <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-clipboard"/></svg>待審核</div>
                             <div class="ds-kpi-value">{{ dashboard.pending_review || 0 }}</div>
-                            <div class="ds-kpi-hint">尚未開單 — 需要審核</div>
+                            <div class="ds-kpi-hint">尚未開單</div>
                             <a class="ds-kpi-action" v-if="canReviewTickets" @click="page='review'">前往開單管理 →</a>
                         </div>
-                        <div class="ds-kpi-card" :class="{warn:(dashboard.offline_cameras||0)>0, ok:(dashboard.offline_cameras||0)===0}">
-                            <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-video"/></svg>離線設備</div>
-                            <div class="ds-kpi-value">{{ dashboard.offline_cameras || 0 }}</div>
-                            <div class="ds-kpi-hint" v-if="(dashboard.offline_cameras||0)===0">所有攝影機運作正常</div>
-                            <div class="ds-kpi-hint" v-else style="color:var(--gov-fault)">⚠ 需立即檢查</div>
-                            <a class="ds-kpi-action" v-if="canManageCameras" @click="page='cameras';loadCameras()">攝影機管理 →</a>
-                        </div>
-                        <div class="ds-kpi-card">
-                            <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-activity"/></svg>最近一小時</div>
-                            <div class="ds-kpi-value">{{ hourlyTotalCount }}</div>
-                            <div class="ds-kpi-hint">事件總數（含車流偵測）</div>
-                            <a class="ds-kpi-action" @click="page='statistics';loadStats()">統計分析 →</a>
+                        <div class="ds-kpi-card" :class="{warn:!systemAllHealthy, ok:systemAllHealthy}">
+                            <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-activity"/></svg>系統健康</div>
+                            <div class="ds-kpi-value" style="font-size:24px">{{ systemHealthSummary }}</div>
+                            <div class="ds-svc-dots" style="margin-top:8px">
+                                <span class="ds-svc-dot" :class="{down:(dashboard.offline_cameras||0)>0}" :title="`攝影機 ${cameras.length-(dashboard.offline_cameras||0)}/${cameras.length}`">攝</span>
+                                <span class="ds-svc-dot" :class="{down:frigateStatus.status!=='online'}" title="NVR">NVR</span>
+                                <span class="ds-svc-dot" :class="{down:!mqttStatus.connected}" title="MQTT">MQTT</span>
+                                <span class="ds-svc-dot" :class="{down:lprStatus.status!=='online'}" title="LPR">LPR</span>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- 24h 違規趨勢 mini chart -->
-                    <div class="ds-card hoverable" style="padding:18px 20px;margin-bottom:14px">
-                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-                            <div>
-                                <div class="ds-section-num">24H TREND</div>
-                                <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:6px">過去 24 小時違規趨勢</div>
-                            </div>
-                            <div style="display:flex;gap:14px;align-items:center">
-                                <div class="ds-trend-meta">
-                                    <div class="ds-trend-meta-label">峰值時段</div>
-                                    <div class="ds-trend-meta-value">{{ dashboardTrendPeakHour }}</div>
-                                </div>
-                                <div class="ds-trend-meta">
-                                    <div class="ds-trend-meta-label">峰值件數</div>
-                                    <div class="ds-trend-meta-value">{{ dashboardTrendPeak }}</div>
-                                </div>
-                                <div class="ds-trend-meta">
-                                    <div class="ds-trend-meta-label">總計</div>
-                                    <div class="ds-trend-meta-value">{{ dashboardTrend24h.reduce((a,b)=>a+(b.count||0),0) }}</div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="ds-trend-chart">
-                            <div class="ds-trend-bar" v-for="(b,i) in dashboardTrend24h" :key="`trend-${i}`"
-                                :style="{height: Math.max(2, b.pct) + '%'}"
-                                :class="{peak: b.count===dashboardTrendPeak && b.count>0, zero: b.count===0}"
-                                :title="`${String(b.hour).padStart(2,'0')}:00 · ${b.count} 件`">
-                            </div>
-                        </div>
-                        <div class="ds-trend-axis">
-                            <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span>
-                        </div>
-                    </div>
-
-                    <div class="dashboard-layout">
-                    <div class="dashboard-left">
-                        <!-- 最近一小時事件分類 (bar 圖) -->
-                        <div class="ds-card hoverable" style="padding:18px 20px;margin-bottom:14px">
-                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+                    <!-- Row 2: 24h trend (左 2/3) + Hourly breakdown (右 1/3) -->
+                    <div class="ds-dashboard-row">
+                        <div class="ds-card hoverable" style="padding:20px 22px">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
                                 <div>
-                                    <div class="ds-section-num">EVENTS · LAST HOUR</div>
-                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:6px">最近一小時事件分類</div>
+                                    <div class="ds-section-num">24H TREND</div>
+                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:6px">過去 24 小時違規趨勢</div>
                                 </div>
-                                <el-tag size="small" type="info">總計 {{ hourlyTotalCount }}</el-tag>
+                                <div style="display:flex;gap:18px;align-items:center">
+                                    <div class="ds-trend-meta">
+                                        <div class="ds-trend-meta-label">峰值</div>
+                                        <div class="ds-trend-meta-value">{{ dashboardTrendPeakHour }} · {{ dashboardTrendPeak }}件</div>
+                                    </div>
+                                    <div class="ds-trend-meta">
+                                        <div class="ds-trend-meta-label">總計</div>
+                                        <div class="ds-trend-meta-value">{{ dashboardTrend24h.reduce((a,b)=>a+(b.count||0),0) }}</div>
+                                    </div>
+                                </div>
                             </div>
-                            <div v-if="hourlyStatsList.length" class="ds-bar-list">
+                            <div class="ds-trend-chart">
+                                <div class="ds-trend-bar" v-for="(b,i) in dashboardTrend24h" :key="`trend-${i}`"
+                                    :style="{height: Math.max(2, b.pct) + '%'}"
+                                    :class="{peak: b.count===dashboardTrendPeak && b.count>0, zero: b.count===0}"
+                                    :title="`${String(b.hour).padStart(2,'0')}:00 · ${b.count} 件`">
+                                </div>
+                            </div>
+                            <div class="ds-trend-axis">
+                                <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span>
+                            </div>
+                        </div>
+                        <div class="ds-card hoverable" style="padding:20px 22px">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                                <div>
+                                    <div class="ds-section-num">LAST 1H</div>
+                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:6px">最近一小時分類</div>
+                                </div>
+                                <span style="font-family:var(--font-mono);font-size:22px;font-weight:700;color:var(--gov-primary)">{{ hourlyTotalCount }}</span>
+                            </div>
+                            <div v-if="hourlyTotalCount>0" class="ds-bar-list">
                                 <div v-for="item in hourlyStatsList" :key="`bar-${item.type}`" class="ds-bar-row">
                                     <span class="ds-bar-label">{{ item.label }}</span>
                                     <div class="ds-bar-track">
@@ -3938,69 +4039,38 @@
                                     <span class="ds-bar-value">{{ item.count }}</span>
                                 </div>
                             </div>
-                            <div v-else style="text-align:center;padding:30px;color:var(--gov-muted)">最近一小時無事件</div>
-                        </div>
-
-                        <!-- 系統服務健康摘要 -->
-                        <div class="ds-card hoverable" style="padding:18px 20px">
-                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-                                <div>
-                                    <div class="ds-section-num">SERVICE HEALTH</div>
-                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:6px">系統服務健康</div>
-                                </div>
-                            </div>
-                            <div class="ds-svc-grid">
-                                <div class="ds-svc-tile" :class="{down: dashboard.offline_cameras>0}">
-                                    <svg class="text-icon" style="font-size:18px"><use href="#i-video"/></svg>
-                                    <div>
-                                        <div class="ds-svc-name">攝影機</div>
-                                        <div class="ds-svc-stat">線上 {{ cameras.length - (dashboard.offline_cameras||0) }} / {{ cameras.length }}</div>
-                                    </div>
-                                </div>
-                                <div class="ds-svc-tile">
-                                    <svg class="text-icon" style="font-size:18px"><use href="#i-film"/></svg>
-                                    <div>
-                                        <div class="ds-svc-name">NVR (Frigate)</div>
-                                        <div class="ds-svc-stat">{{ frigateStatus.status==='online' ? '已連線' : '離線' }}</div>
-                                    </div>
-                                </div>
-                                <div class="ds-svc-tile" :class="{down:!mqttStatus.connected}">
-                                    <svg class="text-icon" style="font-size:18px"><use href="#i-radio"/></svg>
-                                    <div>
-                                        <div class="ds-svc-name">MQTT</div>
-                                        <div class="ds-svc-stat">{{ mqttStatus.connected ? '已連線' : '未連線' }}</div>
-                                    </div>
-                                </div>
-                                <div class="ds-svc-tile">
-                                    <svg class="text-icon" style="font-size:18px"><use href="#i-scan"/></svg>
-                                    <div>
-                                        <div class="ds-svc-name">LPR</div>
-                                        <div class="ds-svc-stat">{{ lprStatus.status==='online' ? '就緒' : '離線' }}</div>
-                                    </div>
-                                </div>
-                            </div>
+                            <div v-else style="text-align:center;padding:36px 12px;color:var(--gov-muted);font-size:13px">最近一小時無事件</div>
                         </div>
                     </div>
-                    <div class="dashboard-right">
-                        <!-- 違規明細 -->
-                        <div class="ds-card hoverable" style="overflow:hidden">
-                            <div style="padding:16px 20px;border-bottom:1px solid var(--gov-border);background:var(--gov-surface-2);display:flex;align-items:center;justify-content:space-between">
-                                <div>
-                                    <div class="ds-section-num">VIOLATIONS · TODAY</div>
-                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">今日違規明細</div>
-                                </div>
-                                <el-tag size="small" type="warning">{{ recentViolations.length }}</el-tag>
+
+                    <!-- Row 3: 違規明細 (full width，最重要的 actionable 資訊) -->
+                    <div class="ds-card hoverable" style="margin-top:14px;overflow:hidden">
+                        <div style="padding:18px 22px;border-bottom:1px solid var(--gov-border);background:var(--gov-surface-2);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+                            <div>
+                                <div class="ds-section-num">VIOLATIONS · TODAY</div>
+                                <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">今日違規明細</div>
                             </div>
-                            <div class="ds-violation-list">
-                                <div class="ds-violation-item" v-for="v in recentViolations" :key="v.id" @click="showDetail(v)">
-                                    <div class="ds-violation-main">
-                                        <div class="ds-violation-plate">{{ v.license_plate || '-' }}</div>
-                                        <div class="ds-violation-loc">{{ v.location || '-' }}</div>
-                                    </div>
-                                    <el-tag size="small" :type="v.violation_type==='red_light'?'danger':(v.violation_type==='speeding'?'warning':'info')">{{ v.violation_name }}</el-tag>
-                                </div>
-                                <div v-if="!recentViolations.length" style="padding:32px 20px;text-align:center;color:var(--gov-muted);font-size:13px">暫無違規記錄</div>
+                            <div style="display:flex;align-items:center;gap:10px">
+                                <el-tag size="small" type="warning">{{ recentViolations.length }} 筆</el-tag>
+                                <el-button size="small" plain @click="page='violations'">查看全部 →</el-button>
                             </div>
+                        </div>
+                        <div class="ds-violation-table">
+                            <div class="ds-vrow header">
+                                <span>時間</span>
+                                <span>車牌</span>
+                                <span>違規類型</span>
+                                <span>地點</span>
+                                <span></span>
+                            </div>
+                            <div class="ds-vrow" v-for="v in recentViolations.slice(0,8)" :key="v.id" @click="showDetail(v)">
+                                <span class="ds-vrow-time">{{ (v.created_at||'').slice(11,16) }}</span>
+                                <span class="ds-vrow-plate">{{ v.license_plate || '-' }}</span>
+                                <span><el-tag size="small" :type="v.violation_type==='red_light'?'danger':(v.violation_type==='speeding'?'warning':'info')">{{ v.violation_name }}</el-tag></span>
+                                <span class="ds-vrow-loc">{{ v.location || '-' }}</span>
+                                <span style="text-align:right"><svg class="text-icon" style="color:var(--gov-muted)"><use href="#i-eye"/></svg></span>
+                            </div>
+                            <div v-if="!recentViolations.length" style="padding:40px 22px;text-align:center;color:var(--gov-muted);font-size:13px">暫無違規記錄</div>
                         </div>
                     </div>
                 </div>
@@ -8389,6 +8459,21 @@ const app=createApp({
             const peak = dashboardTrendPeak.value;
             const found = arr.find(x=>x.count===peak);
             return found ? (found.hour+':00') : '-';
+        });
+        const systemAllHealthy=computed(()=>{
+            return (dashboard.value?.offline_cameras||0)===0
+                && (frigateStatus.value?.status||'')==='online'
+                && (mqttStatus?.connected||false)
+                && (lprStatus.value?.status||'')==='online';
+        });
+        const systemHealthSummary=computed(()=>{
+            const down = [];
+            if((dashboard.value?.offline_cameras||0)>0) down.push('攝影機');
+            if((frigateStatus.value?.status||'')!=='online') down.push('NVR');
+            if(!mqttStatus?.connected) down.push('MQTT');
+            if((lprStatus.value?.status||'')!=='online') down.push('LPR');
+            if(down.length===0) return '全部正常';
+            return down.length+' 服務異常';
         });
         const systemLogs=ref([
             {id:1,time:'08:30:00',level:'info',message:'系統啟動完成'},
@@ -14562,7 +14647,7 @@ const app=createApp({
             if(lprVisualTimer)clearInterval(lprVisualTimer);
         });
         
-        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
+        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
