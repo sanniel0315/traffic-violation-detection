@@ -14,6 +14,13 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
 
+    # PyTorch 裝在 ~/.local/.../torch (NVIDIA Jetson 變體)，但 libcusparseLt.so.0 在
+    # ~/.local/.../nvidia/cusparselt/lib 不在 ldconfig 路徑。
+    # traffic-api systemd unit 用 LD_LIBRARY_PATH 找它 — workflow runner 要鏡像相同 env。
+    env:
+      LD_LIBRARY_PATH: "/home/ubuntu/.local/lib/python3.10/site-packages/nvidia/cusparselt/lib"
+      PYTHONUNBUFFERED: "1"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
