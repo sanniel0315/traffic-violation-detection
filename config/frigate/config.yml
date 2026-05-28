@@ -9,8 +9,7 @@ cameras:
     ffmpeg:
       inputs:
       - path: rtsp://root:root@111.70.33.189:554/axis-media/media.amp
-        roles:
-        - record
+        roles: []
     motion:
       contour_area: 20
       enabled: false
@@ -29,7 +28,7 @@ cameras:
       - bicycle
       - person
     record:
-      enabled: true
+      enabled: false
       retain:
         days: 7
         mode: all
@@ -70,7 +69,8 @@ cameras:
     ffmpeg:
       inputs:
       - path: rtsp://127.0.0.1:8554/cam_2
-        roles: []
+        roles:
+        - record
     motion:
       contour_area: 20
       enabled: false
@@ -89,7 +89,7 @@ cameras:
       - bicycle
       - person
     record:
-      enabled: false
+      enabled: true
       retain:
         days: 7
         mode: all
@@ -128,7 +128,8 @@ cameras:
     ffmpeg:
       inputs:
       - path: rtsp://127.0.0.1:8554/cam_3
-        roles: []
+        roles:
+        - record
     motion:
       contour_area: 20
       enabled: true
@@ -147,7 +148,7 @@ cameras:
       - bicycle
       - person
     record:
-      enabled: false
+      enabled: true
       retain:
         days: 7
         mode: all
@@ -234,6 +235,45 @@ cameras:
       enabled: true
       timestamp: true
     zones: {}
+  cam_6:
+    detect:
+      enabled: true
+      fps: 5
+      width: 1920
+      height: 1080
+    enabled: true
+    ffmpeg:
+      inputs:
+      - path: rtsp://127.0.0.1:8554/cam_6
+        roles:
+        - record
+        - detect
+    motion:
+      enabled: true
+      threshold: 25
+      contour_area: 20
+    objects:
+      filters:
+        car:
+          min_area: 5000
+          min_score: 0.5
+        motorcycle:
+          min_area: 1000
+          min_score: 0.5
+      track:
+      - car
+      - motorcycle
+      - bicycle
+      - person
+    record:
+      enabled: true
+      retain:
+        days: 7
+        mode: all
+    snapshots:
+      enabled: true
+      bounding_box: true
+      timestamp: true
 detect:
   enabled: false
 detectors:

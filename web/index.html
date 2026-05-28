@@ -11175,7 +11175,8 @@ const app=createApp({
             let rows=(lprHistory.value||[]).map(item=>{
                 const conf=Number(item?.confidence);
                 const sortTime=item?.time_iso||item?.time||item?.created_at||'';
-                const displayTime=item?.time||item?.created_at||'';
+                // 優先用 time_iso (帶 +08:00 時區)，避免 naive time 被 formatTime 補 Z 誤判 UTC 多 +8
+                const displayTime=item?.time_iso||item?.time||item?.created_at||'';
                 return {
                     ...item,
                     source:item?.source||'歷史',
