@@ -2923,6 +2923,35 @@
         .map-camera-item[draggable="true"] { cursor: grab; }
         .map-camera-item[draggable="true"]:active { cursor: grabbing; }
 
+        /* 攝影機 marker — 淚滴形 pin + 攝影機 icon */
+        .cam-map-marker { background: transparent; border: none; }
+        .cam-marker-pin {
+            width: 36px; height: 44px;
+            position: relative;
+            cursor: grab;
+            filter: drop-shadow(0 3px 4px rgba(0,0,0,0.32));
+            transition: transform .15s ease;
+        }
+        .cam-marker-pin::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 36px; height: 36px;
+            background: var(--pin-color, #1f9d55);
+            border: 2.5px solid #fff;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            box-sizing: border-box;
+        }
+        .cam-marker-pin svg {
+            position: absolute;
+            top: 8px; left: 9px;
+            width: 18px; height: 18px;
+            z-index: 1;
+        }
+        .cam-marker-pin:hover { transform: scale(1.12) translateY(-2px); }
+        .cam-map-marker:active .cam-marker-pin { cursor: grabbing; }
+
         /* marker popup 內攝影機影像 */
         .cam-map-popup { width: 260px; }
         .cam-map-popup-title {
@@ -11302,13 +11331,19 @@ const app=createApp({
             cameras.value.forEach(c=>{
                 if(c.lat&&c.lng){
                     const color = c.status==='online' ? '#1f9d55' : '#94a3b8';
+                    // 攝影機圖示 marker (淚滴底 + 攝影機 SVG)，可拖曳
                     const icon=L.divIcon({
-                        className:'',
-                        html:`<div style="background:${color};width:26px;height:26px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.32);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700">●</div>`,
-                        iconSize:[26,26],
-                        iconAnchor:[13,13],
+                        className:'cam-map-marker',
+                        html:`<div class="cam-marker-pin" style="--pin-color:${color}">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                                    <circle cx="12" cy="13" r="3.5"/>
+                                </svg>
+                              </div>`,
+                        iconSize:[36,44],
+                        iconAnchor:[18,42],
+                        popupAnchor:[0,-40],
                     });
-                    // popup 含攝影機即時影像 snapshot
                     const popHtml=`
                         <div class="cam-map-popup" data-camid="${c.id}">
                             <div class="cam-map-popup-title">${c.name}
@@ -11317,11 +11352,28 @@ const app=createApp({
                             <div class="cam-map-popup-img-wrap">
                                 <img class="cam-map-popup-img" alt="載入影像中...">
                             </div>
-                            <div class="cam-map-popup-loc">${c.location||'未設定位置'}</div>
+                            <div class="cam-map-popup-loc">${c.location||'未設定位置'} · 拖曳圖示可移動位置</div>
                         </div>`;
-                    const marker = L.marker([c.lat,c.lng],{icon}).addTo(map)
+                    const marker = L.marker([c.lat,c.lng],{icon, draggable:true, autoPan:true}).addTo(map)
                         .bindPopup(popHtml, {maxWidth:300, minWidth:260});
-                    // 每次打開 popup 動態載最新 snapshot (timestamp 防 cache)
+                    // 拖曳結束 → 更新座標
+                    marker.on('dragend', async (e)=>{
+                        const p=e.target.getLatLng();
+                        try{
+                            const r=await fetch(`/api/cameras/${c.id}`,{
+                                method:'PUT',
+                                headers:{'Content-Type':'application/json'},
+                                body:JSON.stringify({lat:p.lat, lng:p.lng})
+                            });
+                            if(!r.ok)throw new Error('HTTP '+r.status);
+                            c.lat=p.lat; c.lng=p.lng;
+                            ElementPlus.ElMessage.success(`${c.name} 位置已更新 (${p.lat.toFixed(5)}, ${p.lng.toFixed(5)})`);
+                        }catch(err){
+                            ElementPlus.ElMessage.error(`更新失敗: ${err?.message||err}`);
+                            updateMarkers();  // 失敗還原位置
+                        }
+                    });
+                    // 每次打開 popup 動態載最新 snapshot
                     marker.on('popupopen', ()=>{
                         const img=document.querySelector(`.cam-map-popup[data-camid="${c.id}"] .cam-map-popup-img`);
                         if(img){
