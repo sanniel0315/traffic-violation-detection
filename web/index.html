@@ -3323,8 +3323,9 @@
         .detail-section { padding: 16px; }
         .detail-section:first-child { border-right: 1px solid #eee; }
         .detail-section-header { display: flex; justify-content: space-between; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid #0d6e9f; }
-        .detail-media { background: #000; border-radius: 8px; min-height: 350px; display: flex; align-items: center; justify-content: center; }
-        .detail-media img { max-width: 100%; max-height: 400px; }
+        .detail-media { background: #000; border-radius: 8px; min-height: 350px; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; padding: 10px; gap: 4px; }
+        .detail-media img { max-width: 100%; max-height: 360px; object-fit: contain; align-self: center; }
+        .detail-media video { width: 100%; }
         .photo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .photo-item { position: relative; border-radius: 8px; overflow: hidden; }
         .photo-item img { width: 100%; height: 150px; object-fit: cover; }
@@ -7954,8 +7955,8 @@
                     <div class="detail-section-header"><span>違規影像（截圖 + 事件錄影）</span></div>
                     <div class="detail-media">
                         <img v-if="selected.image_path" :src="selected.image_path">
-                        <div style="margin-top:10px">
-                            <div style="font-size:12px;color:#64748b;margin-bottom:4px"><svg class="text-icon"><use href="#i-film"/></svg> 事件錄影（前後 ±12 秒）</div>
+                        <div style="margin-top:6px;width:100%">
+                            <div style="font-size:12px;color:#cbd5e1;margin-bottom:4px"><svg class="text-icon"><use href="#i-film"/></svg> 事件錄影（前後 ±12 秒）</div>
                             <video v-if="detailClipUrl && !detailClipError"
                                    :src="detailClipUrl"
                                    controls autoplay muted playsinline loop preload="auto"
