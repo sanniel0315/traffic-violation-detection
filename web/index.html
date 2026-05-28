@@ -11182,7 +11182,9 @@ const app=createApp({
                     setTimeout(initMap, 150);
                     return;
                 }
-                map=L.map('map').setView([25.0330,121.5654],14);
+                // 預設 zoomControl 移除 — 跟左上搜尋框衝突；改放右下角
+                map=L.map('map', {zoomControl: false}).setView([25.0330,121.5654],14);
+                L.control.zoom({position:'bottomright'}).addTo(map);
                 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
                     attribution:'OSM',
                     maxZoom:19
