@@ -3313,9 +3313,9 @@
         .analysis-speed-fields { width:100%; display:flex; align-items:center; gap:6px; justify-content:flex-start; margin-top:6px; padding-top:6px; border-top:1px dashed #dbe3ef; }
         
         /* 違規詳情 */
-        .detail-box { max-width: 1400px; }
-        .detail-header { padding: 12px 20px; background: #f5f5f5; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; }
-        .detail-info { padding: 12px 20px; background: #fafafa; display: flex; gap: 24px; flex-wrap: wrap; border-bottom: 1px solid #eee; }
+        .detail-box { max-width: 1400px; display: flex; flex-direction: column; }
+        .detail-header { padding: 12px 20px; background: #f5f5f5; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; flex-shrink: 0; }
+        .detail-info { padding: 12px 20px; background: #fafafa; display: flex; gap: 24px; flex-wrap: wrap; border-bottom: 1px solid #eee; flex-shrink: 0; }
         .detail-info-item { display: flex; gap: 8px; }
         .detail-info-item .label { color: #666; }
         .detail-info-item .value { font-weight: 600; }
@@ -3338,7 +3338,7 @@
         .photo-item { position: relative; border-radius: 8px; overflow: hidden; }
         .photo-item img { width: 100%; height: 150px; object-fit: cover; }
         .photo-item .overlay { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: #fff; padding: 6px; font-size: 11px; }
-        .detail-footer { padding: 16px 20px; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 12px; background: #fafafa; }
+        .detail-footer { padding: 16px 20px; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 12px; background: #fafafa; flex-shrink: 0; }
         .btn-secondary { background: #6c757d; color: #fff; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; }
         .btn-primary { background: #0d6e9f; color: #fff; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; }
         
@@ -7958,7 +7958,7 @@
                 <div class="detail-info-item"><span class="label">車牌:</span><span class="value" style="color:#0d6e9f;font-size:18px">{{ selected.license_plate }}</span></div>
                 <div class="detail-info-item"><span class="label">時間:</span><span class="value">{{ formatTime(selected.created_at) }}</span></div>
             </div>
-            <div class="detail-body" style="display:flex;flex-direction:column">
+            <div class="detail-body" style="display:flex;flex-direction:column;flex:1 1 auto;overflow-y:auto;min-height:0">
                 <div class="detail-section" style="border-right:none">
                     <div class="detail-section-header"><span>舉發資訊</span></div>
                     <div class="photo-grid">
