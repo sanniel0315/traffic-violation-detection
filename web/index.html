@@ -7960,13 +7960,6 @@
             </div>
             <div class="detail-body" style="display:flex;flex-direction:column;flex:1 1 auto;overflow-y:auto;min-height:0">
                 <div class="detail-section" style="border-right:none">
-                    <div class="detail-section-header"><span>舉發資訊</span></div>
-                    <div class="photo-grid">
-                        <div class="photo-item" v-for="(p,i) in selectedPhotos" :key="i"><img :src="p.url"><div class="overlay">{{ p.time }}</div></div>
-                        <div v-if="!selectedPhotos.length" style="padding:20px;color:#94a3b8;font-size:13px">無舉發照片</div>
-                    </div>
-                </div>
-                <div class="detail-section" style="border-right:none;border-top:1px solid #eee">
                     <div class="detail-section-header"><span>違規影像（截圖 + 事件錄影）</span></div>
                     <div class="detail-evidence-grid">
                         <div class="detail-evidence-col">
