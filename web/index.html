@@ -337,27 +337,54 @@
             width: 3px; background: linear-gradient(180deg, var(--gov-primary) 0%, transparent 100%);
         }
         .ds-page-hero-row {
-            display: flex; align-items: flex-end; justify-content: space-between;
+            display: flex; align-items: center; justify-content: space-between;
             flex-wrap: wrap; gap: 14px;
         }
-        .ds-page-hero .ds-section-title { margin: 10px 0 0; font-size: 28px; }
+        /* hero 左側 col (icon + 標題) — 強制單行並排 */
+        .ds-page-hero-row > div:first-child {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            min-width: 0;
+            flex: 1;
+        }
+        .ds-page-hero .ds-section-num {
+            margin-bottom: 0;
+            flex-shrink: 0;
+        }
+        .ds-page-hero .ds-section-title {
+            margin: 0;
+            font-size: 28px;
+            line-height: 1.2;
+        }
         .ds-page-hero .ds-section-sub { margin-top: 6px; max-width: 720px; }
         .ds-page-hero-meta {
-            display: flex; gap: 18px; align-items: center;
-            font-family: var(--font-mono);
-            font-size: 11px; letter-spacing: 0.16em;
+            display: flex; gap: 16px; align-items: center;
+            font-family: var(--font-sans);
+            font-size: 13px;
+            color: var(--gov-text);
+            letter-spacing: 0.01em;
+            flex-wrap: wrap;
+        }
+        .ds-page-hero-meta > span {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
             color: var(--gov-muted);
-            text-transform: uppercase;
         }
         .ds-page-hero-meta b {
             color: var(--gov-primary);
             font-weight: 700;
+            font-family: var(--font-mono);
+            font-size: 14px;
             font-variant-numeric: tabular-nums;
-            margin-left: 6px;
+            letter-spacing: 0.02em;
         }
         @media (max-width: 720px) {
             .ds-page-hero { padding: 16px 18px 14px; }
             .ds-page-hero .ds-section-title { font-size: 22px; }
+            .ds-page-hero .ds-section-num { width: 36px; height: 36px; }
+            .ds-page-hero .ds-section-num svg { width: 18px; height: 18px; }
         }
 
         /* 數字 / IP / port / URL 統一用 mono — 全站舊 code 不需動,新元件用 .ds-num-data */
