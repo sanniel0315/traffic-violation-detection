@@ -2962,6 +2962,7 @@
             margin-bottom: 8px;
         }
         .cam-map-popup-img-wrap {
+            position: relative;
             width: 100%; height: 146px;
             background: #0f172a;
             border-radius: 6px;
@@ -2975,6 +2976,39 @@
         .cam-map-popup-noimg {
             color: #94a3b8; font-size: 12px; text-align: center; padding: 12px;
         }
+        /* 影像中央播放鍵 (hover 浮現) */
+        .cam-map-popup-play {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%,-50%);
+            width: 48px; height: 48px;
+            border-radius: 50%;
+            background: rgba(11,94,168,0.85);
+            border: 2px solid rgba(255,255,255,0.9);
+            color: #fff;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            opacity: 0.9;
+            transition: transform .15s ease, background .15s ease;
+        }
+        .cam-map-popup-play svg { width: 22px; height: 22px; margin-left: 2px; }
+        .cam-map-popup-play:hover { background: var(--gov-primary); transform: translate(-50%,-50%) scale(1.1); }
+        .cam-map-popup-actions {
+            display: flex; gap: 8px; margin-top: 8px;
+        }
+        .cam-pop-btn {
+            flex: 1;
+            padding: 6px 8px;
+            border: 1px solid var(--gov-border);
+            border-radius: 6px;
+            background: var(--gov-surface);
+            color: var(--gov-text);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background .15s ease, border-color .15s ease;
+        }
+        .cam-pop-btn.cam-pop-live { color: var(--gov-primary); border-color: var(--gov-primary-line); }
+        .cam-pop-btn:hover { background: var(--gov-primary-soft); border-color: var(--gov-primary); }
         .cam-map-popup-loc {
             font-size: 12px;
             color: var(--gov-muted);
@@ -11351,6 +11385,13 @@ const app=createApp({
                             </div>
                             <div class="cam-map-popup-img-wrap">
                                 <img class="cam-map-popup-img" alt="載入影像中...">
+                                <button class="cam-map-popup-play" type="button" title="播放即時影像">
+                                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                                </button>
+                            </div>
+                            <div class="cam-map-popup-actions">
+                                <button class="cam-pop-btn cam-pop-live" type="button">▶ 即時影像</button>
+                                <button class="cam-pop-btn cam-pop-clip" type="button">🎬 錄影回放</button>
                             </div>
                             <div class="cam-map-popup-loc">${c.location||'未設定位置'} · 拖曳圖示可移動位置</div>
                         </div>`;
@@ -11373,9 +11414,11 @@ const app=createApp({
                             updateMarkers();  // 失敗還原位置
                         }
                     });
-                    // 每次打開 popup 動態載最新 snapshot
+                    // 每次打開 popup 動態載最新 snapshot + 綁按鈕事件
                     marker.on('popupopen', ()=>{
-                        const img=document.querySelector(`.cam-map-popup[data-camid="${c.id}"] .cam-map-popup-img`);
+                        const root=document.querySelector(`.cam-map-popup[data-camid="${c.id}"]`);
+                        if(!root)return;
+                        const img=root.querySelector('.cam-map-popup-img');
                         if(img){
                             img.src=`/api/stream/${c.id}/snapshot?t=${Date.now()}`;
                             img.onerror=()=>{img.style.display='none';
@@ -11383,6 +11426,15 @@ const app=createApp({
                                 if(w)w.innerHTML='<div class="cam-map-popup-noimg">無影像（攝影機離線或串流逾時）</div>';
                             };
                         }
+                        // ▶ 即時影像 + 中央播放鍵 → 開放大 dialog 播 live stream
+                        const openLive=()=>{ marker.closePopup(); openMonitorZoom(c); };
+                        const liveBtn=root.querySelector('.cam-pop-live');
+                        const playBtn=root.querySelector('.cam-map-popup-play');
+                        if(liveBtn)liveBtn.onclick=openLive;
+                        if(playBtn)playBtn.onclick=openLive;
+                        // 🎬 錄影回放 → 開 NVR 回放頁 (帶 camera 參數)
+                        const clipBtn=root.querySelector('.cam-pop-clip');
+                        if(clipBtn)clipBtn.onclick=()=>{ window.open('/web/nvr_playback.html','_blank'); };
                     });
                     _camMarkers[c.id] = marker;
                 }
