@@ -75,6 +75,9 @@ class Camera(Base):
     total_violations = Column(Integer, default=0)
     today_violations = Column(Integer, default=0)
     last_seen = Column(DateTime)
+    # 地圖座標 (給地圖頁 marker / focusCameraOnMap 用)
+    lat = Column(Float, nullable=True)
+    lng = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -286,6 +289,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     _migrate_violation_columns()
     _migrate_traffic_event_columns()
+    _migrate_camera_columns()
     _migrate_report_indexes()
     db = SessionLocal()
     try:
@@ -336,6 +340,20 @@ def _migrate_traffic_event_columns():
             col_names = {str(c[1]) for c in cols}
             if "occupancy" not in col_names:
                 conn.execute(text("ALTER TABLE traffic_events ADD COLUMN occupancy FLOAT"))
+    except Exception:
+        pass
+
+
+def _migrate_camera_columns():
+    """為既有 cameras 表補上 lat / lng 地圖座標欄位 (給地圖頁 marker 用)。"""
+    try:
+        with engine.begin() as conn:
+            cols = conn.execute(text("PRAGMA table_info(cameras)")).fetchall()
+            col_names = {str(c[1]) for c in cols}
+            if "lat" not in col_names:
+                conn.execute(text("ALTER TABLE cameras ADD COLUMN lat FLOAT"))
+            if "lng" not in col_names:
+                conn.execute(text("ALTER TABLE cameras ADD COLUMN lng FLOAT"))
     except Exception:
         pass
 
