@@ -2893,6 +2893,16 @@
             margin-top: 2px;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
+        .map-search-empty {
+            padding: 14px 16px;
+            font-size: 13px;
+            color: var(--gov-text);
+            line-height: 1.6;
+        }
+        .map-search-empty small {
+            color: var(--gov-muted);
+            font-size: 11.5px;
+        }
 
         /* 設定座標 banner */
         .map-placing-banner {
@@ -4484,6 +4494,12 @@
                                              @click="onMapSearchSelect(r)">
                                             <div class="map-search-item-name">{{ r.display_name.split(',').slice(0,2).join(',') }}</div>
                                             <div class="map-search-item-meta">{{ r.display_name.split(',').slice(2,5).join(',') }}</div>
+                                        </div>
+                                    </div>
+                                    <div v-else-if="mapSearchQuery.length>=2 && !mapSearchLoading" class="map-search-dropdown">
+                                        <div class="map-search-empty">
+                                            找不到「{{ mapSearchQuery }}」<br>
+                                            <small>試試地名（基隆市 / 瑞芳區）或地標，道路代號可改用「台62線」。<br>找不到也可直接點地圖 + 拖 marker 設座標。</small>
                                         </div>
                                     </div>
                                 </div>
@@ -11266,6 +11282,12 @@ const app=createApp({
         const mapSearchResults=ref([]);
         const mapSearchLoading=ref(false);
         let _mapSearchTimer=null;
+        const _nominatim=async(q)=>{
+            // countrycodes=tw 限定台灣 + viewbox 偏台灣本島，提高道路代號命中率
+            const url=`https://nominatim.openstreetmap.org/search?format=json&limit=6&accept-language=zh-TW&countrycodes=tw&q=${encodeURIComponent(q)}`;
+            const r=await fetch(url,{headers:{'Accept':'application/json'}});
+            return r.ok ? await r.json() : [];
+        };
         const onMapSearchInput=()=>{
             if(_mapSearchTimer)clearTimeout(_mapSearchTimer);
             const q=String(mapSearchQuery.value||'').trim();
@@ -11273,12 +11295,16 @@ const app=createApp({
             mapSearchLoading.value=true;
             _mapSearchTimer=setTimeout(async()=>{
                 try{
-                    const url=`https://nominatim.openstreetmap.org/search?format=json&limit=5&accept-language=zh-TW&q=${encodeURIComponent(q)}`;
-                    const r=await fetch(url,{headers:{'Accept':'application/json'}});
-                    if(r.ok){
-                        mapSearchResults.value=await r.json();
+                    let results=await _nominatim(q);
+                    // 台灣道路代號容錯：「台62」搜不到 → 試「台62線」/「台62快速公路」
+                    if(!results.length && /^(台|臺|國|縣|鄉|市)\s*\d+/.test(q)){
+                        for(const suffix of ['線','快速公路','公路']){
+                            results=await _nominatim(q+suffix);
+                            if(results.length)break;
+                        }
                     }
-                }catch(_){}
+                    mapSearchResults.value=results;
+                }catch(_){mapSearchResults.value=[];}
                 mapSearchLoading.value=false;
             },500);
         };
