@@ -691,6 +691,14 @@
         }
         .ds-kpi-card.warn .ds-kpi-value { color: var(--gov-warn); }
         .ds-kpi-card.ok .ds-kpi-value { color: var(--gov-ok); }
+        /* 中文文字版 KPI value (如「3 服務異常」「全部正常」) — 不用 mono 數字字體 */
+        .ds-kpi-value--text {
+            font-family: var(--font-sans);
+            font-variant-numeric: normal;
+            font-feature-settings: normal;
+            letter-spacing: 0.01em;
+            font-size: 22px;
+        }
         .ds-kpi-hint {
             font-size: 12px;
             color: var(--gov-muted);
@@ -4481,10 +4489,10 @@
                         </div>
                         <div class="ds-kpi-card" :class="{warn:!systemAllHealthy, ok:systemAllHealthy}">
                             <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-activity"/></svg>系統健康</div>
-                            <div class="ds-kpi-value" style="font-size:24px">{{ systemHealthSummary }}</div>
+                            <div class="ds-kpi-value ds-kpi-value--text">{{ systemHealthSummary }}</div>
                             <div class="ds-svc-dots" style="margin-top:8px">
-                                <span class="ds-svc-dot" :class="{down:(dashboard.offline_cameras||0)>0}" :title="`攝影機 ${cameras.length-(dashboard.offline_cameras||0)}/${cameras.length}`">攝</span>
-                                <span class="ds-svc-dot" :class="{down:frigateStatus.status!=='online'}" title="NVR">NVR</span>
+                                <span class="ds-svc-dot" :class="{down:(dashboard.offline_cameras||0)>0}" :title="`攝影機 ${cameras.length-(dashboard.offline_cameras||0)}/${cameras.length}`">CAM</span>
+                                <span class="ds-svc-dot" :class="{down:frigateStatus.status!=='online'}" title="NVR (Frigate)">NVR</span>
                                 <span class="ds-svc-dot" :class="{down:!mqttStatus.connected}" title="MQTT">MQTT</span>
                                 <span class="ds-svc-dot" :class="{down:lprStatus.status!=='online'}" title="LPR">LPR</span>
                             </div>
