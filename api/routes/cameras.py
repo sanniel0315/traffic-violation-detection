@@ -65,8 +65,9 @@ class CameraUpdate(BaseModel):
     enabled: Optional[bool] = None
     detection_enabled: Optional[bool] = None
     zones: Optional[list] = None
-    zones: Optional[list] = None
     status: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
 
 
 class TestUrlRequest(BaseModel):
@@ -1682,6 +1683,8 @@ def _to_dict(c: Camera) -> dict:
         "detection_enabled": c.detection_enabled,
         "total_violations": c.total_violations,
         "today_violations": c.today_violations,
+        "lat": c.lat,
+        "lng": c.lng,
         "last_seen": c.last_seen.isoformat() if c.last_seen else None,
         "created_at": c.created_at.isoformat() if c.created_at else None
     }

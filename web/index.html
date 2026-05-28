@@ -2735,13 +2735,119 @@
             border-left-color: var(--gov-primary);
         }
         .map-camera-item.no-coord {
-            cursor: not-allowed;
-            opacity: 0.55;
+            opacity: 0.65;
         }
-        .map-camera-item.no-coord:hover {
-            background: transparent;
-            border-left-color: transparent;
+        .map-camera-item.is-placing {
+            background: rgba(217,119,6,0.10);
+            border-left-color: var(--gov-warn);
         }
+        .map-set-coord-btn {
+            font-size: 11px;
+            color: var(--gov-primary);
+            cursor: pointer;
+            user-select: none;
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: background .15s ease;
+            white-space: nowrap;
+        }
+        .map-set-coord-btn:hover {
+            background: var(--gov-primary-soft);
+            text-decoration: underline;
+        }
+
+        /* 地址搜尋框 */
+        .map-search-box {
+            position: absolute;
+            top: 12px; left: 12px; right: 12px;
+            max-width: 420px;
+            z-index: 500;
+        }
+        .map-search-input {
+            width: 100%;
+            padding: 9px 32px 9px 14px;
+            border: 1px solid var(--gov-border);
+            border-radius: 8px;
+            background: var(--gov-surface);
+            font-family: var(--font-sans);
+            font-size: 13px;
+            color: var(--gov-text);
+            box-shadow: 0 4px 12px rgba(11,30,60,0.08);
+            outline: none;
+            transition: border-color .18s, box-shadow .18s;
+        }
+        .map-search-input:focus {
+            border-color: var(--gov-primary);
+            box-shadow: 0 4px 12px rgba(11,94,168,0.18), 0 0 0 3px rgba(11,94,168,0.12);
+        }
+        .map-search-input::placeholder {
+            color: var(--gov-mute-2);
+            font-size: 12.5px;
+        }
+        .map-search-clear, .map-search-spinner {
+            position: absolute; right: 10px; top: 9px;
+            width: 18px; height: 18px;
+            border-radius: 50%;
+            background: var(--gov-surface-2);
+            color: var(--gov-muted);
+            border: none;
+            cursor: pointer;
+            font-size: 11px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .map-search-spinner {
+            border: 2px solid var(--gov-primary-soft);
+            border-top-color: var(--gov-primary);
+            animation: nvrSpin 0.7s linear infinite;
+        }
+        .map-search-dropdown {
+            position: absolute;
+            top: 44px; left: 0; right: 0;
+            background: var(--gov-surface);
+            border: 1px solid var(--gov-border);
+            border-radius: 8px;
+            box-shadow: 0 10px 28px rgba(11,30,60,0.18);
+            max-height: 280px;
+            overflow-y: auto;
+        }
+        .map-search-item {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--gov-border);
+            cursor: pointer;
+            transition: background .15s ease;
+        }
+        .map-search-item:hover { background: var(--gov-primary-soft); }
+        .map-search-item:last-child { border-bottom: none; }
+        .map-search-item-name {
+            font-size: 13px;
+            color: var(--gov-text);
+            font-weight: 600;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .map-search-item-meta {
+            font-size: 11px;
+            color: var(--gov-muted);
+            margin-top: 2px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+
+        /* 設定座標 banner */
+        .map-placing-banner {
+            position: absolute;
+            top: 60px; left: 12px; right: 12px;
+            max-width: 640px;
+            z-index: 500;
+            display: flex; align-items: center; gap: 12px;
+            padding: 10px 14px;
+            background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+            border: 1px solid var(--gov-warn);
+            border-left: 4px solid var(--gov-warn);
+            border-radius: 8px;
+            box-shadow: 0 6px 18px rgba(217,119,6,0.20);
+            font-size: 13px;
+            color: var(--gov-text);
+        }
+        .map-placing-banner b { color: var(--gov-warn); font-weight: 700; }
         
         /* 地圖區 */
         .map-section { background: var(--gov-surface); border-radius: 8px; flex: 1; overflow: hidden; border: 1px solid var(--gov-border); box-shadow: 0 1px 2px rgba(16,24,40,0.04); }
@@ -4290,9 +4396,41 @@
                         <div class="map-section" style="height:100%">
                             <div class="map-header">
                                 <span>攝影機分佈地圖</span>
-                                <el-tag size="small" type="primary">共 {{ cameras.length }} 台</el-tag>
+                                <div style="display:flex;gap:8px;align-items:center">
+                                    <el-tag size="small" type="primary">共 {{ cameras.length }} 台</el-tag>
+                                    <el-tag v-if="mapPlacingCamera" size="small" type="warning">設定座標中: {{ mapPlacingCamera.name }}</el-tag>
+                                </div>
                             </div>
-                            <div class="map-container" style="height:calc(100% - 50px)">
+                            <div class="map-container" style="height:calc(100% - 50px);position:relative">
+                                <!-- 地址搜尋框 -->
+                                <div class="map-search-box">
+                                    <input
+                                        type="text"
+                                        v-model="mapSearchQuery"
+                                        @input="onMapSearchInput"
+                                        @keydown.enter.prevent="onMapSearchSelect(mapSearchResults[0])"
+                                        @keydown.escape="mapSearchResults=[]"
+                                        placeholder="搜尋地址 / 地名（按 Enter 選第一筆）"
+                                        class="map-search-input"
+                                    />
+                                    <div v-if="mapSearchLoading" class="map-search-spinner"></div>
+                                    <button v-else-if="mapSearchQuery" @click="mapSearchQuery='';mapSearchResults=[]" class="map-search-clear">✕</button>
+                                    <div v-if="mapSearchResults.length" class="map-search-dropdown">
+                                        <div v-for="r in mapSearchResults" :key="r.place_id"
+                                             class="map-search-item"
+                                             @click="onMapSearchSelect(r)">
+                                            <div class="map-search-item-name">{{ r.display_name.split(',').slice(0,2).join(',') }}</div>
+                                            <div class="map-search-item-meta">{{ r.display_name.split(',').slice(2,5).join(',') }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- 設定座標 banner (顯示於進入設定模式時) -->
+                                <div v-if="mapPlacingCamera" class="map-placing-banner">
+                                    <span style="font-family:var(--font-mono);font-size:11px;letter-spacing:0.12em;color:var(--gov-warn)">PLACEMENT MODE</span>
+                                    <span>拖動 <b>{{ mapPlacingCamera.name }}</b> marker 到目標位置，或<b>點地圖任一處</b></span>
+                                    <el-button size="small" type="success" @click="confirmMapPlacement" :disabled="!mapPlacingDraft">儲存座標</el-button>
+                                    <el-button size="small" plain @click="cancelMapPlacement">取消</el-button>
+                                </div>
                                 <div id="map"></div>
                             </div>
                         </div>
@@ -4303,16 +4441,26 @@
                             <div class="map-camera-item"
                                  v-for="c in cameras"
                                  :key="'map-'+c.id"
-                                 :class="{'no-coord': !(c.lat && c.lng)}"
-                                 :title="(c.lat && c.lng) ? '點擊定位到地圖' : '此攝影機未設定座標'"
+                                 :class="{'no-coord': !(c.lat && c.lng), 'is-placing': mapPlacingCamera?.id===c.id}"
+                                 :title="(c.lat && c.lng) ? '點擊定位到地圖' : '此攝影機未設定座標 — 點旁邊的設定按鈕'"
                                  @click="focusCameraOnMap(c)">
-                                <div style="min-width:0">
-                                    <div style="font-weight:600">{{ c.name }}</div>
+                                <div style="min-width:0;flex:1">
+                                    <div style="font-weight:600;display:flex;align-items:center;gap:6px">
+                                        <span style="overflow:hidden;text-overflow:ellipsis">{{ c.name }}</span>
+                                        <svg v-if="c.lat && c.lng" class="text-icon" style="color:var(--gov-primary);flex-shrink:0;font-size:11px"><use href="#i-pin"/></svg>
+                                    </div>
                                     <div style="font-size:12px;color:#8190a5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.location || '未設定位置' }}</div>
                                 </div>
-                                <el-tag :type="c.status==='online'?'success':'info'" size="small">
-                                    {{ c.status==='online'?'線上':'離線' }}
-                                </el-tag>
+                                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
+                                    <el-tag :type="c.status==='online'?'success':'info'" size="small">
+                                        {{ c.status==='online'?'線上':'離線' }}
+                                    </el-tag>
+                                    <a class="map-set-coord-btn"
+                                       @click.stop="startMapPlacement(c)"
+                                       :title="(c.lat && c.lng) ? '重新設定座標' : '設定座標'">
+                                        {{ (c.lat && c.lng) ? '✏️ 編輯' : '📍 設定' }}
+                                    </a>
+                                </div>
                             </div>
                             <div v-if="!cameras.length" style="padding:20px;text-align:center;color:#99a4b5">暫無攝影機</div>
                         </div>
@@ -11014,7 +11162,6 @@ const app=createApp({
                 return;
             }
             if(!map){
-                // 萬一 map 未 init，先 init
                 initMap();
                 setTimeout(()=>focusCameraOnMap(c), 300);
                 return;
@@ -11024,6 +11171,100 @@ const app=createApp({
             if(m){
                 setTimeout(()=>m.openPopup(), 850);
             }
+        };
+
+        // ═══════ 地址搜尋 (Nominatim API) ═══════
+        const mapSearchQuery=ref('');
+        const mapSearchResults=ref([]);
+        const mapSearchLoading=ref(false);
+        let _mapSearchTimer=null;
+        const onMapSearchInput=()=>{
+            if(_mapSearchTimer)clearTimeout(_mapSearchTimer);
+            const q=String(mapSearchQuery.value||'').trim();
+            if(q.length<2){mapSearchResults.value=[];return;}
+            mapSearchLoading.value=true;
+            _mapSearchTimer=setTimeout(async()=>{
+                try{
+                    const url=`https://nominatim.openstreetmap.org/search?format=json&limit=5&accept-language=zh-TW&q=${encodeURIComponent(q)}`;
+                    const r=await fetch(url,{headers:{'Accept':'application/json'}});
+                    if(r.ok){
+                        mapSearchResults.value=await r.json();
+                    }
+                }catch(_){}
+                mapSearchLoading.value=false;
+            },500);
+        };
+        const onMapSearchSelect=(r)=>{
+            if(!r?.lat||!r?.lon)return;
+            const lat=parseFloat(r.lat), lng=parseFloat(r.lon);
+            if(!map){initMap();setTimeout(()=>onMapSearchSelect(r),300);return;}
+            map.flyTo([lat,lng], 16, {animate:true, duration:0.8});
+            mapSearchResults.value=[];
+            mapSearchQuery.value=r.display_name.split(',').slice(0,2).join(',');
+        };
+
+        // ═══════ 互動描定攝影機座標 ═══════
+        const mapPlacingCamera=ref(null);
+        const mapPlacingDraft=ref(null);  // {lat, lng} 暫存使用者選的點
+        let _placementMarker=null;
+        let _placementClickHandler=null;
+
+        const startMapPlacement=(c)=>{
+            if(!map){initMap();setTimeout(()=>startMapPlacement(c),300);return;}
+            mapPlacingCamera.value=c;
+            mapPlacingDraft.value=null;
+            // 若已有座標，先 flyTo 到既有位置
+            if(c.lat&&c.lng){
+                map.flyTo([c.lat,c.lng], 17);
+                mapPlacingDraft.value={lat:c.lat, lng:c.lng};
+                _spawnPlacementMarker(c.lat, c.lng);
+            }
+            // 監聽 map click → 設新座標
+            _placementClickHandler=(e)=>{
+                const {lat, lng}=e.latlng;
+                mapPlacingDraft.value={lat, lng};
+                _spawnPlacementMarker(lat, lng);
+            };
+            map.on('click', _placementClickHandler);
+        };
+        const _spawnPlacementMarker=(lat, lng)=>{
+            if(_placementMarker){map.removeLayer(_placementMarker);}
+            const icon=L.divIcon({
+                className:'',
+                html:`<div style="background:var(--gov-warn,#d97706);width:30px;height:30px;border-radius:50%;border:3px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700">📍</div>`,
+                iconSize:[30,30], iconAnchor:[15,15]
+            });
+            _placementMarker=L.marker([lat,lng], {icon, draggable:true}).addTo(map);
+            _placementMarker.on('dragend', (e)=>{
+                const p=e.target.getLatLng();
+                mapPlacingDraft.value={lat:p.lat, lng:p.lng};
+            });
+        };
+        const confirmMapPlacement=async()=>{
+            const c=mapPlacingCamera.value, d=mapPlacingDraft.value;
+            if(!c||!d){return;}
+            try{
+                const r=await fetch(`/api/cameras/${c.id}`,{
+                    method:'PUT',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({lat:d.lat, lng:d.lng})
+                });
+                if(!r.ok)throw new Error('HTTP '+r.status);
+                ElementPlus.ElMessage.success(`${c.name} 座標已儲存 (${d.lat.toFixed(5)}, ${d.lng.toFixed(5)})`);
+                // 更新 cameras 內 lat/lng
+                c.lat=d.lat; c.lng=d.lng;
+                cancelMapPlacement();
+                // refresh marker
+                updateMarkers();
+            }catch(e){
+                ElementPlus.ElMessage.error(`儲存失敗: ${e?.message||e}`);
+            }
+        };
+        const cancelMapPlacement=()=>{
+            if(_placementMarker){map.removeLayer(_placementMarker);_placementMarker=null;}
+            if(_placementClickHandler){map.off('click', _placementClickHandler);_placementClickHandler=null;}
+            mapPlacingCamera.value=null;
+            mapPlacingDraft.value=null;
         };
         
         // 預覽
@@ -14925,7 +15166,7 @@ const app=createApp({
             if(lprVisualTimer)clearInterval(lprVisualTimer);
         });
         
-        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
+        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
