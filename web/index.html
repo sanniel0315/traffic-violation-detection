@@ -3326,6 +3326,14 @@
         .detail-media { background: #000; border-radius: 8px; min-height: 350px; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; padding: 10px; gap: 4px; }
         .detail-media img { max-width: 100%; max-height: 360px; object-fit: contain; align-self: center; }
         .detail-media video { width: 100%; }
+        /* 截圖 + 事件錄影 並列 */
+        .detail-evidence-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        @media (max-width: 760px) { .detail-evidence-grid { grid-template-columns: 1fr; } }
+        .detail-evidence-col { display: flex; flex-direction: column; }
+        .detail-evidence-label { font-size: 12px; color: #64748b; margin-bottom: 6px; display: flex; align-items: center; gap: 5px; }
+        .detail-evidence-media { background: #000; border-radius: 6px; overflow: hidden; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; }
+        .detail-evidence-media img, .detail-evidence-media video { width: 100%; height: 100%; object-fit: contain; display: block; }
+        .detail-evidence-empty { color: #94a3b8; font-size: 13px; text-align: center; padding: 16px; }
         .photo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .photo-item { position: relative; border-radius: 8px; overflow: hidden; }
         .photo-item img { width: 100%; height: 150px; object-fit: cover; }
@@ -7950,26 +7958,34 @@
                 <div class="detail-info-item"><span class="label">車牌:</span><span class="value" style="color:#0d6e9f;font-size:18px">{{ selected.license_plate }}</span></div>
                 <div class="detail-info-item"><span class="label">時間:</span><span class="value">{{ formatTime(selected.created_at) }}</span></div>
             </div>
-            <div class="detail-body">
-                <div class="detail-section">
-                    <div class="detail-section-header"><span>違規影像（截圖 + 事件錄影）</span></div>
-                    <div class="detail-media">
-                        <img v-if="selected.image_path" :src="selected.image_path">
-                        <div style="margin-top:6px;width:100%">
-                            <div style="font-size:12px;color:#cbd5e1;margin-bottom:4px"><svg class="text-icon"><use href="#i-film"/></svg> 事件錄影（前後 ±12 秒）</div>
-                            <video v-if="detailClipUrl && !detailClipError"
-                                   :src="detailClipUrl"
-                                   controls autoplay muted playsinline loop preload="auto"
-                                   style="width:100%;max-height:300px;background:#000;border-radius:4px;display:block"
-                                   @error="detailClipError=true"></video>
-                            <div v-else style="padding:24px;text-align:center;color:#94a3b8;background:#111;border-radius:4px;font-size:13px">此事件無對應錄影段（攝影機未錄影或已過期）</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="detail-section">
+            <div class="detail-body" style="display:flex;flex-direction:column">
+                <div class="detail-section" style="border-right:none">
                     <div class="detail-section-header"><span>舉發資訊</span></div>
                     <div class="photo-grid">
                         <div class="photo-item" v-for="(p,i) in selectedPhotos" :key="i"><img :src="p.url"><div class="overlay">{{ p.time }}</div></div>
+                        <div v-if="!selectedPhotos.length" style="padding:20px;color:#94a3b8;font-size:13px">無舉發照片</div>
+                    </div>
+                </div>
+                <div class="detail-section" style="border-right:none;border-top:1px solid #eee">
+                    <div class="detail-section-header"><span>違規影像（截圖 + 事件錄影）</span></div>
+                    <div class="detail-evidence-grid">
+                        <div class="detail-evidence-col">
+                            <div class="detail-evidence-label"><svg class="text-icon"><use href="#i-camera"/></svg> 違規截圖</div>
+                            <div class="detail-evidence-media">
+                                <img v-if="selected.image_path" :src="selected.image_path">
+                                <div v-else class="detail-evidence-empty">無截圖</div>
+                            </div>
+                        </div>
+                        <div class="detail-evidence-col">
+                            <div class="detail-evidence-label"><svg class="text-icon"><use href="#i-film"/></svg> 事件錄影（前後 ±12 秒）</div>
+                            <div class="detail-evidence-media">
+                                <video v-if="detailClipUrl && !detailClipError"
+                                       :src="detailClipUrl"
+                                       controls autoplay muted playsinline loop preload="auto"
+                                       @error="detailClipError=true"></video>
+                                <div v-else class="detail-evidence-empty">此事件無對應錄影段<br>（攝影機未錄影或已過期）</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
