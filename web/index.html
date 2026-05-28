@@ -10937,12 +10937,26 @@ const app=createApp({
         let map=null;
         const initMap=()=>{
             nextTick(()=>{
-                if(map)return;
                 const mapEl=document.getElementById('map');
                 if(!mapEl)return;
+                if(map){
+                    // 既有 instance — page 切回來時 container 改變大小要 invalidate
+                    setTimeout(()=>map.invalidateSize(true), 100);
+                    return;
+                }
+                // 確保 container 有實際大小才 init (避免高度=0)
+                if(mapEl.clientHeight < 50){
+                    setTimeout(initMap, 150);
+                    return;
+                }
                 map=L.map('map').setView([25.0330,121.5654],14);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'OSM'}).addTo(map);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+                    attribution:'OSM',
+                    maxZoom:19
+                }).addTo(map);
                 updateMarkers();
+                // 多保險: 100ms 後再 invalidate 一次 (動畫切換完成)
+                setTimeout(()=>map.invalidateSize(true), 100);
             });
         };
         const updateMarkers=()=>{
