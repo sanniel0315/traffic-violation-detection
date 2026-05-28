@@ -11458,6 +11458,27 @@ const app=createApp({
             const r=await fetch(url,{headers:{'Accept':'application/json'}});
             return r.ok ? await r.json() : [];
         };
+        // 台灣道路名稱 → 候選查詢字串清單 (Nominatim OSM 標註方式不一，多試幾種)
+        const _twRoadVariants=(q)=>{
+            const variants=[q];
+            const s=q.replace(/\s+/g,'');
+            let m;
+            // 國道 (國道8 / 國8 / 國道8號) → 國道8號 + National Freeway 8
+            if((m=s.match(/^(?:國道|國)\s*(\d+)\s*號?$/))){
+                const n=m[1];
+                variants.push(`國道${n}號`, `國道${n}`, `National Freeway ${n}`, `Freeway ${n}, Taiwan`);
+            }
+            // 台/臺 快速公路 (台62 / 台62線) → 台62線 + Provincial Highway 62
+            else if((m=s.match(/^(?:台|臺)\s*(\d+)\s*[線号號]?$/))){
+                const n=m[1];
+                variants.push(`台${n}線`, `臺${n}線`, `Provincial Highway ${n}`, `Highway ${n}, Taiwan`);
+            }
+            // 縣道/鄉道/市道 X
+            else if((m=s.match(/^(縣道|鄉道|市道|縣|鄉|市)\s*(\d+)/))){
+                variants.push(`${m[1]}${m[2]}`, `${s}號`);
+            }
+            return [...new Set(variants)];
+        };
         const onMapSearchInput=()=>{
             if(_mapSearchTimer)clearTimeout(_mapSearchTimer);
             const q=String(mapSearchQuery.value||'').trim();
@@ -11465,13 +11486,11 @@ const app=createApp({
             mapSearchLoading.value=true;
             _mapSearchTimer=setTimeout(async()=>{
                 try{
-                    let results=await _nominatim(q);
-                    // 台灣道路代號容錯：「台62」搜不到 → 試「台62線」/「台62快速公路」
-                    if(!results.length && /^(台|臺|國|縣|鄉|市)\s*\d+/.test(q)){
-                        for(const suffix of ['線','快速公路','公路']){
-                            results=await _nominatim(q+suffix);
-                            if(results.length)break;
-                        }
+                    let results=[];
+                    // 依序試各種台灣道路名稱變體，命中即停
+                    for(const variant of _twRoadVariants(q)){
+                        results=await _nominatim(variant);
+                        if(results.length)break;
                     }
                     mapSearchResults.value=results;
                 }catch(_){mapSearchResults.value=[];}
