@@ -135,6 +135,15 @@ class IOService:
                 r = self._session.get(f"{self._daemon_url}/health", timeout=3)
                 self._di_event_seq = int(r.json().get("di_seq") or 0)
                 print(f"[io_svc client] synced di_seq={self._di_event_seq} from daemon (skip historic events)", flush=True)
+                # daemon 已 ready：清除可能殘留的 stale downloading。上個 traffic-api
+                # 在 config_sync 進行中重啟/crash 會讓結束信號丟失、daemon downloading
+                # 卡 true → 白燈永久閃。client 重啟代表任何 in-flight 下載都已中斷，
+                # 開機清掉是安全且正確的 (download 只由 client 端觸發，daemon 不自發)。
+                try:
+                    self._session.post(f"{self._daemon_url}/set_downloading", json={"active": False}, timeout=2)
+                    print("[io_svc client] cleared stale downloading flag on startup", flush=True)
+                except Exception as _e:
+                    print(f"[io_svc client] startup downloading reset failed (daemon blink watchdog 仍會兜底): {_e}", flush=True)
                 break
             except Exception as e:
                 print(f"[io_svc client] init di_seq sync failed, retry in 2s: {e}", flush=True)
@@ -230,9 +239,23 @@ class IOService:
         self._apply_do()
 
     def _blink_white_loop(self) -> None:
-        """下載期間白燈 ~2.5Hz 閃爍；通訊故障時讓 _apply_do 接管 (不寫白燈避開覆蓋)。"""
+        """下載期間白燈 ~2.5Hz 閃爍；通訊故障時讓 _apply_do 接管 (不寫白燈避開覆蓋)。
+
+        安全兜底：閃爍超過 IO_DOWNLOAD_BLINK_MAX_S 秒仍未收到結束信號就自動復位。
+        避免結束信號丟失 (traffic-api 在 config_sync 進行中重啟/crash、daemon POST
+        /set_downloading false 不可達) 造成白燈永久閃爍。正常下載僅數秒，遠端 config
+        同步硬上限 CONFIG_SYNC_TIMEOUT(預設15s)，故 30s 兜底不會誤殺正常下載。"""
         on = False
+        start = time.monotonic()
+        try:
+            max_s = float(os.getenv("IO_DOWNLOAD_BLINK_MAX_S", "30"))
+        except (TypeError, ValueError):
+            max_s = 30.0
         while not self._dl_blink_stop.is_set():
+            if time.monotonic() - start > max_s:
+                _log("warning", f"遠端下載白燈閃爍逾 {max_s:.0f}s 未結束，自動復位 downloading (兜底)")
+                self.set_downloading(False)
+                break
             on = not on
             if self._comm_ok:
                 try:
