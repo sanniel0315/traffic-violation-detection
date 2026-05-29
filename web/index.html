@@ -12127,6 +12127,17 @@ const app=createApp({
                     enrichPlateSnaps(recentViolations.value.slice(0,8));
                 }
                 await syncFeatureStatus();
+                // 系統健康卡 (dashboard) 依賴 frigateStatus/mqttStatus/lprStatus，
+                // 但這三個原本只在各自頁面載入；dashboard 頁不刷新 → 停在初始 offline
+                // 預設值 → 誤報「3 服務異常(NVR/MQTT/LPR)」。這裡補刷 (輕量 fetch，
+                // 不走 loadMqttStatus 以免連帶抓 MQTT 訊息列表)。
+                if(String(page.value||'')==='dashboard'){
+                    Promise.allSettled([
+                        fetch('/api/frigate/status',{cache:'no-store'}).then(r=>r.json()).then(d=>Object.assign(frigateStatus,d)),
+                        fetch('/api/mqtt/status').then(r=>r.json()).then(d=>Object.assign(mqttStatus,d)),
+                        fetch('/api/lpr/status').then(r=>r.json()).then(d=>Object.assign(lprStatus,d)),
+                    ]);
+                }
                 // 保險: NVR 重啟 overlay 卡死自動解 — 若 Frigate uptime > 60s 表示沒在重啟
                 if(nvrRestarting.value){
                     try{
