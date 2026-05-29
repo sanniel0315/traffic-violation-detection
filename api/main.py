@@ -318,6 +318,38 @@ async def dashboard():
             h = (cursor + i) % 24
             hourly_buckets.append({"hour": h, "count": bucket_map.get(h, 0)})
 
+        # 今日違規分析分布 (戰情室視覺化用) — 依 count 由多到少
+        def _today_dist(col):
+            return [
+                {"key": k, "count": cnt}
+                for k, cnt in (db.query(col, func.count(Violation.id))
+                                 .filter(Violation.created_at >= today)
+                                 .group_by(col)
+                                 .order_by(func.count(Violation.id).desc())
+                                 .all())
+            ]
+        cam_name_map = {c.id: (c.name or f"攝影機 {c.id}") for c in all_cams}
+        type_dist = _today_dist(Violation.violation_type)
+        vehicle_dist = _today_dist(Violation.vehicle_type)
+        camera_dist = [
+            {"key": cam_name_map.get(d["key"], f"攝影機 {d['key']}"), "count": d["count"]}
+            for d in _today_dist(Violation.camera_id)
+        ]
+        # 超速幅度分桶 (今日，依 overspeed_kmh)
+        _speed_edges = [("<10", 0, 10), ("10-20", 10, 20), ("20-40", 20, 40),
+                        ("40-60", 40, 60), ("60+", 60, 10 ** 9)]
+        _speed_counts = {e[0]: 0 for e in _speed_edges}
+        for (ov,) in (db.query(Violation.overspeed_kmh)
+                        .filter(Violation.created_at >= today,
+                                Violation.overspeed_kmh.isnot(None))
+                        .all()):
+            val = float(ov or 0)
+            for name, lo, hi in _speed_edges:
+                if lo <= val < hi:
+                    _speed_counts[name] += 1
+                    break
+        speed_dist = [{"key": e[0], "count": _speed_counts[e[0]]} for e in _speed_edges]
+
         return {
             "today_violations": today_v,
             "pending_review": pending,
@@ -328,6 +360,10 @@ async def dashboard():
             "enabled_cameras": enabled_count,
             "total_cameras": total_cam,
             "hourly_buckets": hourly_buckets,
+            "type_dist": type_dist,
+            "vehicle_dist": vehicle_dist,
+            "camera_dist": camera_dist,
+            "speed_dist": speed_dist,
         }
     finally:
         db.close()
