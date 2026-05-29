@@ -3392,10 +3392,10 @@ async def match_plate_snapshots(request: Request):
             entry = {
                 "lpr_id": rec.id,
                 "confidence": round(float(rec.confidence or 0), 3),
-                "scene_url": f"/api/lpr/snapshot/{scene}",
+                "scene_url": f"/api/lpr/stream/snapshot/{scene}",
             }
             if os.path.exists(os.path.join(SNAPSHOT_DIR, plate_name)):
-                entry["plate_url"] = f"/api/lpr/snapshot/{plate_name}"
+                entry["plate_url"] = f"/api/lpr/stream/snapshot/{plate_name}"
             out[key] = entry
     finally:
         db.close()
