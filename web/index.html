@@ -11604,9 +11604,15 @@ const app=createApp({
                         </div>`;
                     const marker = L.marker([c.lat,c.lng],{icon, draggable:true, autoPan:true}).addTo(map)
                         .bindPopup(popHtml, {maxWidth:300, minWidth:260});
+                    // draggable marker 純點擊 (尤其觸控時微小位移被當拖曳) 有時不會自動開 popup，
+                    // 明確綁 click / 觸控結束 開啟作保險 (未真正拖動才開)
+                    marker.on('click', ()=>{ if(!marker.isPopupOpen()) marker.openPopup(); });
+                    marker.on('dragstart', ()=>{ marker._dragStart=marker.getLatLng(); });
                     // 拖曳結束 → 更新座標
                     marker.on('dragend', async (e)=>{
                         const p=e.target.getLatLng();
+                        // 位移 <3m 視為點擊 (觸控 tap 誤觸 drag) → 開 popup，不更新座標
+                        if(marker._dragStart && map.distance(marker._dragStart, p) < 3){ marker.openPopup(); return; }
                         try{
                             const r=await fetch(`/api/cameras/${c.id}`,{
                                 method:'PUT',
