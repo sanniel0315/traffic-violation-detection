@@ -4887,7 +4887,10 @@
                             </div>
                         </div>
                     </div>
-                    <el-dialog v-model="monitorZoomVisible" top="4vh" width="92vw" :destroy-on-close="false" append-to-body @close="closeMonitorZoom">
+                </div>
+                <!-- 監控放大 dialog: 移出 monitor 頁 v-if，content 層級全域 (append-to-body)
+                     讓地圖 popup「即時影像」等任何頁面都能開啟 -->
+                <el-dialog v-model="monitorZoomVisible" top="4vh" width="92vw" :destroy-on-close="false" append-to-body @close="closeMonitorZoom">
                         <template #header>
                             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-right:24px">
                                 <div>
@@ -4939,8 +4942,7 @@
                             尚未啟動壅塞偵測或暫無資料
                         </div>
                     </el-dialog>
-                </div>
-                
+
                 <!-- 違規查詢 -->
                 <div v-if="page==='violations'">
                     <div class="ds-page-hero">
