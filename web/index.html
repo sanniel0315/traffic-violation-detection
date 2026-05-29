@@ -11622,16 +11622,20 @@ const app=createApp({
                         }
                     });
                     // 每次打開 popup 動態載最新 snapshot + 綁按鈕事件
-                    marker.on('popupopen', ()=>{
-                        const root=document.querySelector(`.cam-map-popup[data-camid="${c.id}"]`);
+                    marker.on('popupopen', (e)=>{
+                        // 用 leaflet 提供的 popup DOM 取 root，比 document.querySelector 可靠
+                        // (避免 popup 開啟動畫/多 marker 時機造成 querySelector 抓不到 → 整個 handler 失效)
+                        const popEl=(e && e.popup && e.popup.getElement) ? e.popup.getElement() : null;
+                        const root=(popEl && popEl.querySelector('.cam-map-popup'))
+                                 || document.querySelector(`.cam-map-popup[data-camid="${c.id}"]`);
                         if(!root)return;
                         const img=root.querySelector('.cam-map-popup-img');
                         if(img){
-                            img.src=`/api/stream/${c.id}/snapshot?t=${Date.now()}`;
                             img.onerror=()=>{img.style.display='none';
                                 const w=img.closest('.cam-map-popup-img-wrap');
                                 if(w)w.innerHTML='<div class="cam-map-popup-noimg">無影像（攝影機離線或串流逾時）</div>';
                             };
+                            img.src=`/api/stream/${c.id}/snapshot?t=${Date.now()}`;
                         }
                         // ▶ 即時影像 + 中央播放鍵 → 開放大 dialog 播 live stream
                         const openLive=()=>{ marker.closePopup(); openMonitorZoom(c); };
@@ -11639,9 +11643,9 @@ const app=createApp({
                         const playBtn=root.querySelector('.cam-map-popup-play');
                         if(liveBtn)liveBtn.onclick=openLive;
                         if(playBtn)playBtn.onclick=openLive;
-                        // 🎬 錄影回放 → 開 NVR 回放頁 (帶 camera 參數)
+                        // 🎬 錄影回放 → 開 NVR 回放頁並帶 camera 參數 (自動定位該攝影機)
                         const clipBtn=root.querySelector('.cam-pop-clip');
-                        if(clipBtn)clipBtn.onclick=()=>{ window.open('/web/nvr_playback.html','_blank'); };
+                        if(clipBtn)clipBtn.onclick=()=>{ window.open('/web/nvr_playback.html?camera='+encodeURIComponent(c.id),'_blank'); };
                     });
                     _camMarkers[c.id] = marker;
                 }

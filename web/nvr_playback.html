@@ -1421,6 +1421,12 @@ setup(){
     // Load data
     await Promise.all([loadStatus(),loadCameras()]);
     setQuickRange('24h');
+    // 從地圖攝影機 popup 帶 ?camera=<id> 進來 → 自動定位該攝影機 (key 格式為 cam_<id>)
+    const _camParam=new URLSearchParams(location.search).get('camera');
+    if(_camParam){
+      const _key=/^cam_/i.test(_camParam)?_camParam:`cam_${_camParam}`;
+      nextTick(()=>selectCamera(_key));
+    }
   });
   onUnmounted(()=>{
     clearInterval(clockTimer);
