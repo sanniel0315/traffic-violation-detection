@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """車牌辨識串流 API - YOLO + Tesseract"""
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from collections import deque
 import cv2
@@ -12,7 +12,7 @@ import asyncio
 import os
 from typing import Dict, Any, List, Optional
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import re
 
@@ -3337,6 +3337,69 @@ async def get_snapshot(filename: str):
     if os.path.exists(filepath):
         return FileResponse(filepath, media_type="image/jpeg")
     raise HTTPException(status_code=404, detail="截圖不存在")
+
+
+@router.post("/match-plate-snapshots")
+async def match_plate_snapshots(request: Request):
+    """給一批違規 (key, plate, camera_id, time)，回對應的裁切車牌圖 url。
+
+    violation 與 LPR 是兩條獨立的線、沒有外鍵，故以「車牌號 + 攝影機 + 時間窗(±10分)
+    最接近」關聯 lpr_records；車牌裁切檔名由場景 snapshot 推導 (.jpg → _plate.png)，
+    並確認檔案存在才回 plate_url。"""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    items = payload.get("items") or []
+    from api.models import SessionLocal, LPRRecord
+    out: dict = {}
+    db = SessionLocal()
+    try:
+        for it in items[:60]:
+            plate = str(it.get("plate") or "").strip()
+            if not plate or plate == "-":
+                continue
+            key = str(it.get("key") if it.get("key") is not None else plate)
+            cam = it.get("camera_id")
+            traw = it.get("time")
+            ts = None
+            if traw:
+                try:
+                    ts = datetime.fromisoformat(str(traw).replace("Z", "+00:00"))
+                    if ts.tzinfo is not None:
+                        ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+                except Exception:
+                    ts = None
+            q = db.query(LPRRecord).filter(LPRRecord.plate_number == plate)
+            if cam is not None:
+                try:
+                    q = q.filter(LPRRecord.camera_id == int(cam))
+                except (TypeError, ValueError):
+                    pass
+            rec = None
+            if ts is not None:
+                lo, hi = ts - timedelta(minutes=10), ts + timedelta(minutes=10)
+                cand = q.filter(LPRRecord.created_at >= lo,
+                                LPRRecord.created_at <= hi).all()
+                if cand:
+                    rec = min(cand, key=lambda r: abs((r.created_at - ts).total_seconds()))
+            if rec is None:
+                rec = q.order_by(LPRRecord.created_at.desc()).first()
+            if not rec or not rec.snapshot:
+                continue
+            scene = rec.snapshot
+            plate_name = scene.rsplit(".", 1)[0] + "_plate.png"
+            entry = {
+                "lpr_id": rec.id,
+                "confidence": round(float(rec.confidence or 0), 3),
+                "scene_url": f"/api/lpr/snapshot/{scene}",
+            }
+            if os.path.exists(os.path.join(SNAPSHOT_DIR, plate_name)):
+                entry["plate_url"] = f"/api/lpr/snapshot/{plate_name}"
+            out[key] = entry
+    finally:
+        db.close()
+    return {"matched": out}
 
 
 @router.get("/all")
