@@ -140,7 +140,7 @@ class IOService:
                 # 卡 true → 白燈永久閃。client 重啟代表任何 in-flight 下載都已中斷，
                 # 開機清掉是安全且正確的 (download 只由 client 端觸發，daemon 不自發)。
                 try:
-                    self._session.post(f"{self._daemon_url}/set_downloading", json={"active": False}, timeout=2)
+                    self._session.post(f"{self._daemon_url}/set_downloading", json={"active": False}, timeout=5)
                     print("[io_svc client] cleared stale downloading flag on startup", flush=True)
                 except Exception as _e:
                     print(f"[io_svc client] startup downloading reset failed (daemon blink watchdog 仍會兜底): {_e}", flush=True)
@@ -189,9 +189,9 @@ class IOService:
         _log("info", "IO 模組關閉")
 
     # ── client-mode HTTP helpers ──────────────────────────────────────
-    def _daemon_post(self, path: str, json_body: dict) -> None:
+    def _daemon_post(self, path: str, json_body: dict, timeout: float = 2.0) -> None:
         try:
-            self._session.post(f"{self._daemon_url}{path}", json=json_body, timeout=2)
+            self._session.post(f"{self._daemon_url}{path}", json=json_body, timeout=timeout)
         except Exception as e:
             print(f"[io_svc] daemon {path} unreachable: {e}", flush=True)
 
@@ -221,7 +221,9 @@ class IOService:
 
     def set_downloading(self, active: bool) -> None:
         if self._daemon_url:
-            self._daemon_post("/set_downloading", {"active": active})
+            # 停閃信號攸關白燈是否卡閃，daemon 寫 RS-485 relay 偶爾排隊 >2s，
+            # 故這條路徑放寬到 5s，避免「停閃」被 2s timeout 砍掉而每次都得等 30s 兜底。
+            self._daemon_post("/set_downloading", {"active": active}, timeout=5.0)
             return
         with self._lock:
             was = self._downloading
