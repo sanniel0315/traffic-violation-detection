@@ -8656,7 +8656,7 @@ const app=createApp({
                 const items=(list||[]).filter(v=>v && v.license_plate && v.license_plate!=='-')
                     .map(v=>({key:v.id, plate:v.license_plate, camera_id:v.camera_id, time:v.created_at}));
                 if(!items.length)return;
-                const r=await fetch('/api/lpr/match-plate-snapshots',{method:'POST',
+                const r=await fetch('/api/lpr/stream/match-plate-snapshots',{method:'POST',
                     headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});
                 if(!r.ok)return;
                 const d=await r.json();
