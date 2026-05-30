@@ -12413,8 +12413,14 @@ const app=createApp({
         const load=async()=>{
             try{
                 if(shouldRefreshOverviewData()){
-                    dashboard.value=await(await fetch('/api/dashboard')).json();
-                    const vItems=(await(await fetch('/api/violations?page_size=30')).json()).items||[];
+                    // 兩個 fetch 並行 (原 sequential 要等 dashboard 完才抓 violations, ~500ms;
+                    //  並行只等較慢者, ~330ms — 加快 dashboard 進入體感)
+                    const [_dashRes,_vRes]=await Promise.all([
+                        fetch('/api/dashboard'),
+                        fetch('/api/violations?page_size=30')
+                    ]);
+                    dashboard.value=await _dashRes.json();
+                    const vItems=((await _vRes.json()).items)||[];
                     // 統計頁使用 loadStats 的完整資料，避免被背景刷新覆蓋
                     if(page.value!=='statistics'){
                         violations.value=vItems;
@@ -15530,6 +15536,9 @@ const app=createApp({
                 return;
             }
             if(v==='dashboard'||v==='map')nextTick(initMap);
+            // 切到 dashboard 立即 load 抓資料 — 之前只在 onMounted 一次 + setInterval 30s,
+            // 從別頁切過來要等最壞 30s, 體感「卡很久才有資料」
+            if(v==='dashboard'){ load(); }
             if(v==='monitor' || v==='cameras' || analysisPages.includes(v)){
                 syncFeatureStatus((cameras.value||[]).map(c=>c.id));
             }
