@@ -15847,8 +15847,10 @@ const app=createApp({
             // 等 Vue render 完 DOM 後 init sidebar UX
             setTimeout(initSidebarUX, 100);
             setInterval(()=>{
-                // 固定 format「2026/05/31 11:50:00」(19 字元) 讓 slice(11,16) 永遠等於 "HH:MM"
-                currentTime.value=new Date().toLocaleString('zh-TW',{hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+                // 手動拼字串 100% 控制格式「YYYY/MM/DD HH:MM:SS」(19 字元)，不依賴 toLocaleString
+                // — 某些瀏覽器/系統 locale 即使 hour12:false 仍會塞「下午/中午」(slice 會錯位變「午11:5」)
+                const _d=new Date(); const _p=n=>String(n).padStart(2,'0');
+                currentTime.value=`${_d.getFullYear()}/${_p(_d.getMonth()+1)}/${_p(_d.getDate())} ${_p(_d.getHours())}:${_p(_d.getMinutes())}:${_p(_d.getSeconds())}`;
                 statsNowMs.value=Date.now();
             },1000);
             if(!ok)return;
