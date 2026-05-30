@@ -1998,6 +1998,11 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         continue
                     if _raw_speed < _effective_limit:
                         continue
+                    # 飽和不可信 (clamp ceiling = 150): TrafficEvent 寫入已過濾 (stream.py:1881
+                    # 將 >=150 設 None)，Violation 線之前漏掉同樣過濾 → speed 估算飆高的 case
+                    # 全被當「超速 150 km/h」誤開單。此處補上一致過濾。
+                    if _raw_speed >= 150.0:
+                        continue
                     _track_id = _v.get("track_id")
                     if _track_id is None:
                         _bb = _v.get("bbox", {}) or {}

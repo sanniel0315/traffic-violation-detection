@@ -2744,6 +2744,7 @@ class LPRStreamTask:
 
             frame_skip = 1
             last_shared_ts = 0.0
+            last_frigate_fetch = 0.0  # cam_6 fallback rate-limit
             while self.running:
                 if use_shared:
                     # 從 detection 寫的 _shared_frames 取最新 frame
@@ -2754,14 +2755,36 @@ class LPRStreamTask:
                         sf_frame = sf.get("frame")
                     except Exception:
                         sf_ts, sf_frame = 0.0, None
-                    if sf_frame is None or sf_ts <= last_shared_ts:
-                        time.sleep(0.05)  # 等下一張新 frame
-                        continue
-                    if time.time() - sf_ts > 10:
-                        # detection 沒在更新，等待
-                        time.sleep(0.5)
-                        continue
-                    frame = sf_frame
+                    # shared_frames 可用且新 → 用；不可用 → fallback frigate latest.jpg 直抓
+                    # (cam_6 detection worker 不能啟 [cap.read SEGV]，shared_frames 常常空 →
+                    #  不 fallback LPR 就 0 frame 完全沒偵測。frigate latest.jpg 一直 200 可用)
+                    _sf_ok = (sf_frame is not None and sf_ts > last_shared_ts
+                              and (time.time() - sf_ts) <= 10)
+                    if _sf_ok:
+                        frame = sf_frame
+                        last_shared_ts = sf_ts
+                    else:
+                        _now = time.time()
+                        if _now - last_frigate_fetch < 0.5:  # rate-limit 2fps，避免過勞
+                            time.sleep(0.1)
+                            continue
+                        last_frigate_fetch = _now
+                        try:
+                            import requests as _req, numpy as _np
+                            _r = _req.get(f"http://127.0.0.1:5000/api/cam_{self.camera_id}/latest.jpg",
+                                          timeout=3)
+                            if _r.status_code != 200 or not _r.content:
+                                time.sleep(0.3)
+                                continue
+                            frame = cv2.imdecode(_np.frombuffer(_r.content, dtype=_np.uint8),
+                                                 cv2.IMREAD_COLOR)
+                            if frame is None:
+                                time.sleep(0.3)
+                                continue
+                            last_shared_ts = _now
+                        except Exception:
+                            time.sleep(0.5)
+                            continue
                     last_shared_ts = sf_ts
                     self.last_frame_at = time.time()
                     self._increment_debug_counter("total_frames")
