@@ -964,6 +964,13 @@
         }
         .ds-ranking-table tbody tr:hover { background: rgba(11,94,168,0.04); }
         .ds-ranking-table tbody tr:last-child td { border-bottom: none; }
+        /* 累犯查詢: 次數 pill 依風險分級 (≥10 深紅 / ≥5 紅 / ≥3 橙 / <3 公務藍) */
+        .repeat-risk { display: inline-block; padding: 2px 10px; border-radius: 10px; font-weight: 700; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; }
+        .repeat-risk.risk-critical { background: #fce4e4; color: #7a1f19; }
+        .repeat-risk.risk-high     { background: #fbe7e3; color: var(--gov-fault); }
+        .repeat-risk.risk-mid      { background: #fdf3e3; color: var(--gov-warn); }
+        .repeat-risk.risk-low      { background: var(--gov-primary-soft); color: var(--gov-primary); }
+        .repeat-plate-cell { font-family: var(--font-mono); font-weight: 700; letter-spacing: 0.04em; }
         .ds-vrow {
             display: grid;
             grid-template-columns: 52px 64px 86px 124px 1fr 78px 26px;
@@ -6063,8 +6070,10 @@
                                 <h1 class="ds-section-title">車輛累犯<b>查詢</b></h1>
                             </div>
                             <div class="ds-page-hero-meta">
-                                <span>累犯 <b>{{ (repeatOffenders||[]).length }}</b></span>
-                                <span>狀態 <b>良好</b></span>
+                                <span>累犯車輛 <b>{{ repeatKPIs.total }}</b></span>
+                                <span>高風險(≥5次) <b style="color:var(--gov-fault)">{{ repeatKPIs.high }}</b></span>
+                                <span>最高次數 <b>{{ repeatKPIs.top }}</b></span>
+                                <span>罰款總額 <b>${{ repeatKPIs.fineSum.toLocaleString() }}</b></span>
                             </div>
                         </div>
                     </div>
@@ -6076,13 +6085,13 @@
                             <!-- 時間區間按鈕 -->
                             <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
                                 <span>時間區間</span>
-                                <el-button size="small" type="primary">本日</el-button>
-                                <el-button size="small" type="primary">本週</el-button>
-                                <el-button size="small" type="primary">本月</el-button>
-                                <el-button size="small" type="primary">近24小時</el-button>
-                                <el-button size="small" type="primary">近一週</el-button>
-                                <el-button size="small" type="warning">最近一個月</el-button>
-                                <el-button size="small" type="warning">最近三個月</el-button>
+                                <el-button size="small" type="primary" @click="setRepeatQuickRange('today')">本日</el-button>
+                                <el-button size="small" type="primary" @click="setRepeatQuickRange('week')">本週</el-button>
+                                <el-button size="small" type="primary" @click="setRepeatQuickRange('month')">本月</el-button>
+                                <el-button size="small" type="primary" @click="setRepeatQuickRange('24h')">近24小時</el-button>
+                                <el-button size="small" type="primary" @click="setRepeatQuickRange('7d')">近一週</el-button>
+                                <el-button size="small" type="warning" @click="setRepeatQuickRange('1m')">最近一個月</el-button>
+                                <el-button size="small" type="warning" @click="setRepeatQuickRange('3m')">最近三個月</el-button>
                             </div>
                             <!-- 日期選擇 -->
                             <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
@@ -6121,29 +6130,35 @@
                             </div>
                         </div>
                     </div>
-                    <!-- 通知列表 -->
+                    <!-- 累犯列表 -->
                     <div class="card">
                         <div class="card-header">
-                            <span>通知列表</span>
-                            <el-button type="primary" size="small">下載</el-button>
+                            <span>累犯列表</span>
+                            <el-button type="primary" size="small" @click="exportRepeatCSV">下載 CSV</el-button>
                         </div>
                         <div class="card-body" style="padding:0">
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th style="width:80px">項次</th>
-                                        <th>車牌</th>
-                                        <th style="width:120px">累計次數 ↓</th>
+                                        <th style="width:60px">項次</th>
+                                        <th style="width:130px">車牌</th>
+                                        <th style="width:110px">累計次數 ↓</th>
+                                        <th>違規類型分布</th>
+                                        <th style="width:160px">最近違規</th>
+                                        <th style="width:130px;text-align:right">罰款總額</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <tr v-for="(item,idx) in repeatOffenders" :key="item.plate">
                                         <td>{{ idx + 1 }}</td>
-                                        <td>{{ item.plate }}</td>
-                                        <td style="color:#0d6e9f">{{ item.count }}</td>
+                                        <td><span class="repeat-plate-cell">{{ item.plate }}</span></td>
+                                        <td><span class="repeat-risk" :class="repeatRiskClass(item.count)">{{ item.count }}</span></td>
+                                        <td>{{ repeatTypesText(item.types) }}</td>
+                                        <td style="font-family:var(--font-mono);font-size:12px;color:var(--gov-muted)">{{ item.last_at ? new Date(item.last_at).toLocaleString('zh-TW') : '—' }}</td>
+                                        <td style="text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums">${{ (item.fine_total||0).toLocaleString() }}</td>
                                     </tr>
                                     <tr v-if="!repeatOffenders.length">
-                                        <td colspan="3" style="text-align:center;color:#999;padding:40px">暫無資料</td>
+                                        <td colspan="6" style="text-align:center;color:#999;padding:40px">暫無資料 — 設定條件後按「分析」查詢</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -13094,7 +13109,88 @@ const app=createApp({
                 monitorRecycleTimer=null;
             }
         };
-        const loadRepeatOffenders=async()=>{const grouped={};violations.value.forEach(v=>{if(v.license_plate){grouped[v.license_plate]=grouped[v.license_plate]||{plate:v.license_plate,count:0};grouped[v.license_plate].count++;}});repeatOffenders.value=Object.values(grouped).filter(g=>g.count>=repeatThreshold.value).sort((a,b)=>b.count-a.count);ElementPlus.ElMessage.success("查詢完成");};
+        // 累犯查詢: 走後端 /api/violations/repeat-offenders, 含時間/類型/車牌 filter 套用 +
+        // 類型分布 + 最早/最近時間 + 罰款總額 (原本只是純前端 group violations.value 半成品)
+        const loadRepeatOffenders=async()=>{
+            try{
+                const _toIso=(d,t)=>{
+                    if(!d)return null;
+                    const dt=new Date(d);
+                    if(t){const tt=new Date(t); dt.setHours(tt.getHours(),tt.getMinutes(),0,0);}
+                    return dt.toISOString();
+                };
+                const params=new URLSearchParams({threshold:String(repeatThreshold.value||1)});
+                const sf=_toIso(repeatDateFrom.value,repeatTimeFrom.value);
+                const st=_toIso(repeatDateTo.value,repeatTimeTo.value);
+                if(sf)params.set('start_time',sf);
+                if(st)params.set('end_time',st);
+                if(repeatViolationType.value)params.set('violation_type',repeatViolationType.value);
+                if(repeatPlate.value)params.set('plate_kw',repeatPlate.value);
+                const r=await fetch('/api/violations/repeat-offenders?'+params.toString());
+                if(!r.ok)throw new Error('HTTP '+r.status);
+                const d=await r.json();
+                repeatOffenders.value=d.items||[];
+                ElementPlus.ElMessage.success(`查詢完成 · ${d.total||0} 筆累犯`);
+            }catch(e){
+                repeatOffenders.value=[];
+                ElementPlus.ElMessage.error('查詢失敗: '+(e?.message||e));
+            }
+        };
+        // 時間 quick range (7 個按鈕)
+        const setRepeatQuickRange=(key)=>{
+            const now=new Date(); now.setSeconds(0,0);
+            const to=new Date(now);
+            const from=new Date(now);
+            switch(key){
+                case 'today': from.setHours(0,0,0,0); break;
+                case 'week': {const day=from.getDay()||7; from.setDate(from.getDate()-day+1); from.setHours(0,0,0,0); break;}
+                case 'month': from.setDate(1); from.setHours(0,0,0,0); break;
+                case '24h': from.setHours(from.getHours()-24); break;
+                case '7d': from.setDate(from.getDate()-7); break;
+                case '1m': from.setMonth(from.getMonth()-1); break;
+                case '3m': from.setMonth(from.getMonth()-3); break;
+            }
+            repeatDateFrom.value=from; repeatTimeFrom.value=from;
+            repeatDateTo.value=to; repeatTimeTo.value=to;
+        };
+        // 累犯 KPI 摘要
+        const repeatKPIs=computed(()=>{
+            const arr=repeatOffenders.value||[];
+            const high=arr.filter(x=>x.count>=5).length;
+            const total=arr.length;
+            const top=arr.length?arr[0].count:0;
+            const fineSum=arr.reduce((a,b)=>a+(b.fine_total||0),0);
+            return {total, high, top, fineSum};
+        });
+        // 違規類型分布顯示 (中文短標 · 數字)
+        const repeatTypesText=(types)=>{
+            if(!types)return '—';
+            const zh={SPEEDING:'超速',RED_LIGHT:'闖紅燈',ILLEGAL_PARKING:'違停',WRONG_WAY:'逆向',NO_HELMET:'未戴帽'};
+            return Object.entries(types).map(([k,v])=>`${zh[k]||k}${v}`).join(' · ')||'—';
+        };
+        // 風險色 (依次數)
+        const repeatRiskClass=(c)=>{
+            const n=Number(c)||0;
+            if(n>=10)return 'risk-critical';
+            if(n>=5)return 'risk-high';
+            if(n>=3)return 'risk-mid';
+            return 'risk-low';
+        };
+        // CSV 匯出 (含 BOM 給 Excel 正確讀中文)
+        const exportRepeatCSV=()=>{
+            const arr=repeatOffenders.value||[];
+            if(!arr.length){ElementPlus.ElMessage.warning('無資料可匯出');return;}
+            const head=['項次','車牌','累計次數','違規類型分布','最早違規','最近違規','罰款總額'];
+            const fmt=(s)=>s?new Date(s).toLocaleString('zh-TW'):'';
+            const rows=arr.map((x,i)=>[i+1,x.plate,x.count,repeatTypesText(x.types),fmt(x.first_at),fmt(x.last_at),x.fine_total||0]);
+            const csv='﻿'+[head,...rows].map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+            const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+            const a=document.createElement('a');
+            a.href=URL.createObjectURL(blob);
+            a.download=`累犯查詢_${new Date().toISOString().slice(0,10)}.csv`;
+            document.body.appendChild(a); a.click(); a.remove();
+            ElementPlus.ElMessage.success(`已匯出 ${arr.length} 筆`);
+        };
         const loadNVRSettings=async()=>{
             try{
                 const r=await fetch('/api/frigate/settings');
@@ -15930,7 +16026,7 @@ const app=createApp({
         return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,detailLocationText,detailClipUrl,detailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
-            load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow};
     }

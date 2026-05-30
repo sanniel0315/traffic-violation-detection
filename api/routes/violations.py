@@ -218,3 +218,74 @@ def _to_dict(v: Violation) -> dict:
         "speed_roi_hit": bool(v.speed_roi_hit),
         "created_at": v.created_at.isoformat() if v.created_at else None
     }
+
+
+@router.get("/repeat-offenders")
+def repeat_offenders(
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    threshold: int = 2,
+    violation_type: Optional[str] = None,
+    plate_kw: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """車輛累犯查詢: GROUP BY 車牌 + 套用時間/類型/車牌關鍵字篩選，
+    回每車的次數、各違規類型分布、最早/最近違規時間、罰款總額。"""
+    base = db.query(Violation).filter(
+        Violation.license_plate.isnot(None),
+        Violation.license_plate != "",
+    )
+    if start_time:
+        try:
+            base = base.filter(Violation.created_at >= datetime.fromisoformat(start_time.replace("Z", "+00:00")))
+        except Exception:
+            pass
+    if end_time:
+        try:
+            base = base.filter(Violation.created_at < datetime.fromisoformat(end_time.replace("Z", "+00:00")))
+        except Exception:
+            pass
+    if violation_type:
+        base = base.filter(Violation.violation_type == violation_type)
+    if plate_kw:
+        base = base.filter(Violation.license_plate.like(f"%{plate_kw}%"))
+
+    th = max(1, int(threshold or 1))
+    rows = (
+        base.with_entities(
+            Violation.license_plate,
+            func.count(Violation.id).label("cnt"),
+            func.min(Violation.created_at).label("first_at"),
+            func.max(Violation.created_at).label("last_at"),
+            func.sum(Violation.fine_amount).label("fine_total"),
+        )
+        .group_by(Violation.license_plate)
+        .having(func.count(Violation.id) >= th)
+        .order_by(desc("cnt"))
+        .limit(500)
+        .all()
+    )
+    plates = [r[0] for r in rows]
+    types_map: dict = {}
+    if plates:
+        tq = base.with_entities(
+            Violation.license_plate,
+            Violation.violation_type,
+            func.count(Violation.id),
+        ).filter(Violation.license_plate.in_(plates)).group_by(
+            Violation.license_plate, Violation.violation_type
+        ).all()
+        for p, t, c in tq:
+            types_map.setdefault(p, {})[t or "UNKNOWN"] = int(c)
+    items = [
+        {
+            "plate": p,
+            "count": int(cnt),
+            "first_at": fa.isoformat() if fa else None,
+            "last_at": la.isoformat() if la else None,
+            "fine_total": int(ft or 0),
+            "types": types_map.get(p, {}),
+        }
+        for (p, cnt, fa, la, ft) in rows
+    ]
+    return {"items": items, "total": len(items)}
