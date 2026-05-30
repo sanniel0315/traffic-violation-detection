@@ -8864,6 +8864,15 @@ const app=createApp({
         };
         const renderDashboardCharts=()=>{
             if(typeof Chart==='undefined')return;
+            // Chart.js 全域字體統一 — 跟既有統計表格 (車種排行等) 一致: Noto Sans TC 中文 +
+            // IBM Plex Mono 數字 + tabular-nums + 公務藍灰，所有圖表 legend/ticks/tooltip 一次套到
+            if(!Chart._dsFontConfigured){
+                Chart.defaults.font.family = "'Noto Sans TC','PingFang TC','IBM Plex Mono',ui-monospace,sans-serif";
+                Chart.defaults.font.size = 12;
+                Chart.defaults.font.weight = '500';
+                Chart.defaults.color = '#5b6778';
+                Chart._dsFontConfigured = true;
+            }
             const d=dashboard.value||{};
             const tip={backgroundColor:_CH.strong,padding:9};
             nextTick(()=>{
