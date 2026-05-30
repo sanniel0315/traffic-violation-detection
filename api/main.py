@@ -350,6 +350,35 @@ async def dashboard():
                     break
         speed_dist = [{"key": e[0], "count": _speed_counts[e[0]]} for e in _speed_edges]
 
+        # 昨日同時段對比 (KPI 趨勢 % + 24h 趨勢圖比較線)
+        yesterday_start = today - timedelta(days=1)
+        yesterday_same_time_end = now - timedelta(days=1)
+        yesterday_same_time = (db.query(Violation)
+                               .filter(Violation.created_at >= yesterday_start,
+                                       Violation.created_at < yesterday_same_time_end)
+                               .count())
+        # 昨日整天 hourly (對齊 hourly_buckets 的 hour 順序)
+        ystr_rows = (db.query(Violation.created_at)
+                       .filter(Violation.created_at >= yesterday_start,
+                               Violation.created_at < today)
+                       .all())
+        ybucket_map: dict = {}
+        for (ts,) in ystr_rows:
+            if ts is None:
+                continue
+            local = ts + timedelta(hours=8)
+            ybucket_map[local.hour] = ybucket_map.get(local.hour, 0) + 1
+        yesterday_hourly_buckets = [
+            {"hour": (cursor + i) % 24, "count": ybucket_map.get((cursor + i) % 24, 0)}
+            for i in range(24)
+        ]
+        # 待審核中最舊一筆距現在多久 (分鐘) — KPI 待審核副資訊
+        _oldest = (db.query(Violation.created_at)
+                   .filter(Violation.status == "pending")
+                   .order_by(Violation.created_at.asc()).first())
+        oldest_pending_minutes = (int((now - _oldest[0]).total_seconds() / 60)
+                                  if (_oldest and _oldest[0]) else None)
+
         return {
             "today_violations": today_v,
             "pending_review": pending,
@@ -364,6 +393,9 @@ async def dashboard():
             "vehicle_dist": vehicle_dist,
             "camera_dist": camera_dist,
             "speed_dist": speed_dist,
+            "yesterday_same_time_violations": yesterday_same_time,
+            "yesterday_hourly_buckets": yesterday_hourly_buckets,
+            "oldest_pending_minutes": oldest_pending_minutes,
         }
     finally:
         db.close()
