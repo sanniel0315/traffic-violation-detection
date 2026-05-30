@@ -881,7 +881,7 @@
         .ds-svc-led { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; background: var(--gov-ok); box-shadow: 0 0 0 3px rgba(31,157,85,.15); }
         .ds-svc-item.down .ds-svc-led { background: var(--gov-fault); box-shadow: 0 0 0 3px rgba(196,58,49,.16); }
         .ds-svc-item b { font-size: 14px; font-weight: 700; font-family: var(--font-mono); letter-spacing: .5px; color: var(--gov-text); display: block; }
-        .ds-svc-item i { font-size: 11px; color: var(--gov-muted); font-style: normal; font-weight: 500; }
+        .ds-svc-item i { font-size: 12px; color: var(--gov-muted); font-style: normal; font-weight: 500; }
         @media (max-width: 980px) {
             .ds-kpi-grid.ds-kpi-3col { grid-template-columns: 1fr; }
         }
@@ -938,7 +938,7 @@
         /* 甜甜圈中央顯示件數總和 */
         .ds-doughnut-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); pointer-events: none; text-align: center; }
         .ds-doughnut-center .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 700; color: var(--gov-text); line-height: 1; }
-        .ds-doughnut-center .lab { font-size: 10px; color: var(--gov-muted); font-weight: 600; margin-top: 3px; letter-spacing: 0.5px; }
+        .ds-doughnut-center .lab { font-size: 12px; color: var(--gov-muted); font-weight: 600; margin-top: 3px; letter-spacing: 0.5px; }
         .ds-analytics-empty {
             display: flex; align-items: center; justify-content: center;
             height: 196px; color: var(--gov-muted); font-size: 13px;
@@ -947,7 +947,7 @@
         .ds-ranking-table { width: 100%; height: 196px; overflow-y: auto; }
         .ds-ranking-table table { width: 100%; border-collapse: collapse; font-size: 13px; font-family: var(--font-sans); }
         .ds-ranking-table thead th {
-            font-weight: 700; color: var(--gov-muted); font-size: 11px;
+            font-weight: 700; color: var(--gov-muted); font-size: 12px;
             text-transform: uppercase; letter-spacing: 0.06em;
             padding: 8px 10px; text-align: left;
             background: var(--gov-surface-2);
@@ -977,7 +977,7 @@
         .ds-vrow.header {
             cursor: default;
             background: var(--gov-surface-2);
-            font-size: 11px;
+            font-size: 12px;
             font-weight: 700;
             color: var(--gov-muted);
             text-transform: uppercase;
@@ -1000,7 +1000,7 @@
             color: var(--gov-text);
         }
         .ds-vrow-speed { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--gov-fault); font-weight: 700; white-space: nowrap; }
-        .ds-vrow-speed small { color: var(--gov-muted); font-weight: 500; font-size: 11px; font-family: var(--font-sans); margin-left: 4px; letter-spacing: 0; }
+        .ds-vrow-speed small { color: var(--gov-muted); font-weight: 500; font-size: 12px; font-family: var(--font-sans); margin-left: 4px; letter-spacing: 0; }
         /* 超速倍數分級配色 (依 speed_kmh / speed_limit_kmh) */
         .ds-vrow-speed.sev-critical { color: #7a1f19; }  /* ≥2倍 深紅 */
         .ds-vrow-speed.sev-high     { color: var(--gov-fault); }  /* ≥1.5倍 紅 */
@@ -1024,7 +1024,7 @@
         .ds-vrow-shot-empty {
             width: 54px; height: 32px; border-radius: 4px; border: 1px dashed var(--gov-border);
             display: flex; align-items: center; justify-content: center;
-            color: var(--gov-muted); font-size: 11px;
+            color: var(--gov-muted); font-size: 12px;
         }
         /* img 載入失敗 fallback: 避免顯示 alt 文字，改 dashed placeholder (跟列表字體協調) */
         .ds-vrow-shot.shot-err img { display: none; }
