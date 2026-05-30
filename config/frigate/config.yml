@@ -289,6 +289,8 @@ go2rtc:
     - rtsp://root:root@111.70.33.189:554/axis-media/media.amp
     cam_2:
     - rtsp://admin:1qaz%40WSX@111.70.34.183:6554/profile2/media.smp
+    cam_3:
+    - rtsp://admin:1qaz%40WSX@111.70.34.184:6554/profile2/media.smp
     cam_6:
     - rtsp://admin:1qaz%40WSX@111.70.34.184:7554/profile2/media.smp
 mqtt:
