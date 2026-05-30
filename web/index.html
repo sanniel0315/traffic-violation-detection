@@ -4567,17 +4567,17 @@
                                 <span class="ds-svc-led"></span>
                                 <div><b>CAM</b><i>攝影機 {{ dashboard.online_cameras||0 }} / {{ dashboard.total_cameras||0 }} 線上</i></div>
                             </div>
-                            <div class="ds-svc-item" :class="{down:frigateStatus.status!=='online'}">
+                            <div class="ds-svc-item" :class="{down:frigateStatus.status && frigateStatus.status!=='online'}">
                                 <span class="ds-svc-led"></span>
-                                <div><b>NVR</b><i>{{ frigateStatus.status==='online' ? `Frigate · ${Math.floor((frigateStatus.uptime||0)/3600)}h uptime` : '未連線' }}</i></div>
+                                <div><b>NVR</b><i>{{ frigateStatus.status==='online' ? `Frigate · ${Math.floor((frigateStatus.uptime||0)/3600)}h uptime` : (frigateStatus.status?'未連線':'載入中…') }}</i></div>
                             </div>
-                            <div class="ds-svc-item" :class="{down:!mqttStatus.connected}">
+                            <div class="ds-svc-item" :class="{down:mqttStatus.connected===false}">
                                 <span class="ds-svc-led"></span>
-                                <div><b>MQTT</b><i>{{ mqttStatus.connected ? `broker · 收${mqttStatus.stats?.recv||0} 發${mqttStatus.stats?.sent||0}` : '未連線' }}</i></div>
+                                <div><b>MQTT</b><i>{{ mqttStatus.connected===true ? `broker · 收${mqttStatus.stats?.recv||0} 發${mqttStatus.stats?.sent||0}` : (mqttStatus.connected===false?'未連線':'載入中…') }}</i></div>
                             </div>
-                            <div class="ds-svc-item" :class="{down:lprStatus.status!=='online'}">
+                            <div class="ds-svc-item" :class="{down:lprStatus.status && lprStatus.status!=='online'}">
                                 <span class="ds-svc-led"></span>
-                                <div><b>LPR</b><i>{{ lprStatus.status==='online'?'辨識運作中':'未運作' }}</i></div>
+                                <div><b>LPR</b><i>{{ lprStatus.status==='online'?'辨識運作中':(lprStatus.status?'未運作':'載入中…') }}</i></div>
                             </div>
                         </div>
                     </div>
@@ -9253,18 +9253,21 @@ const app=createApp({
             const found = arr.find(x=>x.count===peak);
             return found ? (found.hour+':00') : '-';
         });
+        // 樂觀載入: NVR/MQTT/LPR 三者「未載入」(status='' / connected=null) 不算異常，
+        // 避免 dashboard 載入瞬間 reactive 還是初始值就閃紅誤報「服務異常」。
+        // 只有實際從 API 收到 offline / false 才算真異常。
         const systemAllHealthy=computed(()=>{
             return (dashboard.value?.offline_cameras||0)===0
-                && (frigateStatus?.status||'')==='online'
-                && (mqttStatus?.connected||false)
-                && (lprStatus?.status||'')==='online';
+                && (!frigateStatus?.status || frigateStatus.status==='online')
+                && (mqttStatus?.connected!==false)
+                && (!lprStatus?.status || lprStatus.status==='online');
         });
         const systemHealthSummary=computed(()=>{
             const down = [];
             if((dashboard.value?.offline_cameras||0)>0) down.push('攝影機');
-            if((frigateStatus?.status||'')!=='online') down.push('NVR');
-            if(!mqttStatus?.connected) down.push('MQTT');
-            if((lprStatus?.status||'')!=='online') down.push('LPR');
+            const fs=frigateStatus?.status; if(fs && fs!=='online') down.push('NVR');
+            const mc=mqttStatus?.connected; if(mc===false) down.push('MQTT');
+            const ls=lprStatus?.status; if(ls && ls!=='online') down.push('LPR');
             if(down.length===0) return '全部正常';
             return down.length+' 服務異常';
         });
@@ -10920,7 +10923,7 @@ const app=createApp({
         };
         const scheduleDragging=ref(false);
         const schedulePaintValue=ref(true);
-        const frigateStatus=reactive({status:"offline",version:"",cameras:[],detectors:{}});
+        const frigateStatus=reactive({status:"",version:"",cameras:[],detectors:{}});
         const resetFrigateStatus=()=>{
             Object.assign(frigateStatus,{status:"offline",version:"",uptime:0,cameras:[],detectors:{}});
         };
@@ -11187,7 +11190,7 @@ const app=createApp({
         const frigateCameraForm=reactive({name:'',rtsp_url:'',ip:'',port:'554',username:'admin',password:'',stream_path:'stream1',record:true,detect:true,snapshots:true});
         const eventClipDialog=reactive({visible:false, url:'', snapshotUrl:'', title:'', errorMsg:''});
         // MQTT state
-        const mqttStatus=reactive({connected:false, mode:'', stats:{sent:0,recv:0,errors:0}, error:''});
+        const mqttStatus=reactive({connected:null, mode:'', stats:{sent:0,recv:0,errors:0}, error:''});
         const mqttSettings=reactive({mode:'embedded', host:'localhost', port:1883, username:'', password:'', client_id:'traffic-api', base_topic:'traffic', subscribe_patterns:['traffic/#'], qos:0, retain:false});
         const mqttNewSub=ref('');
         const mqttSent=ref([]);
@@ -11314,7 +11317,7 @@ const app=createApp({
         const activeNvrMotionRoiPoints=computed(()=>nvrMotionRoiEditTarget.value==='include' ? nvrMotionRoiIncludePoints.value : nvrMotionRoiExcludePoints.value);
         const encodeRtspCredential=(v)=>{const s=String(v??'');try{return encodeURIComponent(decodeURIComponent(s));}catch(_){return encodeURIComponent(s);}};
         const frigateRtspUrl=computed(()=>{if(frigateCameraForm.rtsp_url)return frigateCameraForm.rtsp_url;if(!frigateCameraForm.ip)return 'rtsp://';let u='rtsp://';if(frigateCameraForm.username){u+=encodeRtspCredential(frigateCameraForm.username);if(frigateCameraForm.password)u+=':'+encodeRtspCredential(frigateCameraForm.password);u+='@';}u+=frigateCameraForm.ip;if(frigateCameraForm.port)u+=':'+frigateCameraForm.port;if(frigateCameraForm.stream_path)u+='/'+frigateCameraForm.stream_path;return u;});
-        const lprStatus=reactive({status:"offline",engine:"",gpu:false});
+        const lprStatus=reactive({status:"",engine:"",gpu:false});
         const lprFile=ref(null);
         const lprPreview=ref("");
         const lprLoading=ref(false);
@@ -12312,7 +12315,7 @@ const app=createApp({
             try{
                 if(shouldRefreshOverviewData()){
                     dashboard.value=await(await fetch('/api/dashboard')).json();
-                    const vItems=(await(await fetch('/api/violations?page_size=100')).json()).items||[];
+                    const vItems=(await(await fetch('/api/violations?page_size=30')).json()).items||[];
                     // 統計頁使用 loadStats 的完整資料，避免被背景刷新覆蓋
                     if(page.value!=='statistics'){
                         violations.value=vItems;
