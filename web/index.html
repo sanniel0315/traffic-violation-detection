@@ -15812,7 +15812,8 @@ const app=createApp({
             // 等 Vue render 完 DOM 後 init sidebar UX
             setTimeout(initSidebarUX, 100);
             setInterval(()=>{
-                currentTime.value=new Date().toLocaleString('zh-TW');
+                // 固定 format「2026/05/31 11:50:00」(19 字元) 讓 slice(11,16) 永遠等於 "HH:MM"
+                currentTime.value=new Date().toLocaleString('zh-TW',{hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
                 statsNowMs.value=Date.now();
             },1000);
             if(!ok)return;
