@@ -979,7 +979,7 @@
             color: var(--gov-text);
         }
         .ds-vrow-speed { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--gov-fault); font-weight: 700; white-space: nowrap; }
-        .ds-vrow-speed small { color: var(--gov-muted); font-weight: 500; font-size: 11px; }
+        .ds-vrow-speed small { color: var(--gov-muted); font-weight: 500; font-size: 11px; font-family: var(--font-sans); margin-left: 4px; letter-spacing: 0; }
         /* 超速倍數分級配色 (依 speed_kmh / speed_limit_kmh) */
         .ds-vrow-speed.sev-critical { color: #7a1f19; }  /* ≥2倍 深紅 */
         .ds-vrow-speed.sev-high     { color: var(--gov-fault); }  /* ≥1.5倍 紅 */
@@ -1004,6 +1004,18 @@
             width: 54px; height: 32px; border-radius: 4px; border: 1px dashed var(--gov-border);
             display: flex; align-items: center; justify-content: center;
             color: var(--gov-muted); font-size: 11px;
+        }
+        /* img 載入失敗 fallback: 避免顯示 alt 文字，改 dashed placeholder (跟列表字體協調) */
+        .ds-vrow-shot.shot-err img { display: none; }
+        .ds-vrow-shot.shot-err {
+            cursor: default; transform: none !important;
+            border-style: dashed; border-color: var(--gov-border); background: var(--gov-bg);
+            box-shadow: none !important;
+        }
+        .ds-vrow-shot.shot-err::after {
+            content: '—'; color: var(--gov-muted); font-size: 11px; font-family: var(--font-sans);
+            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            pointer-events: none;
         }
         .ds-vrow-plateimg img {
             width: 76px; height: 32px; object-fit: cover;
@@ -4723,7 +4735,7 @@
                             <div class="ds-vrow" v-for="v in recentViolations.slice(0,8)" :key="v.id" @click="showDetail(v)">
                                 <span class="ds-vrow-time">{{ (v.created_at||'').slice(11,16) }}</span>
                                 <a v-if="v.image_path" class="ds-vrow-shot" :href="v.image_path" target="_blank" rel="noopener" @click.stop="showDetail(v)" title="點擊看詳情 · hover 放大預覽">
-                                    <img :src="v.image_path" alt="違規截圖">
+                                    <img :src="v.image_path" alt="" @error="$event.target.parentNode.classList.add('shot-err')">
                                 </a>
                                 <span v-else class="ds-vrow-shot-empty">—</span>
                                 <span><el-tag size="small" :type="v.violation_type==='red_light'?'danger':(v.violation_type==='speeding'?'warning':'info')">{{ v.violation_name }}</el-tag></span>
