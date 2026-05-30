@@ -498,13 +498,24 @@ def visual_snapshot(camera_id: int):
         
         recognizer = get_recognizer()
         yolo = get_yolo()
-        cap = cv2.VideoCapture(resolve_analysis_source(camera))
-        
-        ret, frame = cap.read()
-        cap.release()
-        
-        if not ret:
-            raise HTTPException(status_code=500, detail="無法擷取畫面")
+        # 優先從 frigate latest.jpg 取 frame (繞過 cap.read 對 cam_6 SEGV、對 RTSP
+        # 等 keyframe 慢到 timeout 導致 visual snapshot 全失敗 → user 看到「LPR 無影像」)
+        frame = None
+        try:
+            import requests as _req
+            import numpy as _np
+            _r = _req.get(f"http://127.0.0.1:5000/api/cam_{camera_id}/latest.jpg", timeout=3)
+            if _r.status_code == 200 and _r.content:
+                frame = cv2.imdecode(_np.frombuffer(_r.content, dtype=_np.uint8), cv2.IMREAD_COLOR)
+        except Exception:
+            frame = None
+        if frame is None:
+            # fallback cap.read (非 frigate 管理的 camera)
+            cap = cv2.VideoCapture(resolve_analysis_source(camera))
+            ret, frame = cap.read()
+            cap.release()
+            if not ret:
+                raise HTTPException(status_code=500, detail="無法擷取畫面")
         
         detected = []
 
