@@ -4672,35 +4672,6 @@
                         </div>
                     </div>
 
-                    <!-- 系統健康橫排面板 (4 服務含細節) -->
-                    <div class="ds-card hoverable ds-health-panel">
-                        <div class="ds-health-summary" :class="{warn:!systemAllHealthy}">
-                            <span class="ds-health-dot"></span>
-                            <div>
-                                <div class="ds-health-state">{{ systemHealthSummary }}</div>
-                                <div class="ds-health-sub">4 項核心服務 · 即時監測</div>
-                            </div>
-                        </div>
-                        <div class="ds-health-svcs">
-                            <div class="ds-svc-item" :class="{down:(dashboard.offline_cameras||0)>0}">
-                                <span class="ds-svc-led"></span>
-                                <div><b>CAM</b><i>攝影機 {{ dashboard.online_cameras||0 }} / {{ dashboard.total_cameras||0 }} 線上</i></div>
-                            </div>
-                            <div class="ds-svc-item" :class="{down:frigateStatus.status && frigateStatus.status!=='online'}">
-                                <span class="ds-svc-led"></span>
-                                <div><b>NVR</b><i>{{ frigateStatus.status==='online' ? `Frigate · ${Math.floor((frigateStatus.uptime||0)/3600)}h uptime` : (frigateStatus.status?'未連線':'載入中…') }}</i></div>
-                            </div>
-                            <div class="ds-svc-item" :class="{down:mqttStatus.connected===false}">
-                                <span class="ds-svc-led"></span>
-                                <div><b>MQTT</b><i>{{ mqttStatus.connected===true ? `broker · 收${mqttStatus.stats?.recv||0} 發${mqttStatus.stats?.sent||0}` : (mqttStatus.connected===false?'未連線':'載入中…') }}</i></div>
-                            </div>
-                            <div class="ds-svc-item" :class="{down:lprStatus.status && lprStatus.status!=='online'}">
-                                <span class="ds-svc-led"></span>
-                                <div><b>LPR</b><i>{{ lprStatus.status==='online'?'辨識運作中':(lprStatus.status?'未運作':'載入中…') }}</i></div>
-                            </div>
-                        </div>
-                    </div>
-
                     <!-- Row 2: 24h trend (左 2/3) + Hourly breakdown (右 1/3) -->
                     <div class="ds-dashboard-row">
                         <div class="ds-card hoverable" style="padding:20px 22px">
@@ -4937,6 +4908,35 @@
                                 </div>
                             </div>
                             <div v-if="!cameras.length" style="padding:20px;text-align:center;color:#99a4b5">暫無攝影機</div>
+                        </div>
+                    </div>
+
+                    <!-- 服務即時監測 (移到最底，視覺化圖表優先) -->
+                    <div class="ds-card hoverable ds-health-panel">
+                        <div class="ds-health-summary" :class="{warn:!systemAllHealthy}">
+                            <span class="ds-health-dot"></span>
+                            <div>
+                                <div class="ds-health-state">{{ systemHealthSummary }}</div>
+                                <div class="ds-health-sub">4 項核心服務 · 即時監測</div>
+                            </div>
+                        </div>
+                        <div class="ds-health-svcs">
+                            <div class="ds-svc-item" :class="{down:(dashboard.offline_cameras||0)>0}">
+                                <span class="ds-svc-led"></span>
+                                <div><b>CAM</b><i>攝影機 {{ dashboard.online_cameras||0 }} / {{ dashboard.total_cameras||0 }} 線上</i></div>
+                            </div>
+                            <div class="ds-svc-item" :class="{down:frigateStatus.status && frigateStatus.status!=='online'}">
+                                <span class="ds-svc-led"></span>
+                                <div><b>NVR</b><i>{{ frigateStatus.status==='online' ? `Frigate · ${Math.floor((frigateStatus.uptime||0)/3600)}h uptime` : (frigateStatus.status?'未連線':'載入中…') }}</i></div>
+                            </div>
+                            <div class="ds-svc-item" :class="{down:mqttStatus.connected===false}">
+                                <span class="ds-svc-led"></span>
+                                <div><b>MQTT</b><i>{{ mqttStatus.connected===true ? `broker · 收${mqttStatus.stats?.recv||0} 發${mqttStatus.stats?.sent||0}` : (mqttStatus.connected===false?'未連線':'載入中…') }}</i></div>
+                            </div>
+                            <div class="ds-svc-item" :class="{down:lprStatus.status && lprStatus.status!=='online'}">
+                                <span class="ds-svc-led"></span>
+                                <div><b>LPR</b><i>{{ lprStatus.status==='online'?'辨識運作中':(lprStatus.status?'未運作':'載入中…') }}</i></div>
+                            </div>
                         </div>
                     </div>
                 </div>
