@@ -3259,12 +3259,32 @@
             color: var(--gov-primary); letter-spacing: .04em;
         }
         .detail-snapshot-media {
+            position: relative;
             flex: 1; min-height: 160px;
             display: flex; align-items: center; justify-content: center;
             background: #0f172a; border-radius: 4px; overflow: hidden;
         }
-        .detail-snapshot-media img {
+        .detail-snapshot-media > img:first-of-type {
             max-width: 100%; max-height: 240px; object-fit: contain;
+        }
+        /* 4 張各自的 plate crop overlay (左上，跟 LPR 偵測照片同位置) */
+        .detail-snapshot-plate-overlay {
+            position: absolute; top: 8px; left: 8px;
+            max-width: 50%; max-height: 56px;
+            background: #fff; border: 2px solid #fff;
+            border-radius: 4px; padding: 2px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.4);
+            object-fit: contain;
+            pointer-events: none;
+        }
+        /* 時間軸標籤 (右上) */
+        .detail-snapshot-time-badge {
+            position: absolute; top: 8px; right: 8px;
+            padding: 4px 10px; border-radius: 4px;
+            background: var(--gov-primary); color: #fff;
+            font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+            letter-spacing: .04em;
+            pointer-events: none;
         }
         /* 違規 row「照片」欄: 車牌裁切 + 場景兩張並排 (跟 LPR 歷史一致) */
         .vrow-thumbs { display: flex; gap: 6px; align-items: center; }
@@ -8282,20 +8302,31 @@
                         <img :src="plateSnapUrl(selected)" alt="車牌裁切" class="detail-plate-img">
                     </div>
                 </div>
-                <!-- 整合圖 (4 張時間軸 + 各 cell 車牌裁切 + 底部 info bar 拼成 1 張) -->
+                <!-- 4 張時間軸 (前/中/中/後) 各自含車牌裁切 overlay -->
                 <div class="detail-section">
                     <div class="detail-section-header">
-                        <span>事件整合圖（前 → 中 → 後 · 含車牌裁切）</span>
+                        <span>事件時間軸（前 → 中 → 後 · 每張左上含車牌裁切）</span>
                         <span style="display:flex;gap:8px;align-items:center">
                             <span v-if="selectedSnapshotsLoading" style="font-size:12px;color:var(--gov-muted)">載入中…</span>
                             <a v-if="selectedComposite" :href="selectedComposite" download
                                class="btn-primary" style="text-decoration:none;font-size:12px;padding:4px 12px;border-radius:4px">下載組合圖</a>
                         </span>
                     </div>
-                    <div class="detail-composite-wrap">
-                        <img v-if="selectedComposite" :src="selectedComposite" alt="事件整合圖" class="detail-composite-img">
-                        <div v-else-if="selectedSnapshotsLoading" class="detail-evidence-empty" style="padding:60px">抽圖 + 拼接中… (~2s)</div>
-                        <div v-else class="detail-evidence-empty" style="padding:60px">此事件無對應錄影段（過期或攝影機未錄）</div>
+                    <div class="detail-snapshot-grid">
+                        <div v-for="s in SNAPSHOT_LABELS" :key="s.tag" class="detail-snapshot-cell">
+                            <div class="detail-snapshot-media">
+                                <img v-if="selectedSnapshots[s.tag]" :src="selectedSnapshots[s.tag]" :alt="s.label">
+                                <div v-else-if="selectedSnapshotsLoading" class="detail-evidence-empty">抽圖中…</div>
+                                <div v-else class="detail-evidence-empty">無此時間點影像</div>
+                                <!-- 左上 overlay: 車牌裁切 (跟 LPR 偵測照片同位置) -->
+                                <img v-if="plateSnapUrl(selected) && selectedSnapshots[s.tag]"
+                                     :src="plateSnapUrl(selected)"
+                                     class="detail-snapshot-plate-overlay"
+                                     alt="車牌裁切">
+                                <!-- 右上 overlay: 時間標籤 -->
+                                <div v-if="selectedSnapshots[s.tag]" class="detail-snapshot-time-badge">{{ s.label }}</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <!-- 違規截圖 (annotated) + 事件錄影 -->
