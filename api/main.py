@@ -379,6 +379,16 @@ async def dashboard():
         oldest_pending_minutes = (int((now - _oldest[0]).total_seconds() / 60)
                                   if (_oldest and _oldest[0]) else None)
 
+        # 最近 1 小時違規分類 (LAST 1H 卡用) — 前端 hourlyStats 來源
+        one_hour_ago = now - timedelta(hours=1)
+        recent_hour_dist = [
+            {"key": k, "count": cnt}
+            for k, cnt in (db.query(Violation.violation_type, func.count(Violation.id))
+                             .filter(Violation.created_at >= one_hour_ago)
+                             .group_by(Violation.violation_type)
+                             .all())
+        ]
+
         return {
             "today_violations": today_v,
             "pending_review": pending,
@@ -396,6 +406,7 @@ async def dashboard():
             "yesterday_same_time_violations": yesterday_same_time,
             "yesterday_hourly_buckets": yesterday_hourly_buckets,
             "oldest_pending_minutes": oldest_pending_minutes,
+            "recent_hour_dist": recent_hour_dist,
         }
     finally:
         db.close()

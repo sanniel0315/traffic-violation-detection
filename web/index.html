@@ -9373,21 +9373,38 @@ const app=createApp({
         const monitorUpdatedAt=ref('');
         const monitorZoomVisible=ref(false);
         const monitorZoomCamera=ref(null);
-        const hourlyStats=ref({'闖紅燈':0,'超速':0,'違停':0});
+        // hourlyStats: 來源 = dashboard.recent_hour_dist (後端 /api/dashboard 計算最近 1h GROUP BY violation_type)
+        // type → 中文 label + 色號 mapping (gov design tokens)
+        const _VIOL_TYPE_META={
+            RED_LIGHT:{label:'闖紅燈', color:'var(--gov-fault)'},
+            SPEEDING:{label:'超速', color:'var(--gov-warn)'},
+            ILLEGAL_PARKING:{label:'違停', color:'var(--gov-primary)'},
+            SIDEWALK:{label:'人行道', color:'var(--gov-accent, #8b5cf6)'},
+        };
+        const hourlyStats=computed(()=>{
+            const out={};
+            (dashboard.value?.recent_hour_dist||[]).forEach(d=>{
+                const k=String(d?.key||'UNKNOWN');
+                out[k]=(out[k]||0)+(Number(d?.count)||0);
+            });
+            return out;
+        });
         const hourlyTotalCount=computed(()=>Object.values(hourlyStats.value||{}).reduce((a,b)=>a+(Number(b)||0),0));
         const hourlyStatsList=computed(()=>{
-            const colorMap={'闖紅燈':'var(--gov-fault)','超速':'var(--gov-warn)','違停':'var(--gov-primary)'};
             const total=hourlyTotalCount.value;
-            return Object.entries(hourlyStats.value||{}).map(([type,count])=>{
-                const c=Number(count)||0;
-                return {
-                    type,
-                    label:type,
-                    count:c,
-                    pct: total>0 ? Math.max(2, Math.round((c/total)*100)) : 0,
-                    color: colorMap[type] || 'var(--gov-primary)'
-                };
-            });
+            return Object.entries(hourlyStats.value||{})
+                .sort((a,b)=>(Number(b[1])||0)-(Number(a[1])||0))
+                .map(([type,count])=>{
+                    const c=Number(count)||0;
+                    const meta=_VIOL_TYPE_META[type]||{label:type, color:'var(--gov-muted)'};
+                    return {
+                        type,
+                        label: meta.label,
+                        count: c,
+                        pct: total>0 ? Math.max(2, Math.round((c/total)*100)) : 0,
+                        color: meta.color,
+                    };
+                });
         });
         // 24h 違規趨勢 mini chart (用 dashboard.hourly_buckets 或 fallback 空陣列)
         const dashboardTrend24h=computed(()=>{
