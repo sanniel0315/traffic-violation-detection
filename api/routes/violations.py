@@ -72,6 +72,37 @@ def _find_plate_crop_disk_path(v: Violation, db: Session) -> Optional[Path]:
         return None
 
 
+def _find_nearest_lpr_plate(v: Violation, db: Session) -> Optional[dict]:
+    """violation.license_plate 空時，從 LPR 同攝影機 ±2 分鐘最近一筆抓車牌號碼 + plate crop。
+    confidence >= 0.5 才信。回 {plate, plate_path}。"""
+    if not v.camera_id or not v.created_at:
+        return None
+    try:
+        from api.models import LPRRecord
+        from api.routes.lpr_stream import SNAPSHOT_DIR
+        lo = v.created_at - timedelta(minutes=2)
+        hi = v.created_at + timedelta(minutes=2)
+        rec = (db.query(LPRRecord)
+               .filter(LPRRecord.camera_id == int(v.camera_id))
+               .filter(LPRRecord.created_at >= lo, LPRRecord.created_at <= hi)
+               .filter(LPRRecord.plate_number.isnot(None))
+               .filter(LPRRecord.plate_number != "")
+               .filter(LPRRecord.confidence >= 0.5)
+               .order_by(LPRRecord.created_at.desc())
+               .first())
+        if not rec:
+            return None
+        out = {"plate": rec.plate_number, "plate_path": None}
+        if rec.snapshot:
+            pn = rec.snapshot.rsplit(".", 1)[0] + "_plate.png"
+            p = Path(SNAPSHOT_DIR) / pn
+            if p.exists():
+                out["plate_path"] = p
+        return out
+    except Exception:
+        return None
+
+
 def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], out_path: Path) -> bool:
     """拼 2x2 (4 張時間軸) + 各 cell 右下角 plate crop + 底部 info bar → 1 張 JPG。
     格子大小 960x540，總 1920x1180 (1080 + 100 info bar)。
@@ -401,8 +432,18 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
     # 一律找 plate crop (給 dialog overlay 用，跟前端 enrichPlateSnaps 機制獨立)
     plate_disk = _find_plate_crop_disk_path(v, db)
     plate_url = None
+    plate_number = v.license_plate or None
     if plate_disk and plate_disk.exists():
         plate_url = f"/api/lpr/stream/snapshot/{plate_disk.name}"
+    else:
+        # violation.license_plate 空 → fallback 同攝影機 ±2 分鐘最近 LPR
+        nearest = _find_nearest_lpr_plate(v, db)
+        if nearest:
+            plate_number = plate_number or nearest.get("plate")
+            np = nearest.get("plate_path")
+            if np and np.exists():
+                plate_disk = np
+                plate_url = f"/api/lpr/stream/snapshot/{np.name}"
 
     # 至少 1 張時間軸 frame 就拼 composite (缺的格子留深灰底，避免 frigate 末端 seek 失敗整個拿不到)
     composite_url = None
@@ -422,6 +463,7 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
         "snapshots": result,
         "composite": composite_url,
         "plate_url": plate_url,
+        "plate_number": plate_number,
         "violation_id": violation_id,
         "available": list(result.keys()),
         "violation_time": v.created_at.isoformat() if v.created_at else None,
