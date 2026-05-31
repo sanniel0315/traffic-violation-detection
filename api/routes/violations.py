@@ -104,11 +104,12 @@ def _find_nearest_lpr_plate(v: Violation, db: Session) -> Optional[dict]:
 
 
 def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], out_path: Path) -> bool:
-    """拼 2x2 (4 張時間軸) + 各 cell 右下角 plate crop + 底部 info bar → 1 張 JPG。
-    格子大小 960x540，總 1920x1180 (1080 + 100 info bar)。
-    缺的時間點 cell 維持深灰底 (frigate 末端 seek 失敗時 fallback)，至少有 1 張就拼。"""
+    """拼 2x2 (4 張時間軸) + 各 cell 左上角 plate crop → 1 張 JPG。
+    格子大小 960x540，總 1920x1080。
+    乾淨版: 不加時間標籤、不加底部 info bar (user 要求不要在截圖上標示)。
+    缺的時間點 cell 維持深灰底，至少有 1 張就拼。"""
     try:
-        from PIL import Image, ImageDraw
+        from PIL import Image
         cells = []
         any_loaded = False
         for tag, _ in _SNAPSHOT_OFFSETS:
@@ -121,19 +122,14 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
             cells.append(im)
         if not any_loaded:
             return False
-        canvas = Image.new("RGB", (1920, 1180), (15, 23, 42))
+        canvas = Image.new("RGB", (1920, 1080), (15, 23, 42))
         for i, im in enumerate(cells):
             cx = (i % 2) * 960
             cy = (i // 2) * 540
             if im is not None:
                 canvas.paste(im, (cx, cy))
-            # else 維持深灰底
 
-        draw = ImageDraw.Draw(canvas)
-        font_label = _find_unicode_font(30)
-        font_info = _find_unicode_font(40)
-
-        # plate crop 放左上 (跟 LPR 偵測照片同位置)；加大到 400x100
+        # 每張 cell 左上貼 plate crop (跟 LPR 偵測照片一致位置)；加大到 400x100
         plate_img = None
         if plate_disk and plate_disk.exists():
             try:
@@ -141,33 +137,14 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
                 plate_img.thumbnail((400, 100), Image.LANCZOS)
             except Exception:
                 plate_img = None
-        for i, (tag, _) in enumerate(_SNAPSHOT_OFFSETS):
-            cx = (i % 2) * 960
-            cy = (i // 2) * 540
-            # 左上: plate crop (跟 LPR 偵測照片一致位置)
-            if plate_img is not None:
-                pw, ph = plate_img.size
+        if plate_img is not None:
+            pw, ph = plate_img.size
+            for i in range(4):
+                cx = (i % 2) * 960
+                cy = (i // 2) * 540
                 bg = Image.new("RGB", (pw + 8, ph + 8), (255, 255, 255))
                 canvas.paste(bg, (cx + 10 - 4, cy + 10 - 4))
                 canvas.paste(plate_img, (cx + 10, cy + 10))
-            # 右上: 時間標籤
-            box_w = 260
-            box_h = 48
-            bx = cx + 960 - box_w - 10
-            by = cy + 10
-            draw.rectangle([bx, by, bx + box_w, by + box_h], fill=(11, 94, 168))
-            draw.text((bx + 16, by + 8), _SNAPSHOT_LABELS[tag],
-                      fill=(255, 255, 255), font=font_label)
-
-        draw.rectangle([0, 1080, 1920, 1180], fill=(11, 94, 168))
-        plate_text = v.license_plate or "-"
-        type_text = v.violation_name or v.violation_type or "違規"
-        speed_text = (f"{float(v.speed_kmh):.0f} km/h"
-                      if v.speed_kmh else "")
-        time_text = (v.created_at.strftime("%Y/%m/%d %H:%M:%S")
-                     if v.created_at else "")
-        info = f"  車牌: {plate_text}    類型: {type_text}    {speed_text}    時間: {time_text}"
-        draw.text((20, 1108), info, fill=(255, 255, 255), font=font_info)
 
         canvas.save(out_path, "JPEG", quality=85)
         return True
@@ -446,9 +423,10 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
                 plate_url = f"/api/lpr/stream/snapshot/{np.name}"
 
     # 至少 1 張時間軸 frame 就拼 composite (缺的格子留深灰底，避免 frigate 末端 seek 失敗整個拿不到)
+    # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
     composite_url = None
     if len(result) >= 1:
-        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite.jpg"
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v2.jpg"
         last_count_attr = f"_last_count_{violation_id}"
         prev_count = getattr(_build_composite_image, last_count_attr, 0)
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
