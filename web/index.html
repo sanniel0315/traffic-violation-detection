@@ -5098,10 +5098,10 @@
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>點位</span>
-                                    <el-select v-model="filters.location" placeholder="點位" size="small" style="width:150px" clearable popper-class="stats-select-popper">
-                                        <el-option label="全部" value=""/>
-                                        <el-option v-for="loc in locations" :key="loc" :label="loc" :value="loc"/>
-                                    </el-select>
+                                    <select v-model="filters.location" class="stats-native-select" style="width:150px">
+                                        <option value="">全部點位</option>
+                                        <option v-for="loc in locations" :key="loc" :value="loc">{{ loc }}</option>
+                                    </select>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>攝影機</span>
@@ -5114,24 +5114,24 @@
                             <div style="display:flex;gap:16px;align-items:center">
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>違規種類</span>
-                                    <el-select v-model="filters.type" placeholder="違規種類" size="small" style="width:150px" clearable popper-class="stats-select-popper">
-                                        <el-option label="全部" value=""/>
-                                        <el-option label="闖紅燈" value="RED_LIGHT"/>
-                                        <el-option label="超速" value="SPEEDING"/>
-                                        <el-option label="違規停車" value="ILLEGAL_PARKING"/>
-                                        <el-option label="駕車行駛人行道或騎樓" value="SIDEWALK"/>
-                                    </el-select>
+                                    <select v-model="filters.type" class="stats-native-select" style="width:170px">
+                                        <option value="">全部違規種類</option>
+                                        <option value="RED_LIGHT">闖紅燈</option>
+                                        <option value="SPEEDING">超速</option>
+                                        <option value="ILLEGAL_PARKING">違規停車</option>
+                                        <option value="SIDEWALK">駕車行駛人行道或騎樓</option>
+                                    </select>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>開單結果</span>
-                                    <el-select v-model="filters.status" placeholder="開單結果" size="small" style="width:120px" clearable popper-class="stats-select-popper">
-                                        <el-option label="全部" value=""/>
-                                        <el-option label="未處理" value="pending"/>
-                                        <el-option label="已舉發" value="confirmed"/>
-                                        <el-option label="已製單" value="issued"/>
-                                        <el-option label="製單失敗" value="failed"/>
-                                        <el-option label="不舉發" value="rejected"/>
-                                    </el-select>
+                                    <select v-model="filters.status" class="stats-native-select" style="width:130px">
+                                        <option value="">全部結果</option>
+                                        <option value="pending">未處理</option>
+                                        <option value="confirmed">已舉發</option>
+                                        <option value="issued">已製單</option>
+                                        <option value="failed">製單失敗</option>
+                                        <option value="rejected">不舉發</option>
+                                    </select>
                                 </div>
                                 <el-button type="primary" @click="loadViolations">查詢</el-button>
                             </div>
@@ -5311,10 +5311,10 @@
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>點位</span>
-                                    <el-select v-model="reviewLocation" placeholder="點位" size="small" style="width:150px" clearable popper-class="stats-select-popper">
-                                        <el-option label="全部" value=""/>
-                                        <el-option v-for="loc in locations" :key="loc" :label="loc" :value="loc"/>
-                                    </el-select>
+                                    <select v-model="reviewLocation" class="stats-native-select" style="width:150px">
+                                        <option value="">全部點位</option>
+                                        <option v-for="loc in locations" :key="loc" :value="loc">{{ loc }}</option>
+                                    </select>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>攝影機</span>
@@ -5327,21 +5327,21 @@
                             <div style="display:flex;gap:16px;align-items:center">
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>違規種類</span>
-                                    <el-select v-model="reviewType" placeholder="違規種類" size="small" style="width:150px" clearable popper-class="stats-select-popper">
-                                        <el-option label="全部" value=""/>
-                                        <el-option label="闖紅燈" value="RED_LIGHT"/>
-                                        <el-option label="超速" value="SPEEDING"/>
-                                        <el-option label="違規停車" value="ILLEGAL_PARKING"/>
-                                        <el-option label="駕車行駛人行道或騎樓" value="SIDEWALK"/>
-                                    </el-select>
+                                    <select v-model="reviewType" class="stats-native-select" style="width:170px">
+                                        <option value="">全部違規種類</option>
+                                        <option value="RED_LIGHT">闖紅燈</option>
+                                        <option value="SPEEDING">超速</option>
+                                        <option value="ILLEGAL_PARKING">違規停車</option>
+                                        <option value="SIDEWALK">駕車行駛人行道或騎樓</option>
+                                    </select>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>開單結果</span>
-                                    <el-select v-model="reviewStatus" placeholder="開單結果" size="small" style="width:120px" popper-class="stats-select-popper">
-                                        <el-option label="未處理" value="pending"/>
-                                        <el-option label="已舉發" value="confirmed"/>
-                                        <el-option label="不舉發" value="rejected"/>
-                                    </el-select>
+                                    <select v-model="reviewStatus" class="stats-native-select" style="width:120px">
+                                        <option value="pending">未處理</option>
+                                        <option value="confirmed">已舉發</option>
+                                        <option value="rejected">不舉發</option>
+                                    </select>
                                 </div>
                                 <el-button type="primary" @click="loadPendingViolations">查詢</el-button>
                             </div>
@@ -6131,12 +6131,12 @@
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>違規種類</span>
-                                    <el-select v-model="repeatViolationType" placeholder="全部" size="small" style="width:150px" clearable popper-class="stats-select-popper">
-                                        <el-option label="全部" value=""/>
-                                        <el-option label="闖紅燈" value="RED_LIGHT"/>
-                                        <el-option label="超速" value="SPEEDING"/>
-                                        <el-option label="違規停車" value="ILLEGAL_PARKING"/>
-                                    </el-select>
+                                    <select v-model="repeatViolationType" class="stats-native-select" style="width:150px">
+                                        <option value="">全部</option>
+                                        <option value="RED_LIGHT">闖紅燈</option>
+                                        <option value="SPEEDING">超速</option>
+                                        <option value="ILLEGAL_PARKING">違規停車</option>
+                                    </select>
                                 </div>
                                 <el-button type="primary" @click="loadRepeatOffenders">分析</el-button>
                             </div>
