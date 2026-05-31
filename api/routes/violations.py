@@ -74,21 +74,29 @@ def _find_plate_crop_disk_path(v: Violation, db: Session) -> Optional[Path]:
 
 def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], out_path: Path) -> bool:
     """拼 2x2 (4 張時間軸) + 各 cell 右下角 plate crop + 底部 info bar → 1 張 JPG。
-    格子大小 960x540，總 1920x1180 (1080 + 100 info bar)。"""
+    格子大小 960x540，總 1920x1180 (1080 + 100 info bar)。
+    缺的時間點 cell 維持深灰底 (frigate 末端 seek 失敗時 fallback)，至少有 1 張就拼。"""
     try:
         from PIL import Image, ImageDraw
         cells = []
+        any_loaded = False
         for tag, _ in _SNAPSHOT_OFFSETS:
             p = _SNAPSHOT_CACHE_DIR / f"{vid}_{tag}.jpg"
-            if not (p.exists() and p.stat().st_size > 1024):
-                return False
-            im = Image.open(p).convert("RGB").resize((960, 540), Image.LANCZOS)
+            if p.exists() and p.stat().st_size > 1024:
+                im = Image.open(p).convert("RGB").resize((960, 540), Image.LANCZOS)
+                any_loaded = True
+            else:
+                im = None
             cells.append(im)
+        if not any_loaded:
+            return False
         canvas = Image.new("RGB", (1920, 1180), (15, 23, 42))
         for i, im in enumerate(cells):
             cx = (i % 2) * 960
             cy = (i // 2) * 540
-            canvas.paste(im, (cx, cy))
+            if im is not None:
+                canvas.paste(im, (cx, cy))
+            # else 維持深灰底
 
         plate_img = None
         if plate_disk and plate_disk.exists():
@@ -368,16 +376,16 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
         camera_name = f"cam_{int(v.camera_id)}"
         # violation_time 是 UTC datetime (DB stored as naive UTC via datetime.utcnow)
         ts_unix = int(calendar.timegm(v.created_at.utctimetuple()))
-        # 抓 clip ±3s (含緩衝)
-        clip_bytes = _fetch_frigate_clip(camera_name, ts_unix - 3, ts_unix + 3)
+        # 抓 clip ±4s (端 8s)；±3s 末端 seek 容易抓不到 after (clip 還沒切到 ts+2s)
+        clip_bytes = _fetch_frigate_clip(camera_name, ts_unix - 4, ts_unix + 4)
         if clip_bytes:
             clip_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip.mp4"
             clip_path.write_bytes(clip_bytes)
             for tag, offset in _SNAPSHOT_OFFSETS:
                 if tag not in need_fetch:
                     continue
-                # clip 從 ts-3 開始, 所以 t 在 clip 內的 seek = 3 + offset
-                seek = 3.0 + offset
+                # clip 從 ts-4 開始, t 在 clip 內 seek = 4 + offset (2, 3.5, 4.5, 6 → 都在中段)
+                seek = 4.0 + offset
                 _extract_frame_with_ffmpeg(clip_path, seek, cached[tag])
             try:
                 clip_path.unlink(missing_ok=True)
@@ -390,13 +398,18 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
         if p.exists() and p.stat().st_size > 1024:
             result[tag] = f"/files/violations/snapshots/{p.name}"
 
-    # 4 張齊全時，組合成 1 張整合圖 (2x2 + 每 cell 右下角 plate crop + 底部 info bar)
+    # 至少 1 張時間軸 frame 就拼 composite (缺的格子留深灰底，避免 frigate 末端 seek 失敗整個拿不到)
     composite_url = None
-    if len(result) == 4:
+    if len(result) >= 1:
         composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite.jpg"
-        if not (composite_path.exists() and composite_path.stat().st_size > 1024):
+        last_count_attr = f"_last_count_{violation_id}"
+        prev_count = getattr(_build_composite_image, last_count_attr, 0)
+        existing = composite_path.exists() and composite_path.stat().st_size > 1024
+        # 重建條件: 不存在 OR 新 frame 數比上次多 (有抽到新時間點)
+        if not existing or len(result) > prev_count:
             plate_disk = _find_plate_crop_disk_path(v, db)
-            _build_composite_image(violation_id, v, plate_disk, composite_path)
+            if _build_composite_image(violation_id, v, plate_disk, composite_path):
+                setattr(_build_composite_image, last_count_attr, len(result))
         if composite_path.exists() and composite_path.stat().st_size > 1024:
             composite_url = f"/files/violations/snapshots/{composite_path.name}"
 
