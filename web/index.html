@@ -3225,7 +3225,14 @@
             letter-spacing: 0.04em;
             border-bottom-width: 1px;
         }
-        .thumbnail { width: 80px; height: 50px; object-fit: cover; border-radius: 4px; }
+        .thumbnail { width: 80px; height: 50px; object-fit: cover; border-radius: 4px; cursor: pointer; }
+        /* 違規 row「照片」欄: 車牌裁切 + 場景兩張並排 (跟 LPR 歷史一致) */
+        .vrow-thumbs { display: flex; gap: 6px; align-items: center; }
+        .thumbnail--plate {
+            width: 96px; height: 30px; object-fit: contain;
+            background: #0f172a; border: 1px solid var(--gov-border);
+            border-radius: 4px; padding: 2px;
+        }
         .filter-bar { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; padding: 16px; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         
         /* 攝影機 */
@@ -5166,7 +5173,12 @@
                                         <td>{{ formatTime(v.end_time || v.created_at) }}</td>
                                         <td>{{ v.license_plate || '-' }}</td>
                                         <td>{{ v.violation_name }}</td>
-                                        <td><img v-if="v.image_path" :src="v.image_path" class="thumbnail" @click="showDetail(v)"></td>
+                                        <td>
+                                            <div class="vrow-thumbs" @click="showDetail(v)">
+                                                <img v-if="plateSnapUrl(v)" :src="plateSnapUrl(v)" class="thumbnail--plate" title="車牌裁切">
+                                                <img v-if="v.image_path" :src="v.image_path" class="thumbnail" title="違規場景">
+                                            </div>
+                                        </td>
                                         <td><el-button circle size="small" @click="showDetail(v)"><svg class="btn-icon"><use href="#i-eye"/></svg></el-button></td>
                                     </tr>
                                     <tr v-if="!violations.length">
@@ -5376,7 +5388,12 @@
                                         <td>{{ formatTime(v.end_time || v.created_at) }}</td>
                                         <td>{{ v.license_plate || '-' }}</td>
                                         <td>{{ v.violation_name }}</td>
-                                        <td><img v-if="v.image_path" :src="v.image_path" class="thumbnail" @click="showDetail(v)"></td>
+                                        <td>
+                                            <div class="vrow-thumbs" @click="showDetail(v)">
+                                                <img v-if="plateSnapUrl(v)" :src="plateSnapUrl(v)" class="thumbnail--plate" title="車牌裁切">
+                                                <img v-if="v.image_path" :src="v.image_path" class="thumbnail" title="違規場景">
+                                            </div>
+                                        </td>
                                         <td><el-button circle size="small" @click="showDetail(v)"><svg class="btn-icon"><use href="#i-eye"/></svg></el-button></td>
                                     </tr>
                                     <tr v-if="!pendingViolations.length">
@@ -12507,6 +12524,8 @@ const app=createApp({
                         violations.value=vItems;
                     }
                     recentViolations.value=vItems.slice(0,20);
+                    // 接 LPR 車牌裁切 (戰情室「今日違規明細」row 與兩個查詢頁同源)
+                    enrichPlateSnaps(vItems);
                 }
                 await syncFeatureStatus();
                 // 系統健康卡 (dashboard) 依賴 frigateStatus/mqttStatus/lprStatus，
@@ -14466,8 +14485,16 @@ const app=createApp({
             if(filters.type)u+=`&violation_type=${filters.type}`;
             if(filters.status)u+=`&status=${filters.status}`;
             violations.value=(await(await fetch(u)).json()).items||[];
+            // 接 LPR 車牌裁切圖 (跟 LPR 歷史一致): batch match plate+camera+time
+            enrichPlateSnaps(violations.value);
         };
-        const loadPendingViolations=async()=>{let u="/api/violations?status=pending&page_size=100";if(reviewPlate.value)u+=`&license_plate=${reviewPlate.value}`;if(reviewType.value)u+=`&violation_type=${reviewType.value}`;pendingViolations.value=(await(await fetch(u)).json()).items||[];};
+        const loadPendingViolations=async()=>{
+            let u="/api/violations?status=pending&page_size=100";
+            if(reviewPlate.value)u+=`&license_plate=${reviewPlate.value}`;
+            if(reviewType.value)u+=`&violation_type=${reviewType.value}`;
+            pendingViolations.value=(await(await fetch(u)).json()).items||[];
+            enrichPlateSnaps(pendingViolations.value);
+        };
         const openAnalysisPage=(targetPage)=>{
             page.value=targetPage;
             loadCameras();
