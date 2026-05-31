@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 """違規事件 API"""
+import calendar
+import os
+import subprocess
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
@@ -11,6 +15,12 @@ from api.models import get_db, Violation
 from api.routes.logs import add_log
 
 router = APIRouter(prefix="/api/violations", tags=["違規事件"])
+
+# 違規 4 張時間軸快照 cache dir (mount 在 /files/violations/snapshots/)
+_SNAPSHOT_CACHE_DIR = Path("./output/violations/snapshots").resolve()
+_SNAPSHOT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+# 4 張時間軸偏移 (秒)，相對 violation_time
+_SNAPSHOT_OFFSETS = [("before", -2.0), ("mid_a", -0.5), ("mid_b", 0.5), ("after", 2.0)]
 
 
 class ViolationCreate(BaseModel):
@@ -192,6 +202,85 @@ def repeat_offenders(
         for (p, cnt, fa, la, ft) in rows
     ]
     return {"items": items, "total": len(items)}
+
+
+def _fetch_frigate_clip(camera_name: str, start_unix: int, end_unix: int) -> Optional[bytes]:
+    """從 frigate 抓 mp4 clip bytes (失敗回 None)。"""
+    import requests as _rq
+    base_urls = ["http://127.0.0.1:5000", "http://frigate:5000"]
+    for base in base_urls:
+        try:
+            r = _rq.get(
+                f"{base}/api/{camera_name}/start/{start_unix}/end/{end_unix}/clip.mp4",
+                timeout=15,
+            )
+            if r.status_code == 200 and len(r.content) > 1024:
+                return r.content
+        except Exception:
+            continue
+    return None
+
+
+def _extract_frame_with_ffmpeg(clip_path: Path, seek_sec: float, out_path: Path) -> bool:
+    """ffmpeg seek to `seek_sec` in clip → 抽 1 frame 存 out_path。"""
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-ss", f"{seek_sec:.3f}", "-i", str(clip_path),
+             "-frames:v", "1", "-q:v", "3", str(out_path)],
+            capture_output=True, timeout=10, check=False,
+        )
+        return out_path.exists() and out_path.stat().st_size > 1024
+    except Exception:
+        return False
+
+
+@router.get("/{violation_id}/snapshots")
+def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
+    """違規 4 張時間軸快照 (前/中/中/後): 從 frigate clip 用 ffmpeg 抽 ±2s/±0.5s 共 4 frame，
+    存 ./output/violations/snapshots/{id}_{tag}.jpg，回 /files/... URL。
+    Cache：4 張都已存在直接回。第一次 fetch 抓 frigate clip ~1-2s。"""
+    v = db.query(Violation).filter(Violation.id == violation_id).first()
+    if not v:
+        raise HTTPException(status_code=404, detail="violation not found")
+    if not v.created_at or not v.camera_id:
+        return {"snapshots": {}, "violation_id": violation_id, "reason": "missing time/camera"}
+
+    # check cache 是否齊全
+    cached = {tag: (_SNAPSHOT_CACHE_DIR / f"{violation_id}_{tag}.jpg") for tag, _ in _SNAPSHOT_OFFSETS}
+    need_fetch = [tag for tag, p in cached.items() if not (p.exists() and p.stat().st_size > 1024)]
+
+    if need_fetch:
+        # frigate camera name 慣例 = f"cam_{camera_id}"
+        camera_name = f"cam_{int(v.camera_id)}"
+        # violation_time 是 UTC datetime (DB stored as naive UTC via datetime.utcnow)
+        ts_unix = int(calendar.timegm(v.created_at.utctimetuple()))
+        # 抓 clip ±3s (含緩衝)
+        clip_bytes = _fetch_frigate_clip(camera_name, ts_unix - 3, ts_unix + 3)
+        if clip_bytes:
+            clip_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip.mp4"
+            clip_path.write_bytes(clip_bytes)
+            for tag, offset in _SNAPSHOT_OFFSETS:
+                if tag not in need_fetch:
+                    continue
+                # clip 從 ts-3 開始, 所以 t 在 clip 內的 seek = 3 + offset
+                seek = 3.0 + offset
+                _extract_frame_with_ffmpeg(clip_path, seek, cached[tag])
+            try:
+                clip_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    result = {}
+    for tag, _ in _SNAPSHOT_OFFSETS:
+        p = cached[tag]
+        if p.exists() and p.stat().st_size > 1024:
+            result[tag] = f"/files/violations/snapshots/{p.name}"
+    return {
+        "snapshots": result,
+        "violation_id": violation_id,
+        "available": list(result.keys()),
+        "violation_time": v.created_at.isoformat() if v.created_at else None,
+    }
 
 
 @router.get("/{violation_id}")

@@ -3226,6 +3226,36 @@
             border-bottom-width: 1px;
         }
         .thumbnail { width: 80px; height: 50px; object-fit: cover; border-radius: 4px; cursor: pointer; }
+        /* 違規詳情: 車牌裁切大圖 + 4 張時間軸 grid */
+        .detail-plate-row { padding: 10px 16px 14px; border-bottom: 1px solid var(--gov-border); }
+        .detail-plate-wrap { display: flex; justify-content: center; }
+        .detail-plate-img {
+            max-width: 480px; max-height: 110px;
+            background: #0f172a; padding: 6px;
+            border: 1px solid var(--gov-border); border-radius: 6px;
+            object-fit: contain;
+        }
+        .detail-snapshot-grid {
+            display: grid; grid-template-columns: repeat(2, 1fr);
+            gap: 10px; padding: 12px 16px;
+        }
+        .detail-snapshot-cell {
+            display: flex; flex-direction: column; gap: 6px;
+            background: var(--gov-surface); border: 1px solid var(--gov-border);
+            border-radius: 6px; padding: 8px; min-height: 200px;
+        }
+        .detail-snapshot-label {
+            font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+            color: var(--gov-primary); letter-spacing: .04em;
+        }
+        .detail-snapshot-media {
+            flex: 1; min-height: 160px;
+            display: flex; align-items: center; justify-content: center;
+            background: #0f172a; border-radius: 4px; overflow: hidden;
+        }
+        .detail-snapshot-media img {
+            max-width: 100%; max-height: 240px; object-fit: contain;
+        }
         /* 違規 row「照片」欄: 車牌裁切 + 場景兩張並排 (跟 LPR 歷史一致) */
         .vrow-thumbs { display: flex; gap: 6px; align-items: center; }
         .thumbnail--plate {
@@ -8235,11 +8265,36 @@
                 <div class="detail-info-item"><span class="label">時間:</span><span class="value">{{ formatTime(selected.created_at) }}</span></div>
             </div>
             <div class="detail-body" style="display:flex;flex-direction:column;flex:1 1 auto;overflow-y:auto;min-height:0">
+                <!-- 車牌裁切大圖 (跟 LPR 歷史一致) -->
+                <div v-if="plateSnapUrl(selected)" class="detail-section detail-plate-row">
+                    <div class="detail-section-header"><span>車牌</span></div>
+                    <div class="detail-plate-wrap">
+                        <img :src="plateSnapUrl(selected)" alt="車牌裁切" class="detail-plate-img">
+                    </div>
+                </div>
+                <!-- 4 張時間軸 (前/中/中/後) -->
+                <div class="detail-section">
+                    <div class="detail-section-header">
+                        <span>事件時間軸（前 → 中 → 後）</span>
+                        <span v-if="selectedSnapshotsLoading" style="font-size:12px;color:var(--gov-muted)">載入中…</span>
+                    </div>
+                    <div class="detail-snapshot-grid">
+                        <div v-for="s in SNAPSHOT_LABELS" :key="s.tag" class="detail-snapshot-cell">
+                            <div class="detail-snapshot-label">{{ s.label }}</div>
+                            <div class="detail-snapshot-media">
+                                <img v-if="selectedSnapshots[s.tag]" :src="selectedSnapshots[s.tag]" :alt="s.label">
+                                <div v-else-if="selectedSnapshotsLoading" class="detail-evidence-empty">抽圖中…</div>
+                                <div v-else class="detail-evidence-empty">無此時間點影像</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 違規截圖 (annotated) + 事件錄影 -->
                 <div class="detail-section" style="border-right:none">
-                    <div class="detail-section-header"><span>違規影像（截圖 + 事件錄影）</span></div>
+                    <div class="detail-section-header"><span>違規截圖 + 事件錄影</span></div>
                     <div class="detail-evidence-grid">
                         <div class="detail-evidence-col">
-                            <div class="detail-evidence-label"><svg class="text-icon"><use href="#i-camera"/></svg> 違規截圖</div>
+                            <div class="detail-evidence-label"><svg class="text-icon"><use href="#i-camera"/></svg> 違規當下截圖</div>
                             <div class="detail-evidence-media">
                                 <img v-if="selected.image_path" :src="selected.image_path">
                                 <div v-else class="detail-evidence-empty">無截圖</div>
@@ -12360,6 +12415,15 @@ const app=createApp({
         const showDetailModal=ref(false);
         const selected=ref({});
         const selectedPhotos=ref([]);
+        // 違規 4 張時間軸快照 (前/中/中/後) — 來源 GET /api/violations/{id}/snapshots
+        const selectedSnapshots=ref({});  // {before, mid_a, mid_b, after} → URL
+        const selectedSnapshotsLoading=ref(false);
+        const SNAPSHOT_LABELS=[
+            {tag:'before', label:'事件前 (t-2s)'},
+            {tag:'mid_a',  label:'中段 (t-0.5s)'},
+            {tag:'mid_b',  label:'中段 (t+0.5s)'},
+            {tag:'after',  label:'事件後 (t+2s)'},
+        ];
         // 地點：違規本身無 location 時，fallback 用攝影機名稱
         const detailLocationText=computed(()=>{
             const v=selected.value||{};
@@ -15000,7 +15064,26 @@ const app=createApp({
             }
         };
         
-        const showDetail=(v)=>{selected.value=v;selectedPhotos.value=v.image_path?[{url:v.image_path,time:formatTime(v.created_at)}]:[];detailClipError.value=false;showDetailModal.value=true;};
+        const showDetail=async(v)=>{
+            selected.value=v;
+            selectedPhotos.value=v.image_path?[{url:v.image_path,time:formatTime(v.created_at)}]:[];
+            selectedSnapshots.value={};
+            detailClipError.value=false;
+            showDetailModal.value=true;
+            // 同步抓 4 張時間軸快照 (背景 fetch，dialog 先開)
+            if(v?.id){
+                selectedSnapshotsLoading.value=true;
+                try{
+                    const r=await fetch(`/api/violations/${v.id}/snapshots`);
+                    if(r.ok){
+                        const d=await r.json();
+                        selectedSnapshots.value=d.snapshots||{};
+                    }
+                }catch(_){}finally{
+                    selectedSnapshotsLoading.value=false;
+                }
+            }
+        };
         // 違規詳情對應的錄影 clip (事件時間 ±12 秒) — frigate camera 命名慣例 cam_{id}
         const detailClipUrl=computed(()=>{
             const v=selected.value;
@@ -16139,7 +16222,7 @@ const app=createApp({
         
         return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
-            showDetailModal,selected,selectedPhotos,detailLocationText,detailClipUrl,detailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
+            showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedSnapshotsLoading,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow};
