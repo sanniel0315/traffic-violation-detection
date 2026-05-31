@@ -3588,15 +3588,17 @@
         .el-message { z-index: 20000 !important; }
         .el-notification { z-index: 20000 !important; }
         .el-select-dropdown .el-select-dropdown__wrap { max-height: 320px !important; overflow-y: auto !important; }
-        /* 全面強制 el-select dropdown 全部 option 縱向顯示 — Element Plus 某些版本對
-           scrollbar / view / list 預設 flex/inline/height-limited 會把 options 擠成
-           單行或只顯示 1 個。用全域 !important 鎖死縱向顯示 + 給足夠空間 */
-        .el-select-dropdown { min-height: 0 !important; height: auto !important; }
+        /* 全面強制 el-select dropdown 全部 option 縱向顯示 — Element Plus 某些版本可能:
+           (1) virtual-scroll 用 transform 把 view 限制 visible items → 只顯示 1 個
+           (2) popper / scrollbar / view / list 預設 flex / inline / height-limited
+           用 !important 鎖死每層: 給高度、強制 block、取消 transform、縱向 stack */
+        .el-select__popper { max-height: 360px !important; }
+        .el-select-dropdown { max-height: 360px !important; min-height: 0 !important; height: auto !important; }
         .el-select-dropdown .el-scrollbar { max-height: 320px !important; height: auto !important; }
         .el-select-dropdown .el-scrollbar__wrap { max-height: 320px !important; height: auto !important; overflow-y: auto !important; overflow-x: hidden !important; }
-        .el-select-dropdown .el-scrollbar__view { display: block !important; height: auto !important; }
-        .el-select-dropdown .el-select-dropdown__list { display: block !important; padding: 4px 0 !important; height: auto !important; }
-        .el-select-dropdown__item { display: flex !important; align-items: center !important; height: 32px !important; line-height: 32px !important; padding: 0 16px !important; white-space: nowrap !important; }
+        .el-select-dropdown .el-scrollbar__view { display: block !important; height: auto !important; transform: none !important; }
+        .el-select-dropdown .el-select-dropdown__list { display: block !important; padding: 4px 0 !important; height: auto !important; min-height: 0 !important; }
+        .el-select-dropdown__item { display: block !important; height: 34px !important; line-height: 34px !important; padding: 0 16px !important; white-space: nowrap !important; box-sizing: border-box !important; cursor: pointer !important; }
         .stats-select-popper.el-popper { z-index: 6000 !important; }
         .stats-select-popper .el-select-dropdown__wrap { max-height: 360px !important; overflow-y: auto !important; }
         .stats-select-popper .el-scrollbar__view { display: block !important; }
