@@ -8294,31 +8294,6 @@
                         <img :src="plateSnapUrl(selected)" alt="車牌裁切" class="detail-plate-img">
                     </div>
                 </div>
-                <!-- 4 張時間軸 (前/中/中/後) 各自含車牌裁切 overlay -->
-                <div class="detail-section">
-                    <div class="detail-section-header">
-                        <span>事件時間軸（前 → 中 → 後 · 每張左上含車牌裁切）</span>
-                        <span style="display:flex;gap:8px;align-items:center">
-                            <span v-if="selectedSnapshotsLoading" style="font-size:12px;color:var(--gov-muted)">載入中…</span>
-                            <a v-if="selectedComposite" :href="selectedComposite" download
-                               class="btn-primary" style="text-decoration:none;font-size:12px;padding:4px 12px;border-radius:4px">下載組合圖</a>
-                        </span>
-                    </div>
-                    <div class="detail-snapshot-grid">
-                        <div v-for="s in SNAPSHOT_LABELS" :key="s.tag" class="detail-snapshot-cell">
-                            <div class="detail-snapshot-media">
-                                <img v-if="selectedSnapshots[s.tag]" :src="selectedSnapshots[s.tag]" :alt="s.label">
-                                <div v-else-if="selectedSnapshotsLoading" class="detail-evidence-empty">抽圖中…</div>
-                                <div v-else class="detail-evidence-empty">無此時間點影像</div>
-                                <!-- 左上 overlay: 車牌裁切 (用 backend /snapshots 直接回的 plate_url，不依賴前端 plateSnaps batch) -->
-                                <img v-if="selectedPlateUrl && selectedSnapshots[s.tag]"
-                                     :src="selectedPlateUrl"
-                                     class="detail-snapshot-plate-overlay"
-                                     alt="車牌裁切">
-                            </div>
-                        </div>
-                    </div>
-                </div>
                 <!-- 違規截圖 (組合圖取代原 annotated 單張) + 事件錄影 -->
                 <div class="detail-section" style="border-right:none">
                     <div class="detail-section-header">
