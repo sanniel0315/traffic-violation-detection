@@ -5098,7 +5098,7 @@
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>點位</span>
-                                    <el-select v-model="filters.location" placeholder="點位" size="small" style="width:150px" clearable>
+                                    <el-select v-model="filters.location" placeholder="點位" size="small" style="width:150px" clearable popper-class="stats-select-popper">
                                         <el-option label="全部" value=""/>
                                         <el-option v-for="loc in locations" :key="loc" :label="loc" :value="loc"/>
                                     </el-select>
@@ -5114,7 +5114,7 @@
                             <div style="display:flex;gap:16px;align-items:center">
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>違規種類</span>
-                                    <el-select v-model="filters.type" placeholder="違規種類" size="small" style="width:150px" clearable>
+                                    <el-select v-model="filters.type" placeholder="違規種類" size="small" style="width:150px" clearable popper-class="stats-select-popper">
                                         <el-option label="全部" value=""/>
                                         <el-option label="闖紅燈" value="RED_LIGHT"/>
                                         <el-option label="超速" value="SPEEDING"/>
@@ -5124,7 +5124,7 @@
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>開單結果</span>
-                                    <el-select v-model="filters.status" placeholder="開單結果" size="small" style="width:120px" clearable>
+                                    <el-select v-model="filters.status" placeholder="開單結果" size="small" style="width:120px" clearable popper-class="stats-select-popper">
                                         <el-option label="全部" value=""/>
                                         <el-option label="未處理" value="pending"/>
                                         <el-option label="已舉發" value="confirmed"/>
@@ -5311,7 +5311,7 @@
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>點位</span>
-                                    <el-select v-model="reviewLocation" placeholder="點位" size="small" style="width:150px" clearable>
+                                    <el-select v-model="reviewLocation" placeholder="點位" size="small" style="width:150px" clearable popper-class="stats-select-popper">
                                         <el-option label="全部" value=""/>
                                         <el-option v-for="loc in locations" :key="loc" :label="loc" :value="loc"/>
                                     </el-select>
@@ -5327,7 +5327,7 @@
                             <div style="display:flex;gap:16px;align-items:center">
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>違規種類</span>
-                                    <el-select v-model="reviewType" placeholder="違規種類" size="small" style="width:150px" clearable>
+                                    <el-select v-model="reviewType" placeholder="違規種類" size="small" style="width:150px" clearable popper-class="stats-select-popper">
                                         <el-option label="全部" value=""/>
                                         <el-option label="闖紅燈" value="RED_LIGHT"/>
                                         <el-option label="超速" value="SPEEDING"/>
@@ -5337,7 +5337,7 @@
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>開單結果</span>
-                                    <el-select v-model="reviewStatus" placeholder="開單結果" size="small" style="width:120px">
+                                    <el-select v-model="reviewStatus" placeholder="開單結果" size="small" style="width:120px" popper-class="stats-select-popper">
                                         <el-option label="未處理" value="pending"/>
                                         <el-option label="已舉發" value="confirmed"/>
                                         <el-option label="不舉發" value="rejected"/>
@@ -6131,7 +6131,7 @@
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>違規種類</span>
-                                    <el-select v-model="repeatViolationType" placeholder="全部" size="small" style="width:150px" clearable>
+                                    <el-select v-model="repeatViolationType" placeholder="全部" size="small" style="width:150px" clearable popper-class="stats-select-popper">
                                         <el-option label="全部" value=""/>
                                         <el-option label="闖紅燈" value="RED_LIGHT"/>
                                         <el-option label="超速" value="SPEEDING"/>
