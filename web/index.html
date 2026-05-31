@@ -15373,9 +15373,17 @@ const app=createApp({
             }
             return `/api/stream/${camera.id}/snapshot?t=${camera.thumbKey||Date.now()}`;
         };
+        // file source camera (/files/... 含 .mp4/.mkv) 不會「斷線」— 是本機檔，永久播放
+        const isFileSourceCamera=(camera)=>{
+            const s=String(camera?.source||'').trim();
+            return s.startsWith('/files/') || /\.(mp4|mkv|mov|avi)(\?.*)?$/i.test(s);
+        };
         const handleThumbLoad=(c,e)=>{c.snapshotError=false;c.lastGoodSnapshot=e?.target?.currentSrc||c.lastGoodSnapshot;c.listVideoFailed=false;};
         const handleThumbError=(c,e)=>{
-            c.snapshotError=true;
+            // file source 不會「斷」(本機檔)，snapshot 暫時抓不到是 worker 還沒啟或 cv2 transient — 不顯示斷線 UI
+            if(!isFileSourceCamera(c)){
+                c.snapshotError=true;
+            }
             if(isCameraListVideo(c)){
                 c.listVideoFailed=true;
                 c.thumbKey=Date.now();
