@@ -21,6 +21,120 @@ _SNAPSHOT_CACHE_DIR = Path("./output/violations/snapshots").resolve()
 _SNAPSHOT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 # 4 張時間軸偏移 (秒)，相對 violation_time
 _SNAPSHOT_OFFSETS = [("before", -2.0), ("mid_a", -0.5), ("mid_b", 0.5), ("after", 2.0)]
+_SNAPSHOT_LABELS = {"before": "事件前 t-2s", "mid_a": "中段 t-0.5s",
+                    "mid_b": "中段 t+0.5s", "after": "事件後 t+2s"}
+
+
+def _find_unicode_font(size: int):
+    """跨平台找中文字體 (PIL ImageFont)，找不到 fall back default。"""
+    from PIL import ImageFont
+    candidates = [
+        "/workspace/web/fonts/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ]
+    for fp in candidates:
+        try:
+            if os.path.exists(fp):
+                return ImageFont.truetype(fp, size)
+        except Exception:
+            continue
+    try:
+        return ImageFont.load_default()
+    except Exception:
+        return None
+
+
+def _find_plate_crop_disk_path(v: Violation, db: Session) -> Optional[Path]:
+    """違規 → LPRRecord 配對 → 推算 plate crop disk path。
+    跟前端 /match-plate-snapshots 同邏輯: plate_number + camera_id + ±10min。"""
+    if not v.license_plate or not v.camera_id or not v.created_at:
+        return None
+    try:
+        from api.models import LPRRecord
+        from api.routes.lpr_stream import SNAPSHOT_DIR
+        lo = v.created_at - timedelta(minutes=10)
+        hi = v.created_at + timedelta(minutes=10)
+        rec = (db.query(LPRRecord)
+               .filter(LPRRecord.plate_number == v.license_plate)
+               .filter(LPRRecord.camera_id == int(v.camera_id))
+               .filter(LPRRecord.created_at >= lo, LPRRecord.created_at <= hi)
+               .order_by(LPRRecord.created_at.desc())
+               .first())
+        if not rec or not rec.snapshot:
+            return None
+        plate_name = rec.snapshot.rsplit(".", 1)[0] + "_plate.png"
+        p = Path(SNAPSHOT_DIR) / plate_name
+        return p if p.exists() else None
+    except Exception:
+        return None
+
+
+def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], out_path: Path) -> bool:
+    """拼 2x2 (4 張時間軸) + 各 cell 右下角 plate crop + 底部 info bar → 1 張 JPG。
+    格子大小 960x540，總 1920x1180 (1080 + 100 info bar)。"""
+    try:
+        from PIL import Image, ImageDraw
+        cells = []
+        for tag, _ in _SNAPSHOT_OFFSETS:
+            p = _SNAPSHOT_CACHE_DIR / f"{vid}_{tag}.jpg"
+            if not (p.exists() and p.stat().st_size > 1024):
+                return False
+            im = Image.open(p).convert("RGB").resize((960, 540), Image.LANCZOS)
+            cells.append(im)
+        canvas = Image.new("RGB", (1920, 1180), (15, 23, 42))
+        for i, im in enumerate(cells):
+            cx = (i % 2) * 960
+            cy = (i // 2) * 540
+            canvas.paste(im, (cx, cy))
+
+        plate_img = None
+        if plate_disk and plate_disk.exists():
+            try:
+                plate_img = Image.open(plate_disk).convert("RGB")
+                plate_img.thumbnail((280, 70), Image.LANCZOS)
+            except Exception:
+                plate_img = None
+        if plate_img is not None:
+            pw, ph = plate_img.size
+            for i in range(4):
+                cx = (i % 2) * 960
+                cy = (i // 2) * 540
+                px = cx + 960 - pw - 16
+                py = cy + 540 - ph - 16
+                bg = Image.new("RGB", (pw + 6, ph + 6), (255, 255, 255))
+                canvas.paste(bg, (px - 3, py - 3))
+                canvas.paste(plate_img, (px, py))
+
+        draw = ImageDraw.Draw(canvas)
+        font_label = _find_unicode_font(34)
+        font_info = _find_unicode_font(40)
+
+        for i, (tag, _) in enumerate(_SNAPSHOT_OFFSETS):
+            cx = (i % 2) * 960
+            cy = (i // 2) * 540
+            draw.rectangle([cx + 10, cy + 10, cx + 290, cy + 62],
+                           fill=(11, 94, 168))
+            draw.text((cx + 24, cy + 18), _SNAPSHOT_LABELS[tag],
+                      fill=(255, 255, 255), font=font_label)
+
+        draw.rectangle([0, 1080, 1920, 1180], fill=(11, 94, 168))
+        plate_text = v.license_plate or "-"
+        type_text = v.violation_name or v.violation_type or "違規"
+        speed_text = (f"{float(v.speed_kmh):.0f} km/h"
+                      if v.speed_kmh else "")
+        time_text = (v.created_at.strftime("%Y/%m/%d %H:%M:%S")
+                     if v.created_at else "")
+        info = f"  車牌: {plate_text}    類型: {type_text}    {speed_text}    時間: {time_text}"
+        draw.text((20, 1108), info, fill=(255, 255, 255), font=font_info)
+
+        canvas.save(out_path, "JPEG", quality=85)
+        return True
+    except Exception as e:
+        print(f"⚠️ composite build failed for {vid}: {e}", flush=True)
+        return False
 
 
 class ViolationCreate(BaseModel):
@@ -275,8 +389,20 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
         p = cached[tag]
         if p.exists() and p.stat().st_size > 1024:
             result[tag] = f"/files/violations/snapshots/{p.name}"
+
+    # 4 張齊全時，組合成 1 張整合圖 (2x2 + 每 cell 右下角 plate crop + 底部 info bar)
+    composite_url = None
+    if len(result) == 4:
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite.jpg"
+        if not (composite_path.exists() and composite_path.stat().st_size > 1024):
+            plate_disk = _find_plate_crop_disk_path(v, db)
+            _build_composite_image(violation_id, v, plate_disk, composite_path)
+        if composite_path.exists() and composite_path.stat().st_size > 1024:
+            composite_url = f"/files/violations/snapshots/{composite_path.name}"
+
     return {
         "snapshots": result,
+        "composite": composite_url,
         "violation_id": violation_id,
         "available": list(result.keys()),
         "violation_time": v.created_at.isoformat() if v.created_at else None,
