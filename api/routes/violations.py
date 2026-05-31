@@ -398,6 +398,12 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
         if p.exists() and p.stat().st_size > 1024:
             result[tag] = f"/files/violations/snapshots/{p.name}"
 
+    # 一律找 plate crop (給 dialog overlay 用，跟前端 enrichPlateSnaps 機制獨立)
+    plate_disk = _find_plate_crop_disk_path(v, db)
+    plate_url = None
+    if plate_disk and plate_disk.exists():
+        plate_url = f"/api/lpr/stream/snapshot/{plate_disk.name}"
+
     # 至少 1 張時間軸 frame 就拼 composite (缺的格子留深灰底，避免 frigate 末端 seek 失敗整個拿不到)
     composite_url = None
     if len(result) >= 1:
@@ -407,7 +413,6 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
         # 重建條件: 不存在 OR 新 frame 數比上次多 (有抽到新時間點)
         if not existing or len(result) > prev_count:
-            plate_disk = _find_plate_crop_disk_path(v, db)
             if _build_composite_image(violation_id, v, plate_disk, composite_path):
                 setattr(_build_composite_image, last_count_attr, len(result))
         if composite_path.exists() and composite_path.stat().st_size > 1024:
@@ -416,6 +421,7 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
     return {
         "snapshots": result,
         "composite": composite_url,
+        "plate_url": plate_url,
         "violation_id": violation_id,
         "available": list(result.keys()),
         "violation_time": v.created_at.isoformat() if v.created_at else None,
