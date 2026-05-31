@@ -98,34 +98,34 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
                 canvas.paste(im, (cx, cy))
             # else 維持深灰底
 
+        draw = ImageDraw.Draw(canvas)
+        font_label = _find_unicode_font(30)
+        font_info = _find_unicode_font(40)
+
+        # plate crop 放左上 (跟 LPR 偵測照片同位置)；加大到 400x100
         plate_img = None
         if plate_disk and plate_disk.exists():
             try:
                 plate_img = Image.open(plate_disk).convert("RGB")
-                plate_img.thumbnail((280, 70), Image.LANCZOS)
+                plate_img.thumbnail((400, 100), Image.LANCZOS)
             except Exception:
                 plate_img = None
-        if plate_img is not None:
-            pw, ph = plate_img.size
-            for i in range(4):
-                cx = (i % 2) * 960
-                cy = (i // 2) * 540
-                px = cx + 960 - pw - 16
-                py = cy + 540 - ph - 16
-                bg = Image.new("RGB", (pw + 6, ph + 6), (255, 255, 255))
-                canvas.paste(bg, (px - 3, py - 3))
-                canvas.paste(plate_img, (px, py))
-
-        draw = ImageDraw.Draw(canvas)
-        font_label = _find_unicode_font(34)
-        font_info = _find_unicode_font(40)
-
         for i, (tag, _) in enumerate(_SNAPSHOT_OFFSETS):
             cx = (i % 2) * 960
             cy = (i // 2) * 540
-            draw.rectangle([cx + 10, cy + 10, cx + 290, cy + 62],
-                           fill=(11, 94, 168))
-            draw.text((cx + 24, cy + 18), _SNAPSHOT_LABELS[tag],
+            # 左上: plate crop (跟 LPR 偵測照片一致位置)
+            if plate_img is not None:
+                pw, ph = plate_img.size
+                bg = Image.new("RGB", (pw + 8, ph + 8), (255, 255, 255))
+                canvas.paste(bg, (cx + 10 - 4, cy + 10 - 4))
+                canvas.paste(plate_img, (cx + 10, cy + 10))
+            # 右上: 時間標籤
+            box_w = 260
+            box_h = 48
+            bx = cx + 960 - box_w - 10
+            by = cy + 10
+            draw.rectangle([bx, by, bx + box_w, by + box_h], fill=(11, 94, 168))
+            draw.text((bx + 16, by + 8), _SNAPSHOT_LABELS[tag],
                       fill=(255, 255, 255), font=font_label)
 
         draw.rectangle([0, 1080, 1920, 1180], fill=(11, 94, 168))
