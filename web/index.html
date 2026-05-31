@@ -15203,6 +15203,12 @@ const app=createApp({
                     analysis_nx_source:(cameraForm.source_mode==='http' && cameraForm.http_source_kind==='nx')?String(cameraForm.analysis_nx_source||'relay'):'',
                     analysis_nx_relay_format:(cameraForm.source_mode==='http' && cameraForm.http_source_kind==='nx' && String(cameraForm.analysis_nx_source||'relay')==='relay')?(String(cameraForm.analysis_nx_relay_format||'mpegts').toLowerCase()==='mp4'?'mp4':'mpegts'):'',
                 };
+                // form 輸入字串 → 後端 Optional[float]: 空字串/NaN 設 null
+                const _toFloatOrNull=(v)=>{
+                    if(v===''||v==null)return null;
+                    const n=Number(v);
+                    return isFinite(n)?n:null;
+                };
                 const d={
                     name,
                     source,
@@ -15212,6 +15218,8 @@ const app=createApp({
                     port:cameraForm.source_mode==='rtsp'?cameraForm.port:'',
                     stream_path:cameraForm.source_mode==='rtsp'?cameraForm.stream_path:'',
                     location:cameraForm.location,
+                    lat:_toFloatOrNull(cameraForm.lat),
+                    lng:_toFloatOrNull(cameraForm.lng),
                     enabled:!!cameraForm.enabled,
                     detection_config:detectionConfig,
                     zones:cameraForm.zones||[]
