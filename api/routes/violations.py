@@ -406,27 +406,27 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
         if p.exists() and p.stat().st_size > 1024:
             result[tag] = f"/files/violations/snapshots/{p.name}"
 
-    # 一律找 plate crop (給 dialog overlay 用，跟前端 enrichPlateSnaps 機制獨立)
+    # plate crop 嚴格用該違規本身車牌 (plate_number+camera+±10min)；
+    # 不 fallback 用同攝影機其他車的車牌避免「貼錯車」誤導
     plate_disk = _find_plate_crop_disk_path(v, db)
     plate_url = None
     plate_number = v.license_plate or None
     if plate_disk and plate_disk.exists():
         plate_url = f"/api/lpr/stream/snapshot/{plate_disk.name}"
     else:
-        # violation.license_plate 空 → fallback 同攝影機 ±2 分鐘最近 LPR
-        nearest = _find_nearest_lpr_plate(v, db)
-        if nearest:
-            plate_number = plate_number or nearest.get("plate")
-            np = nearest.get("plate_path")
-            if np and np.exists():
-                plate_disk = np
-                plate_url = f"/api/lpr/stream/snapshot/{np.name}"
+        # violation 沒車牌 → 不貼 plate crop (composite/dialog overlay 都不貼)
+        # 但 plate_number text 仍 fallback 同攝影機 ±2 分鐘最近 LPR 結果，給 dialog info 顯示
+        if not v.license_plate:
+            nearest = _find_nearest_lpr_plate(v, db)
+            if nearest:
+                plate_number = nearest.get("plate")
+        # plate_disk 維持 None → composite / overlay 不貼
 
     # 至少 1 張時間軸 frame 就拼 composite (缺的格子留深灰底，避免 frigate 末端 seek 失敗整個拿不到)
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
     composite_url = None
     if len(result) >= 1:
-        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v2.jpg"
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v3.jpg"
         last_count_attr = f"_last_count_{violation_id}"
         prev_count = getattr(_build_composite_image, last_count_attr, 0)
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
