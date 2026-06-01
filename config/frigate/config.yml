@@ -127,7 +127,7 @@ cameras:
     enabled: true
     ffmpeg:
       inputs:
-      - path: rtsp://127.0.0.1:8554/cam_3
+      - path: rtsp://admin:1qaz%40WSX@111.70.34.184:6554/profile2/media.smp
         roles:
         - record
     motion:
@@ -244,7 +244,7 @@ cameras:
     enabled: true
     ffmpeg:
       inputs:
-      - path: rtsp://127.0.0.1:8554/cam_6
+      - path: rtsp://admin:1qaz%40WSX@111.70.34.184:7554/profile2/media.smp
         roles:
         - record
         - detect
