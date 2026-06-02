@@ -7330,7 +7330,7 @@
                                 <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
                                     <select v-model="lprCameraId" class="stats-native-select" style="width:220px">
                                         <option :value="null">選擇攝影機</option>
-                                        <option v-for="c in lprCameraOptions" :key="'lpr-cam-'+c.id" :value="String(c.id)">{{ c.name }}</option>
+                                        <option v-for="c in lprCameraOptions" :key="'lpr-cam-'+c.id" :value="String(c.id)" :disabled="c.disabled">{{ c.name }}</option>
                                     </select>
                                     <el-button type="success" :loading="lprStartLoading[lprCameraId]===true" @click="startLprStream" :disabled="!lprCameraId || lprStreamRunning || lprStartLoading[lprCameraId]===true">
                                         ▶ 開始辨識
@@ -11632,6 +11632,11 @@ const app=createApp({
         const lprHistoryTotal=ref(0);
         const lprHistoryCameraCatalog=ref([]);
         const lprCameraOptions=computed(()=>{
+            // enabled map from cameras (DB authoritative)
+            const enabledMap=new Map();
+            (cameras.value||[]).forEach(c=>{
+                enabledMap.set(Number(c?.id||0), !!c?.enabled);
+            });
             const seen=new Map();
             (lprHistoryCameraCatalog.value||[]).forEach(c=>{
                 const id=Number(c?.id||0);
@@ -11645,7 +11650,15 @@ const app=createApp({
             if(selectedId>0 && !seen.has(selectedId)){
                 seen.set(selectedId,{id:selectedId,name:`攝影機 ${selectedId}`});
             }
-            return Array.from(seen.values()).sort((a,b)=>a.id-b.id);
+            // 標記 disabled cam: name 加「(已關閉)」suffix + disabled flag
+            return Array.from(seen.values()).map(o=>{
+                const en=enabledMap.has(o.id)?enabledMap.get(o.id):true;
+                return {
+                    id:o.id,
+                    name: en ? o.name : `${o.name}（已關閉）`,
+                    disabled: !en,
+                };
+            }).sort((a,b)=>a.id-b.id);
         });
         const lprHistoryCameraOptions=computed(()=>{
             const seen=new Map();
