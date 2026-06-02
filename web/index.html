@@ -8275,7 +8275,7 @@
             <div class="detail-info">
                 <div class="detail-info-item"><span class="label">地點:</span><span class="value">{{ detailLocationText }}</span></div>
                 <div class="detail-info-item"><span class="label">類型:</span><el-tag :type="getTagType(selected.violation_type)">{{ selected.violation_name }}</el-tag></div>
-                <div class="detail-info-item"><span class="label">車種:</span><span class="value">{{ vehicleTypeZh[selected.vehicle_type] || selected.vehicle_type || '—' }}</span></div>
+                <div class="detail-info-item"><span class="label">車種:</span><span class="value">{{ selected.vehicle_type ? vehicleTypeZh(selected.vehicle_type) : '—' }}</span></div>
                 <div class="detail-info-item"><span class="label">車牌:</span><span class="value" style="color:#0d6e9f;font-size:18px">{{ selected.license_plate || selectedPlateNumber || '—' }}</span></div>
                 <div class="detail-info-item"><span class="label">時間:</span><span class="value">{{ formatTime(selected.created_at) }}</span></div>
             </div>
