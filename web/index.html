@@ -1153,17 +1153,6 @@
             border-radius: 3px;
             text-transform: uppercase;
         }
-        /* LPR 卡片角落貼車牌裁切 (從 _plate.png 拿) */
-        .lpr-rec-plate-overlay {
-            position: absolute; right: 6px; top: 6px;
-            max-width: 70%; max-height: 36px;
-            background: #fff;
-            border: 1.5px solid #fff;
-            border-radius: 3px;
-            box-shadow: 0 1px 4px rgba(0,0,0,.5);
-            object-fit: contain;
-            pointer-events: none;
-        }
         .lpr-rec-body {
             padding: 10px 14px 12px;
             display: flex; flex-direction: column;
@@ -7451,9 +7440,6 @@
                                         <img v-if="h.snapshot" :src="'/api/lpr/stream/snapshot/'+h.snapshot" alt="">
                                         <div v-else class="lpr-rec-no-img"><svg class="text-icon"><use href="#i-camera"/></svg></div>
                                         <span class="lpr-rec-source-tag">{{ h.source || '串流' }}</span>
-                                        <!-- 車牌裁切 (從 scene 檔名推算 _plate.png) 疊在角落，找不到自動隱藏 -->
-                                        <img v-if="h.snapshot" :src="'/api/lpr/stream/snapshot/'+h.snapshot.replace(/\.[^.]+$/, '_plate.png')"
-                                             class="lpr-rec-plate-overlay" alt="" @error="$event.target.style.display='none'">
                                     </div>
                                     <div class="lpr-rec-body">
                                         <div class="lpr-rec-plate-row">
