@@ -365,16 +365,28 @@ def _fetch_frigate_clip(camera_name: str, start_unix: int, end_unix: int) -> Opt
 
 
 def _extract_frame_with_ffmpeg(clip_path: Path, seek_sec: float, out_path: Path) -> bool:
-    """ffmpeg seek to `seek_sec` in clip → 抽 1 frame 存 out_path。"""
-    try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-ss", f"{seek_sec:.3f}", "-i", str(clip_path),
-             "-frames:v", "1", "-q:v", "3", str(out_path)],
-            capture_output=True, timeout=10, check=False,
-        )
-        return out_path.exists() and out_path.stat().st_size > 1024
-    except Exception:
-        return False
+    """ffmpeg seek to `seek_sec` in clip → 抽 1 frame 存 out_path。
+    Robust 多策略: 1) accurate seek (-ss after -i) → 2) fast seek (-ss before -i) →
+    3) 容差 -0.3s fallback。前策略失敗 fall through 下一個。"""
+    def _try(seek: float, fast: bool) -> bool:
+        try:
+            if fast:
+                cmd = ["ffmpeg", "-y", "-ss", f"{seek:.3f}", "-i", str(clip_path),
+                       "-frames:v", "1", "-q:v", "3", str(out_path)]
+            else:
+                cmd = ["ffmpeg", "-y", "-i", str(clip_path),
+                       "-ss", f"{seek:.3f}", "-frames:v", "1", "-q:v", "3", str(out_path)]
+            subprocess.run(cmd, capture_output=True, timeout=10, check=False)
+            return out_path.exists() and out_path.stat().st_size > 1024
+        except Exception:
+            return False
+    if _try(seek_sec, fast=False):
+        return True
+    if _try(seek_sec, fast=True):
+        return True
+    if seek_sec > 0.3 and _try(seek_sec - 0.3, fast=True):
+        return True
+    return False
 
 
 @router.get("/{violation_id}/snapshots")
@@ -397,16 +409,16 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
         camera_name = f"cam_{int(v.camera_id)}"
         # violation_time 是 UTC datetime (DB stored as naive UTC via datetime.utcnow)
         ts_unix = int(calendar.timegm(v.created_at.utctimetuple()))
-        # 抓 clip ±4s (端 8s)；±3s 末端 seek 容易抓不到 after (clip 還沒切到 ts+2s)
-        clip_bytes = _fetch_frigate_clip(camera_name, ts_unix - 4, ts_unix + 4)
+        # 抓 clip ±6s (端 12s) — 用更大 buffer 避免末端 seek lost frame
+        clip_bytes = _fetch_frigate_clip(camera_name, ts_unix - 6, ts_unix + 6)
         if clip_bytes:
             clip_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip.mp4"
             clip_path.write_bytes(clip_bytes)
             for tag, offset in _SNAPSHOT_OFFSETS:
                 if tag not in need_fetch:
                     continue
-                # clip 從 ts-4 開始, t 在 clip 內 seek = 4 + offset (2, 3.5, 4.5, 6 → 都在中段)
-                seek = 4.0 + offset
+                # clip 從 ts-6 開始, seek = 6+offset (4, 5.5, 6.5, 8 → 全部在 clip 中段)
+                seek = 6.0 + offset
                 _extract_frame_with_ffmpeg(clip_path, seek, cached[tag])
             try:
                 clip_path.unlink(missing_ok=True)
