@@ -104,38 +104,33 @@ def _find_nearest_lpr_plate(v: Violation, db: Session) -> Optional[dict]:
 
 
 def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], out_path: Path) -> bool:
-    """拼 2x2 (4 張時間軸) + 每張 cell 右上角貼小張 LPR plate.png → 1 張 JPG (1920x1080)。
-    plate.png 是 LPR 真實裁切的車牌圖檔 (不是軟體 draw text)，貼在 scene 角落作標記。
-    plate_disk 為 None → 不貼 (該違規沒對應 LPR plate)。"""
+    """拼 2x2 (4 張時間軸) → 1 張高解析度 JPG (2560x1440 2K)。
+    每 cell 1280x720 (從 1920x1080 LANCZOS 一次 downscale，避免兩次縮放模糊)。
+    乾淨版: 不加時間標籤/info bar/plate overlay。
+    plate_disk 參數保留 (相容呼叫端) 但不使用 (LPR 跟 violation 不嚴格 1:1)。"""
     try:
         from PIL import Image
         cells = []
         any_loaded = False
+        cell_w, cell_h = 1280, 720
         for tag, _ in _SNAPSHOT_OFFSETS:
             p = _SNAPSHOT_CACHE_DIR / f"{vid}_{tag}.jpg"
             if p.exists() and p.stat().st_size > 1024:
-                im = Image.open(p).convert("RGB").resize((960, 540), Image.LANCZOS)
+                im = Image.open(p).convert("RGB").resize((cell_w, cell_h), Image.LANCZOS)
                 any_loaded = True
             else:
                 im = None
             cells.append(im)
         if not any_loaded:
             return False
-        canvas = Image.new("RGB", (1920, 1080), (15, 23, 42))
+        canvas = Image.new("RGB", (cell_w * 2, cell_h * 2), (15, 23, 42))
         for i, im in enumerate(cells):
-            cx = (i % 2) * 960
-            cy = (i // 2) * 540
+            cx = (i % 2) * cell_w
+            cy = (i // 2) * cell_h
             if im is not None:
                 canvas.paste(im, (cx, cy))
 
-        # ⚠️ 不貼 plate crop overlay: violation.license_plate 來自
-        # stream.py:2017 _latest_lpr_plate(camera_id, max_age_sec=20)
-        # = 同攝影機最近 20 秒 LPR 結果。可能是前一輛車的車牌，跟觸發違規那輛車對不到
-        # → composite 上貼會誤導舉發 (user 看到 Honda 車卻寫 Hyundai 車牌)。
-        # TODO: 要恢復需先改 detector 做嚴格 plate-vehicle association
-        # (e.g. plate detection on current frame vehicle bbox)。
-
-        canvas.save(out_path, "JPEG", quality=85)
+        canvas.save(out_path, "JPEG", quality=92, subsampling=0)
         return True
     except Exception as e:
         print(f"⚠️ composite build failed for {vid}: {e}", flush=True)
@@ -427,7 +422,7 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
     composite_url = None
     if len(result) >= 1:
-        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v8.jpg"
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v9.jpg"
         last_count_attr = f"_last_count_{violation_id}"
         prev_count = getattr(_build_composite_image, last_count_attr, 0)
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
