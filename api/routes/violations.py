@@ -128,8 +128,9 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
             if im is not None:
                 canvas.paste(im, (cx, cy))
 
-        # 每張 cell 左上角貼小張 plate.png (LPR 真實裁切) — 對齊 LPR 偵測照片樣式:
-        # 左上位置、黃色邊框 (#FFD700)、加大到 max 280x80
+        # 每張 cell 左上角貼小張 plate.png — 完全對齊 LPR pipeline _draw_plate_inset 樣式:
+        # 黑底 padding 8px + 純黃 (255,255,0) 細邊框 2px (LPR cv2 BGR 0,255,255)
+        from PIL import ImageDraw
         plate_img = None
         if plate_disk and plate_disk.exists():
             try:
@@ -139,17 +140,24 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
                 plate_img = None
         if plate_img is not None:
             pw, ph = plate_img.size
-            border_w = 6  # 黃框厚度
+            pad = 8        # 黑底 padding (跟 LPR cv2.rectangle 6px padding 對齊)
+            border_w = 2   # 黃框厚度 (LPR cv2 thickness=2)
+            draw = ImageDraw.Draw(canvas)
             for i in range(4):
                 cx = (i % 2) * 960
                 cy = (i // 2) * 540
-                # 左上角 (距邊 12px)
-                px = cx + 12
+                px = cx + 12  # 距 cell 邊 12px
                 py = cy + 12
-                # 黃色邊框 (LPR annotation 標準色)
-                bg = Image.new("RGB", (pw + border_w * 2, ph + border_w * 2), (255, 215, 0))
-                canvas.paste(bg, (px - border_w, py - border_w))
+                # 1. 黑底 padding (含 plate)
+                black_bg = Image.new("RGB", (pw + pad * 2, ph + pad * 2), (0, 0, 0))
+                canvas.paste(black_bg, (px - pad, py - pad))
+                # 2. plate 圖貼到黑底中央
                 canvas.paste(plate_img, (px, py))
+                # 3. 黃色細邊框 (緊貼 plate 邊)
+                draw.rectangle(
+                    [px - 1, py - 1, px + pw, py + ph],
+                    outline=(255, 255, 0), width=border_w
+                )
 
         canvas.save(out_path, "JPEG", quality=85)
         return True
@@ -431,7 +439,7 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
     composite_url = None
     if len(result) >= 1:
-        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v6.jpg"
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v7.jpg"
         last_count_attr = f"_last_count_{violation_id}"
         prev_count = getattr(_build_composite_image, last_count_attr, 0)
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
