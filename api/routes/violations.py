@@ -128,36 +128,12 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
             if im is not None:
                 canvas.paste(im, (cx, cy))
 
-        # 每張 cell 左上角貼小張 plate.png — 完全對齊 LPR pipeline _draw_plate_inset 樣式:
-        # 黑底 padding 8px + 純黃 (255,255,0) 細邊框 2px (LPR cv2 BGR 0,255,255)
-        from PIL import ImageDraw
-        plate_img = None
-        if plate_disk and plate_disk.exists():
-            try:
-                plate_img = Image.open(plate_disk).convert("RGB")
-                plate_img.thumbnail((280, 80), Image.LANCZOS)
-            except Exception:
-                plate_img = None
-        if plate_img is not None:
-            pw, ph = plate_img.size
-            pad = 8        # 黑底 padding (跟 LPR cv2.rectangle 6px padding 對齊)
-            border_w = 2   # 黃框厚度 (LPR cv2 thickness=2)
-            draw = ImageDraw.Draw(canvas)
-            for i in range(4):
-                cx = (i % 2) * 960
-                cy = (i // 2) * 540
-                px = cx + 12  # 距 cell 邊 12px
-                py = cy + 12
-                # 1. 黑底 padding (含 plate)
-                black_bg = Image.new("RGB", (pw + pad * 2, ph + pad * 2), (0, 0, 0))
-                canvas.paste(black_bg, (px - pad, py - pad))
-                # 2. plate 圖貼到黑底中央
-                canvas.paste(plate_img, (px, py))
-                # 3. 黃色細邊框 (緊貼 plate 邊)
-                draw.rectangle(
-                    [px - 1, py - 1, px + pw, py + ph],
-                    outline=(255, 255, 0), width=border_w
-                )
+        # ⚠️ 不貼 plate crop overlay: violation.license_plate 來自
+        # stream.py:2017 _latest_lpr_plate(camera_id, max_age_sec=20)
+        # = 同攝影機最近 20 秒 LPR 結果。可能是前一輛車的車牌，跟觸發違規那輛車對不到
+        # → composite 上貼會誤導舉發 (user 看到 Honda 車卻寫 Hyundai 車牌)。
+        # TODO: 要恢復需先改 detector 做嚴格 plate-vehicle association
+        # (e.g. plate detection on current frame vehicle bbox)。
 
         canvas.save(out_path, "JPEG", quality=85)
         return True
@@ -451,7 +427,7 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
     composite_url = None
     if len(result) >= 1:
-        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v7.jpg"
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v8.jpg"
         last_count_attr = f"_last_count_{violation_id}"
         prev_count = getattr(_build_composite_image, last_count_attr, 0)
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
