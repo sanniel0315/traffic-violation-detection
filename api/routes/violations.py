@@ -105,11 +105,11 @@ def _find_nearest_lpr_plate(v: Violation, db: Session) -> Optional[dict]:
 
 def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], out_path: Path) -> bool:
     """拼 2x2 (4 張時間軸) → 1 張高解析度 JPG (2560x1440 2K)。
-    每 cell 1280x720 (從 1920x1080 LANCZOS 一次 downscale，避免兩次縮放模糊)。
-    乾淨版: 不加時間標籤/info bar/plate overlay。
-    plate_disk 參數保留 (相容呼叫端) 但不使用 (LPR 跟 violation 不嚴格 1:1)。"""
+    每 cell 1280x720 (從 1920x1080 LANCZOS)，左上角貼 plate.png (LPR 真實裁切)。
+    plate_disk 嚴格用 violation.license_plate match (見 _find_plate_crop_disk_path)。
+    ⚠️ 已知限制: LPR 跟 violation 不 1:1，plate 可能是同攝影機附近時間其他車。"""
     try:
-        from PIL import Image
+        from PIL import Image, ImageDraw
         cells = []
         any_loaded = False
         cell_w, cell_h = 1280, 720
@@ -129,6 +129,33 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
             cy = (i // 2) * cell_h
             if im is not None:
                 canvas.paste(im, (cx, cy))
+
+        # 每張 cell 左上角貼 plate.png — LPR pipeline _draw_plate_inset 樣式:
+        # 黑底 padding + 純黃 (255,255,0) 細邊框 2px。cell 加大到 1280 → plate 也加大。
+        plate_img = None
+        if plate_disk and plate_disk.exists():
+            try:
+                plate_img = Image.open(plate_disk).convert("RGB")
+                plate_img.thumbnail((360, 100), Image.LANCZOS)
+            except Exception:
+                plate_img = None
+        if plate_img is not None:
+            pw, ph = plate_img.size
+            pad = 10
+            border_w = 3
+            draw = ImageDraw.Draw(canvas)
+            for i in range(4):
+                cx = (i % 2) * cell_w
+                cy = (i // 2) * cell_h
+                px = cx + 16
+                py = cy + 16
+                black_bg = Image.new("RGB", (pw + pad * 2, ph + pad * 2), (0, 0, 0))
+                canvas.paste(black_bg, (px - pad, py - pad))
+                canvas.paste(plate_img, (px, py))
+                draw.rectangle(
+                    [px - 2, py - 2, px + pw + 1, py + ph + 1],
+                    outline=(255, 255, 0), width=border_w
+                )
 
         canvas.save(out_path, "JPEG", quality=92, subsampling=0)
         return True
@@ -422,7 +449,7 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
     composite_url = None
     if len(result) >= 1:
-        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v9.jpg"
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v10.jpg"
         last_count_attr = f"_last_count_{violation_id}"
         prev_count = getattr(_build_composite_image, last_count_attr, 0)
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
