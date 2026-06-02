@@ -104,9 +104,9 @@ def _find_nearest_lpr_plate(v: Violation, db: Session) -> Optional[dict]:
 
 
 def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], out_path: Path) -> bool:
-    """拼 2x2 (4 張時間軸) → 1 張純圖 JPG (1920x1080)。
-    不加任何標籤、info bar、plate overlay — 純原始截圖組合，不在影像上「軟體另外打」。
-    plate_disk 參數保留 (相容呼叫端) 但不使用。"""
+    """拼 2x2 (4 張時間軸) + 每張 cell 右上角貼小張 LPR plate.png → 1 張 JPG (1920x1080)。
+    plate.png 是 LPR 真實裁切的車牌圖檔 (不是軟體 draw text)，貼在 scene 角落作標記。
+    plate_disk 為 None → 不貼 (該違規沒對應 LPR plate)。"""
     try:
         from PIL import Image
         cells = []
@@ -127,6 +127,26 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
             cy = (i // 2) * 540
             if im is not None:
                 canvas.paste(im, (cx, cy))
+
+        # 每張 cell 右上角貼小張 plate.png (LPR 真實裁切)，max 240x60，白邊框
+        plate_img = None
+        if plate_disk and plate_disk.exists():
+            try:
+                plate_img = Image.open(plate_disk).convert("RGB")
+                plate_img.thumbnail((240, 60), Image.LANCZOS)
+            except Exception:
+                plate_img = None
+        if plate_img is not None:
+            pw, ph = plate_img.size
+            for i in range(4):
+                cx = (i % 2) * 960
+                cy = (i // 2) * 540
+                # 右上角 (距邊 12px)
+                px = cx + 960 - pw - 12
+                py = cy + 12
+                bg = Image.new("RGB", (pw + 6, ph + 6), (255, 255, 255))
+                canvas.paste(bg, (px - 3, py - 3))
+                canvas.paste(plate_img, (px, py))
 
         canvas.save(out_path, "JPEG", quality=85)
         return True
@@ -408,7 +428,7 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
     composite_url = None
     if len(result) >= 1:
-        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v4.jpg"
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v5.jpg"
         last_count_attr = f"_last_count_{violation_id}"
         prev_count = getattr(_build_composite_image, last_count_attr, 0)
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
