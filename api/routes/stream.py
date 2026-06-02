@@ -38,6 +38,93 @@ detection_services: Dict[int, dict] = {}
 # detection 服務共享最新 frame 給 overlay（避免 NX 串流開第二條連線）
 _shared_frames: Dict[int, dict] = {}  # {camera_id: {"frame": ndarray, "ts": float}}
 
+# ---- 違規 4 frame ring buffer (方案 C 100% 命中) ----
+# 違規觸發時直接從 ring 撈 t-2s frame + 觸發當下 + timer 抓未來 t+0.5/t+2s
+# 取代 frigate clip + ffmpeg seek (容易 lost frame)
+import threading as _vbuf_threading
+from collections import deque as _vbuf_deque
+_violation_frame_ring: Dict[int, _vbuf_deque] = {}
+_VIOLATION_RING_MAXLEN = 30  # 30 frame @ ~10fps push = 3 秒 buffer (覆蓋 t-2s)
+_VIOLATION_PUSH_INTERVAL_SEC = 0.1  # 限 10 fps push 避免 IO 過量
+_violation_ring_lock = _vbuf_threading.Lock()
+_violation_last_push: Dict[int, float] = {}
+
+
+def _push_violation_ring(camera_id: int, frame):
+    """worker tick 呼叫，每 ~0.1s push 一張 frame (縮 1280x720) 進 ring buffer。"""
+    import time as _t
+    now = _t.time()
+    last = _violation_last_push.get(camera_id, 0.0)
+    if now - last < _VIOLATION_PUSH_INTERVAL_SEC:
+        return
+    _violation_last_push[camera_id] = now
+    try:
+        import cv2 as _cv2_local
+        h, w = frame.shape[:2]
+        if w > 1280:
+            scale = 1280.0 / float(w)
+            small = _cv2_local.resize(frame, (1280, int(h * scale)), interpolation=_cv2_local.INTER_AREA)
+        else:
+            small = frame.copy()
+        with _violation_ring_lock:
+            ring = _violation_frame_ring.get(camera_id)
+            if ring is None:
+                ring = _vbuf_deque(maxlen=_VIOLATION_RING_MAXLEN)
+                _violation_frame_ring[camera_id] = ring
+            ring.append((now, small))
+    except Exception:
+        pass
+
+
+def _save_violation_4frames_async(camera_id: int, violation_id: int, trigger_ts: float, current_frame):
+    """違規觸發後拿到 id 立刻 save 4 frame (before/mid_a/mid_b/after)。
+    - mid_a: 觸發當下 frame (100% 命中)
+    - before: 從 ring 撈 trigger_ts - 2.0s 最接近的 frame
+    - mid_b / after: schedule threading.Timer 在 0.6s / 2.1s 後從 ring 撈最新 frame"""
+    import time as _t
+    import cv2 as _cv2_local
+    from pathlib import Path as _Path
+    out_dir = _Path("./output/violations/snapshots").resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _write(tag: str, img):
+        if img is None:
+            return
+        try:
+            _cv2_local.imwrite(
+                str(out_dir / f"{violation_id}_{tag}.jpg"),
+                img,
+                [_cv2_local.IMWRITE_JPEG_QUALITY, 85],
+            )
+        except Exception:
+            pass
+
+    # mid_a: 當下 frame (100% 命中)
+    _write("mid_a", current_frame)
+
+    # before: 從 ring 撈 t-2s 最接近
+    with _violation_ring_lock:
+        ring_snapshot = list(_violation_frame_ring.get(camera_id, []))
+    if ring_snapshot:
+        target = trigger_ts - 2.0
+        best = min(ring_snapshot, key=lambda x: abs(x[0] - target))
+        if abs(best[0] - target) <= 1.5:
+            _write("before", best[1])
+
+    # mid_b / after: 排程 timer 從 ring 撈未來最新 frame
+    def _save_future(tag: str, wait: float):
+        try:
+            _t.sleep(wait)
+            with _violation_ring_lock:
+                latest_list = list(_violation_frame_ring.get(camera_id, []))
+            if latest_list:
+                _write(tag, latest_list[-1][1])
+        except Exception:
+            pass
+
+    _vbuf_threading.Thread(target=_save_future, args=("mid_b", 0.6), daemon=True).start()
+    _vbuf_threading.Thread(target=_save_future, args=("after", 2.1), daemon=True).start()
+
 # ---- P1 Homography helpers (per-zone calibration → real-meter speed) ----
 _zone_h_cache: Dict[str, tuple] = {}  # zone_id -> (H_matrix, ts)
 
@@ -2044,9 +2131,16 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         "speed_roi_hit": True,
                     }
                     try:
-                        requests.post("http://localhost:8000/api/violations", json=_data, timeout=5)
+                        _resp = requests.post("http://localhost:8000/api/violations", json=_data, timeout=5)
                         _plate_text = _plate or "NODATA(LPR)"
                         print(f"⚠️ real SPEEDING: {_plate_text} {_data['speed_kmh']}km/h (limit {_data['speed_limit_kmh']})")
+                        # 方案 C: 從 ring buffer save 4 frame (100% 命中，不靠 frigate clip)
+                        try:
+                            _vid = (_resp.json() or {}).get("id") if _resp.ok else None
+                            if _vid:
+                                _save_violation_4frames_async(camera_id, int(_vid), _now_t, frame)
+                        except Exception:
+                            pass
                     except Exception:
                         pass
 
@@ -2124,6 +2218,11 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             "detections": detections,
             "ts": cur_ts,
         }
+        # push 進違規 ring buffer (限 10fps + 縮圖 1280x720，方案 C 100% 命中 4 frame)
+        try:
+            _push_violation_ring(camera_id, infer_frame)
+        except Exception:
+            pass
         try:
             _post_q.put_nowait((infer_frame, list(detections), cur_ts))
         except _queue.Full:
