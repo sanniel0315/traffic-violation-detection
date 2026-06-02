@@ -51,7 +51,9 @@ _violation_last_push: Dict[int, float] = {}
 
 
 def _push_violation_ring(camera_id: int, frame):
-    """worker tick 呼叫，每 ~0.1s push 一張 frame (縮 1280x720) 進 ring buffer。"""
+    """worker tick 呼叫，每 ~0.1s push 一張原解析度 frame 進 ring buffer。
+    保留原 1920x1080 (不縮)，避免 composite 兩次 downscale 模糊。
+    RAM cost: 30 frame × 6MB ≈ 180MB / cam × 4 cam = 720MB (Jetson 64GB OK)。"""
     import time as _t
     now = _t.time()
     last = _violation_last_push.get(camera_id, 0.0)
@@ -59,19 +61,12 @@ def _push_violation_ring(camera_id: int, frame):
         return
     _violation_last_push[camera_id] = now
     try:
-        import cv2 as _cv2_local
-        h, w = frame.shape[:2]
-        if w > 1280:
-            scale = 1280.0 / float(w)
-            small = _cv2_local.resize(frame, (1280, int(h * scale)), interpolation=_cv2_local.INTER_AREA)
-        else:
-            small = frame.copy()
         with _violation_ring_lock:
             ring = _violation_frame_ring.get(camera_id)
             if ring is None:
                 ring = _vbuf_deque(maxlen=_VIOLATION_RING_MAXLEN)
                 _violation_frame_ring[camera_id] = ring
-            ring.append((now, small))
+            ring.append((now, frame.copy()))
     except Exception:
         pass
 
@@ -91,10 +86,11 @@ def _save_violation_4frames_async(camera_id: int, violation_id: int, trigger_ts:
         if img is None:
             return
         try:
+            # 提高 JPEG quality 85→92，避免 dialog 看模糊；單張 ~1.5-2MB OK
             _cv2_local.imwrite(
                 str(out_dir / f"{violation_id}_{tag}.jpg"),
                 img,
-                [_cv2_local.IMWRITE_JPEG_QUALITY, 85],
+                [_cv2_local.IMWRITE_JPEG_QUALITY, 92],
             )
         except Exception:
             pass
