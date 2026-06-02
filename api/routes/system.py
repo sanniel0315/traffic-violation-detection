@@ -695,21 +695,57 @@ def _get_temperatures():
     return temps
 
 
-def _get_disk_info():
-    """取得磁碟使用情況"""
+def _disk_stat(path: str) -> dict:
+    """單一 mount point 容量。失敗回 None。"""
     try:
-        stat = os.statvfs("/")
+        stat = os.statvfs(path)
         total = stat.f_blocks * stat.f_frsize
         free = stat.f_bfree * stat.f_frsize
         used = total - free
         return {
+            "path": path,
             "total_gb": round(total / (1024 ** 3), 1),
             "used_gb": round(used / (1024 ** 3), 1),
             "free_gb": round(free / (1024 ** 3), 1),
             "usage_percent": round(used / total * 100, 1) if total > 0 else 0,
         }
     except Exception:
-        return {"total_gb": 0, "used_gb": 0, "free_gb": 0, "usage_percent": 0}
+        return None
+
+
+def _get_disk_info():
+    """取得磁碟使用情況。主回根目錄 (eMMC)，volumes 揭露所有 >10GB 的實體 mount (含 NVMe)。"""
+    root = _disk_stat("/") or {"path": "/", "total_gb": 0, "used_gb": 0, "free_gb": 0, "usage_percent": 0}
+    volumes = []
+    seen_devs = set()
+    try:
+        with open("/proc/mounts", "r") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                dev, mnt, fstype = parts[0], parts[1], parts[2]
+                # 只看實體磁碟 (排除 tmpfs/proc/cgroup/overlay 等)
+                if fstype not in ("ext4", "ext3", "xfs", "btrfs", "ntfs", "exfat", "vfat", "f2fs"):
+                    continue
+                if not dev.startswith("/dev/"):
+                    continue
+                if dev in seen_devs:
+                    continue
+                seen_devs.add(dev)
+                info = _disk_stat(mnt)
+                if info and info["total_gb"] >= 10:
+                    info["device"] = dev
+                    info["fstype"] = fstype
+                    volumes.append(info)
+    except Exception:
+        pass
+    # 回相容欄位 (root 為主) + volumes (含 NVMe 等所有實體磁碟)
+    return {
+        **{k: v for k, v in root.items() if k != "path"},
+        "path": root.get("path", "/"),
+        "volumes": volumes,
+    }
 
 
 def _get_uptime():
