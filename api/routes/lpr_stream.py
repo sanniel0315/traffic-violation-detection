@@ -1793,15 +1793,11 @@ class LPRStreamTask:
             px1, py1, px2, py2 = [int(v) for v in plate_bbox]
             cv2.rectangle(snapshot, (px1, py1), (px2, py2), (0, 255, 255), 2)
             if plate_crop is not None and getattr(plate_crop, "size", 0) > 0:
-                # 存攤平+二值化的截圖（顯示用）
-                try:
-                    from recognition.plate_recognizer import PlateRecognizer
-                    _display_crop = PlateRecognizer.enhance_plate_static(plate_crop)
-                except Exception:
-                    _display_crop = plate_crop
+                # 存彩色原 plate_crop (顯示用，跟 LPR 偵測 frame 同樣彩色)。
+                # OCR pipeline 另外做 enhance/二值化，不受此處影響。
                 cv2.imwrite(
                     plate_snapshot_path,
-                    _display_crop,
+                    plate_crop,
                     [cv2.IMWRITE_PNG_COMPRESSION, 1],
                 )
                 saved_plate_snapshot = plate_snapshot_name
