@@ -498,19 +498,29 @@ def visual_snapshot(camera_id: int):
         
         recognizer = get_recognizer()
         yolo = get_yolo()
-        # 優先從 frigate latest.jpg 取 frame (繞過 cap.read 對 cam_6 SEGV、對 RTSP
-        # 等 keyframe 慢到 timeout 導致 visual snapshot 全失敗 → user 看到「LPR 無影像」)
+        # 取 frame fallback chain:
+        # 1. frigate latest.jpg (size > 80KB 才算真 frame，<80KB 是「No frames」placeholder)
+        # 2. go2rtc /api/frame.jpeg?src=cam_X (主動拉源)
+        # 3. cap.read RTSP (last resort)
         frame = None
+        import requests as _req
+        import numpy as _np
         try:
-            import requests as _req
-            import numpy as _np
             _r = _req.get(f"http://127.0.0.1:5000/api/cam_{camera_id}/latest.jpg", timeout=3)
-            if _r.status_code == 200 and _r.content:
+            if _r.status_code == 200 and len(_r.content) > 80000:
                 frame = cv2.imdecode(_np.frombuffer(_r.content, dtype=_np.uint8), cv2.IMREAD_COLOR)
         except Exception:
             frame = None
         if frame is None:
-            # fallback cap.read (非 frigate 管理的 camera)
+            # fallback 1: go2rtc frame.jpeg (對 detect 關閉的 cam 仍能拿到 frame)
+            try:
+                _r = _req.get(f"http://127.0.0.1:1984/api/frame.jpeg?src=cam_{camera_id}", timeout=5)
+                if _r.status_code == 200 and len(_r.content) > 10000:
+                    frame = cv2.imdecode(_np.frombuffer(_r.content, dtype=_np.uint8), cv2.IMREAD_COLOR)
+            except Exception:
+                frame = None
+        if frame is None:
+            # fallback 2: cap.read (非 frigate 管理的 camera 或 file source)
             cap = cv2.VideoCapture(resolve_analysis_source(camera))
             ret, frame = cap.read()
             cap.release()
