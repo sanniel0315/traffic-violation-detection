@@ -128,24 +128,27 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
             if im is not None:
                 canvas.paste(im, (cx, cy))
 
-        # 每張 cell 右上角貼小張 plate.png (LPR 真實裁切)，max 240x60，白邊框
+        # 每張 cell 左上角貼小張 plate.png (LPR 真實裁切) — 對齊 LPR 偵測照片樣式:
+        # 左上位置、黃色邊框 (#FFD700)、加大到 max 280x80
         plate_img = None
         if plate_disk and plate_disk.exists():
             try:
                 plate_img = Image.open(plate_disk).convert("RGB")
-                plate_img.thumbnail((240, 60), Image.LANCZOS)
+                plate_img.thumbnail((280, 80), Image.LANCZOS)
             except Exception:
                 plate_img = None
         if plate_img is not None:
             pw, ph = plate_img.size
+            border_w = 6  # 黃框厚度
             for i in range(4):
                 cx = (i % 2) * 960
                 cy = (i // 2) * 540
-                # 右上角 (距邊 12px)
-                px = cx + 960 - pw - 12
+                # 左上角 (距邊 12px)
+                px = cx + 12
                 py = cy + 12
-                bg = Image.new("RGB", (pw + 6, ph + 6), (255, 255, 255))
-                canvas.paste(bg, (px - 3, py - 3))
+                # 黃色邊框 (LPR annotation 標準色)
+                bg = Image.new("RGB", (pw + border_w * 2, ph + border_w * 2), (255, 215, 0))
+                canvas.paste(bg, (px - border_w, py - border_w))
                 canvas.paste(plate_img, (px, py))
 
         canvas.save(out_path, "JPEG", quality=85)
@@ -428,7 +431,7 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
     composite_url = None
     if len(result) >= 1:
-        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v5.jpg"
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v6.jpg"
         last_count_attr = f"_last_count_{violation_id}"
         prev_count = getattr(_build_composite_image, last_count_attr, 0)
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
