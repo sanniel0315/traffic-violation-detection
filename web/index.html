@@ -7747,27 +7747,27 @@
                                 Swap: {{ hwStatus.memory?.swap_used_mb || 0 }} / {{ hwStatus.memory?.swap_total_mb || 0 }} MB
                             </div>
                         </div>
-                        <!-- 磁碟 -->
-                        <div class="monitor-card">
-                            <h4><svg class="text-icon"><use href="#i-disk"/></svg> 磁碟 <span style="font-size:12px;color:#999">{{ hwStatus.disk?.used_gb || 0 }} / {{ hwStatus.disk?.total_gb || 0 }} GB</span></h4>
+                        <!-- 磁碟 (依 mount 顯示，eMMC 系統碟 + NVMe 資料碟分開) -->
+                        <div class="monitor-card" v-for="(v, idx) in (hwStatus.disk?.volumes?.length ? hwStatus.disk.volumes : [hwStatus.disk||{}])" :key="`disk-${idx}`">
+                            <h4><svg class="text-icon"><use href="#i-disk"/></svg> {{ v.path === '/' ? '系統碟 (eMMC)' : ('資料碟 ' + (v.path||'')) }} <span style="font-size:12px;color:#999">{{ v.used_gb || 0 }} / {{ v.total_gb || 0 }} GB</span></h4>
                             <div class="gauge-wrap">
                                 <div class="gauge-ring">
                                     <svg width="120" height="120" viewBox="0 0 120 120">
                                         <circle class="bg" cx="60" cy="60" r="52" fill="none" stroke-width="10"/>
                                         <circle class="fg" cx="60" cy="60" r="52" fill="none" stroke-width="10"
-                                            :stroke="(hwStatus.disk?.usage_percent||0)>90?'#2563eb':(hwStatus.disk?.usage_percent||0)>70?'#e6a23c':'#409eff'"
+                                            :stroke="(v.usage_percent||0)>90?'#2563eb':(v.usage_percent||0)>70?'#e6a23c':'#409eff'"
                                             stroke-linecap="round"
                                             :stroke-dasharray="326.7"
-                                            :stroke-dashoffset="326.7 - 326.7 * (hwStatus.disk?.usage_percent||0) / 100"/>
+                                            :stroke-dashoffset="326.7 - 326.7 * (v.usage_percent||0) / 100"/>
                                     </svg>
                                     <div class="value">
-                                        <div class="number" :style="{color:(hwStatus.disk?.usage_percent||0)>90?'#2563eb':(hwStatus.disk?.usage_percent||0)>70?'#e6a23c':'#409eff'}">{{ hwStatus.disk?.usage_percent || 0 }}</div>
+                                        <div class="number" :style="{color:(v.usage_percent||0)>90?'#2563eb':(v.usage_percent||0)>70?'#e6a23c':'#409eff'}">{{ v.usage_percent || 0 }}</div>
                                         <div class="unit">%</div>
                                     </div>
                                 </div>
                             </div>
                             <div style="text-align:center;font-size:12px;color:#999;margin-top:8px">
-                                可用: {{ hwStatus.disk?.free_gb || 0 }} GB
+                                可用: {{ v.free_gb || 0 }} GB
                             </div>
                         </div>
                     </div>
@@ -7801,7 +7801,10 @@
                             <div class="hw-info-row"><span style="color:#666">CPU 核心</span><span>{{ hwStatus.cpu?.cores || 0 }} 核心 · {{ hwStatus.cpu?.freq_mhz || 0 }} MHz</span></div>
                             <div class="hw-info-row"><span style="color:#666">GPU 頻率</span><span>{{ hwStatus.gpu?.freq_mhz || 0 }} MHz</span></div>
                             <div class="hw-info-row"><span style="color:#666">總記憶體</span><span>{{ hwStatus.memory?.total_mb || 0 }} MB</span></div>
-                            <div class="hw-info-row"><span style="color:#666">磁碟空間</span><span>{{ hwStatus.disk?.total_gb || 0 }} GB (可用 {{ hwStatus.disk?.free_gb || 0 }} GB)</span></div>
+                            <div class="hw-info-row" v-for="(v, idx) in (hwStatus.disk?.volumes?.length ? hwStatus.disk.volumes : [hwStatus.disk||{}])" :key="`hw-disk-${idx}`">
+                                <span style="color:#666">{{ v.path === '/' ? '系統碟 (eMMC)' : ('資料碟 ' + (v.path||'')) }}</span>
+                                <span>{{ v.total_gb || 0 }} GB (可用 {{ v.free_gb || 0 }} GB)</span>
+                            </div>
                             <div class="hw-info-row" v-for="(val, key) in (hwStatus.power||{})" :key="key"><span style="color:#666"><svg class="text-icon" style="color:var(--gov-warn)"><use href="#i-zap"/></svg> {{ key }}</span><span>{{ val }} mW</span></div>
                         </div>
                     </div>
