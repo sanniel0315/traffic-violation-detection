@@ -441,27 +441,34 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
         if p.exists() and p.stat().st_size > 1024:
             result[tag] = f"/files/violations/snapshots/{p.name}"
 
-    # plate crop 嚴格用該違規本身車牌 (plate_number+camera+±10min)；
-    # 不 fallback 用同攝影機其他車的車牌避免「貼錯車」誤導
-    plate_disk = _find_plate_crop_disk_path(v, db)
+    # plate crop 來源優先順序:
+    # 1. {vid}_violation_plate.png — detector 觸發時 plate-vehicle association 寫的 (嚴格綁定觸發車輛)
+    # 2. _find_plate_crop_disk_path — LPR plate_number+camera+±10min match (相容舊資料)
+    # 3. plate_number fallback 用 _find_nearest_lpr_plate (僅 dialog info text)
+    plate_disk = None
     plate_url = None
     plate_number = v.license_plate or None
-    if plate_disk and plate_disk.exists():
-        plate_url = f"/api/lpr/stream/snapshot/{plate_disk.name}"
+    # 優先 1: violation_plate.png (detector 嚴格綁定)
+    _vp = _SNAPSHOT_CACHE_DIR / f"{violation_id}_violation_plate.png"
+    if _vp.exists() and _vp.stat().st_size > 512:
+        plate_disk = _vp
+        plate_url = f"/files/violations/snapshots/{_vp.name}"
     else:
-        # violation 沒車牌 → 不貼 plate crop (composite/dialog overlay 都不貼)
-        # 但 plate_number text 仍 fallback 同攝影機 ±2 分鐘最近 LPR 結果，給 dialog info 顯示
-        if not v.license_plate:
+        # 優先 2: LPR plate match (舊資料 fallback)
+        plate_disk = _find_plate_crop_disk_path(v, db)
+        if plate_disk and plate_disk.exists():
+            plate_url = f"/api/lpr/stream/snapshot/{plate_disk.name}"
+        elif not v.license_plate:
+            # 優先 3: violation 完全沒車牌 → plate_number text fallback (純資訊用)
             nearest = _find_nearest_lpr_plate(v, db)
             if nearest:
                 plate_number = nearest.get("plate")
-        # plate_disk 維持 None → composite / overlay 不貼
 
     # 至少 1 張時間軸 frame 就拼 composite (缺的格子留深灰底，避免 frigate 末端 seek 失敗整個拿不到)
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
     composite_url = None
     if len(result) >= 1:
-        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v11.jpg"
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v12.jpg"
         last_count_attr = f"_last_count_{violation_id}"
         prev_count = getattr(_build_composite_image, last_count_attr, 0)
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
