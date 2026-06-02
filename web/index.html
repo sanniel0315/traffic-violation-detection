@@ -5224,12 +5224,7 @@
                                         <td>{{ formatTime(v.end_time || v.created_at) }}</td>
                                         <td>{{ v.license_plate || '-' }}</td>
                                         <td>{{ v.violation_name }}</td>
-                                        <td>
-                                            <div class="vrow-thumbs" @click="showDetail(v)">
-                                                <img v-if="plateSnapUrl(v)" :src="plateSnapUrl(v)" class="thumbnail--plate" title="車牌裁切">
-                                                <img v-if="v.image_path" :src="v.image_path" class="thumbnail" title="違規場景">
-                                            </div>
-                                        </td>
+                                        <td><img v-if="v.image_path" :src="v.image_path" class="thumbnail" @click="showDetail(v)"></td>
                                         <td><el-button circle size="small" @click="showDetail(v)"><svg class="btn-icon"><use href="#i-eye"/></svg></el-button></td>
                                     </tr>
                                     <tr v-if="!violations.length">
@@ -5439,12 +5434,7 @@
                                         <td>{{ formatTime(v.end_time || v.created_at) }}</td>
                                         <td>{{ v.license_plate || '-' }}</td>
                                         <td>{{ v.violation_name }}</td>
-                                        <td>
-                                            <div class="vrow-thumbs" @click="showDetail(v)">
-                                                <img v-if="plateSnapUrl(v)" :src="plateSnapUrl(v)" class="thumbnail--plate" title="車牌裁切">
-                                                <img v-if="v.image_path" :src="v.image_path" class="thumbnail" title="違規場景">
-                                            </div>
-                                        </td>
+                                        <td><img v-if="v.image_path" :src="v.image_path" class="thumbnail" @click="showDetail(v)"></td>
                                         <td><el-button circle size="small" @click="showDetail(v)"><svg class="btn-icon"><use href="#i-eye"/></svg></el-button></td>
                                     </tr>
                                     <tr v-if="!pendingViolations.length">
@@ -8287,13 +8277,6 @@
                 <div class="detail-info-item"><span class="label">時間:</span><span class="value">{{ formatTime(selected.created_at) }}</span></div>
             </div>
             <div class="detail-body" style="display:flex;flex-direction:column;flex:1 1 auto;overflow-y:auto;min-height:0">
-                <!-- 車牌裁切大圖 (跟 LPR 歷史一致) -->
-                <div v-if="plateSnapUrl(selected)" class="detail-section detail-plate-row">
-                    <div class="detail-section-header"><span>車牌</span></div>
-                    <div class="detail-plate-wrap">
-                        <img :src="plateSnapUrl(selected)" alt="車牌裁切" class="detail-plate-img">
-                    </div>
-                </div>
                 <!-- 違規截圖 (組合圖取代原 annotated 單張) + 事件錄影 -->
                 <div class="detail-section" style="border-right:none">
                     <div class="detail-section-header">
