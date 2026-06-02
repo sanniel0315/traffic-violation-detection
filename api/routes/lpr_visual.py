@@ -487,14 +487,22 @@ def visual_snapshot(camera_id: int):
     """單張視覺化快照"""
     from api.models import SessionLocal, Camera
     from fastapi.responses import Response
-    
+
     db = SessionLocal()
     try:
         camera = db.query(Camera).filter(Camera.id == camera_id).first()
         if not camera:
             raise HTTPException(status_code=404, detail="攝影機不存在")
         if not bool(camera.enabled):
-            raise HTTPException(status_code=409, detail="攝影機已關閉")
+            # disabled cam: 不 raise (前端 image @error 會 retry hang)，回 SVG placeholder
+            svg = (
+                '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" '
+                'viewBox="0 0 1920 1080"><rect fill="#0f172a" width="1920" height="1080"/>'
+                '<text fill="#94a3b8" x="50%" y="50%" text-anchor="middle" '
+                'font-family="sans-serif" font-size="48" font-weight="700">'
+                f'攝影機已關閉（{camera.name}）</text></svg>'
+            )
+            return Response(content=svg.encode("utf-8"), media_type="image/svg+xml")
         
         recognizer = get_recognizer()
         yolo = get_yolo()
