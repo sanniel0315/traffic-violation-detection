@@ -2097,10 +2097,52 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     _violation_dedup[_dedup_key] = _now_t
                     _speed_kmh = float(_raw_speed)
                     _overspeed_kmh = max(0.0, _speed_kmh - _speed_limit_kmh)
-                    _lpr_hit = _latest_lpr_plate(camera_id, max_age_sec=20)
-                    _plate = (_lpr_hit or {}).get("plate", "")
-                    _annotated = frame.copy()
                     _bbox = _v.get('bbox', {}) or {}
+                    # plate-vehicle association: 對該違規 vehicle bbox 即時跑 plate
+                    # detection + OCR，嚴格綁定觸發車輛 (不再用 _latest_lpr_plate ±20s
+                    # 抓最近 LPR 結果可能是前車)。crop 暫存待 POST 拿 vid 後寫盤。
+                    _plate = ""
+                    _violation_plate_crop = None  # numpy array (BGR)，POST 後 save 用
+                    if _bbox:
+                        try:
+                            _bx1 = max(0, int(_bbox.get('x1', 0)))
+                            _by1 = max(0, int(_bbox.get('y1', 0)))
+                            _bx2 = int(_bbox.get('x2', 0))
+                            _by2 = int(_bbox.get('y2', 0))
+                            _veh_crop = frame[_by1:_by2, _bx1:_bx2]
+                            if _veh_crop is not None and _veh_crop.size > 0:
+                                from api.routes.lpr_stream import (
+                                    _propose_plate_bboxes as _vpd,
+                                    _recognize_plate_on_crop as _vpo,
+                                    get_recognizer as _vpr,
+                                )
+                                _cands = _vpd(_veh_crop, max_candidates=3)
+                                _rec = _vpr()
+                                for _cand in _cands:
+                                    _cb = _cand.get('bbox') or []
+                                    if len(_cb) != 4:
+                                        continue
+                                    _cx1, _cy1, _cx2, _cy2 = [int(x) for x in _cb]
+                                    if _cx2 <= _cx1 or _cy2 <= _cy1:
+                                        continue
+                                    _pc = _veh_crop[_cy1:_cy2, _cx1:_cx2]
+                                    if _pc is None or _pc.size == 0:
+                                        continue
+                                    _res = _vpo(_pc, _rec)
+                                    _pn = (_res or {}).get('plate_number')
+                                    _conf = float((_res or {}).get('confidence') or 0.0)
+                                    if _pn and _conf >= 0.5:
+                                        _plate = str(_pn).strip()
+                                        _violation_plate_crop = _pc.copy()
+                                        break
+                        except Exception:
+                            pass
+                    # fallback: 嚴格 plate detection 沒抓到 → 用 _latest_lpr_plate ±20s
+                    # (不保證準，但有總比沒)
+                    if not _plate:
+                        _lpr_hit = _latest_lpr_plate(camera_id, max_age_sec=20)
+                        _plate = (_lpr_hit or {}).get("plate", "") or ""
+                    _annotated = frame.copy()
                     if _bbox:
                         cv2.rectangle(_annotated, (int(_bbox.get('x1', 0)), int(_bbox.get('y1', 0))),
                                       (int(_bbox.get('x2', 0)), int(_bbox.get('y2', 0))), (0, 255, 0), 2)
@@ -2130,11 +2172,24 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         _resp = requests.post("http://localhost:8000/api/violations", json=_data, timeout=5)
                         _plate_text = _plate or "NODATA(LPR)"
                         print(f"⚠️ real SPEEDING: {_plate_text} {_data['speed_kmh']}km/h (limit {_data['speed_limit_kmh']})")
-                        # 方案 C: 從 ring buffer save 4 frame (100% 命中，不靠 frigate clip)
                         try:
                             _vid = (_resp.json() or {}).get("id") if _resp.ok else None
                             if _vid:
+                                # 方案 C: ring buffer save 4 frame
                                 _save_violation_4frames_async(camera_id, int(_vid), _now_t, frame)
+                                # plate-vehicle association: save 嚴格綁定觸發車輛的 plate crop
+                                if _violation_plate_crop is not None and _violation_plate_crop.size > 0:
+                                    try:
+                                        from pathlib import Path as _PP
+                                        _vp_dir = _PP("./output/violations/snapshots").resolve()
+                                        _vp_dir.mkdir(parents=True, exist_ok=True)
+                                        cv2.imwrite(
+                                            str(_vp_dir / f"{int(_vid)}_violation_plate.png"),
+                                            _violation_plate_crop,
+                                            [cv2.IMWRITE_PNG_COMPRESSION, 1],
+                                        )
+                                    except Exception:
+                                        pass
                         except Exception:
                             pass
                     except Exception:
