@@ -95,32 +95,9 @@ def _save_violation_4frames_async(camera_id: int, violation_id: int, trigger_ts:
         except Exception:
             pass
 
-    # mid_a: 當下 frame + 標出觸發車輛 (粗綠框 + plate text 在框上方)
-    mid_a_img = current_frame.copy()
-    if vehicle_bbox:
-        try:
-            x1 = max(0, int(vehicle_bbox.get('x1', 0)))
-            y1 = max(0, int(vehicle_bbox.get('y1', 0)))
-            x2 = int(vehicle_bbox.get('x2', 0))
-            y2 = int(vehicle_bbox.get('y2', 0))
-            if x2 > x1 and y2 > y1:
-                # 粗綠框 thickness=6 (1920px frame 上明顯可見)
-                _cv2_local.rectangle(mid_a_img, (x1, y1), (x2, y2), (0, 255, 0), 6)
-                # plate text label 在框上方 (黑底白字)
-                label = (plate_text or "VIOLATION").strip()
-                font_scale = 1.6
-                font = _cv2_local.FONT_HERSHEY_SIMPLEX
-                (tw, th), _ = _cv2_local.getTextSize(label, font, font_scale, 3)
-                ly = max(th + 12, y1 - 8)
-                # 黑底
-                _cv2_local.rectangle(mid_a_img, (x1, ly - th - 12), (x1 + tw + 16, ly + 4),
-                                     (0, 0, 0), -1)
-                # 白字
-                _cv2_local.putText(mid_a_img, label, (x1 + 8, ly - 4),
-                                   font, font_scale, (255, 255, 255), 3, _cv2_local.LINE_AA)
-        except Exception:
-            pass
-    _write("mid_a", mid_a_img)
+    # mid_a: 當下 frame 原圖 (不畫綠框 / 不標 label，user 要原本風格)
+    # 車輛識別走 composite 左上 plate crop overlay，不在 frame 上 draw
+    _write("mid_a", current_frame)
 
     # before: 從 ring 撈 t-2s 最接近
     with _violation_ring_lock:
