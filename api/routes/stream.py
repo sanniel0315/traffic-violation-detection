@@ -2137,11 +2137,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                         break
                         except Exception:
                             pass
-                    # fallback: 嚴格 plate detection 沒抓到 → 用 _latest_lpr_plate ±20s
-                    # (不保證準，但有總比沒)
-                    if not _plate:
-                        _lpr_hit = _latest_lpr_plate(camera_id, max_age_sec=20)
-                        _plate = (_lpr_hit or {}).get("plate", "") or ""
+                    # 嚴格 plate detection 沒抓到 → license_plate = None
+                    # (寧可沒車牌也不要 fallback _latest_lpr_plate ±20s 抓前車誤標。
+                    # user 之前抱怨 Honda 配 Hyundai / AZ-1122 對不上正是這個)
                     _annotated = frame.copy()
                     if _bbox:
                         cv2.rectangle(_annotated, (int(_bbox.get('x1', 0)), int(_bbox.get('y1', 0))),
