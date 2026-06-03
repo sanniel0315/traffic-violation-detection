@@ -140,9 +140,10 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
             except Exception:
                 plate_src = None
         if plate_src is not None:
-            # plate overlay 只貼 mid_a cell (觸發當下 frame，車輛 + plate 100% 同步)。
-            # before/mid_b/after 車輛位置已移動或離開畫面，貼 plate 會跟 frame 對不上 (user 抱怨)。
-            # _SNAPSHOT_OFFSETS 順序: before(i=0) / mid_a(i=1) / mid_b(i=2) / after(i=3)
+            # 4 cell 都貼 plate overlay (user 要原本樣式)。新違規走 plate-vehicle
+            # association (eda3cf6+) → plate 嚴格綁定觸發車輛車牌，不再是 ±20s 抓前車。
+            # 完全對齊 LPR _draw_plate_inset (lpr_stream.py:1530) 規格:
+            # 位置 (10,10) / size max 28%w×18%h / 黑底 padding 6px / 純黃邊框 2px
             max_w = int(cell_w * 0.28)
             max_h = int(cell_h * 0.18)
             cw, ch = plate_src.size
@@ -155,19 +156,21 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
             pad = 6
             border_w = 2
             draw = ImageDraw.Draw(canvas)
-            # 只貼 mid_a (i=1) — 右上 cell
-            i = 1
-            cx = (i % 2) * cell_w
-            cy = (i // 2) * cell_h
-            px = cx + 10
-            py = cy + 10
-            black_bg = Image.new("RGB", (pw + pad * 2, ph + pad * 2), (0, 0, 0))
-            canvas.paste(black_bg, (px - pad, py - pad))
-            canvas.paste(plate_img, (px, py))
-            draw.rectangle(
-                [px, py, px + pw - 1, py + ph - 1],
-                outline=(255, 255, 0), width=border_w
-            )
+            for i in range(4):
+                cx = (i % 2) * cell_w
+                cy = (i // 2) * cell_h
+                px = cx + 10
+                py = cy + 10
+                # 1. 黑底矩形 padding 6px
+                black_bg = Image.new("RGB", (pw + pad * 2, ph + pad * 2), (0, 0, 0))
+                canvas.paste(black_bg, (px - pad, py - pad))
+                # 2. plate 貼中央
+                canvas.paste(plate_img, (px, py))
+                # 3. 黃色細邊框
+                draw.rectangle(
+                    [px, py, px + pw - 1, py + ph - 1],
+                    outline=(255, 255, 0), width=border_w
+                )
 
         canvas.save(out_path, "JPEG", quality=92, subsampling=0)
         return True
@@ -468,7 +471,7 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
     composite_url = None
     if len(result) >= 1:
-        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v14.jpg"
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v15.jpg"
         last_count_attr = f"_last_count_{violation_id}"
         prev_count = getattr(_build_composite_image, last_count_attr, 0)
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
