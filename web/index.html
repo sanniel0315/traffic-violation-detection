@@ -3707,7 +3707,7 @@
             box-shadow: 0 2px 6px rgba(11,94,168,0.25);
         }
         .nvr-playback-filter-grid { display:grid; grid-template-columns:repeat(6,minmax(140px,1fr)); gap:10px; align-items:end; }
-        .nvr-playback-field-label { font-size:12px; color:#64748b; margin-bottom:4px; }
+        .nvr-playback-field-label { font-size:12px; color:var(--gov-muted); margin-bottom:4px; }
         .nvr-playback-quick-row { grid-column:1 / -1; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center; }
         .nvr-playback-quick-buttons { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
         .nvr-playback-summary-grid { margin-top:12px; display:grid; grid-template-columns:repeat(4,minmax(120px,1fr)); gap:8px; }
@@ -3718,17 +3718,17 @@
         .nvr-playback-item { border:1px solid var(--gov-border); border-radius:10px; padding:9px; margin-bottom:8px; cursor:pointer; background:var(--gov-surface); transition:all .15s ease; }
         .nvr-playback-item:hover { border-color:var(--gov-primary-line); box-shadow:0 2px 10px rgba(11,94,168,.08); transform:translateY(-1px); }
         .nvr-playback-item.active { border-color:var(--gov-primary); background:var(--gov-primary-soft); box-shadow:0 3px 12px rgba(11,94,168,.14); }
-        .nvr-playback-item-title { font-size:12px; color:#0f172a; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin:4px 0 2px; }
-        .nvr-playback-item-sub { font-size:11px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .nvr-playback-item-meta { font-size:11px; color:#94a3b8; display:flex; justify-content:space-between; gap:8px; margin-top:3px; }
+        .nvr-playback-item-title { font-size:12px; color:var(--gov-text); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin:4px 0 2px; }
+        .nvr-playback-item-sub { font-size:11px; color:var(--gov-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .nvr-playback-item-meta { font-size:11px; color:var(--gov-muted); display:flex; justify-content:space-between; gap:8px; margin-top:3px; }
         .nvr-playback-list-foot { display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border-top:1px solid var(--gov-border); background:var(--gov-surface); }
         .nvr-player-meta-grid { padding:10px 12px; border-bottom:1px solid var(--gov-border); display:grid; grid-template-columns:repeat(2,minmax(200px,1fr)); gap:8px 12px; background:var(--gov-bg); }
-        .nvr-player-meta-item { font-size:12px; color:#334155; display:flex; gap:6px; min-width:0; }
-        .nvr-player-meta-item .k { color:#64748b; flex:0 0 auto; }
-        .nvr-player-meta-item .v { color:#0f172a; font-weight:600; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .nvr-player-meta-item { font-size:12px; color:var(--gov-text); display:flex; gap:6px; min-width:0; }
+        .nvr-player-meta-item .k { color:var(--gov-muted); flex:0 0 auto; }
+        .nvr-player-meta-item .v { color:var(--gov-text); font-weight:600; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .nvr-playback-player-stage { flex:1; display:flex; align-items:center; justify-content:center; background:#000; min-height:360px; }
-        .nvr-playback-empty { color:#94a3b8; text-align:center; font-size:13px; padding:24px; }
-        .nvr-playback-empty strong { display:block; color:#cbd5e1; font-size:16px; margin-bottom:6px; font-weight:700; }
+        .nvr-playback-empty { color:var(--gov-muted); text-align:center; font-size:13px; padding:24px; }
+        .nvr-playback-empty strong { display:block; color:var(--gov-muted); font-size:16px; margin-bottom:6px; font-weight:700; }
         .nvr-replay-shell { display:flex; flex-direction:column; gap:12px; }
         .nvr-replay-stage { border:1px solid var(--gov-border); border-radius:12px; background:var(--gov-surface); overflow:hidden; }
         .nvr-replay-stage-head { padding:10px 12px; border-bottom:1px solid var(--gov-border); display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; background:var(--gov-bg-2); }
@@ -3740,10 +3740,10 @@
         .nvr-replay-wave-bar { flex:1; min-width:2px; border-radius:3px 3px 1px 1px; background:linear-gradient(180deg,var(--gov-primary-line) 0%,var(--gov-primary-strong) 100%); opacity:.95; }
         .nvr-replay-marker { position:absolute; top:5px; width:8px; height:8px; border-radius:50%; border:0; background:#dc2626; transform:translateX(-50%); box-shadow:0 0 0 2px rgba(220,38,38,.22); cursor:pointer; }
         .nvr-replay-ticks { position:absolute; left:0; right:0; bottom:4px; height:16px; }
-        .nvr-replay-tick { position:absolute; transform:translateX(-50%); font-size:10px; color:#64748b; white-space:nowrap; }
+        .nvr-replay-tick { position:absolute; transform:translateX(-50%); font-size:10px; color:var(--gov-muted); white-space:nowrap; }
         .nvr-replay-controls { border-top:1px solid var(--gov-border); background:var(--gov-surface); padding:10px 12px; display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap; }
         .nvr-replay-control-group { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-        .nvr-replay-time-text { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:13px; color:#0f172a; font-weight:700; min-width:140px; text-align:right; }
+        .nvr-replay-time-text { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:13px; color:var(--gov-text); font-weight:700; min-width:140px; text-align:right; }
         .nvr-replay-bottom-grid { display:grid; grid-template-columns:280px minmax(0,1fr); gap:12px; }
         .nvr-replay-panel { border:1px solid var(--gov-border); border-radius:12px; background:var(--gov-surface); overflow:hidden; display:flex; flex-direction:column; min-height:300px; }
         .nvr-replay-panel-head { padding:10px 12px; border-bottom:1px solid var(--gov-border); background:var(--gov-bg-2); display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -3759,12 +3759,12 @@
             gap:14px;
             align-items:stretch;
             padding:16px;
-            border:1px solid #d7e2ef;
+            border:1px solid var(--gov-border);
             border-radius:18px;
             background:
                 radial-gradient(circle at top left, rgba(96,165,250,.18), transparent 28%),
                 radial-gradient(circle at bottom right, rgba(56,189,248,.14), transparent 26%),
-                linear-gradient(180deg,#f8fbff 0%,#f2f7ff 38%,#ffffff 100%);
+                linear-gradient(180deg,var(--gov-bg-2) 0%,var(--gov-bg-2) 38%,var(--gov-surface) 100%);
             box-shadow:0 18px 40px rgba(15,23,42,.08);
         }
         .nvr-wireframe-toolbar-intro {
@@ -3776,7 +3776,7 @@
             border:1px solid rgba(148,163,184,.22);
             border-radius:16px;
             background:linear-gradient(145deg,#0f172a 0%,#111827 56%,#1e293b 100%);
-            color:#e2e8f0;
+            color:var(--gov-border);
             min-height:160px;
             overflow:hidden;
         }
@@ -3788,14 +3788,14 @@
             padding:6px 10px;
             border-radius:999px;
             background:rgba(148,163,184,.16);
-            color:#cbd5e1;
+            color:var(--gov-muted);
             font-size:11px;
             letter-spacing:.08em;
             text-transform:uppercase;
             font-weight:700;
         }
-        .nvr-wireframe-toolbar-title { font-size:24px; line-height:1.15; font-weight:800; color:#f8fafc; letter-spacing:-.02em; }
-        .nvr-wireframe-toolbar-copy { font-size:13px; line-height:1.7; color:#cbd5e1; max-width:32ch; }
+        .nvr-wireframe-toolbar-title { font-size:24px; line-height:1.15; font-weight:800; color:var(--gov-bg); letter-spacing:-.02em; }
+        .nvr-wireframe-toolbar-copy { font-size:13px; line-height:1.7; color:var(--gov-muted); max-width:32ch; }
         .nvr-wireframe-toolbar-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
         .nvr-wireframe-toolbar-stat {
             padding:12px;
@@ -3804,14 +3804,14 @@
             border:1px solid rgba(148,163,184,.16);
             backdrop-filter:blur(8px);
         }
-        .nvr-wireframe-toolbar-stat .k { font-size:11px; color:#94a3b8; margin-bottom:4px; }
-        .nvr-wireframe-toolbar-stat .v { font-size:17px; font-weight:800; color:#f8fafc; }
+        .nvr-wireframe-toolbar-stat .k { font-size:11px; color:var(--gov-muted); margin-bottom:4px; }
+        .nvr-wireframe-toolbar-stat .v { font-size:17px; font-weight:800; color:var(--gov-bg); }
         .nvr-wireframe-toolbar-controls {
             display:flex;
             flex-direction:column;
             gap:12px;
             padding:14px;
-            border:1px solid #dbe7f6;
+            border:1px solid var(--gov-border);
             border-radius:16px;
             background:rgba(255,255,255,.9);
             box-shadow:inset 0 1px 0 rgba(255,255,255,.6);
@@ -3819,17 +3819,17 @@
         .nvr-wireframe-filter-grid { display:grid; grid-template-columns:repeat(5,minmax(120px,1fr)); gap:10px; }
         .nvr-wireframe-field {
             padding:10px;
-            border:1px solid #e2e8f0;
+            border:1px solid var(--gov-border);
             border-radius:12px;
-            background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);
+            background:linear-gradient(180deg,var(--gov-surface) 0%,var(--gov-bg-2) 100%);
         }
         .nvr-wireframe-quick { display:flex; gap:6px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
         .nvr-wireframe-quick-cluster { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
         .nvr-wireframe-main { display:grid; grid-template-columns:300px minmax(0,1fr) 340px; gap:14px; min-height:760px; }
         .nvr-wireframe-pane {
-            border:1px solid #dbe3ef;
+            border:1px solid var(--gov-border);
             border-radius:18px;
-            background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);
+            background:linear-gradient(180deg,var(--gov-surface) 0%,var(--gov-bg-2) 100%);
             overflow:hidden;
             display:flex;
             flex-direction:column;
@@ -3840,20 +3840,20 @@
             padding:14px 16px;
             border-bottom:1px solid rgba(226,232,240,.9);
             background:linear-gradient(180deg,#0f172a 0%,#111827 72%,#162033 100%);
-            color:#e2e8f0;
+            color:var(--gov-border);
             display:flex;
             justify-content:space-between;
             align-items:center;
             gap:8px;
         }
-        .nvr-wireframe-pane-sub { font-size:11px; color:#94a3b8; }
-        .nvr-device-search { padding:12px; border-bottom:1px solid #edf2f7; background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%); }
+        .nvr-wireframe-pane-sub { font-size:11px; color:var(--gov-muted); }
+        .nvr-device-search { padding:12px; border-bottom:1px solid var(--gov-border); background:linear-gradient(180deg,var(--gov-surface) 0%,var(--gov-bg-2) 100%); }
         .nvr-device-search-summary { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
         .nvr-device-search-pill {
             padding:6px 10px;
             border-radius:999px;
-            background:#eff6ff;
-            color:#1d4ed8;
+            background:var(--gov-primary-soft);
+            color:var(--gov-primary-strong);
             font-size:11px;
             font-weight:700;
             border:1px solid #c7defc;
@@ -3874,7 +3874,7 @@
             gap:8px;
             font-size:11px;
             font-weight:700;
-            color:#94a3b8;
+            color:var(--gov-muted);
             letter-spacing:.06em;
             text-transform:uppercase;
             margin-bottom:8px;
@@ -3884,13 +3884,13 @@
             border-radius:999px;
             background:rgba(148,163,184,.12);
             font-size:10px;
-            color:#cbd5e1;
+            color:var(--gov-muted);
         }
         .nvr-device-item {
             border:1px solid rgba(148,163,184,.18);
             border-radius:14px;
             background:linear-gradient(180deg,rgba(15,23,42,.96) 0%,rgba(17,24,39,.88) 100%);
-            color:#e2e8f0;
+            color:var(--gov-border);
             padding:11px 12px;
             margin-bottom:9px;
             cursor:pointer;
@@ -3898,14 +3898,14 @@
         }
         .nvr-device-item:hover { border-color:rgba(96,165,250,.55); transform:translateY(-1px); box-shadow:0 10px 22px rgba(2,6,23,.24); }
         .nvr-device-item.active {
-            border-color:#60a5fa;
+            border-color:var(--gov-primary-line);
             background:
                 linear-gradient(180deg,rgba(30,41,59,.98) 0%,rgba(15,23,42,.96) 100%),
                 linear-gradient(90deg,rgba(96,165,250,.16),transparent);
             box-shadow:0 0 0 1px rgba(96,165,250,.28) inset, 0 14px 30px rgba(2,6,23,.3);
         }
         .nvr-device-item-top { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
-        .nvr-device-item-name { font-size:13px; font-weight:700; color:#f8fafc; margin-bottom:3px; }
+        .nvr-device-item-name { font-size:13px; font-weight:700; color:var(--gov-bg); margin-bottom:3px; }
         .nvr-device-item-source {
             display:inline-flex;
             align-items:center;
@@ -3916,7 +3916,7 @@
             font-size:10px;
             font-weight:700;
         }
-        .nvr-device-item-meta { font-size:11px; color:#94a3b8; display:flex; justify-content:space-between; gap:8px; margin-top:6px; }
+        .nvr-device-item-meta { font-size:11px; color:var(--gov-muted); display:flex; justify-content:space-between; gap:8px; margin-top:6px; }
         .nvr-main-stage { display:flex; flex-direction:column; min-height:0; background:#020617; }
         .nvr-main-video-head {
             padding:14px 16px 12px;
@@ -3924,14 +3924,14 @@
             justify-content:space-between;
             align-items:flex-start;
             gap:12px;
-            color:#e2e8f0;
+            color:var(--gov-border);
             background:
                 radial-gradient(circle at top right, rgba(56,189,248,.18), transparent 22%),
                 linear-gradient(180deg,#111827 0%,#0f172a 62%,#0b1220 100%);
             border-bottom:1px solid rgba(148,163,184,.18);
         }
-        .nvr-main-title { font-size:18px; font-weight:800; color:#f8fafc; letter-spacing:-.02em; }
-        .nvr-main-subtitle { font-size:12px; color:#94a3b8; margin-top:5px; }
+        .nvr-main-title { font-size:18px; font-weight:800; color:var(--gov-bg); letter-spacing:-.02em; }
+        .nvr-main-subtitle { font-size:12px; color:var(--gov-muted); margin-top:5px; }
         .nvr-main-badge-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-top:12px; max-width:520px; }
         .nvr-main-badge {
             padding:10px 12px;
@@ -3939,8 +3939,8 @@
             border-radius:13px;
             background:rgba(15,23,42,.34);
         }
-        .nvr-main-badge .k { font-size:11px; color:#94a3b8; margin-bottom:4px; }
-        .nvr-main-badge .v { font-size:16px; font-weight:800; color:#f8fafc; }
+        .nvr-main-badge .k { font-size:11px; color:var(--gov-muted); margin-bottom:4px; }
+        .nvr-main-badge .v { font-size:16px; font-weight:800; color:var(--gov-bg); }
         .nvr-main-tags { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; max-width:260px; }
         .nvr-main-video-wrap {
             position:relative;
@@ -3971,7 +3971,7 @@
             border-radius:14px;
             background:
                 linear-gradient(180deg,rgba(30,41,59,.9) 0%,rgba(15,23,42,.96) 100%);
-            color:#e2e8f0;
+            color:var(--gov-border);
             padding:9px 10px 10px;
             cursor:pointer;
             min-height:86px;
@@ -3986,22 +3986,22 @@
             background:linear-gradient(90deg,rgba(59,130,246,.26),rgba(56,189,248,.12),transparent);
             pointer-events:none;
         }
-        .nvr-thumb-card:hover { border-color:#60a5fa; transform:translateY(-1px); box-shadow:0 10px 20px rgba(2,6,23,.2); }
+        .nvr-thumb-card:hover { border-color:var(--gov-primary-line); transform:translateY(-1px); box-shadow:0 10px 20px rgba(2,6,23,.2); }
         .nvr-thumb-card.active { border-color:#f59e0b; background:#1f2937; box-shadow:0 0 0 1px rgba(245,158,11,.28) inset, 0 10px 20px rgba(0,0,0,.2); }
-        .nvr-thumb-card-time { position:relative; font-size:11px; font-weight:800; color:#f8fafc; margin-bottom:6px; }
-        .nvr-thumb-card-meta { position:relative; font-size:10px; color:#94a3b8; line-height:1.45; }
+        .nvr-thumb-card-time { position:relative; font-size:11px; font-weight:800; color:var(--gov-bg); margin-bottom:6px; }
+        .nvr-thumb-card-meta { position:relative; font-size:10px; color:var(--gov-muted); line-height:1.45; }
         .nvr-main-timeline-wrap { padding:14px 16px 16px; background:linear-gradient(180deg,#0f172a 0%,#0b1220 100%); border-top:1px solid rgba(148,163,184,.18); }
         .nvr-right-shell { display:flex; flex-direction:column; min-height:0; }
         .nvr-right-tabs {
             display:flex;
             gap:8px;
             padding:12px 12px 0;
-            background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);
-            border-bottom:1px solid #edf2f7;
+            background:linear-gradient(180deg,var(--gov-surface) 0%,var(--gov-bg-2) 100%);
+            border-bottom:1px solid var(--gov-border);
         }
         .nvr-right-tab {
-            border:1px solid #dbe7f6;
-            background:#ffffff;
+            border:1px solid var(--gov-border);
+            background:var(--gov-surface);
             color:#475569;
             border-radius:999px;
             font-size:12px;
@@ -4010,27 +4010,27 @@
             cursor:pointer;
             transition:all .15s ease;
         }
-        .nvr-right-tab.active { border-color:#2563eb; background:#eff6ff; color:#1d4ed8; }
-        .nvr-right-summary { padding:12px; border-bottom:1px solid #edf2f7; background:linear-gradient(180deg,#f8fbff 0%,#ffffff 100%); display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+        .nvr-right-tab.active { border-color:var(--gov-primary); background:var(--gov-primary-soft); color:var(--gov-primary-strong); }
+        .nvr-right-summary { padding:12px; border-bottom:1px solid var(--gov-border); background:linear-gradient(180deg,var(--gov-bg-2) 0%,var(--gov-surface) 100%); display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
         .nvr-right-summary-card {
-            border:1px solid #dbe7f6;
+            border:1px solid var(--gov-border);
             border-radius:14px;
-            background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);
+            background:linear-gradient(180deg,var(--gov-surface) 0%,var(--gov-bg-2) 100%);
             padding:12px;
             box-shadow:0 8px 18px rgba(37,99,235,.05);
         }
-        .nvr-right-summary-k { font-size:11px; color:#64748b; margin-bottom:4px; }
-        .nvr-right-summary-v { font-size:16px; font-weight:800; color:#0f172a; }
-        .nvr-right-events { flex:1; overflow:auto; padding:10px; background:#f8fafc; }
-        .nvr-notify-list { flex:1; overflow:auto; padding:12px; background:#f8fafc; }
+        .nvr-right-summary-k { font-size:11px; color:var(--gov-muted); margin-bottom:4px; }
+        .nvr-right-summary-v { font-size:16px; font-weight:800; color:var(--gov-text); }
+        .nvr-right-events { flex:1; overflow:auto; padding:10px; background:var(--gov-bg); }
+        .nvr-notify-list { flex:1; overflow:auto; padding:12px; background:var(--gov-bg); }
         .nvr-notify-item {
             display:flex;
             gap:10px;
             align-items:flex-start;
             padding:12px;
-            border:1px solid #dbe7f6;
+            border:1px solid var(--gov-border);
             border-radius:14px;
-            background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);
+            background:linear-gradient(180deg,var(--gov-surface) 0%,var(--gov-bg-2) 100%);
             margin-bottom:10px;
         }
         .nvr-notify-icon {
@@ -4044,18 +4044,18 @@
             flex:0 0 auto;
         }
         .nvr-notify-item.success .nvr-notify-icon { background:#dcfce7; color:#15803d; }
-        .nvr-notify-item.info .nvr-notify-icon { background:#dbeafe; color:#1d4ed8; }
+        .nvr-notify-item.info .nvr-notify-icon { background:#dbeafe; color:var(--gov-primary-strong); }
         .nvr-notify-item.warn .nvr-notify-icon { background:#fef3c7; color:#b45309; }
-        .nvr-notify-item.neutral .nvr-notify-icon { background:#e2e8f0; color:#475569; }
-        .nvr-notify-title { font-size:13px; font-weight:800; color:#0f172a; margin-bottom:3px; }
+        .nvr-notify-item.neutral .nvr-notify-icon { background:var(--gov-border); color:#475569; }
+        .nvr-notify-title { font-size:13px; font-weight:800; color:var(--gov-text); margin-bottom:3px; }
         .nvr-notify-text { font-size:12px; line-height:1.6; color:#475569; }
-        .nvr-notify-meta { font-size:11px; color:#94a3b8; margin-top:6px; }
-        .schedule-grid-wrap { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 8px; }
+        .nvr-notify-meta { font-size:11px; color:var(--gov-muted); margin-top:6px; }
+        .schedule-grid-wrap { overflow-x: auto; border: 1px solid var(--gov-border); border-radius: 8px; background: var(--gov-surface); padding: 8px; }
         .schedule-grid { border-collapse: collapse; table-layout: fixed; min-width: 900px; user-select: none; }
         .schedule-grid th, .schedule-grid td { border: 1px solid #edf1f6; text-align: center; padding: 0; }
-        .schedule-grid th { height: 28px; font-size: 11px; color: #64748b; background: #f8fafc; }
-        .schedule-day { width: 60px; font-size: 12px; color: #334155; background: #f8fafc; font-weight: 700; }
-        .schedule-cell { width: 28px; height: 24px; cursor: pointer; background: #f1f5f9; transition: background-color .12s ease; }
+        .schedule-grid th { height: 28px; font-size: 11px; color: var(--gov-muted); background: var(--gov-bg); }
+        .schedule-day { width: 60px; font-size: 12px; color: var(--gov-text); background: var(--gov-bg); font-weight: 700; }
+        .schedule-cell { width: 28px; height: 24px; cursor: pointer; background: var(--gov-border); transition: background-color .12s ease; }
         .schedule-cell.active { background: #0b5ea8; }
         /* NVR 重啟提示改成右下角 corner toast (不擋畫面) */
         .nvr-restart-toast {
@@ -4142,26 +4142,26 @@
         .content :where(.muted, .subtext, .help-text, .hint, .desc, .description, .el-input__count, .el-select__placeholder, .el-empty__description) {
             color: var(--ui-text-muted) !important;
         }
-        .content [style*="color:#0f172a"],
-        .content [style*="color: #0f172a"],
+        .content [style*="color:var(--gov-text)"],
+        .content [style*="color: var(--gov-text)"],
         .content [style*="color:#111827"],
         .content [style*="color: #111827"] {
             color: var(--ui-text-main) !important;
         }
-        .content [style*="color:#334155"],
-        .content [style*="color: #334155"],
+        .content [style*="color:var(--gov-text)"],
+        .content [style*="color: var(--gov-text)"],
         .content [style*="color:#475569"],
         .content [style*="color: #475569"] {
             color: var(--ui-text-sub) !important;
         }
-        .content [style*="color:#64748b"],
-        .content [style*="color: #64748b"],
+        .content [style*="color:var(--gov-muted)"],
+        .content [style*="color: var(--gov-muted)"],
         .content [style*="color:#666"],
         .content [style*="color: #666"] {
             color: var(--ui-text-muted) !important;
         }
-        .content [style*="color:#94a3b8"],
-        .content [style*="color: #94a3b8"],
+        .content [style*="color:var(--gov-muted)"],
+        .content [style*="color: var(--gov-muted)"],
         .content [style*="color:#999"],
         .content [style*="color: #999"],
         .content [style*="color:#99a4b5"],
@@ -4170,10 +4170,10 @@
         .content [style*="color: #909399"] {
             color: var(--ui-text-faint) !important;
         }
-        .content [style*="color:#1d4ed8"],
-        .content [style*="color: #1d4ed8"],
-        .content [style*="color:#2563eb"],
-        .content [style*="color: #2563eb"],
+        .content [style*="color:var(--gov-primary-strong)"],
+        .content [style*="color: var(--gov-primary-strong)"],
+        .content [style*="color:var(--gov-primary)"],
+        .content [style*="color: var(--gov-primary)"],
         .content [style*="color:#0369a1"],
         .content [style*="color: #0369a1"],
         .content [style*="color:#409eff"],
