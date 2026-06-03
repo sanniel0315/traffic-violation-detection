@@ -7699,6 +7699,27 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- NTP 同步紀錄 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-history"/></svg>NTP 同步紀錄</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <span style="font-size:12px;color:var(--gov-muted)">最近 {{ ntpSyncHistory.length }} 筆</span>
+                                <el-button size="small" plain @click="loadNtpSyncHistory"><svg class="text-icon"><use href="#i-refresh"/></svg>重新整理</el-button>
+                            </div>
+                        </div>
+                        <div class="card-body" style="padding:8px 0">
+                            <div v-if="!ntpSyncHistory.length" style="padding:14px 16px;color:var(--gov-muted);font-size:13px;text-align:center">尚無 NTP 同步紀錄（背景每 {{ ntpSettings.sync_interval_minutes || 10 }} 分鐘執行 + 按「立即同步」會留時間戳記）</div>
+                            <div v-for="(l, i) in ntpSyncHistory" :key="`ntp-sync-${l.id || i}`"
+                                 style="display:flex;gap:10px;align-items:flex-start;padding:8px 16px;border-bottom:1px solid var(--gov-border);font-family:var(--font-mono);font-size:12.5px">
+                                <span style="flex:0 0 auto;width:64px;padding:1px 6px;border-radius:3px;text-align:center;font-weight:700"
+                                      :style="{background:l.level==='success'?'rgba(31,157,85,.15)':l.level==='error'?'rgba(196,58,49,.15)':'rgba(217,119,6,.15)',color:l.level==='success'?'var(--gov-ok)':l.level==='error'?'var(--gov-fault)':'var(--gov-warn)'}">{{ l.level||'info' }}</span>
+                                <span style="flex:0 0 auto;width:170px;color:var(--gov-muted)">{{ formatNVRTime(l.created_at) }}</span>
+                                <span style="flex:1;color:var(--gov-text)">{{ l.message }}</span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="monitor-grid">
                         <!-- CPU -->
                         <div class="monitor-card">
@@ -15717,6 +15738,20 @@ const app=createApp({
                 ElementPlus.ElMessage.error(`NTP 設定儲存失敗: ${e?.message||e}`);
             }
         };
+        const ntpSyncHistory=ref([]);  // 最近 N 筆 NTP 同步紀錄
+        const loadNtpSyncHistory=async()=>{
+            try{
+                // backend 寫 source="system" + message 含「NTP」關鍵字 (api/routes/system.py:357+)
+                const r=await fetch('/api/logs/query?source=system&limit=100');
+                if(!r.ok)return;
+                const d=await r.json();
+                const all=d.items||d.logs||[];
+                ntpSyncHistory.value=all.filter(l=>{
+                    const m=String(l?.message||'');
+                    return m.includes('NTP');
+                }).slice(0,15);
+            }catch(_){}
+        };
         const syncNtpNow=async()=>{
             try{
                 const r=await fetch('/api/system/ntp/sync-now',{method:'POST'});
@@ -15727,6 +15762,7 @@ const app=createApp({
                 ntpSettings.last_sync=d.result||{};
                 ntpSettings.runtime=d.result?.runtime||ntpSettings.runtime;
                 ElementPlus.ElMessage.success('NTP 同步指令已送出');
+                loadNtpSyncHistory();  // 同步後刷新紀錄
                 if(page.value==='logs')loadSystemLogs();
             }catch(e){
                 ElementPlus.ElMessage.error(`NTP 同步失敗: ${e?.message||e}`);
@@ -15973,6 +16009,7 @@ const app=createApp({
             if(v==='hwmonitor'){
                 loadHwStatus();
                 loadNtpSettings();
+                loadNtpSyncHistory();
                 hwTimer=setInterval(()=>{if(hwAutoRefresh.value && page.value==='hwmonitor' && isPageVisible())loadHwStatus();},5000);
             }else if(hwTimer){
                 clearInterval(hwTimer);
@@ -16321,7 +16358,7 @@ const app=createApp({
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            formatTime,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow};
+            formatTime,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory};
     }
 });
 window.__vueApp=app;
