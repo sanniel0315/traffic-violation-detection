@@ -11,28 +11,47 @@
 <link rel="stylesheet" href="/web/lib/element-plus.css">
 <link rel="stylesheet" href="/web/lib/element-plus-dark.css">
 <style>
-/* ── Dark Theme ── */
+/* ── Light Theme (對齊主頁面 gov design tokens) ── */
 :root {
-  --bg-deepest: #0a0c10;
-  --bg-primary: #0f1218;
-  --bg-secondary: #161b22;
-  --bg-tertiary: #1c2333;
-  --bg-elevated: #232b3a;
-  --bg-hover: #2a3548;
-  --border-color: rgba(148,163,184,.15);
-  --border-active: #3b82f6;
-  --text-primary: #f0f4f8;
-  --text-secondary: #c0c8d4;
-  --text-muted: #7a8694;
-  --accent-blue: #3b82f6;
-  --accent-green: #22c55e;
-  --accent-red: #ef4444;
-  --accent-amber: #f59e0b;
-  --accent-cyan: #06b6d4;
-  --rec-continuous: #22c55e;
-  --rec-event: #ef4444;
-  --rec-bookmark: #3b82f6;
-  --rec-empty: rgba(255,255,255,.05);
+  /* gov tokens (跟 index.html 主頁面同源) */
+  --gov-bg: #eef2f6;
+  --gov-bg-2: #f4f7fb;
+  --gov-surface: #ffffff;
+  --gov-surface-2: #f7f9fc;
+  --gov-border: #d7dee8;
+  --gov-border-strong: #b8c4d4;
+  --gov-text: #1f2937;
+  --gov-text-2: #344151;
+  --gov-muted: #5b6778;
+  --gov-mute-2: #8b95a4;
+  --gov-primary: #0b5ea8;
+  --gov-primary-strong: #084d8a;
+  --gov-primary-soft: #eaf2fb;
+  --gov-primary-line: #c5dbf0;
+  --gov-ok: #1f9d55;
+  --gov-warn: #d97706;
+  --gov-fault: #c43a31;
+  /* 原 NVR dark tokens 重新對應到 gov (整檔自動 reflect) */
+  --bg-deepest: var(--gov-bg);
+  --bg-primary: var(--gov-bg-2);
+  --bg-secondary: var(--gov-surface);
+  --bg-tertiary: var(--gov-surface);
+  --bg-elevated: var(--gov-surface);
+  --bg-hover: var(--gov-primary-soft);
+  --border-color: var(--gov-border);
+  --border-active: var(--gov-primary);
+  --text-primary: var(--gov-text);
+  --text-secondary: var(--gov-text-2);
+  --text-muted: var(--gov-muted);
+  --accent-blue: var(--gov-primary);
+  --accent-green: var(--gov-ok);
+  --accent-red: var(--gov-fault);
+  --accent-amber: var(--gov-warn);
+  --accent-cyan: var(--gov-primary-line);
+  --rec-continuous: var(--gov-ok);
+  --rec-event: var(--gov-fault);
+  --rec-bookmark: var(--gov-primary);
+  --rec-empty: rgba(15,23,42,.05);
 }
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
 html, body { height:100%; overflow:hidden; }
@@ -49,15 +68,15 @@ body {
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148,163,184,0.18);
+  background: rgba(11,94,168,0.22);
   border-radius: 8px;
   border: 2px solid transparent;
   background-clip: padding-box;
   transition: background .2s ease;
 }
-::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.32); background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(11,94,168,0.42); background-clip: padding-box; }
 ::-webkit-scrollbar-corner { background: transparent; }
-* { scrollbar-color: rgba(148,163,184,0.25) transparent; scrollbar-width: thin; }
+* { scrollbar-color: rgba(11,94,168,0.28) transparent; scrollbar-width: thin; }
 /* selection 公務藍底（跟主頁一致） */
 ::selection { background: #0b5ea8; color: #fff; }
 ::-moz-selection { background: #0b5ea8; color: #fff; }
@@ -194,7 +213,7 @@ body {
   pointer-events:none;
 }
 .grid-cell-name { font-size:15px; font-weight:600; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.8); }
-.grid-cell-time { font-size:14px; color:rgba(255,255,255,.85); font-variant-numeric:tabular-nums; }
+.grid-cell-time { font-size:14px; color:var(--gov-text); font-variant-numeric:tabular-nums; }
 .grid-cell-close {
   position:absolute; top:4px; right:4px;
   width:20px; height:20px; border-radius:50%;
@@ -218,7 +237,7 @@ body {
 .grid-cell-mode-tag {
   position:absolute; bottom:5px; right:5px;
   font-size:9px; padding:2px 6px; border-radius:3px;
-  background:rgba(0,0,0,.5); color:rgba(255,255,255,.6);
+  background:rgba(15,23,42,.65); color:rgba(255,255,255,.85);
   pointer-events:none;
 }
 
@@ -379,7 +398,7 @@ body {
   width:36px; height:36px; border-radius:50%;
   background:var(--accent-blue); color:#fff; font-size:16px;
 }
-.ctrl-btn.primary:hover { background:#2563eb; }
+.ctrl-btn.primary:hover { background:var(--gov-primary-strong); }
 .ctrl-sep { width:1px; height:20px; background:var(--border-color); margin:0 4px; }
 .ctrl-speed {
   padding:4px 8px; border:1px solid var(--border-color); border-radius:5px;
@@ -439,7 +458,7 @@ body {
 .nvr-input:focus { border-color:var(--accent-blue); }
 .nvr-cam-table { width:100%; border-collapse:collapse; font-size:12px; }
 .nvr-cam-table th { text-align:left; padding:8px 6px; color:var(--text-muted); border-bottom:1px solid var(--border-color); font-weight:600; }
-.nvr-cam-table td { padding:8px 6px; border-bottom:1px solid rgba(255,255,255,.05); }
+.nvr-cam-table td { padding:8px 6px; border-bottom:1px solid var(--gov-border); }
 .nvr-cam-table tr:hover td { background:var(--bg-hover); }
 .nvr-cam-table input[type=checkbox] { accent-color:var(--accent-blue); width:16px; height:16px; cursor:pointer; }
 </style>
