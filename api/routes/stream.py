@@ -71,11 +71,12 @@ def _push_violation_ring(camera_id: int, frame):
         pass
 
 
-def _save_violation_4frames_async(camera_id: int, violation_id: int, trigger_ts: float, current_frame):
+def _save_violation_4frames_async(camera_id: int, violation_id: int, trigger_ts: float,
+                                   current_frame, vehicle_bbox=None, plate_text: str = ""):
     """違規觸發後拿到 id 立刻 save 4 frame (before/mid_a/mid_b/after)。
-    - mid_a: 觸發當下 frame (100% 命中)
-    - before: 從 ring 撈 trigger_ts - 2.0s 最接近的 frame
-    - mid_b / after: schedule threading.Timer 在 0.6s / 2.1s 後從 ring 撈最新 frame"""
+    - mid_a: 觸發當下 frame + 綠色 vehicle bbox + plate 標記 (讓 user 看出哪輛是違規車)
+    - before: 從 ring 撈 trigger_ts - 2.0s 最接近的 frame (不標 bbox，車輛位置已不同)
+    - mid_b / after: schedule threading.Timer 在 0.6s / 2.1s 後從 ring 撈最新 frame (不標)"""
     import time as _t
     import cv2 as _cv2_local
     from pathlib import Path as _Path
@@ -86,7 +87,6 @@ def _save_violation_4frames_async(camera_id: int, violation_id: int, trigger_ts:
         if img is None:
             return
         try:
-            # 提高 JPEG quality 85→92，避免 dialog 看模糊；單張 ~1.5-2MB OK
             _cv2_local.imwrite(
                 str(out_dir / f"{violation_id}_{tag}.jpg"),
                 img,
@@ -95,8 +95,32 @@ def _save_violation_4frames_async(camera_id: int, violation_id: int, trigger_ts:
         except Exception:
             pass
 
-    # mid_a: 當下 frame (100% 命中)
-    _write("mid_a", current_frame)
+    # mid_a: 當下 frame + 標出觸發車輛 (粗綠框 + plate text 在框上方)
+    mid_a_img = current_frame.copy()
+    if vehicle_bbox:
+        try:
+            x1 = max(0, int(vehicle_bbox.get('x1', 0)))
+            y1 = max(0, int(vehicle_bbox.get('y1', 0)))
+            x2 = int(vehicle_bbox.get('x2', 0))
+            y2 = int(vehicle_bbox.get('y2', 0))
+            if x2 > x1 and y2 > y1:
+                # 粗綠框 thickness=6 (1920px frame 上明顯可見)
+                _cv2_local.rectangle(mid_a_img, (x1, y1), (x2, y2), (0, 255, 0), 6)
+                # plate text label 在框上方 (黑底白字)
+                label = (plate_text or "VIOLATION").strip()
+                font_scale = 1.6
+                font = _cv2_local.FONT_HERSHEY_SIMPLEX
+                (tw, th), _ = _cv2_local.getTextSize(label, font, font_scale, 3)
+                ly = max(th + 12, y1 - 8)
+                # 黑底
+                _cv2_local.rectangle(mid_a_img, (x1, ly - th - 12), (x1 + tw + 16, ly + 4),
+                                     (0, 0, 0), -1)
+                # 白字
+                _cv2_local.putText(mid_a_img, label, (x1 + 8, ly - 4),
+                                   font, font_scale, (255, 255, 255), 3, _cv2_local.LINE_AA)
+        except Exception:
+            pass
+    _write("mid_a", mid_a_img)
 
     # before: 從 ring 撈 t-2s 最接近
     with _violation_ring_lock:
@@ -107,7 +131,6 @@ def _save_violation_4frames_async(camera_id: int, violation_id: int, trigger_ts:
         if abs(best[0] - target) <= 1.5:
             _write("before", best[1])
 
-    # mid_b / after: 排程 timer 從 ring 撈未來最新 frame
     def _save_future(tag: str, wait: float):
         try:
             _t.sleep(wait)
@@ -2173,8 +2196,11 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         try:
                             _vid = (_resp.json() or {}).get("id") if _resp.ok else None
                             if _vid:
-                                # 方案 C: ring buffer save 4 frame
-                                _save_violation_4frames_async(camera_id, int(_vid), _now_t, frame)
+                                # 方案 C: ring buffer save 4 frame，mid_a 加綠框 + plate 標記
+                                _save_violation_4frames_async(
+                                    camera_id, int(_vid), _now_t, frame,
+                                    vehicle_bbox=_bbox, plate_text=_plate,
+                                )
                                 # plate-vehicle association: save 嚴格綁定觸發車輛的 plate crop
                                 if _violation_plate_crop is not None and _violation_plate_crop.size > 0:
                                     try:
