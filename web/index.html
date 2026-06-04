@@ -15785,6 +15785,14 @@ const app=createApp({
             e.target.src='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><rect fill="%23222" width="200" height="120"/><text fill="%23666" x="50%" y="50%" text-anchor="middle" dy=".3em">無訊號</text></svg>';
         };
         
+        // 後端 detection worker 是同一支,跑 SPEEDING / parking / 流量統計都靠它,
+        // 訊息依當前 page 動態切 label,避免在「停車違規設定」頁顯示「車流偵測」誤導 user
+        const detectionLabel=()=>{
+            const p=String(page.value||'');
+            if(p==='parking_violation_settings')return '停車違規偵測';
+            if(p==='speed_detection')return '車速偵測';
+            return '車流/車速偵測';
+        };
         const startDetection=async(id)=>{
             if(isActionLoading(detectionStartLoading,id))return;
             const camera=(cameras.value||[]).find(c=>Number(c.id)===Number(id));
@@ -15792,23 +15800,24 @@ const app=createApp({
                 ElementPlus.ElMessage.warning('攝影機已關閉，請先啟用再啟動分析');
                 return;
             }
+            const label=detectionLabel();
             try{
                 setActionLoading(detectionStartLoading,id,true);
                 const r=await fetch(`/api/stream/${id}/detection/start`,{method:'POST'});
                 const d=await r.json().catch(()=>({}));
                 if(!r.ok){
-                    ElementPlus.ElMessage.error(`車流/車速偵測啟動失敗: ${d?.detail||d?.message||`HTTP ${r.status}`}`);
+                    ElementPlus.ElMessage.error(`${label}啟動失敗: ${d?.detail||d?.message||`HTTP ${r.status}`}`);
                     return;
                 }
                 await syncFeatureStatus([id]);
-                ElementPlus.ElMessage.success('車流/車速偵測已啟動');
+                ElementPlus.ElMessage.success(`${label}已啟動`);
             }catch(e){
-                ElementPlus.ElMessage.error(`車流/車速偵測啟動失敗: ${e?.message||e}`);
+                ElementPlus.ElMessage.error(`${label}啟動失敗: ${e?.message||e}`);
             }finally{
                 setActionLoading(detectionStartLoading,id,false);
             }
         };
-        const stopDetection=async(id)=>{await fetch(`/api/stream/${id}/detection/stop`,{method:'POST'});await syncFeatureStatus([id]);ElementPlus.ElMessage.info('車流/車速偵測已停止');};
+        const stopDetection=async(id)=>{const label=detectionLabel();await fetch(`/api/stream/${id}/detection/stop`,{method:'POST'});await syncFeatureStatus([id]);ElementPlus.ElMessage.info(`${label}已停止`);};
         const loadCongestionParams=async(id)=>{
             try{
                 const r=await fetch(`/api/congestion/${id}/params`);
