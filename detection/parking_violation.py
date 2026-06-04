@@ -63,11 +63,50 @@ def resolve_zone_config(zone: dict) -> Tuple[float, str, str, int, int]:
 
 
 def _point_in_zone(cx: float, cy: float, zone: dict) -> bool:
+    """legacy: 中心點測試 (保留給其他模組相容,evaluator 已改用 _bbox_overlaps_zone)"""
     pts = zone.get("points") or []
     if len(pts) < 3:
         return False
     poly = np.array(pts, dtype=np.float32).reshape(-1, 1, 2)
     return cv2.pointPolygonTest(poly, (float(cx), float(cy)), False) >= 0
+
+
+def _bbox_overlaps_zone(bbox: dict, zone: dict) -> bool:
+    """車輛 bbox 跟 zone 多邊形「任何重疊」即視為「車輛進入」(車頭/車尾/車身
+    任一部分壓到紅線就算)。
+    判定: bbox 4 corner 任一在 polygon 內 OR polygon 任一頂點在 bbox 內 OR
+          bbox 中心在 polygon 內。涵蓋:
+      - 車輛剛進來 (前輪/車頭跨入 zone)
+      - 完全在 zone 內 (中心點測試)
+      - zone 比 bbox 小,zone 整個被 bbox 包覆 (polygon 點在 bbox 內)
+    """
+    pts = zone.get("points") or []
+    if len(pts) < 3:
+        return False
+    if not bbox:
+        return False
+    x1 = float(bbox.get("x1", 0)); y1 = float(bbox.get("y1", 0))
+    x2 = float(bbox.get("x2", 0)); y2 = float(bbox.get("y2", 0))
+    if x2 <= x1 or y2 <= y1:
+        return False
+    poly = np.array(pts, dtype=np.float32).reshape(-1, 1, 2)
+    # 1. bbox 4 corner + bottom-center + center 任一在 polygon 內
+    test_points = [
+        (x1, y1), (x2, y1), (x2, y2), (x1, y2),  # 4 corners
+        ((x1 + x2) * 0.5, y2),                    # bottom-center (車輪位置)
+        ((x1 + x2) * 0.5, (y1 + y2) * 0.5),       # bbox 中心
+    ]
+    for px, py in test_points:
+        if cv2.pointPolygonTest(poly, (float(px), float(py)), False) >= 0:
+            return True
+    # 2. polygon 任一頂點在 bbox 內 (zone 小於 bbox 的 case)
+    for pt in pts:
+        if len(pt) < 2:
+            continue
+        px, py = float(pt[0]), float(pt[1])
+        if x1 <= px <= x2 and y1 <= py <= y2:
+            return True
+    return False
 
 
 class ParkingEvaluator:
@@ -118,7 +157,9 @@ class ParkingEvaluator:
             cy = float((b.get("y1", 0) + b.get("y2", 0)) / 2)
             for z in parking_zones:
                 zid = str(z.get("id") or id(z))
-                inside = _point_in_zone(cx, cy, z)
+                # 「車身任一部分壓 zone」即算進入 (車頭/車尾/車輪 → 紅線停車邏輯)
+                # 不是中心點判定 (中心點對紅線停車過嚴,user 反映「車頭碰到就算」)
+                inside = _bbox_overlaps_zone(b, z)
                 track_zones = self._dwell.setdefault(tid, {})
                 rec = track_zones.get(zid)
                 if not inside:
