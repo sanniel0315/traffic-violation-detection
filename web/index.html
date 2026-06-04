@@ -9710,12 +9710,20 @@ const app=createApp({
                 if(!Number.isFinite(n))return null;
                 return n>1e12?n:(n*1000);
             }
+            // backend datetime.utcnow().isoformat() 沒 timezone designator → 前端
+            // Date.parse 規範會當 local time，造成 +8h 偏差 (台灣)。沒 TZ 字尾就
+            // 加 Z 強制當 UTC，跟 backend 寫入時的 timezone 一致。
             const isDateOnly=/^\d{4}-\d{2}-\d{2}$/.test(text);
-            const normalized=isDateOnly
-                ? `${text}T00:00:00`
-                : text
+            let normalized;
+            if(isDateOnly){
+                normalized=`${text}T00:00:00Z`;
+            }else{
+                const cleaned=text
                     .replace(' ','T')
                     .replace(/(\.\d{3})\d+/, '$1');
+                const hasTz=/Z$/i.test(cleaned) || /[+-]\d{2}:?\d{2}$/.test(cleaned);
+                normalized=hasTz?cleaned:cleaned+'Z';
+            }
             const ms=Date.parse(normalized);
             return Number.isFinite(ms)?ms:null;
         };
