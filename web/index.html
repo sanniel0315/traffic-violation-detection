@@ -4831,7 +4831,7 @@
                                 <span></span>
                             </div>
                             <div class="ds-vrow" v-for="v in recentViolations.slice(0,8)" :key="v.id" @click="showDetail(v)">
-                                <span class="ds-vrow-time">{{ (v.created_at||'').slice(11,16) }}</span>
+                                <span class="ds-vrow-time">{{ formatTimeHHMM(v.created_at) }}</span>
                                 <a v-if="v.image_path" class="ds-vrow-shot" :href="v.image_path" target="_blank" rel="noopener" @click.stop="showDetail(v)" title="點擊看詳情 · hover 放大預覽">
                                     <img :src="v.image_path" alt="" @error="$event.target.parentNode.classList.add('shot-err')">
                                 </a>
@@ -10364,38 +10364,52 @@ const app=createApp({
                 cameraCount: cameraSet.size,
             };
         });
-        const statsRealtimeOverview=computed(()=>{
-            const wallNow=Number(statsNowMs.value||Date.now());
-            let latestTs=0;
-            statsFilteredEvents.value.forEach(evt=>{
-                const tsMs=getEventTimestamp(evt);
-                if(Number.isFinite(tsMs) && tsMs>latestTs)latestTs=tsMs;
-            });
-            // 查歷史區間時，改用資料最新時間作為基準，避免 1m/5m 永遠顯示 0
-            const now=(latestTs>0 && (wallNow-latestTs)>10*60*1000) ? latestTs : wallNow;
-            let last1m=0;
-            let last5m=0;
-            let speedSum=0;
-            let speedCount=0;
-            statsFilteredEvents.value.forEach(evt=>{
-                const tsMs=getEventTimestamp(evt);
-                if(!tsMs)return;
-                const diff=now-tsMs;
-                if(diff>=0 && diff<=60000)last1m++;
-                if(diff>=0 && diff<=300000)last5m++;
-                const speedVal = parseEventSpeed(evt);
-                if(Number.isFinite(speedVal) && speedVal>0){
-                    speedSum+=speedVal;
-                    speedCount++;
+        // 即時指標獨立背景輪詢 backend，不受 stats query range 影響
+        // (避免 user 設「最近 1 小時」range，loadStats 抓 snapshot 後新事件
+        // 沒進 statsFilteredEvents，「近 1 分鐘」顯示 0)
+        const statsRealtimeMetrics=reactive({last1m:0, last5m:0, avgSpeed:null});
+        let _statsRealtimeTimer=null;
+        const refreshStatsRealtimeMetrics=async()=>{
+            try{
+                const now=new Date();
+                const t60s=new Date(now.getTime()-60*1000);
+                const t5m=new Date(now.getTime()-5*60*1000);
+                const fmt=(d)=>d.toISOString();
+                const [r1,r5]=await Promise.all([
+                    fetch(`/api/traffic/events?start_time=${fmt(t60s)}&end_time=${fmt(now)}&include_total=true&page_size=1`),
+                    fetch(`/api/traffic/events?start_time=${fmt(t5m)}&end_time=${fmt(now)}&include_total=true&page_size=200`),
+                ]);
+                if(r1.ok){
+                    const d1=await r1.json();
+                    statsRealtimeMetrics.last1m=Number(d1.total)||0;
                 }
-            });
-            return {
-                currentRate:last1m,
-                last1m,
-                last5m,
-                avgSpeed: speedCount ? speedSum / speedCount : null
-            };
-        });
+                if(r5.ok){
+                    const d5=await r5.json();
+                    statsRealtimeMetrics.last5m=Number(d5.total)||0;
+                    const items=d5.items||[];
+                    let sum=0, count=0;
+                    items.forEach(it=>{
+                        const sp=Number(it?.speed_kmh);
+                        if(Number.isFinite(sp) && sp>0){sum+=sp; count++;}
+                    });
+                    statsRealtimeMetrics.avgSpeed=count?sum/count:null;
+                }
+            }catch(_){}
+        };
+        const startStatsRealtimeTimer=()=>{
+            if(_statsRealtimeTimer)return;
+            refreshStatsRealtimeMetrics();
+            _statsRealtimeTimer=setInterval(refreshStatsRealtimeMetrics, 15000);  // 15s 一次
+        };
+        const stopStatsRealtimeTimer=()=>{
+            if(_statsRealtimeTimer){clearInterval(_statsRealtimeTimer); _statsRealtimeTimer=null;}
+        };
+        const statsRealtimeOverview=computed(()=>({
+            currentRate: statsRealtimeMetrics.last1m,
+            last1m: statsRealtimeMetrics.last1m,
+            last5m: statsRealtimeMetrics.last5m,
+            avgSpeed: statsRealtimeMetrics.avgSpeed,
+        }));
         const statsTrendSummary=computed(()=>{
             const rows=hourlyChartData.value||[];
             if(!rows.length){
@@ -16013,6 +16027,17 @@ const app=createApp({
             const d=new Date(s);
             return isNaN(d.getTime()) ? String(t) : d.toLocaleString('zh-TW');
         };
+        // 取 HH:MM (24h 制台灣時間) — 用於 row 緊湊顯示，避免直接 slice 拿到 UTC
+        const formatTimeHHMM=(t)=>{
+            if(!t)return '';
+            let s=String(t);
+            if(!/[Zz]|[+-]\d{2}:?\d{2}$/.test(s)){
+                s=s.replace(' ','T')+'Z';
+            }
+            const d=new Date(s);
+            if(isNaN(d.getTime()))return String(t).slice(11,16);
+            return d.toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false});
+        };
         const VEHICLE_TYPE_ZH={
             'car':'小客車','motorcycle':'機車','bicycle':'自行車','person':'行人',
             'truck':'貨車','bus':'大客車','heavy_truck':'大貨車','light_truck':'小貨車','non_truck':'小客車'
@@ -16155,8 +16180,10 @@ const app=createApp({
             if(v==='statistics'){
                 loadStats();
                 startStatsAutoTimer();
+                startStatsRealtimeTimer();
             }else{
                 stopStatsAutoTimer();
+                stopStatsRealtimeTimer();
             }
             if(v==='vd_report'){
                 if(!vdFilter.timeFrom || !vdFilter.timeTo){
@@ -16538,7 +16565,7 @@ const app=createApp({
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            formatTime,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory};
+            formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory};
     }
 });
 window.__vueApp=app;
