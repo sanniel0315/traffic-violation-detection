@@ -5,6 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from typing import List, Optional
@@ -25,17 +26,27 @@ _SNAPSHOT_LABELS = {"before": "事件前 t-2s", "mid_a": "中段 t-0.5s",
                     "mid_b": "中段 t+0.5s", "after": "事件後 t+2s"}
 
 
+_FONT_CANDIDATES = [
+    "/workspace/web/fonts/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+]
+
+
+def _find_unicode_font_path() -> Optional[str]:
+    """回 file path (ffmpeg drawtext 用)。"""
+    for fp in _FONT_CANDIDATES:
+        if os.path.exists(fp):
+            return fp
+    return None
+
+
 def _find_unicode_font(size: int):
     """跨平台找中文字體 (PIL ImageFont)，找不到 fall back default。"""
     from PIL import ImageFont
-    candidates = [
-        "/workspace/web/fonts/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ]
-    for fp in candidates:
+    for fp in _FONT_CANDIDATES:
         try:
             if os.path.exists(fp):
                 return ImageFont.truetype(fp, size)
@@ -194,17 +205,14 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
                     th = bbox_ts[3] - bbox_ts[1]
                 except Exception:
                     tw, th = 440, 50
-                # 右下角，距邊 20px + 黑底 padding 10px
-                pad_ts = 10
-                tx = cx + cell_w - tw - 20 - pad_ts
-                ty = cy + cell_h - th - 20 - pad_ts
-                # 黑底矩形
-                draw_ts.rectangle(
-                    [tx - pad_ts, ty - pad_ts, tx + tw + pad_ts, ty + th + pad_ts],
-                    fill=(0, 0, 0)
+                # 右下角，距邊 24px。無黑底，改白字黑色描邊 stroke 提升可讀性
+                tx = cx + cell_w - tw - 24
+                ty = cy + cell_h - th - 24
+                draw_ts.text(
+                    (tx, ty), time_str,
+                    fill=(255, 255, 255), font=font_ts,
+                    stroke_width=3, stroke_fill=(0, 0, 0),
                 )
-                # 白字
-                draw_ts.text((tx, ty), time_str, fill=(255, 255, 255), font=font_ts)
 
         canvas.save(out_path, "JPEG", quality=92, subsampling=0)
         return True
@@ -505,7 +513,7 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
     composite_url = None
     if len(result) >= 1:
-        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v16.jpg"
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v17.jpg"
         last_count_attr = f"_last_count_{violation_id}"
         prev_count = getattr(_build_composite_image, last_count_attr, 0)
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
@@ -628,6 +636,75 @@ async def delete_violation(violation_id: int, db: Session = Depends(get_db)):
     db.delete(v)
     db.commit()
     return {"message": "已刪除"}
+
+
+@router.get("/{violation_id}/clip.mp4")
+def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)):
+    """違規事件錄影 (±12s)，ffmpeg drawtext 把時間 OSD 燒進畫面右下。
+    下載與播放同一份檔案。Cache 在 ./output/violations/snapshots/{vid}_clip_osd_v1.mp4。"""
+    v = db.query(Violation).filter(Violation.id == violation_id).first()
+    if not v:
+        raise HTTPException(status_code=404, detail="violation not found")
+    if not v.created_at or not v.camera_id:
+        raise HTTPException(status_code=404, detail="missing time/camera")
+
+    out_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_osd_v1.mp4"
+    if not (out_path.exists() and out_path.stat().st_size > 4096):
+        camera_name = f"cam_{int(v.camera_id)}"
+        ts_unix = int(calendar.timegm(v.created_at.utctimetuple()))
+        clip_start_unix = ts_unix - 12
+        clip_bytes = _fetch_frigate_clip(camera_name, clip_start_unix, ts_unix + 12)
+        if not clip_bytes:
+            raise HTTPException(status_code=404, detail="frigate clip not available")
+        raw_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_raw.mp4"
+        raw_path.write_bytes(clip_bytes)
+
+        # ffmpeg drawtext: PTS-based wall clock，base = clip 起點 unix + 8h (台灣時區)
+        # gmtime 把 (base + pts) 當 UTC 解 → 預加 8h 就得台灣時間顯示
+        base_tpe = clip_start_unix + 8 * 3600
+        font_path = _find_unicode_font_path() or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        # text expression 內 strftime 的 `:` 要 escape 兩次（drawtext option parser + expression parser）
+        drawtext = (
+            f"drawtext=fontfile='{font_path}':"
+            f"text='%{{pts\\:gmtime\\:{base_tpe}\\:%Y/%m/%d %H\\\\:%M\\\\:%S}}':"
+            "x=w-tw-30:y=h-th-30:"
+            "fontsize=36:fontcolor=white:"
+            "borderw=3:bordercolor=black"
+        )
+        cmd = [
+            "ffmpeg", "-y", "-i", str(raw_path),
+            "-vf", drawtext,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-c:a", "copy", "-movflags", "+faststart",
+            str(out_path),
+        ]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, timeout=60, check=False)
+            ok = out_path.exists() and out_path.stat().st_size > 4096
+            if not ok:
+                # ffmpeg 失敗 → 退而求其次回 raw clip 不掛 OSD
+                err = (proc.stderr or b"")[-400:].decode("utf-8", "ignore")
+                print(f"⚠️ violation {violation_id} drawtext failed: {err}", flush=True)
+                raw_path.replace(out_path)
+        except Exception as e:
+            print(f"⚠️ violation {violation_id} ffmpeg exception: {e}", flush=True)
+            if raw_path.exists():
+                raw_path.replace(out_path)
+        finally:
+            if raw_path.exists() and out_path.exists() and raw_path != out_path:
+                try:
+                    raw_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    if not (out_path.exists() and out_path.stat().st_size > 4096):
+        raise HTTPException(status_code=500, detail="clip build failed")
+
+    return FileResponse(
+        path=str(out_path),
+        media_type="video/mp4",
+        filename=f"violation_{violation_id}.mp4",
+    )
 
 
 def _to_dict(v: Violation) -> dict:

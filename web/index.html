@@ -8427,17 +8427,12 @@
                         </div>
                         <div class="detail-evidence-col">
                             <div class="detail-evidence-label"><svg class="text-icon"><use href="#i-film"/></svg> 事件錄影（前後 ±12 秒）</div>
-                            <div class="detail-evidence-media" style="position:relative">
+                            <div class="detail-evidence-media">
                                 <video v-if="detailClipUrl && !detailClipError"
                                        :src="detailClipUrl"
                                        controls autoplay muted playsinline loop preload="auto"
                                        @error="detailClipError=true"></video>
                                 <div v-else class="detail-evidence-empty">此事件無對應錄影段<br>（攝影機未錄影或已過期）</div>
-                                <!-- 右下時間 OSD overlay (跟 composite 風格一致) -->
-                                <div v-if="detailClipUrl && !detailClipError && selected.created_at"
-                                     style="position:absolute;right:10px;bottom:46px;padding:6px 12px;background:rgba(0,0,0,.78);color:#fff;font-family:var(--font-mono);font-size:13px;font-weight:600;letter-spacing:.04em;border-radius:4px;pointer-events:none;line-height:1.2">
-                                    {{ formatTime(selected.created_at) }}
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -15381,16 +15376,12 @@ const app=createApp({
                 }
             }
         };
-        // 違規詳情對應的錄影 clip (事件時間 ±12 秒) — frigate camera 命名慣例 cam_{id}
+        // 違規詳情對應的錄影 clip (事件時間 ±12 秒)，後端 ffmpeg burn-in OSD 時間
+        // 下載與播放同一份檔案 → 下載 mp4 也自帶時間
         const detailClipUrl=computed(()=>{
             const v=selected.value;
-            if(!v?.camera_id||!v?.created_at) return '';
-            let s=String(v.created_at);
-            if(!/[Zz]|[+-]\d{2}:?\d{2}$/.test(s)) s=s.replace(' ','T')+'Z';
-            const ts=Math.floor(new Date(s).getTime()/1000);
-            if(!ts||isNaN(ts)) return '';
-            const path=`/api/cam_${v.camera_id}/start/${ts-12}/end/${ts+12}/clip.mp4`;
-            return `/api/frigate/recordings/play?src=${encodeURIComponent(path)}`;
+            if(!v?.id||!v?.camera_id||!v?.created_at) return '';
+            return `/api/violations/${v.id}/clip.mp4`;
         });
         const detailClipError=ref(false);
         const review=async(id,s)=>{await fetch(`/api/violations/${id}/review`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:s})});load();ElementPlus.ElMessage.success(s==='confirmed'?'已舉發':'已駁回');};
