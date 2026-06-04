@@ -196,7 +196,7 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
             draw_ts = _ID.Draw(canvas)
             for i, (_tag, offset_sec) in enumerate(_SNAPSHOT_OFFSETS):
                 cell_ts = base_ts + timedelta(seconds=offset_sec)
-                time_str = cell_ts.strftime("%Y/%m/%d %H:%M:%S")
+                time_str = cell_ts.strftime("%Y-%m-%d %H:%M:%S")
                 cx = (i % 2) * cell_w
                 cy = (i // 2) * cell_h
                 try:
@@ -513,7 +513,7 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
     composite_url = None
     if len(result) >= 1:
-        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v18.jpg"
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v19.jpg"
         last_count_attr = f"_last_count_{violation_id}"
         prev_count = getattr(_build_composite_image, last_count_attr, 0)
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
@@ -649,7 +649,7 @@ def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)
     if not v.created_at or not v.camera_id:
         raise HTTPException(status_code=404, detail="missing time/camera")
 
-    out_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_osd_v3.mp4"
+    out_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_osd_v4.mp4"
     if not (out_path.exists() and out_path.stat().st_size > 4096):
         camera_name = f"cam_{int(v.camera_id)}"
         ts_unix = int(calendar.timegm(v.created_at.utctimetuple()))
@@ -665,7 +665,7 @@ def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)
         # 改用 textfile= 從檔案讀,可放任意 `:` 字符 (跟 composite OSD 一致 HH:MM:SS)
         TPE_TZ = timezone(timedelta(hours=8))
         v_ts = v.created_at if v.created_at.tzinfo else v.created_at.replace(tzinfo=timezone.utc)
-        osd_text = v_ts.astimezone(TPE_TZ).strftime("%Y/%m/%d %H:%M:%S")
+        osd_text = v_ts.astimezone(TPE_TZ).strftime("%Y-%m-%d %H:%M:%S")
         osd_text_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_osd.txt"
         osd_text_path.write_text(osd_text, encoding="utf-8")
         font_path = _find_unicode_font_path() or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
