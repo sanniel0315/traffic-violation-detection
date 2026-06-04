@@ -8461,16 +8461,13 @@
                 </div>
             </div>
             <div class="detail-body" style="display:flex;flex-direction:column;flex:1 1 auto;overflow-y:auto;min-height:0">
-                <!-- 違規截圖 (組合圖取代原 annotated 單張) + 事件錄影 -->
                 <div class="detail-section" style="border-right:none">
-                    <div class="detail-section-header">
-                        <span>違規截圖 + 事件錄影</span>
-                        <a v-if="selectedComposite" :href="selectedComposite" download
+                    <div class="detail-section-header" v-if="selectedComposite">
+                        <a :href="selectedComposite" download
                            class="btn-primary" style="text-decoration:none;font-size:12px;padding:4px 12px;border-radius:4px">下載組合圖</a>
                     </div>
                     <div class="detail-evidence-grid">
                         <div class="detail-evidence-col">
-                            <div class="detail-evidence-label"><svg class="text-icon"><use href="#i-camera"/></svg> 事件組合圖（前 / 中 / 中 / 後 · 左上含車牌裁切）</div>
                             <div class="detail-evidence-media">
                                 <img v-if="selectedComposite" :src="selectedComposite" alt="事件組合圖"
                                      style="cursor:zoom-in" @click="compositeZoomVisible=true" title="點擊看全圖">
@@ -8480,13 +8477,12 @@
                             </div>
                         </div>
                         <div class="detail-evidence-col">
-                            <div class="detail-evidence-label"><svg class="text-icon"><use href="#i-film"/></svg> 事件錄影（前後 ±12 秒）</div>
                             <div class="detail-evidence-media">
                                 <video v-if="detailClipUrl && !detailClipError"
                                        :src="detailClipUrl"
                                        controls autoplay muted playsinline loop preload="auto"
                                        @error="detailClipError=true"></video>
-                                <div v-else class="detail-evidence-empty">此事件無對應錄影段<br>（攝影機未錄影或已過期）</div>
+                                <div v-else class="detail-evidence-empty">此事件無對應錄影段</div>
                             </div>
                         </div>
                     </div>

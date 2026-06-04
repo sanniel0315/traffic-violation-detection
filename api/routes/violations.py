@@ -641,14 +641,15 @@ async def delete_violation(violation_id: int, db: Session = Depends(get_db)):
 @router.get("/{violation_id}/clip.mp4")
 def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)):
     """違規事件錄影 (±12s)，ffmpeg drawtext 把時間 OSD 燒進畫面右下。
-    下載與播放同一份檔案。Cache 在 ./output/violations/snapshots/{vid}_clip_osd_v1.mp4。"""
+    下載與播放同一份檔案。Cache 在 ./output/violations/snapshots/{vid}_clip_osd_v2.mp4
+    (v2: 修 drawtext escape 6-backslash 才正確 burn-in time OSD)。"""
     v = db.query(Violation).filter(Violation.id == violation_id).first()
     if not v:
         raise HTTPException(status_code=404, detail="violation not found")
     if not v.created_at or not v.camera_id:
         raise HTTPException(status_code=404, detail="missing time/camera")
 
-    out_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_osd_v1.mp4"
+    out_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_osd_v2.mp4"
     if not (out_path.exists() and out_path.stat().st_size > 4096):
         camera_name = f"cam_{int(v.camera_id)}"
         ts_unix = int(calendar.timegm(v.created_at.utctimetuple()))
@@ -663,10 +664,13 @@ def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)
         # gmtime 把 (base + pts) 當 UTC 解 → 預加 8h 就得台灣時間顯示
         base_tpe = clip_start_unix + 8 * 3600
         font_path = _find_unicode_font_path() or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        # text expression 內 strftime 的 `:` 要 escape 兩次（drawtext option parser + expression parser）
+        # text expression escape 兩層:
+        #   prefix `:` (function args 分隔): option-level escape 一次 = Python \\: 輸出 \:
+        #   strftime 內 literal `:` (要顯示在影片): option-level + expression-level 兩次 escape
+        #     = Python \\\\\\: 輸出 \\\: → ffmpeg 解 \\ literal + \: literal → 進 expression 後 unescape 為 :
         drawtext = (
             f"drawtext=fontfile='{font_path}':"
-            f"text='%{{pts\\:gmtime\\:{base_tpe}\\:%Y/%m/%d %H\\\\:%M\\\\:%S}}':"
+            f"text=%{{pts\\:gmtime\\:{base_tpe}\\:%Y/%m/%d %H\\\\\\:%M\\\\\\:%S}}:"
             "x=w-tw-30:y=h-th-30:"
             "fontsize=36:fontcolor=white:"
             "borderw=3:bordercolor=black"
