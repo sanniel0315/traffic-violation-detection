@@ -3485,9 +3485,16 @@
         .detail-box { max-width: 1400px; display: flex; flex-direction: column; }
         .detail-header { padding: 12px 20px; background: #f5f5f5; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; flex-shrink: 0; }
         .detail-info { padding: 12px 20px; background: #fafafa; display: flex; gap: 24px; flex-wrap: wrap; border-bottom: 1px solid #eee; flex-shrink: 0; }
-        .detail-info-item { display: flex; gap: 8px; }
-        .detail-info-item .label { color: #666; }
-        .detail-info-item .value { font-weight: 600; }
+        .detail-info-item { display: flex; gap: 8px; align-items: center; }
+        .detail-info-item .label { color: var(--gov-muted); }
+        .detail-info-item .value { font-weight: 600; color: var(--gov-text); }
+        /* 違規 dialog inline 修改按鈕 (對齊截圖紅色 chip 樣式) */
+        .violation-edit-btn {
+            height: 22px !important;
+            padding: 0 10px !important;
+            font-size: 11px !important;
+            margin-left: 4px;
+        }
         .detail-body { display: grid; grid-template-columns: 1fr 1fr; }
         .detail-section { padding: 16px; }
         .detail-section:first-child { border-right: 1px solid #eee; }
@@ -8353,11 +8360,37 @@
         <div class="modal-box detail-box">
             <div class="detail-header"><h3>違規詳情</h3><el-button circle size="small" @click="showDetailModal=false">✕</el-button></div>
             <div class="detail-info">
-                <div class="detail-info-item"><span class="label">地點:</span><span class="value">{{ detailLocationText }}</span></div>
-                <div class="detail-info-item"><span class="label">類型:</span><el-tag :type="getTagType(selected.violation_type)">{{ selected.violation_name }}</el-tag></div>
-                <div class="detail-info-item"><span class="label">車種:</span><span class="value">{{ selected.vehicle_type ? vehicleTypeZh(selected.vehicle_type) : '—' }}</span></div>
-                <div class="detail-info-item"><span class="label">車牌:</span><span class="value" style="color:#0d6e9f;font-size:18px">{{ selected.license_plate || selectedPlateNumber || '—' }}</span></div>
-                <div class="detail-info-item"><span class="label">時間:</span><span class="value">{{ formatTime(selected.created_at) }}</span></div>
+                <div class="detail-info-item">
+                    <span class="label">地點:</span>
+                    <span class="value">{{ detailLocationText }}</span>
+                    <el-button class="violation-edit-btn" size="small" type="danger" plain @click="editViolationField('location','違規地點','text')">修改</el-button>
+                </div>
+                <div class="detail-info-item">
+                    <span class="label">類型:</span>
+                    <el-tag :type="getTagType(selected.violation_type)">{{ selected.violation_name || selected.violation_type || '—' }}</el-tag>
+                    <el-button class="violation-edit-btn" size="small" type="danger" plain @click="editViolationField('violation_type','違規種類','enum_violation_type')">修改</el-button>
+                </div>
+                <div class="detail-info-item">
+                    <span class="label">車種:</span>
+                    <span class="value">{{ selected.vehicle_type ? vehicleTypeZh(selected.vehicle_type) : '—' }}</span>
+                    <el-button class="violation-edit-btn" size="small" type="danger" plain @click="editViolationField('vehicle_type','車種','enum_vehicle_type')">修改</el-button>
+                </div>
+                <div class="detail-info-item">
+                    <span class="label">車牌:</span>
+                    <span class="value" style="color:#0d6e9f;font-size:18px">{{ selected.license_plate || selectedPlateNumber || '—' }}</span>
+                    <el-button class="violation-edit-btn" size="small" type="danger" plain @click="editViolationField('license_plate','車牌號碼','text')">修改</el-button>
+                </div>
+                <div class="detail-info-item">
+                    <span class="label">時間:</span>
+                    <span class="value">{{ formatTime(selected.created_at) }}</span>
+                </div>
+                <div class="detail-info-item">
+                    <span class="label">開單狀態:</span>
+                    <el-tag size="small" :type="selected.status==='confirmed'?'danger':selected.status==='rejected'?'info':selected.status==='issued'?'success':'warning'">
+                        {{ ({pending:'未處理',confirmed:'已舉發',rejected:'不舉發',issued:'已製單',failed:'製單失敗'})[selected.status] || selected.status || '—' }}
+                    </el-tag>
+                    <el-button class="violation-edit-btn" size="small" type="danger" plain @click="editViolationField('status','開單狀態','enum_status')">修改</el-button>
+                </div>
             </div>
             <div class="detail-body" style="display:flex;flex-direction:column;flex:1 1 auto;overflow-y:auto;min-height:0">
                 <!-- 違規截圖 (組合圖取代原 annotated 單張) + 事件錄影 -->
@@ -15207,6 +15240,77 @@ const app=createApp({
             }
         };
         
+        // 違規 dialog 內每欄 [修改] 按鈕觸發。fieldType: text / enum_violation_type / enum_vehicle_type / enum_status
+        const VIOLATION_TYPE_OPTS={
+            RED_LIGHT:'闖紅燈', SPEEDING:'超速', ILLEGAL_PARKING:'違規停車',
+            SIDEWALK:'駕車行駛人行道或騎樓', SIDEWALK_PARKING:'在人行道停車',
+            TURN_NOT_YIELD_PEDESTRIAN:'轉彎未禮讓行人', RED_LIGHT_RIGHT_TURN:'紅燈右轉',
+            RED_LINE_PARKING:'紅線停車', RED_LINE_STOP:'紅線臨停',
+            YELLOW_LINE_PARKING:'黃線停車', DOUBLE_PARKING:'併排停車', DOUBLE_STOP:'併排臨停',
+            BUS_STOP_STOP:'公車招呼站臨停', BUS_STOP_PARKING:'公車招呼站停車',
+            ILLEGAL_LANE_CHANGE:'變換車道不依標線指示', ILLEGAL_RIGHT_TURN:'違規右轉',
+            LEFT_TURN_NO_INNER_LANE:'左轉彎(迴轉)，不先駛入內側車道',
+            MAINTENANCE_ALERT:'維運告警',
+        };
+        const VEHICLE_TYPE_OPTS={
+            car:'小客車', motorcycle:'機車', light_truck:'小貨車',
+            heavy_truck:'大貨車', bus:'大客車', truck:'貨車',
+        };
+        const STATUS_OPTS={
+            pending:'未處理', confirmed:'已舉發', rejected:'不舉發',
+            issued:'已製單', failed:'製單失敗',
+        };
+        const editViolationField=async(field, label, fieldType)=>{
+            const v=selected.value;
+            if(!v?.id){ElementPlus.ElMessage.warning('沒有違規資料');return;}
+            const cur=String(v[field]==null?'':v[field]);
+            try{
+                let newValue;
+                if(fieldType==='text'){
+                    const r=await ElementPlus.ElMessageBox.prompt(`修改${label}`, '編輯', {
+                        inputValue: cur, confirmButtonText:'儲存', cancelButtonText:'取消',
+                    });
+                    newValue=String(r.value||'').trim();
+                }else{
+                    const opts = fieldType==='enum_violation_type' ? VIOLATION_TYPE_OPTS
+                               : fieldType==='enum_vehicle_type' ? VEHICLE_TYPE_OPTS
+                               : STATUS_OPTS;
+                    const hint=Object.entries(opts).map(([k,v])=>`${k}=${v}`).join('\n');
+                    const r=await ElementPlus.ElMessageBox.prompt(
+                        `修改${label}（請輸入英文代號，可選:\n${hint}）`, '編輯',
+                        { inputValue: cur, confirmButtonText:'儲存', cancelButtonText:'取消',
+                          inputValidator:(val)=>{
+                              const s=String(val||'').trim();
+                              if(!s)return true;
+                              return opts[s] ? true : `必須是: ${Object.keys(opts).join(', ')}`;
+                          }
+                        }
+                    );
+                    newValue=String(r.value||'').trim();
+                }
+                const body={[field]: newValue};
+                // 自動帶 violation_name (中文 label) 一起送
+                if(field==='violation_type' && newValue && VIOLATION_TYPE_OPTS[newValue]){
+                    body.violation_name=VIOLATION_TYPE_OPTS[newValue];
+                }
+                const resp=await fetch(`/api/violations/${v.id}`, {
+                    method:'PATCH', headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify(body)
+                });
+                if(!resp.ok){
+                    const d=await resp.json().catch(()=>({}));
+                    throw new Error(d?.detail||d?.message||`HTTP ${resp.status}`);
+                }
+                const updated=await resp.json();
+                Object.assign(v, updated);
+                ElementPlus.ElMessage.success(`${label}已更新`);
+                if(page.value==='review')loadPendingViolations();
+                else if(page.value==='statistics' || page.value==='dashboard')loadViolations();
+            }catch(e){
+                if(e==='cancel' || e?.action==='cancel' || e?.message==='cancel')return;
+                ElementPlus.ElMessage.error(`修改失敗: ${e?.message||e}`);
+            }
+        };
         const showDetail=async(v)=>{
             selected.value=v;
             selectedPhotos.value=v.image_path?[{url:v.image_path,time:formatTime(v.created_at)}]:[];
@@ -16408,7 +16512,7 @@ const app=createApp({
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
-            showDetail,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
+            showDetail,editViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory};
     }
 });
