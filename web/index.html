@@ -4697,7 +4697,7 @@
                             <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-clipboard"/></svg>待審核</div>
                             <div class="ds-kpi-value">{{ dashboard.pending_review || 0 }}</div>
                             <div class="ds-kpi-hint">尚未開單{{ oldestPendingText }}</div>
-                            <a class="ds-kpi-action" v-if="canReviewTickets" @click="page='review'">前往開單管理 →</a>
+                            <a class="ds-kpi-action" v-if="canReviewTickets" @click="page='review';loadPendingViolations()">前往開單管理 →</a>
                         </div>
                         <div class="ds-kpi-card" :class="{warn:(dashboard.offline_cameras||0)>0, ok:(dashboard.offline_cameras||0)===0}">
                             <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-video"/></svg>攝影機線上</div>
