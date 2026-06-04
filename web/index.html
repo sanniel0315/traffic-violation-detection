@@ -12327,7 +12327,28 @@ const app=createApp({
         const roiName=ref('');
         const roiPoints=ref([]);
         let roiEditorPollTimer=null;
-        const zoneColors={detection:'#67c23a',flow_detection:'#67c23a',speed:'#f97316',speed_roi:'#f97316',speed_line_in:'#2563eb',speed_line_out:'#8b5cf6',lane_left:'#e11d48',lane_straight:'#0ea5e9',lane_right:'#f59e0b',stop_line:'#e6a23c',crosswalk:'#409eff',no_parking:'#2563eb'};
+        const zoneColors={detection:'#67c23a',flow_detection:'#67c23a',speed:'#f97316',speed_roi:'#f97316',speed_line_in:'#2563eb',speed_line_out:'#8b5cf6',lane_left:'#e11d48',lane_straight:'#0ea5e9',lane_right:'#f59e0b',stop_line:'#e6a23c',crosswalk:'#409eff',no_parking:'#dc2626',sidewalk:'#7c3aed',red_line:'#ef4444',yellow_line:'#f59e0b',bus_stop:'#0ea5e9'};
+        // 停車類違規 zone sub_kind → 對應違規 type/name/預設秒數/罰金/點數
+        const parkingSubKindOptions=[
+            {value:'general',          label:'一般違停',       threshold:180, violation_type:'ILLEGAL_PARKING',     violation_name:'違規停車',         fine:600,  points:0},
+            {value:'red_line',         label:'紅線臨停',       threshold:1,   violation_type:'RED_LINE_STOP',       violation_name:'紅線臨停',         fine:600,  points:0},
+            {value:'red_line_long',    label:'紅線停車',       threshold:180, violation_type:'RED_LINE_PARKING',    violation_name:'紅線停車',         fine:900,  points:0},
+            {value:'yellow_line',      label:'黃線停車',       threshold:180, violation_type:'YELLOW_LINE_PARKING', violation_name:'黃線停車',         fine:600,  points:0},
+            {value:'sidewalk',         label:'駕車行駛人行道', threshold:0.5, violation_type:'SIDEWALK',            violation_name:'駕車行駛人行道',   fine:1200, points:1},
+            {value:'sidewalk_parking', label:'人行道停車',     threshold:60,  violation_type:'SIDEWALK_PARKING',    violation_name:'在人行道停車',     fine:1200, points:1},
+            {value:'bus_stop_stop',    label:'公車招呼站臨停', threshold:1,   violation_type:'BUS_STOP_STOP',       violation_name:'公車招呼站臨停',   fine:600,  points:0},
+            {value:'bus_stop_parking', label:'公車招呼站停車', threshold:180, violation_type:'BUS_STOP_PARKING',    violation_name:'公車招呼站停車',   fine:900,  points:0},
+            {value:'crosswalk_stop',   label:'停在斑馬線',     threshold:1,   violation_type:'CROSSWALK_STOP',      violation_name:'停在斑馬線',       fine:900,  points:1},
+        ];
+        // parking sub_kind → 對應 zone.type (前端 type 選項映射)
+        const parkingSubKindToZoneType=(sk)=>({
+            general:'no_parking', red_line:'red_line', red_line_long:'red_line', yellow_line:'yellow_line',
+            sidewalk:'sidewalk', sidewalk_parking:'sidewalk', bus_stop_stop:'bus_stop', bus_stop_parking:'bus_stop',
+            crosswalk_stop:'crosswalk',
+        }[String(sk||'')] || 'no_parking');
+        const roiSubKind=ref('');
+        const roiStopThreshold=ref(null);
+        const parkingZoneTypes=['no_parking','sidewalk','red_line','yellow_line','bus_stop','crosswalk'];
         const flowZoneTypes=['detection','flow_detection'];
         const speedZoneTypes=['speed','speed_roi','speed_line_in','speed_line_out'];
         const flowDirectionOptions=[
@@ -12451,13 +12472,18 @@ const app=createApp({
             speed_line_out:'速度結束線',
             stop_line:'停止線',
             crosswalk:'斑馬線',
-            no_parking:'禁停區'
+            no_parking:'禁停區',
+            sidewalk:'人行道',
+            red_line:'紅線',
+            yellow_line:'黃線',
+            bus_stop:'公車招呼站'
         }[String(t||'')] || String(t||''));
         const zoneTypeTagType=(t)=>{
             const k=String(t||'');
             if(['detection','flow_detection'].includes(k))return 'success';
             if(['speed','speed_roi','speed_line_in','speed_line_out'].includes(k))return 'warning';
-            if(['stop_line','crosswalk','no_parking'].includes(k))return 'info';
+            if(['no_parking','sidewalk','red_line','yellow_line','bus_stop'].includes(k))return 'danger';
+            if(['stop_line','crosswalk'].includes(k))return 'info';
             return 'info';
         };
         const zoneLaneNoLabel=(zone)=>{
@@ -15233,6 +15259,17 @@ const app=createApp({
                 z.scope = page.value==='congestion_detection' ? 'congestion_detection' : 'traffic_flow_settings';
             }else if(['speed','speed_roi','speed_line_in','speed_line_out'].includes(zt)){
                 z.scope = 'speed_detection';
+            }else if(parkingZoneTypes.includes(zt)){
+                // 停車類違規 zone: 共用 traffic_flow scope (跟 vehicle detection 一起)
+                z.scope = 'traffic_flow_settings';
+                const sk = roiSubKind.value || (zt==='sidewalk'?'sidewalk':zt==='crosswalk'?'crosswalk_stop':zt==='bus_stop'?'bus_stop_stop':zt==='red_line'?'red_line':zt==='yellow_line'?'yellow_line':'general');
+                const cfg = parkingSubKindOptions.find(o=>o.value===sk) || parkingSubKindOptions[0];
+                z.sub_kind = sk;
+                z.stop_threshold_sec = (roiStopThreshold.value!=null && roiStopThreshold.value!=='') ? Number(roiStopThreshold.value) : cfg.threshold;
+                z.violation_type = cfg.violation_type;
+                z.violation_name = cfg.violation_name;
+                z.fine_amount = cfg.fine;
+                z.points_penalty = cfg.points;
             }
             const zones=[...(previewCamera.value.zones||[]),z];
             try{

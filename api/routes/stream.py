@@ -10,7 +10,7 @@ import threading
 import time
 import requests
 from datetime import datetime, timedelta
-from typing import Dict
+from typing import Dict, Optional
 import numpy as np
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
@@ -49,6 +49,9 @@ _VIOLATION_PUSH_INTERVAL_SEC = 0.1  # 限 10 fps push 避免 IO 過量
 _violation_ring_lock = _vbuf_threading.Lock()
 _violation_last_push: Dict[int, float] = {}
 
+# 停車類違規 evaluator (per camera 一個 instance,跨 frame 保 dwell 狀態)
+_PARKING_EVALUATORS: Dict[int, "object"] = {}
+
 
 def _push_violation_ring(camera_id: int, frame):
     """worker tick 呼叫，每 ~0.1s push 一張原解析度 frame 進 ring buffer。
@@ -69,6 +72,140 @@ def _push_violation_ring(camera_id: int, frame):
             ring.append((now, frame.copy()))
     except Exception:
         pass
+
+
+def _associate_plate_for_vehicle(frame, vehicle_bbox: dict, camera_id: int):
+    """對指定 vehicle bbox 跑 plate detect + OCR，回 (plate_number, plate_crop_bgr)。
+    嚴格綁定觸發車輛（不走 _latest_lpr_plate ±20s 避免抓到前車）。
+    OCR 走 tightened crop（準確）、save 走 expanded crop（composite 上下不被切）。
+    返回 ("", None) 表示沒抓到 conf>=0.5 的 plate。"""
+    if not vehicle_bbox:
+        return "", None
+    try:
+        bx1 = max(0, int(vehicle_bbox.get('x1', 0)))
+        by1 = max(0, int(vehicle_bbox.get('y1', 0)))
+        bx2 = int(vehicle_bbox.get('x2', 0))
+        by2 = int(vehicle_bbox.get('y2', 0))
+        veh_crop = frame[by1:by2, bx1:bx2]
+        if veh_crop is None or veh_crop.size == 0:
+            return "", None
+        from api.routes.lpr_stream import (
+            get_plate_detector as _vpgd,
+            get_recognizer as _vpr,
+            _PLATE_DETECT_CONF as _vpconf,
+            _expand_plate_bbox as _vpex,
+            _tighten_plate_crop_with_bbox as _vptight,
+            _rank_plate_candidates as _vprank,
+            _propose_plate_bboxes as _vpfb,
+            _recognize_plate_on_crop as _vpo,
+        )
+        det = _vpgd()
+        rec = _vpr()
+        vh, vw = veh_crop.shape[:2]
+        detections = det.detect(veh_crop, conf=_vpconf)
+        if not detections:
+            detections = _vpfb(veh_crop)
+        ranked = _vprank(detections, vw, vh)
+        for r in ranked:
+            rb = r.get('bbox') or []
+            if len(rb) != 4:
+                continue
+            ex1, ey1, ex2, ey2 = _vpex([int(x) for x in rb], vw, vh)
+            pc = det.crop(veh_crop, [ex1, ey1, ex2, ey2])
+            if pc is None or getattr(pc, 'size', 0) == 0:
+                continue
+            pc_save = pc.copy()
+            pc_tight, _ = _vptight(pc)
+            pc_ocr = pc_tight if (pc_tight is not None and getattr(pc_tight, 'size', 0) > 0) else pc
+            res = _vpo(pc_ocr, rec)
+            pn = (res or {}).get('plate_number')
+            conf = float((res or {}).get('confidence') or 0.0)
+            if pn and conf >= 0.5:
+                return str(pn).strip(), pc_save
+        return "", None
+    except Exception as e:
+        print(f"⚠️ plate-vehicle association err cam{camera_id}: {e}", flush=True)
+        return "", None
+
+
+def _emit_violation_for_vehicle(
+    *,
+    camera_id: int,
+    location: str,
+    frame,
+    vehicle_bbox: dict,
+    vehicle_class: str,
+    vehicle_conf,
+    violation_type: str,
+    violation_name: str,
+    fine_amount: int,
+    points: int = 0,
+    output_dir,
+    extra_fields: Optional[dict] = None,
+    trigger_ts: Optional[float] = None,
+):
+    """通用違規 emitter：plate-vehicle association → 標 annotated.jpg → POST →
+    ring buffer 4-frame save + plate.png 寫盤。回 (violation_id, plate_number)。
+    所有違規種類共用此 path，等同 SPEEDING pipeline。"""
+    import time as _t
+    plate, plate_crop = _associate_plate_for_vehicle(frame, vehicle_bbox, camera_id)
+    annotated = frame.copy()
+    if vehicle_bbox:
+        cv2.rectangle(
+            annotated,
+            (int(vehicle_bbox.get('x1', 0)), int(vehicle_bbox.get('y1', 0))),
+            (int(vehicle_bbox.get('x2', 0)), int(vehicle_bbox.get('y2', 0))),
+            (0, 255, 0), 2,
+        )
+    ts_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    image_name = f"{violation_type}_{ts_str}.jpg"
+    image_path = output_dir / image_name
+    cv2.imwrite(str(image_path), annotated)
+    data = {
+        "violation_type": violation_type,
+        "violation_name": violation_name,
+        "vehicle_type": vehicle_class,
+        "license_plate": plate or None,
+        "location": location,
+        "camera_id": camera_id,
+        "confidence": vehicle_conf,
+        "fine_amount": fine_amount,
+        "points": points,
+        "image_path": f"/files/violations/{image_name}",
+        "bbox": vehicle_bbox,
+    }
+    if extra_fields:
+        data.update(extra_fields)
+    vid = None
+    try:
+        resp = requests.post("http://localhost:8000/api/violations", json=data, timeout=5)
+        vid = (resp.json() or {}).get("id") if resp.ok else None
+    except Exception as e:
+        print(f"⚠️ emit {violation_type} POST fail cam{camera_id}: {e}", flush=True)
+        return None, plate
+    if not vid:
+        return None, plate
+    now_t = trigger_ts if trigger_ts is not None else _t.time()
+    try:
+        _save_violation_4frames_async(
+            camera_id, int(vid), now_t, frame,
+            vehicle_bbox=vehicle_bbox, plate_text=plate,
+        )
+    except Exception:
+        pass
+    if plate_crop is not None and plate_crop.size > 0:
+        try:
+            from pathlib import Path as _PP
+            vp_dir = _PP("./output/violations/snapshots").resolve()
+            vp_dir.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(
+                str(vp_dir / f"{int(vid)}_violation_plate.png"),
+                plate_crop,
+                [cv2.IMWRITE_PNG_COMPRESSION, 1],
+            )
+        except Exception:
+            pass
+    return int(vid), plate
 
 
 def _save_violation_4frames_async(camera_id: int, violation_id: int, trigger_ts: float,
@@ -2215,6 +2352,58 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             pass
                     except Exception:
                         pass
+
+            # ---- 停車類違規通用 evaluator (共通邏輯解 10 種違規) ----
+            # 條件：vehicle 在 parking zone (no_parking/sidewalk/crosswalk/bus_stop
+            # /red_line/yellow_line) 內靜止超過 zone.stop_threshold_sec
+            # 走跟 SPEEDING 同一條 _emit_violation_for_vehicle pipeline:
+            # plate-vehicle association + composite + OSD + ring buffer save
+            try:
+                _parking_zones = select_zones(
+                    zones, scope=SCOPE_TRAFFIC,
+                    allowed_types=(
+                        "no_parking", "sidewalk", "crosswalk",
+                        "bus_stop", "red_line", "yellow_line",
+                    ),
+                )
+                if _parking_zones and vehicles:
+                    _peval = _PARKING_EVALUATORS.get(camera_id)
+                    if _peval is None:
+                        from detection.parking_violation import ParkingEvaluator
+                        _peval = ParkingEvaluator(camera_id)
+                        _PARKING_EVALUATORS[camera_id] = _peval
+                    _pk_now = time.time()
+                    _triggers = _peval.feed(vehicles, _pk_now, _parking_zones)
+                    for _trig in _triggers:
+                        try:
+                            _vid_pk, _plate_pk = _emit_violation_for_vehicle(
+                                camera_id=camera_id,
+                                location=location,
+                                frame=frame,
+                                vehicle_bbox=_trig.get("vehicle_bbox") or {},
+                                vehicle_class=_trig.get("vehicle_class") or "car",
+                                vehicle_conf=_trig.get("vehicle_conf"),
+                                violation_type=_trig["violation_type"],
+                                violation_name=_trig["violation_name"],
+                                fine_amount=int(_trig.get("fine_amount") or 600),
+                                points=int(_trig.get("points_penalty") or 0),
+                                output_dir=output_dir,
+                                trigger_ts=_pk_now,
+                                extra_fields={
+                                    "flow_roi_hit": True,
+                                    "speed_roi_hit": False,
+                                },
+                            )
+                            print(
+                                f"⚠️ {_trig['violation_type']}: zone={_trig['zone_name']!r} "
+                                f"track={_trig['track_id']} dwell={_trig['dwell_sec']:.1f}s "
+                                f"plate={_plate_pk or 'NODATA'} cam{camera_id}",
+                                flush=True,
+                            )
+                        except Exception as _ex_pk:
+                            print(f"⚠️ parking emit cam{camera_id}: {_ex_pk}", flush=True)
+            except Exception as _ex_peval:
+                print(f"⚠️ parking evaluator cam{camera_id}: {_ex_peval}", flush=True)
 
     # 後處理 thread：drain queue，跑 ROI/tracking/DB/violations。不阻塞 worker。
     import queue as _queue
