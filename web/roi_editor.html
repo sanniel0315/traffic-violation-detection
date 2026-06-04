@@ -479,18 +479,24 @@ createApp({
         };
         
         const mergeScopedZones = (localZones) => {
-            const normalizedLocal = (localZones || []).map((z, i) => ({
-                ...z,
-                id: ensureZoneId(z, i),
-                type: normalizeZoneType(z.type),
-                scope: currentScope,
-                name: z.name || `${typeNames[normalizeZoneType(z.type)] || '區域'} ${i + 1}`,
-                lane_tags: isFlowZoneType(z.type) ? normalizeLaneTags(z.lane_tags || []) : [],
-                lane_no: isFlowZoneType(z.type) ? normalizeLaneNo(z.lane_no) : null,
-                direction: z.direction || null,
-                speed_limit: isSpeedZoneType(z.type) ? Number(z.speed_limit || 60) : null,
-                overspeed_kmh: isSpeedZoneType(z.type) ? Number(z.overspeed_kmh || 10) : null
-            }));
+            const normalizedLocal = (localZones || []).map((z, i) => {
+                const t = normalizeZoneType(z.type);
+                // parking 類 zone 強制走 traffic_flow_settings scope (跟 stream.py
+                // SCOPE_TRAFFIC 一致),不然 select_zones 撈不到 → evaluator 不觸發
+                const scope = isParkingZoneType(t) ? 'traffic_flow_settings' : currentScope;
+                return {
+                    ...z,
+                    id: ensureZoneId(z, i),
+                    type: t,
+                    scope,
+                    name: z.name || `${typeNames[t] || '區域'} ${i + 1}`,
+                    lane_tags: isFlowZoneType(z.type) ? normalizeLaneTags(z.lane_tags || []) : [],
+                    lane_no: isFlowZoneType(z.type) ? normalizeLaneNo(z.lane_no) : null,
+                    direction: z.direction || null,
+                    speed_limit: isSpeedZoneType(z.type) ? Number(z.speed_limit || 60) : null,
+                    overspeed_kmh: isSpeedZoneType(z.type) ? Number(z.overspeed_kmh || 10) : null
+                };
+            });
             const others = (allZones.value || []).filter(z => {
                 const zScope = String(z.scope || '');
                 if (zScope === currentScope) return false;
