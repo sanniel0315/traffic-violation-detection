@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 
 from api.models import get_db, Violation
@@ -171,6 +171,40 @@ def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], o
                     [px, py, px + pw - 1, py + ph - 1],
                     outline=(255, 255, 0), width=border_w
                 )
+
+        # 每張 cell 右下角時間 OSD (西元年/月/日 時:分:秒 24hr, 台灣時區)
+        # 偏移對應 before(-2s) / mid_a(-0.5s) / mid_b(+0.5s) / after(+2s)
+        if v.created_at:
+            from PIL import ImageDraw as _ID
+            TPE_TZ = timezone(timedelta(hours=8))
+            base_ts = v.created_at
+            if base_ts.tzinfo is None:
+                base_ts = base_ts.replace(tzinfo=timezone.utc)
+            base_ts = base_ts.astimezone(TPE_TZ)
+            font_ts = _find_unicode_font(40)
+            draw_ts = _ID.Draw(canvas)
+            for i, (_tag, offset_sec) in enumerate(_SNAPSHOT_OFFSETS):
+                cell_ts = base_ts + timedelta(seconds=offset_sec)
+                time_str = cell_ts.strftime("%Y/%m/%d %H:%M:%S")
+                cx = (i % 2) * cell_w
+                cy = (i // 2) * cell_h
+                try:
+                    bbox_ts = draw_ts.textbbox((0, 0), time_str, font=font_ts)
+                    tw = bbox_ts[2] - bbox_ts[0]
+                    th = bbox_ts[3] - bbox_ts[1]
+                except Exception:
+                    tw, th = 440, 50
+                # 右下角，距邊 20px + 黑底 padding 10px
+                pad_ts = 10
+                tx = cx + cell_w - tw - 20 - pad_ts
+                ty = cy + cell_h - th - 20 - pad_ts
+                # 黑底矩形
+                draw_ts.rectangle(
+                    [tx - pad_ts, ty - pad_ts, tx + tw + pad_ts, ty + th + pad_ts],
+                    fill=(0, 0, 0)
+                )
+                # 白字
+                draw_ts.text((tx, ty), time_str, fill=(255, 255, 255), font=font_ts)
 
         canvas.save(out_path, "JPEG", quality=92, subsampling=0)
         return True
@@ -471,7 +505,7 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
     composite_url = None
     if len(result) >= 1:
-        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v15.jpg"
+        composite_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_composite_v16.jpg"
         last_count_attr = f"_last_count_{violation_id}"
         prev_count = getattr(_build_composite_image, last_count_attr, 0)
         existing = composite_path.exists() and composite_path.stat().st_size > 1024
