@@ -649,7 +649,7 @@ def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)
     if not v.created_at or not v.camera_id:
         raise HTTPException(status_code=404, detail="missing time/camera")
 
-    out_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_osd_v2.mp4"
+    out_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_osd_v3.mp4"
     if not (out_path.exists() and out_path.stat().st_size > 4096):
         camera_name = f"cam_{int(v.camera_id)}"
         ts_unix = int(calendar.timegm(v.created_at.utctimetuple()))
@@ -660,17 +660,18 @@ def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)
         raw_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_raw.mp4"
         raw_path.write_bytes(clip_bytes)
 
-        # ffmpeg drawtext: PTS-based wall clock，base = clip 起點 unix + 8h (台灣時區)
-        # gmtime 把 (base + pts) 當 UTC 解 → 預加 8h 就得台灣時間顯示
-        base_tpe = clip_start_unix + 8 * 3600
+        # 靜態 OSD: violation.created_at 轉台灣時區 burn-in 影片右下
+        # ffmpeg drawtext 任何 `:` 都被當 option separator (\: 或 \\: 都不被認 escape),
+        # 改用 textfile= 從檔案讀,可放任意 `:` 字符 (跟 composite OSD 一致 HH:MM:SS)
+        TPE_TZ = timezone(timedelta(hours=8))
+        v_ts = v.created_at if v.created_at.tzinfo else v.created_at.replace(tzinfo=timezone.utc)
+        osd_text = v_ts.astimezone(TPE_TZ).strftime("%Y/%m/%d %H:%M:%S")
+        osd_text_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_osd.txt"
+        osd_text_path.write_text(osd_text, encoding="utf-8")
         font_path = _find_unicode_font_path() or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        # text expression escape 兩層:
-        #   prefix `:` (function args 分隔): option-level escape 一次 = Python \\: 輸出 \:
-        #   strftime 內 literal `:` (要顯示在影片): option-level + expression-level 兩次 escape
-        #     = Python \\\\\\: 輸出 \\\: → ffmpeg 解 \\ literal + \: literal → 進 expression 後 unescape 為 :
         drawtext = (
-            f"drawtext=fontfile='{font_path}':"
-            f"text=%{{pts\\:gmtime\\:{base_tpe}\\:%Y/%m/%d %H\\\\\\:%M\\\\\\:%S}}:"
+            f"drawtext=fontfile={font_path}:"
+            f"textfile={osd_text_path}:"
             "x=w-tw-30:y=h-th-30:"
             "fontsize=36:fontcolor=white:"
             "borderw=3:bordercolor=black"
