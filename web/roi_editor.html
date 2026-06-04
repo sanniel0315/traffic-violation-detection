@@ -414,6 +414,17 @@ createApp({
             if (mappedType && mappedType !== functionType.value) {
                 functionType.value = mappedType;
             }
+            // 切到 parking zone type 時自動帶該 type 預設 sub_kind
+            if (isParkingZoneType(nextZoneType) && !zoneSubKind.value) {
+                zoneSubKind.value = defaultSubKindForType(nextZoneType);
+            }
+        });
+        // 切違規種類 (sub_kind) 自動填入該法條建議門檻秒數 (user 可再 input 內覆寫)
+        watch(zoneSubKind, (nextSubKind) => {
+            const cfg = parkingSubKinds.find(o => o.value === nextSubKind);
+            if (cfg) {
+                zoneStopThreshold.value = cfg.threshold;
+            }
         });
         
         const colors = {
