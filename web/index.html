@@ -8244,7 +8244,7 @@
                         <div class="analysis-setting-group">
                             <div class="analysis-setting-head">1. ROI 區域編輯</div>
                             <el-button type="warning" size="small" style="width:100%" @click="openRoiEditor(previewCamera.id)">開啟 ROI 編輯器</el-button>
-                            <div class="analysis-setting-tip">畫多邊形 → 選種類 + 門檻秒數</div>
+                            <div class="analysis-setting-tip">畫多邊形 → 選種類 (預設依台灣法律可調整)</div>
                             <div class="analysis-kpi-row">
                                 <el-tag size="small" type="danger">停車 ROI {{ previewParkingZoneCount }}</el-tag>
                                 <el-tag size="small" :type="detectionStatus[previewCamera?.id]?.running ? 'success' : 'info'">
@@ -12387,16 +12387,18 @@ const app=createApp({
         let roiEditorPollTimer=null;
         const zoneColors={detection:'#67c23a',flow_detection:'#67c23a',speed:'#f97316',speed_roi:'#f97316',speed_line_in:'#2563eb',speed_line_out:'#8b5cf6',lane_left:'#e11d48',lane_straight:'#0ea5e9',lane_right:'#f59e0b',stop_line:'#e6a23c',crosswalk:'#409eff',no_parking:'#dc2626',sidewalk:'#7c3aed',red_line:'#ef4444',yellow_line:'#f59e0b',bus_stop:'#0ea5e9'};
         // 停車類違規 zone sub_kind → 對應違規 type/name/預設秒數/罰金/點數
+        // 預設門檻 + 罰金依「道路交通管理處罰條例」: §56 停車 >3min(180s), §57 紅黃線, §74 人行道
+        // 須跟 detection/parking_violation.py DEFAULT_SUB_KIND_CONFIG 同步
         const parkingSubKindOptions=[
-            {value:'general',          label:'一般違停',       threshold:180, violation_type:'ILLEGAL_PARKING',     violation_name:'違規停車',         fine:600,  points:0},
-            {value:'red_line',         label:'紅線臨停',       threshold:1,   violation_type:'RED_LINE_STOP',       violation_name:'紅線臨停',         fine:600,  points:0},
-            {value:'red_line_long',    label:'紅線停車',       threshold:180, violation_type:'RED_LINE_PARKING',    violation_name:'紅線停車',         fine:900,  points:0},
-            {value:'yellow_line',      label:'黃線停車',       threshold:180, violation_type:'YELLOW_LINE_PARKING', violation_name:'黃線停車',         fine:600,  points:0},
-            {value:'sidewalk',         label:'駕車行駛人行道', threshold:0.5, violation_type:'SIDEWALK',            violation_name:'駕車行駛人行道',   fine:1200, points:1},
-            {value:'sidewalk_parking', label:'人行道停車',     threshold:60,  violation_type:'SIDEWALK_PARKING',    violation_name:'在人行道停車',     fine:1200, points:1},
-            {value:'bus_stop_stop',    label:'公車招呼站臨停', threshold:1,   violation_type:'BUS_STOP_STOP',       violation_name:'公車招呼站臨停',   fine:600,  points:0},
-            {value:'bus_stop_parking', label:'公車招呼站停車', threshold:180, violation_type:'BUS_STOP_PARKING',    violation_name:'公車招呼站停車',   fine:900,  points:0},
-            {value:'crosswalk_stop',   label:'停在斑馬線',     threshold:1,   violation_type:'CROSSWALK_STOP',      violation_name:'停在斑馬線',       fine:900,  points:1},
+            {value:'general',          label:'一般違停 (§56)',        threshold:180, violation_type:'ILLEGAL_PARKING',     violation_name:'違規停車',         fine:600,  points:0},
+            {value:'red_line',         label:'紅線臨停 (§57)',        threshold:1,   violation_type:'RED_LINE_STOP',       violation_name:'紅線臨停',         fine:900,  points:0},
+            {value:'red_line_long',    label:'紅線停車 (§57+§56)',    threshold:180, violation_type:'RED_LINE_PARKING',    violation_name:'紅線停車',         fine:1200, points:0},
+            {value:'yellow_line',      label:'黃線停車 (§57)',        threshold:180, violation_type:'YELLOW_LINE_PARKING', violation_name:'黃線停車',         fine:600,  points:0},
+            {value:'sidewalk',         label:'駕車行駛人行道 (§74)',  threshold:0.5, violation_type:'SIDEWALK',            violation_name:'駕車行駛人行道',   fine:1200, points:1},
+            {value:'sidewalk_parking', label:'人行道停車 (§56+§74)',  threshold:60,  violation_type:'SIDEWALK_PARKING',    violation_name:'在人行道停車',     fine:1200, points:1},
+            {value:'bus_stop_stop',    label:'公車招呼站臨停 (§56)',  threshold:1,   violation_type:'BUS_STOP_STOP',       violation_name:'公車招呼站臨停',   fine:600,  points:0},
+            {value:'bus_stop_parking', label:'公車招呼站停車 (§56)',  threshold:180, violation_type:'BUS_STOP_PARKING',    violation_name:'公車招呼站停車',   fine:900,  points:0},
+            {value:'crosswalk_stop',   label:'停在斑馬線 (§44)',      threshold:1,   violation_type:'CROSSWALK_STOP',      violation_name:'停在斑馬線',       fine:900,  points:1},
         ];
         // parking sub_kind → 對應 zone.type (前端 type 選項映射)
         const parkingSubKindToZoneType=(sk)=>({

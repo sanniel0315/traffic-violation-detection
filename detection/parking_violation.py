@@ -23,16 +23,23 @@ import numpy as np
 
 
 # sub_kind -> (default_threshold_sec, violation_type, violation_name, fine_amount, points)
+# 預設門檻秒數依「道路交通管理處罰條例」法條：
+#   §56 ①「停車」= 停止逾 3 分鐘 (180s)；臨停 ≤ 3 分鐘
+#   §57 ① 紅線禁停（即使臨停亦違規）/ 黃線允許 ≤ 3 分鐘臨停
+#   §74 駕車行駛人行道（瞬時違規，0.5s 過濾抖動）
+#   §56 公車招呼站 10m 內禁臨停（瞬時違規）
+#   斑馬線禁停（瞬時）
+# 預設只是建議，UI 允許 user 個別 zone 覆寫 stop_threshold_sec
 DEFAULT_SUB_KIND_CONFIG: Dict[str, Tuple[float, str, str, int, int]] = {
-    "general":          (180.0, "ILLEGAL_PARKING",     "違規停車",         600, 0),
-    "red_line":         (1.0,   "RED_LINE_STOP",       "紅線臨停",         600, 0),
-    "red_line_long":    (180.0, "RED_LINE_PARKING",    "紅線停車",         900, 0),
-    "yellow_line":      (180.0, "YELLOW_LINE_PARKING", "黃線停車",         600, 0),
-    "sidewalk":         (0.5,   "SIDEWALK",            "駕車行駛人行道",   1200, 1),
-    "sidewalk_parking": (60.0,  "SIDEWALK_PARKING",    "在人行道停車",     1200, 1),
-    "bus_stop_stop":    (1.0,   "BUS_STOP_STOP",       "公車招呼站臨停",   600, 0),
-    "bus_stop_parking": (180.0, "BUS_STOP_PARKING",    "公車招呼站停車",   900, 0),
-    "crosswalk_stop":   (1.0,   "CROSSWALK_STOP",      "停在斑馬線",       900, 1),
+    "general":          (180.0, "ILLEGAL_PARKING",     "違規停車",         600, 0),   # §56 ① 停車 >3min
+    "red_line":         (1.0,   "RED_LINE_STOP",       "紅線臨停",         900, 0),   # §57 ① 紅線即使臨停亦違規
+    "red_line_long":    (180.0, "RED_LINE_PARKING",    "紅線停車",         1200, 0),  # §57 ① + §56 ①
+    "yellow_line":      (180.0, "YELLOW_LINE_PARKING", "黃線停車",         600, 0),   # §57 黃線 >3min 違規
+    "sidewalk":         (0.5,   "SIDEWALK",            "駕車行駛人行道",   1200, 1),  # §74 瞬時
+    "sidewalk_parking": (60.0,  "SIDEWALK_PARKING",    "在人行道停車",     1200, 1),  # §56 in §74
+    "bus_stop_stop":    (1.0,   "BUS_STOP_STOP",       "公車招呼站臨停",   600, 0),   # §56 10m 禁臨停
+    "bus_stop_parking": (180.0, "BUS_STOP_PARKING",    "公車招呼站停車",   900, 0),   # §56 ① + 招呼站
+    "crosswalk_stop":   (1.0,   "CROSSWALK_STOP",      "停在斑馬線",       900, 1),   # §44 斑馬線禁停
 }
 
 # 視為「靜止」的位移速度上限（pixel / sec），低於此值即視為沒在動
