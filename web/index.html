@@ -12857,7 +12857,11 @@ const app=createApp({
         
         const syncFeatureStatus=async(cameraIds=[])=>{
             const pageKey=String(page.value||'');
-            const shouldLoadDetection=['dashboard','map','monitor','cameras','congestion_detection'].includes(pageKey);
+            // analysis pages (traffic/speed/congestion/parking) 都有 preview modal
+            // 顯示啟動/停止按鈕,要同步 detectionStatus 才不會永遠顯示「啟動」
+            const shouldLoadDetection=['dashboard','map','monitor','cameras',
+                'traffic_flow_settings','speed_detection','congestion_detection',
+                'parking_violation_settings'].includes(pageKey);
             const shouldLoadLpr=pageKey==='lpr' || ['dashboard','map','monitor','cameras'].includes(pageKey);
             try{
                 if(shouldLoadDetection){
