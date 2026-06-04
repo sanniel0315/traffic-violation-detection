@@ -2359,12 +2359,16 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             # 走跟 SPEEDING 同一條 _emit_violation_for_vehicle pipeline:
             # plate-vehicle association + composite + OSD + ring buffer save
             try:
+                # parking zone 預期 scope = traffic_flow_settings,但舊版前端
+                # 透過「停車違規設定」mode 寫入時 scope 誤設為 parking_violation_settings
+                # → fallback 也吃這個 scope 容錯
                 _parking_zones = select_zones(
                     zones, scope=SCOPE_TRAFFIC,
                     allowed_types=(
                         "no_parking", "sidewalk", "crosswalk",
                         "bus_stop", "red_line", "yellow_line",
                     ),
+                    fallback_scopes=("parking_violation_settings",),
                 )
                 if _parking_zones and vehicles:
                     _peval = _PARKING_EVALUATORS.get(camera_id)
