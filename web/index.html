@@ -8404,7 +8404,6 @@
                     <el-tag size="small" :type="selected.status==='confirmed'?'danger':selected.status==='rejected'?'info':selected.status==='issued'?'success':'warning'">
                         {{ ({pending:'未處理',confirmed:'已舉發',rejected:'不舉發',issued:'已製單',failed:'製單失敗'})[selected.status] || selected.status || '—' }}
                     </el-tag>
-                    <el-button class="violation-edit-btn" size="small" plain @click="editViolationField('status','開單狀態','enum_status')">修改</el-button>
                 </div>
             </div>
             <div class="detail-body" style="display:flex;flex-direction:column;flex:1 1 auto;overflow-y:auto;min-height:0">
@@ -8459,6 +8458,22 @@
                style="position:absolute;top:24px;right:80px;padding:10px 16px;border-radius:8px;background:var(--gov-primary);color:#fff;text-decoration:none;font-size:14px;font-weight:600">下載</a>
         </div>
     </div>
+
+    <!-- 違規欄位編輯 dialog (替代 prompt，enum 用 select 勾選) -->
+    <el-dialog v-model="violationEditDialog.visible" :title="`修改 ${violationEditDialog.label}`" width="420px" :append-to-body="true">
+        <div v-if="violationEditDialog.type==='text'" style="padding:8px 0">
+            <el-input v-model="violationEditDialog.value" :placeholder="`輸入${violationEditDialog.label}`" size="default" autofocus/>
+        </div>
+        <div v-else style="padding:8px 0">
+            <el-select v-model="violationEditDialog.value" :placeholder="`選擇${violationEditDialog.label}`" style="width:100%" size="default" filterable>
+                <el-option v-for="(zh, code) in violationEditDialog.options" :key="code" :value="code" :label="zh"/>
+            </el-select>
+        </div>
+        <template #footer>
+            <el-button @click="violationEditDialog.visible=false">取消</el-button>
+            <el-button type="primary" @click="confirmEditViolationField">儲存</el-button>
+        </template>
+    </el-dialog>
 
     <!-- NVR Motion 事件預覽 -->
     <div class="modal-overlay" v-if="showNvrEventModal" @click.self="closeNvrEventModal">
@@ -15275,36 +15290,31 @@ const app=createApp({
             pending:'未處理', confirmed:'已舉發', rejected:'不舉發',
             issued:'已製單', failed:'製單失敗',
         };
-        const editViolationField=async(field, label, fieldType)=>{
+        const violationEditDialog=reactive({
+            visible:false, field:'', label:'', type:'text', value:'', options:{},
+        });
+        const editViolationField=(field, label, fieldType)=>{
             const v=selected.value;
             if(!v?.id){ElementPlus.ElMessage.warning('沒有違規資料');return;}
             const cur=String(v[field]==null?'':v[field]);
+            const opts = fieldType==='enum_violation_type' ? VIOLATION_TYPE_OPTS
+                       : fieldType==='enum_vehicle_type' ? VEHICLE_TYPE_OPTS
+                       : fieldType==='enum_status' ? STATUS_OPTS : null;
+            violationEditDialog.visible=true;
+            violationEditDialog.field=field;
+            violationEditDialog.label=label;
+            violationEditDialog.type = opts ? 'enum' : 'text';
+            violationEditDialog.value=cur;
+            violationEditDialog.options=opts || {};
+        };
+        const confirmEditViolationField=async()=>{
+            const v=selected.value;
+            const field=violationEditDialog.field;
+            const label=violationEditDialog.label;
+            const newValue=String(violationEditDialog.value||'').trim();
+            if(!v?.id){ElementPlus.ElMessage.warning('沒有違規資料');return;}
             try{
-                let newValue;
-                if(fieldType==='text'){
-                    const r=await ElementPlus.ElMessageBox.prompt(`修改${label}`, '編輯', {
-                        inputValue: cur, confirmButtonText:'儲存', cancelButtonText:'取消',
-                    });
-                    newValue=String(r.value||'').trim();
-                }else{
-                    const opts = fieldType==='enum_violation_type' ? VIOLATION_TYPE_OPTS
-                               : fieldType==='enum_vehicle_type' ? VEHICLE_TYPE_OPTS
-                               : STATUS_OPTS;
-                    const hint=Object.entries(opts).map(([k,v])=>`${k}=${v}`).join('\n');
-                    const r=await ElementPlus.ElMessageBox.prompt(
-                        `修改${label}（請輸入英文代號，可選:\n${hint}）`, '編輯',
-                        { inputValue: cur, confirmButtonText:'儲存', cancelButtonText:'取消',
-                          inputValidator:(val)=>{
-                              const s=String(val||'').trim();
-                              if(!s)return true;
-                              return opts[s] ? true : `必須是: ${Object.keys(opts).join(', ')}`;
-                          }
-                        }
-                    );
-                    newValue=String(r.value||'').trim();
-                }
-                const body={[field]: newValue};
-                // 自動帶 violation_name (中文 label) 一起送
+                const body={[field]: newValue || null};
                 if(field==='violation_type' && newValue && VIOLATION_TYPE_OPTS[newValue]){
                     body.violation_name=VIOLATION_TYPE_OPTS[newValue];
                 }
@@ -15319,10 +15329,10 @@ const app=createApp({
                 const updated=await resp.json();
                 Object.assign(v, updated);
                 ElementPlus.ElMessage.success(`${label}已更新`);
+                violationEditDialog.visible=false;
                 if(page.value==='review')loadPendingViolations();
                 else if(page.value==='statistics' || page.value==='dashboard')loadViolations();
             }catch(e){
-                if(e==='cancel' || e?.action==='cancel' || e?.message==='cancel')return;
                 ElementPlus.ElMessage.error(`修改失敗: ${e?.message||e}`);
             }
         };
@@ -16527,7 +16537,7 @@ const app=createApp({
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
-            showDetail,editViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
+            showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory};
     }
 });
