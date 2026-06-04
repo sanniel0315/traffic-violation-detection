@@ -4602,7 +4602,7 @@
                 <div v-if="hasPerm('reports')" class="menu-item" :class="{active:page==='reports'}" @click="page='reports'"><svg class="nav-icon"><use href="#i-file"/></svg><span>一般報表</span></div>
                 <div v-if="hasPerm('repeat')" class="menu-item" :class="{active:page==='repeat'}" @click="page='repeat'"><svg class="nav-icon"><use href="#i-repeat"/></svg><span>車輛累犯查詢</span></div>
             </div>
-            <div v-if="canReviewTickets" class="menu-item" :class="{active:page==='review'}" @click="page='review'"><svg class="nav-icon"><use href="#i-clipboard"/></svg><span>開單管理</span></div>
+            <div v-if="canReviewTickets" class="menu-item" :class="{active:page==='review'}" @click="page='review';loadPendingViolations()"><svg class="nav-icon"><use href="#i-clipboard"/></svg><span>開單管理</span></div>
             <div v-if="hasPerm('monitor')" class="menu-item" :class="{active:page==='monitor'}" @click="page='monitor';loadCameras()"><svg class="nav-icon"><use href="#i-monitor"/></svg><span>即時監控</span></div>
             <div v-if="hasPerm('lpr')" class="menu-item" :class="{active:page==='lpr'}" @click="page='lpr';loadLprStatus();loadLprHistory()"><svg class="nav-icon"><use href="#i-scan"/></svg><span>車牌辨識</span></div>
             <div v-if="canOpenAnalysisMenu" class="menu-item" :class="{active:isAnalysisPage}" @click="menuOpen.analysis=!menuOpen.analysis"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>分析</span><span class="arrow" :class="{open:menuOpen.analysis}">▶</span></div>
