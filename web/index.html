@@ -8275,8 +8275,8 @@
                                         <el-input-number v-model="item.zone.stop_threshold_sec" :min="0" :step="1" :precision="1" size="small" style="width:120px"/>
                                     </div>
                                     <div style="display:flex;gap:6px;width:100%;justify-content:flex-end;padding-top:4px">
-                                        <el-button size="small" type="success" plain @click="saveZoneBinding(item.index)">儲存</el-button>
-                                        <el-button size="small" type="primary" plain @click="openRoiEditor(previewCamera.id)">重畫多邊形</el-button>
+                                        <el-button size="small" type="success" @click="saveZoneBinding(item.index)">儲存</el-button>
+                                        <el-button size="small" type="primary" @click="openRoiEditor(previewCamera.id)">重畫多邊形</el-button>
                                         <el-button size="small" type="danger" @click="deleteZone(item.index)">刪除</el-button>
                                     </div>
                                 </div>
