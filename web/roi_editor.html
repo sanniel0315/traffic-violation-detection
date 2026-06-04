@@ -258,17 +258,18 @@ createApp({
                 { label: '斑馬線', value: 'crosswalk' }
             ]
         };
-        // 停車類違規 sub_kind 預設配置 (跟後端 detection/parking_violation.py 一致)
+        // 停車類違規 sub_kind 預設配置 (跟後端 detection/parking_violation.py + web/index.html 同步)
+        // 門檻 + 罰金依「道路交通管理處罰條例」: §56 §57 §74，預設可調整
         const parkingSubKinds = [
-            { value: 'general',          label: '一般違停',       threshold: 180, violation_type: 'ILLEGAL_PARKING',     violation_name: '違規停車',         fine: 600,  points: 0 },
-            { value: 'red_line',         label: '紅線臨停',       threshold: 1,   violation_type: 'RED_LINE_STOP',       violation_name: '紅線臨停',         fine: 600,  points: 0 },
-            { value: 'red_line_long',    label: '紅線停車',       threshold: 180, violation_type: 'RED_LINE_PARKING',    violation_name: '紅線停車',         fine: 900,  points: 0 },
-            { value: 'yellow_line',      label: '黃線停車',       threshold: 180, violation_type: 'YELLOW_LINE_PARKING', violation_name: '黃線停車',         fine: 600,  points: 0 },
-            { value: 'sidewalk',         label: '駕車行駛人行道', threshold: 0.5, violation_type: 'SIDEWALK',            violation_name: '駕車行駛人行道',   fine: 1200, points: 1 },
-            { value: 'sidewalk_parking', label: '人行道停車',     threshold: 60,  violation_type: 'SIDEWALK_PARKING',    violation_name: '在人行道停車',     fine: 1200, points: 1 },
-            { value: 'bus_stop_stop',    label: '公車招呼站臨停', threshold: 1,   violation_type: 'BUS_STOP_STOP',       violation_name: '公車招呼站臨停',   fine: 600,  points: 0 },
-            { value: 'bus_stop_parking', label: '公車招呼站停車', threshold: 180, violation_type: 'BUS_STOP_PARKING',    violation_name: '公車招呼站停車',   fine: 900,  points: 0 },
-            { value: 'crosswalk_stop',   label: '停在斑馬線',     threshold: 1,   violation_type: 'CROSSWALK_STOP',      violation_name: '停在斑馬線',       fine: 900,  points: 1 }
+            { value: 'general',          label: '一般違停 (§56)',        threshold: 180, violation_type: 'ILLEGAL_PARKING',     violation_name: '違規停車',         fine: 600,  points: 0 },
+            { value: 'red_line',         label: '紅線臨停 (§57)',        threshold: 1,   violation_type: 'RED_LINE_STOP',       violation_name: '紅線臨停',         fine: 900,  points: 0 },
+            { value: 'red_line_long',    label: '紅線停車 (§57+§56)',    threshold: 180, violation_type: 'RED_LINE_PARKING',    violation_name: '紅線停車',         fine: 1200, points: 0 },
+            { value: 'yellow_line',      label: '黃線停車 (§57)',        threshold: 180, violation_type: 'YELLOW_LINE_PARKING', violation_name: '黃線停車',         fine: 600,  points: 0 },
+            { value: 'sidewalk',         label: '駕車行駛人行道 (§74)',  threshold: 0.5, violation_type: 'SIDEWALK',            violation_name: '駕車行駛人行道',   fine: 1200, points: 1 },
+            { value: 'sidewalk_parking', label: '人行道停車 (§56+§74)',  threshold: 60,  violation_type: 'SIDEWALK_PARKING',    violation_name: '在人行道停車',     fine: 1200, points: 1 },
+            { value: 'bus_stop_stop',    label: '公車招呼站臨停 (§56)',  threshold: 1,   violation_type: 'BUS_STOP_STOP',       violation_name: '公車招呼站臨停',   fine: 600,  points: 0 },
+            { value: 'bus_stop_parking', label: '公車招呼站停車 (§56)',  threshold: 180, violation_type: 'BUS_STOP_PARKING',    violation_name: '公車招呼站停車',   fine: 900,  points: 0 },
+            { value: 'crosswalk_stop',   label: '停在斑馬線 (§44)',      threshold: 1,   violation_type: 'CROSSWALK_STOP',      violation_name: '停在斑馬線',       fine: 900,  points: 1 }
         ];
         const parkingZoneTypes = ['no_parking', 'sidewalk', 'red_line', 'yellow_line', 'bus_stop', 'crosswalk'];
         const isParkingZoneType = (t) => parkingZoneTypes.includes(String(t || ''));
