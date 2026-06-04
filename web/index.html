@@ -4610,6 +4610,7 @@
                 <div v-if="hasPerm('analysis_traffic')" class="menu-item" :class="{active:page==='traffic_flow_settings'}" @click="openAnalysisPage('traffic_flow_settings')"><svg class="nav-icon"><use href="#i-shuffle"/></svg><span>車流設定</span></div>
                 <div v-if="hasPerm('analysis_speed')" class="menu-item" :class="{active:page==='speed_detection'}" @click="openAnalysisPage('speed_detection')"><svg class="nav-icon"><use href="#i-gauge"/></svg><span>車速檢測</span></div>
                 <div v-if="hasPerm('analysis_congestion')" class="menu-item" :class="{active:page==='congestion_detection'}" @click="openAnalysisPage('congestion_detection')"><svg class="nav-icon"><use href="#i-alert"/></svg><span>壅塞檢測</span></div>
+                <div v-if="hasPerm('analysis_parking')" class="menu-item" :class="{active:page==='parking_violation_settings'}" @click="openAnalysisPage('parking_violation_settings')"><svg class="nav-icon"><use href="#i-target"/></svg><span>停車違規設定</span></div>
             </div>
             <div v-if="canManageCameras" class="menu-item" :class="{active:page==='cameras'}" @click="page='cameras';loadCameras()"><svg class="nav-icon"><use href="#i-video"/></svg><span>攝影機管理</span></div>
             <div v-if="canManageCameras" class="menu-item" :class="{active:page==='nx_viewer'}" @click="page='nx_viewer';loadNxSettings()"><svg class="nav-icon"><use href="#i-film"/></svg><span>Nx 串流</span></div>
@@ -5556,7 +5557,7 @@
                                         <el-tag v-if="c.snapshotError" size="small" type="danger">串流逾時</el-tag>
                                     </div>
                                     <div class="camera-list-actions">
-                                        <el-button size="small" type="primary" @click="openPreview(c)">{{ page==='traffic_flow_settings'?'車流設定':page==='speed_detection'?'車速檢測':page==='congestion_detection'?'壅塞檢測':'預覽設定' }}</el-button>
+                                        <el-button size="small" type="primary" @click="openPreview(c)">{{ page==='traffic_flow_settings'?'車流設定':page==='speed_detection'?'車速檢測':page==='congestion_detection'?'壅塞檢測':page==='parking_violation_settings'?'停車違規設定':'預覽設定' }}</el-button>
                                         <el-button v-if="isAnalysisPage" size="small" type="warning" @click="openRoiEditor(c.id)">編輯ROI</el-button>
                                         <el-button v-if="page==='cameras'" size="small" type="success" :disabled="!c.enabled" @click="testCamera(c.id)">測試</el-button>
                                         <el-button v-if="page==='cameras'" size="small" @click="editCamera(c)">編輯</el-button>
@@ -9051,6 +9052,7 @@ const app=createApp({
             {key:'analysis_traffic',label:'車流設定'},
             {key:'analysis_speed',label:'車速檢測'},
             {key:'analysis_congestion',label:'壅塞檢測'},
+            {key:'analysis_parking',label:'停車違規設定'},
             {key:'cameras',label:'攝影機管理'},
             {key:'frigate',label:'NVR 設定'},
             {key:'lpr',label:'車牌辨識'},
@@ -9062,12 +9064,12 @@ const app=createApp({
             admin:permissionCatalog.map(p=>p.key),
             ops:[
                 'map','statistics','violations','reports','repeat','monitor',
-                'analysis_traffic','analysis_speed','analysis_congestion',
+                'analysis_traffic','analysis_speed','analysis_congestion','analysis_parking',
                 'cameras','frigate','lpr','logs','hwmonitor'
             ],
             viewer:[
                 'map','statistics','violations','reports','repeat','monitor',
-                'analysis_traffic','analysis_speed','analysis_congestion',
+                'analysis_traffic','analysis_speed','analysis_congestion','analysis_parking',
                 'lpr','logs','hwmonitor'
             ]
         };
@@ -9100,7 +9102,7 @@ const app=createApp({
         const canReviewTickets=computed(()=>hasPerm('review'));
         const canManageCameras=computed(()=>hasPerm('cameras'));
         const canManageNvr=computed(()=>hasPerm('frigate'));
-        const canOpenAnalysisMenu=computed(()=>hasPerm('analysis_traffic')||hasPerm('analysis_speed')||hasPerm('analysis_congestion'));
+        const canOpenAnalysisMenu=computed(()=>hasPerm('analysis_traffic')||hasPerm('analysis_speed')||hasPerm('analysis_congestion')||hasPerm('analysis_parking'));
         const firstAllowedPage=()=>{
             const order=['monitor','map','statistics','violations','lpr','logs','hwmonitor'];
             for(const p of order){
@@ -9241,7 +9243,7 @@ const app=createApp({
         const detectionStatus=ref({});
         const congestionStatus=ref({});
         const lprTaskStatus=ref({});
-        const analysisPages=['traffic_flow_settings','speed_detection','congestion_detection'];
+        const analysisPages=['traffic_flow_settings','speed_detection','congestion_detection','parking_violation_settings'];
         const pagePermMap={
             map:'map',
             dashboard:'dashboard',
@@ -9254,6 +9256,7 @@ const app=createApp({
             traffic_flow_settings:'analysis_traffic',
             speed_detection:'analysis_speed',
             congestion_detection:'analysis_congestion',
+            parking_violation_settings:'analysis_parking',
             cameras:'cameras',
             frigate:'frigate',
             lpr:'lpr',
@@ -9499,7 +9502,8 @@ const app=createApp({
         const analysisPageTitle=computed(()=>({
             traffic_flow_settings:'車流設定',
             speed_detection:'車速檢測',
-            congestion_detection:'壅塞檢測'
+            congestion_detection:'壅塞檢測',
+            parking_violation_settings:'停車違規設定'
         }[page.value]||'攝影機列表'));
         const currentPageIcon=computed(()=>({
             dashboard:           'i-bar',
@@ -9511,6 +9515,7 @@ const app=createApp({
             traffic_flow_settings:'i-shuffle',
             speed_detection:     'i-gauge',
             congestion_detection:'i-alert',
+            parking_violation_settings:'i-target',
             nx_viewer:           'i-film',
             mqtt:                'i-radio',
             logs:                'i-list',
