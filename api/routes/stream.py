@@ -2140,16 +2140,20 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                     _pc = _det.crop(_veh_crop, [_ex1, _ey1, _ex2, _ey2])
                                     if _pc is None or getattr(_pc, 'size', 0) == 0:
                                         continue
-                                    # tighten 收緊 plate 邊界
+                                    # tighten 收緊邊界供 OCR (準確率高)，但 save 用 expanded 原圖
+                                    # (composite 4 cell overlay 才不會切到上下) — user 抱怨高度不夠
+                                    _pc_for_save = _pc.copy()
                                     _pc_tight, _ = _vptight(_pc)
                                     if _pc_tight is not None and getattr(_pc_tight, 'size', 0) > 0:
-                                        _pc = _pc_tight
-                                    _res = _vpo(_pc, _rec)
+                                        _pc_for_ocr = _pc_tight
+                                    else:
+                                        _pc_for_ocr = _pc
+                                    _res = _vpo(_pc_for_ocr, _rec)
                                     _pn = (_res or {}).get('plate_number')
                                     _conf = float((_res or {}).get('confidence') or 0.0)
                                     if _pn and _conf >= 0.5:
                                         _plate = str(_pn).strip()
-                                        _violation_plate_crop = _pc.copy()
+                                        _violation_plate_crop = _pc_for_save
                                         break
                         except Exception as _ex_lpv:
                             print(f"⚠️ plate-vehicle association err cam{camera_id}: {_ex_lpv}", flush=True)
