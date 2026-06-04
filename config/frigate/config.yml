@@ -146,7 +146,7 @@ cameras:
     enabled: true
     ffmpeg:
       inputs:
-      - path: rtsp://admin:<CAMERA_PASSWORD>@203.0.113.13:7554/profile2/media.smp
+      - path: rtsp://127.0.0.1:8554/cam_6
         roles:
         - record
         - detect
