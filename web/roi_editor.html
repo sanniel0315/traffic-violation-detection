@@ -37,6 +37,7 @@
                 <li>車流設定頁只編輯「車流區」</li>
                 <li>車速設定頁編輯「車速區 + 速度起始線 + 速度結束線」並設定方向</li>
                 <li>壅塞設定使用「車流區」多邊形，不需起始/結束線</li>
+                <li>停車違規設定頁編輯「禁停區 / 人行道 / 紅線 / 黃線 / 公車招呼站 / 斑馬線」並選違規種類 + 靜止門檻秒數</li>
                 <li>左轉/直行/右轉請在車流區列表中綁定（可複選，不需另畫車道框）</li>
                 <li>完成後點擊「儲存區域」按鈕</li>
             </ul>
@@ -224,11 +225,13 @@ createApp({
                 { label: '車速偵測', value: 'speed' }
             ],
             traffic_flow_settings: [
-                { label: '車流偵測', value: 'flow' },
-                { label: '停車違規', value: 'parking' }
+                { label: '車流偵測', value: 'flow' }
             ],
             congestion_detection: [
                 { label: '車流偵測', value: 'flow' }
+            ],
+            parking_violation_settings: [
+                { label: '停車違規', value: 'parking' }
             ]
         };
         const functionTypeOptions = computed(() => modeFunctionOptions[entryMode] || [
