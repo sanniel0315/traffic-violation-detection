@@ -8244,12 +8244,7 @@
                         <div class="analysis-setting-group">
                             <div class="analysis-setting-head">1. ROI 區域編輯</div>
                             <el-button type="warning" size="small" style="width:100%" @click="openRoiEditor(previewCamera.id)">開啟 ROI 編輯器</el-button>
-                            <div class="analysis-setting-tip">
-                                繪製禁停區 / 人行道 / 紅線 / 黃線 / 公車招呼站 / 斑馬線
-                                多邊形，選違規種類與靜止門檻秒數。車輛在 ROI 內靜止超過
-                                門檻時間即觸發違規（共用 SPEEDING 的 plate-vehicle association
-                                + composite + OSD 影片 burn-in）。
-                            </div>
+                            <div class="analysis-setting-tip">畫多邊形 → 選種類 + 門檻秒數</div>
                             <div class="analysis-kpi-row">
                                 <el-tag size="small" type="danger">停車 ROI {{ previewParkingZoneCount }}</el-tag>
                                 <el-tag size="small" :type="detectionStatus[previewCamera?.id]?.running ? 'success' : 'info'">
@@ -8286,10 +8281,7 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="analysis-setting-tip" style="margin-top:6px">
-                                改完「違規種類 / 靜止門檻」後按「儲存」即生效。
-                                重新觸發偵測請按下方「停止」再「啟動」讓 worker 重新載入新設定。
-                            </div>
+                            <div class="analysis-setting-tip" style="margin-top:6px">改完按「儲存」，再「停止 → 啟動」偵測讓新設定生效</div>
                         </div>
                         <div class="analysis-setting-group" v-else>
                             <p style="font-size:12px;color:#999;text-align:center;padding:8px 0">尚未建立停車違規 ROI，請點擊「開啟 ROI 編輯器」</p>
