@@ -78,6 +78,12 @@
             <el-select v-if="isSpeedZoneType(zoneType)" v-model="zoneDirection" placeholder="方向" style="width:140px">
                 <el-option v-for="opt in directionOptions" :key="`main-speed-dir-${opt.value}`" :label="opt.label" :value="opt.value"/>
             </el-select>
+            <span v-if="isParkingZoneType(zoneType)" style="font-size:12px;color:#64748b">違規種類</span>
+            <el-select v-if="isParkingZoneType(zoneType)" v-model="zoneSubKind" placeholder="違規種類" style="width:190px">
+                <el-option v-for="opt in parkingSubKinds" :key="`pk-sub-${opt.value}`" :label="opt.label" :value="opt.value"/>
+            </el-select>
+            <span v-if="isParkingZoneType(zoneType)" style="font-size:12px;color:#64748b">靜止門檻(秒)</span>
+            <el-input-number v-if="isParkingZoneType(zoneType)" v-model="zoneStopThreshold" :min="0" :step="1" :precision="1" size="small" style="width:130px" :placeholder="String(parkingSubKinds.find(o=>o.value===(zoneSubKind||'general'))?.threshold||0)"/>
         </div>
         <div class="toolbar">
             <el-button type="primary" size="large" @click="saveZone" :disabled="points.length < minPointsForCurrentType">💾 儲存區域</el-button>
@@ -218,7 +224,8 @@ createApp({
                 { label: '車速偵測', value: 'speed' }
             ],
             traffic_flow_settings: [
-                { label: '車流偵測', value: 'flow' }
+                { label: '車流偵測', value: 'flow' },
+                { label: '停車違規', value: 'parking' }
             ],
             congestion_detection: [
                 { label: '車流偵測', value: 'flow' }
@@ -227,7 +234,8 @@ createApp({
         const functionTypeOptions = computed(() => modeFunctionOptions[entryMode] || [
             { label: '車流偵測', value: 'flow' },
             { label: '車速偵測', value: 'speed' },
-            { label: '車道方向', value: 'lane' }
+            { label: '車道方向', value: 'lane' },
+            { label: '停車違規', value: 'parking' }
         ]);
         const functionTypeMap = {
             flow: [
@@ -237,8 +245,41 @@ createApp({
                 { label: '車速區', value: 'speed_roi' },
                 { label: '車速進入線', value: 'speed_line_in' },
                 { label: '車速離開線', value: 'speed_line_out' }
+            ],
+            parking: [
+                { label: '禁停區', value: 'no_parking' },
+                { label: '人行道', value: 'sidewalk' },
+                { label: '紅線', value: 'red_line' },
+                { label: '黃線', value: 'yellow_line' },
+                { label: '公車招呼站', value: 'bus_stop' },
+                { label: '斑馬線', value: 'crosswalk' }
             ]
         };
+        // 停車類違規 sub_kind 預設配置 (跟後端 detection/parking_violation.py 一致)
+        const parkingSubKinds = [
+            { value: 'general',          label: '一般違停',       threshold: 180, violation_type: 'ILLEGAL_PARKING',     violation_name: '違規停車',         fine: 600,  points: 0 },
+            { value: 'red_line',         label: '紅線臨停',       threshold: 1,   violation_type: 'RED_LINE_STOP',       violation_name: '紅線臨停',         fine: 600,  points: 0 },
+            { value: 'red_line_long',    label: '紅線停車',       threshold: 180, violation_type: 'RED_LINE_PARKING',    violation_name: '紅線停車',         fine: 900,  points: 0 },
+            { value: 'yellow_line',      label: '黃線停車',       threshold: 180, violation_type: 'YELLOW_LINE_PARKING', violation_name: '黃線停車',         fine: 600,  points: 0 },
+            { value: 'sidewalk',         label: '駕車行駛人行道', threshold: 0.5, violation_type: 'SIDEWALK',            violation_name: '駕車行駛人行道',   fine: 1200, points: 1 },
+            { value: 'sidewalk_parking', label: '人行道停車',     threshold: 60,  violation_type: 'SIDEWALK_PARKING',    violation_name: '在人行道停車',     fine: 1200, points: 1 },
+            { value: 'bus_stop_stop',    label: '公車招呼站臨停', threshold: 1,   violation_type: 'BUS_STOP_STOP',       violation_name: '公車招呼站臨停',   fine: 600,  points: 0 },
+            { value: 'bus_stop_parking', label: '公車招呼站停車', threshold: 180, violation_type: 'BUS_STOP_PARKING',    violation_name: '公車招呼站停車',   fine: 900,  points: 0 },
+            { value: 'crosswalk_stop',   label: '停在斑馬線',     threshold: 1,   violation_type: 'CROSSWALK_STOP',      violation_name: '停在斑馬線',       fine: 900,  points: 1 }
+        ];
+        const parkingZoneTypes = ['no_parking', 'sidewalk', 'red_line', 'yellow_line', 'bus_stop', 'crosswalk'];
+        const isParkingZoneType = (t) => parkingZoneTypes.includes(String(t || ''));
+        // zone type 預設 sub_kind (user 沒選的話)
+        const defaultSubKindForType = (t) => ({
+            no_parking: 'general',
+            red_line: 'red_line',
+            yellow_line: 'yellow_line',
+            sidewalk: 'sidewalk',
+            bus_stop: 'bus_stop_stop',
+            crosswalk: 'crosswalk_stop'
+        }[String(t || '')] || 'general');
+        const zoneSubKind = ref('');
+        const zoneStopThreshold = ref(null);
         const zoneTypeOptions = computed(() => functionTypeMap[functionType.value] || []);
         const flowZones = computed(() => zones.value.map((zone, idx) => ({ zone, idx })).filter(x => String(x.zone.type || '') === 'flow_detection'));
         const speedZones = computed(() => zones.value.map((zone, idx) => ({ zone, idx })).filter(x => String(x.zone.type || '') === 'speed_roi'));
@@ -262,7 +303,13 @@ createApp({
             flow_detection: 'flow',
             speed_roi: 'speed',
             speed_line_in: 'speed',
-            speed_line_out: 'speed'
+            speed_line_out: 'speed',
+            no_parking: 'parking',
+            sidewalk: 'parking',
+            red_line: 'parking',
+            yellow_line: 'parking',
+            bus_stop: 'parking',
+            crosswalk: 'parking'
         };
         const modeToFunction = {
             speed_detection: 'speed',
@@ -375,9 +422,13 @@ createApp({
             lane_left: '#e11d48',
             lane_straight: '#0ea5e9',
             lane_right: '#f59e0b',
-            stop_line: '#e6a23c', 
+            stop_line: '#e6a23c',
             crosswalk: '#409eff',
-            no_parking: '#f56c6c'
+            no_parking: '#dc2626',
+            sidewalk: '#7c3aed',
+            red_line: '#ef4444',
+            yellow_line: '#f59e0b',
+            bus_stop: '#0ea5e9'
         };
         const typeNames = {
             detection: '偵測區',
@@ -388,7 +439,11 @@ createApp({
             speed_line_out: '車速離開線',
             stop_line: '停止線',
             crosswalk: '斑馬線',
-            no_parking: '禁停區'
+            no_parking: '禁停區',
+            sidewalk: '人行道',
+            red_line: '紅線',
+            yellow_line: '黃線',
+            bus_stop: '公車招呼站'
         };
         const ensureZoneId = (z, idx) => String(z?.id || `zone_${idx + 1}`);
         const normalizeLaneTags = (tags) => {
@@ -650,6 +705,19 @@ createApp({
                 source_width: sourceSize.value.width,
                 source_height: sourceSize.value.height
             };
+            // 停車類違規 zone: 補 sub_kind / 閾值 / violation type / 罰金等屬性
+            if (isParkingZoneType(zoneType.value)) {
+                const sk = zoneSubKind.value || defaultSubKindForType(zoneType.value);
+                const cfg = parkingSubKinds.find(o => o.value === sk) || parkingSubKinds[0];
+                newZone.sub_kind = sk;
+                newZone.stop_threshold_sec = (zoneStopThreshold.value != null && zoneStopThreshold.value !== '')
+                    ? Number(zoneStopThreshold.value) : cfg.threshold;
+                newZone.violation_type = cfg.violation_type;
+                newZone.violation_name = cfg.violation_name;
+                newZone.fine_amount = cfg.fine;
+                newZone.points_penalty = cfg.points;
+                newZone.scope = 'traffic_flow_settings';  // parking 共用 traffic scope
+            }
             
             const newZones = [...zones.value, newZone];
             if (!validateZones(newZones, zoneType.value, newZone.id)) return;
@@ -769,6 +837,7 @@ createApp({
         return {
             cameraId, cameraName, imageUrl, imgRef, canvasRef,
             points, zones, functionType, functionTypeOptions, zoneType, zoneTypeOptions, zoneName, zoneLaneTags, zoneLaneNo, zoneDirection, zoneSpeedLimit, zoneOverSpeedKmh, directionOptions, laneTagOptions, flowZoneOptions, flowZones, speedZones, otherZones, pointsText, colors, typeNames, isLineType, minPointsForCurrentType, isFlowZoneType, isSpeedZoneType, showDirectionByType,
+            isParkingZoneType, parkingSubKinds, zoneSubKind, zoneStopThreshold,
             isZoneTypeDisabledInCreate,
             initCanvas, addPoint, undoPoint, clearPoints, saveZone, saveAllEdits, deleteZone, updateZone, copyPoints, goBack
         };
