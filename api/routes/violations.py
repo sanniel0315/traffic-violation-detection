@@ -555,6 +555,35 @@ async def review_violation(
     return {"message": "審核完成", "status": review.status}
 
 
+class ViolationPatch(BaseModel):
+    """允許 user 在違規詳情 dialog 內逐欄修改的欄位 (對應截圖「修改」鈕)"""
+    license_plate: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    violation_type: Optional[str] = None
+    violation_name: Optional[str] = None
+    location: Optional[str] = None
+    status: Optional[str] = None
+
+
+@router.patch("/{violation_id}")
+async def patch_violation(violation_id: int, data: ViolationPatch, db: Session = Depends(get_db)):
+    """違規欄位通用更新 (給 dialog 每欄 [修改] 按鈕用)"""
+    v = db.query(Violation).filter(Violation.id == violation_id).first()
+    if not v:
+        raise HTTPException(status_code=404, detail="違規記錄不存在")
+    payload = data.dict(exclude_unset=True)
+    for key, value in payload.items():
+        # license_plate 空字串 → None (DB 沒車牌一致表達)
+        if key == "license_plate" and isinstance(value, str) and not value.strip():
+            value = None
+        setattr(v, key, value)
+    v.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(v)
+    add_log("info", f"違規 {violation_id} 已修改欄位: {list(payload.keys())}", "violations")
+    return _to_dict(v)
+
+
 @router.delete("/{violation_id}")
 async def delete_violation(violation_id: int, db: Session = Depends(get_db)):
     """刪除違規記錄"""
