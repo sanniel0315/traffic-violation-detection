@@ -2111,23 +2111,39 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             _by2 = int(_bbox.get('y2', 0))
                             _veh_crop = frame[_by1:_by2, _bx1:_bx2]
                             if _veh_crop is not None and _veh_crop.size > 0:
+                                # 用跟 LPR 同樣 pipeline 抓 plate (真 YOLO plate detector
+                                # + expand + tighten)，而非 sliding-window heuristic
                                 from api.routes.lpr_stream import (
-                                    _propose_plate_bboxes as _vpd,
-                                    _recognize_plate_on_crop as _vpo,
+                                    get_plate_detector as _vpgd,
                                     get_recognizer as _vpr,
+                                    _PLATE_DETECT_CONF as _vpconf,
+                                    _expand_plate_bbox as _vpex,
+                                    _tighten_plate_crop_with_bbox as _vptight,
+                                    _rank_plate_candidates as _vprank,
+                                    _propose_plate_bboxes as _vpfb,
+                                    _recognize_plate_on_crop as _vpo,
                                 )
-                                _cands = _vpd(_veh_crop, max_candidates=3)
+                                _det = _vpgd()
                                 _rec = _vpr()
-                                for _cand in _cands:
-                                    _cb = _cand.get('bbox') or []
-                                    if len(_cb) != 4:
+                                _vh, _vw = _veh_crop.shape[:2]
+                                _detections = _det.detect(_veh_crop, conf=_vpconf)
+                                if not _detections:
+                                    _detections = _vpfb(_veh_crop)  # fallback heuristic
+                                _ranked = _vprank(_detections, _vw, _vh)
+                                for _r in _ranked:
+                                    _rb = _r.get('bbox') or []
+                                    if len(_rb) != 4:
                                         continue
-                                    _cx1, _cy1, _cx2, _cy2 = [int(x) for x in _cb]
-                                    if _cx2 <= _cx1 or _cy2 <= _cy1:
+                                    _ex1, _ey1, _ex2, _ey2 = _vpex(
+                                        [int(x) for x in _rb], _vw, _vh
+                                    )
+                                    _pc = _det.crop(_veh_crop, [_ex1, _ey1, _ex2, _ey2])
+                                    if _pc is None or getattr(_pc, 'size', 0) == 0:
                                         continue
-                                    _pc = _veh_crop[_cy1:_cy2, _cx1:_cx2]
-                                    if _pc is None or _pc.size == 0:
-                                        continue
+                                    # tighten 收緊 plate 邊界
+                                    _pc_tight, _ = _vptight(_pc)
+                                    if _pc_tight is not None and getattr(_pc_tight, 'size', 0) > 0:
+                                        _pc = _pc_tight
                                     _res = _vpo(_pc, _rec)
                                     _pn = (_res or {}).get('plate_number')
                                     _conf = float((_res or {}).get('confidence') or 0.0)
@@ -2135,8 +2151,8 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                         _plate = str(_pn).strip()
                                         _violation_plate_crop = _pc.copy()
                                         break
-                        except Exception:
-                            pass
+                        except Exception as _ex_lpv:
+                            print(f"⚠️ plate-vehicle association err cam{camera_id}: {_ex_lpv}", flush=True)
                     # 嚴格 plate detection 沒抓到 → license_plate = None
                     # (寧可沒車牌也不要 fallback _latest_lpr_plate ±20s 抓前車誤標。
                     # user 之前抱怨 Honda 配 Hyundai / AZ-1122 對不上正是這個)
