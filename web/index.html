@@ -5173,6 +5173,20 @@
                                         <option value="SPEEDING">超速</option>
                                         <option value="ILLEGAL_PARKING">違規停車</option>
                                         <option value="SIDEWALK">駕車行駛人行道或騎樓</option>
+                                        <option value="SIDEWALK_PARKING">在人行道停車</option>
+                                        <option value="TURN_NOT_YIELD_PEDESTRIAN">轉彎未禮讓行人</option>
+                                        <option value="RED_LIGHT_RIGHT_TURN">紅燈右轉</option>
+                                        <option value="RED_LINE_PARKING">紅線停車</option>
+                                        <option value="RED_LINE_STOP">紅線臨停</option>
+                                        <option value="YELLOW_LINE_PARKING">黃線停車</option>
+                                        <option value="DOUBLE_PARKING">併排停車</option>
+                                        <option value="DOUBLE_STOP">併排臨停</option>
+                                        <option value="BUS_STOP_STOP">公車招呼站臨停</option>
+                                        <option value="BUS_STOP_PARKING">公車招呼站停車</option>
+                                        <option value="ILLEGAL_LANE_CHANGE">變換車道不依標線指示</option>
+                                        <option value="ILLEGAL_RIGHT_TURN">違規右轉</option>
+                                        <option value="LEFT_TURN_NO_INNER_LANE">左轉彎(迴轉)，不先駛入內側車道</option>
+                                        <option value="MAINTENANCE_ALERT">維運告警</option>
                                     </select>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
@@ -5386,6 +5400,20 @@
                                         <option value="SPEEDING">超速</option>
                                         <option value="ILLEGAL_PARKING">違規停車</option>
                                         <option value="SIDEWALK">駕車行駛人行道或騎樓</option>
+                                        <option value="SIDEWALK_PARKING">在人行道停車</option>
+                                        <option value="TURN_NOT_YIELD_PEDESTRIAN">轉彎未禮讓行人</option>
+                                        <option value="RED_LIGHT_RIGHT_TURN">紅燈右轉</option>
+                                        <option value="RED_LINE_PARKING">紅線停車</option>
+                                        <option value="RED_LINE_STOP">紅線臨停</option>
+                                        <option value="YELLOW_LINE_PARKING">黃線停車</option>
+                                        <option value="DOUBLE_PARKING">併排停車</option>
+                                        <option value="DOUBLE_STOP">併排臨停</option>
+                                        <option value="BUS_STOP_STOP">公車招呼站臨停</option>
+                                        <option value="BUS_STOP_PARKING">公車招呼站停車</option>
+                                        <option value="ILLEGAL_LANE_CHANGE">變換車道不依標線指示</option>
+                                        <option value="ILLEGAL_RIGHT_TURN">違規右轉</option>
+                                        <option value="LEFT_TURN_NO_INNER_LANE">左轉彎(迴轉)，不先駛入內側車道</option>
+                                        <option value="MAINTENANCE_ALERT">維運告警</option>
                                     </select>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
@@ -6184,11 +6212,26 @@
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>違規種類</span>
-                                    <select v-model="repeatViolationType" class="stats-native-select" style="width:150px">
+                                    <select v-model="repeatViolationType" class="stats-native-select" style="width:200px">
                                         <option value="">全部</option>
                                         <option value="RED_LIGHT">闖紅燈</option>
                                         <option value="SPEEDING">超速</option>
                                         <option value="ILLEGAL_PARKING">違規停車</option>
+                                        <option value="SIDEWALK">駕車行駛人行道或騎樓</option>
+                                        <option value="SIDEWALK_PARKING">在人行道停車</option>
+                                        <option value="TURN_NOT_YIELD_PEDESTRIAN">轉彎未禮讓行人</option>
+                                        <option value="RED_LIGHT_RIGHT_TURN">紅燈右轉</option>
+                                        <option value="RED_LINE_PARKING">紅線停車</option>
+                                        <option value="RED_LINE_STOP">紅線臨停</option>
+                                        <option value="YELLOW_LINE_PARKING">黃線停車</option>
+                                        <option value="DOUBLE_PARKING">併排停車</option>
+                                        <option value="DOUBLE_STOP">併排臨停</option>
+                                        <option value="BUS_STOP_STOP">公車招呼站臨停</option>
+                                        <option value="BUS_STOP_PARKING">公車招呼站停車</option>
+                                        <option value="ILLEGAL_LANE_CHANGE">變換車道不依標線指示</option>
+                                        <option value="ILLEGAL_RIGHT_TURN">違規右轉</option>
+                                        <option value="LEFT_TURN_NO_INNER_LANE">左轉彎(迴轉)，不先駛入內側車道</option>
+                                        <option value="MAINTENANCE_ALERT">維運告警</option>
                                     </select>
                                 </div>
                                 <el-button type="primary" @click="loadRepeatOffenders">分析</el-button>
