@@ -25,6 +25,7 @@ from api.routes import logs, system
 from api.routes import external, api_key_admin
 from api.routes import mqtt as mqtt_route
 from api.routes import io as io_route
+from api.routes import sensor_fusion as sensor_fusion_route
 TZ_TAIPEI = ZoneInfo("Asia/Taipei")
 
 
@@ -243,6 +244,7 @@ app.include_router(external.router)
 app.include_router(api_key_admin.router)
 app.include_router(mqtt_route.router)
 app.include_router(io_route.router)
+app.include_router(sensor_fusion_route.router)
 # 靜態檔案
 if os.path.exists("./output"):
     app.mount("/files", StaticFiles(directory="./output"), name="files")
