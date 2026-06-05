@@ -52,6 +52,9 @@ _violation_last_push: Dict[int, float] = {}
 # 停車類違規 evaluator (per camera 一個 instance,跨 frame 保 dwell 狀態)
 _PARKING_EVALUATORS: Dict[int, "object"] = {}
 
+# 行人未禮讓 evaluator (per camera 一個 instance)
+_PEDESTRIAN_YIELD_EVALUATORS: Dict[int, "object"] = {}
+
 # 視覺 track snapshot (per camera, BEV world coord) — 給 sensor_fusion router 拉。
 # 每 frame post-process 結尾覆寫,sensor_fusion API 即時讀。
 # 結構: [{track_id, world_x, world_y, vx, vy, class_name, confidence, bbox, timestamp}]
@@ -133,6 +136,10 @@ def _associate_plate_for_vehicle(frame, vehicle_bbox: dict, camera_id: int):
         return "", None
 
 
+# user 決定: 罰金不在系統上計算 (法定金額由執法人員裁定,系統只記違規行為)
+# 所有 POST 出去的 fine_amount + points 都寫 0,detector 仍記類型/時間/車牌/影像
+
+
 def _emit_violation_for_vehicle(
     *,
     camera_id: int,
@@ -166,6 +173,7 @@ def _emit_violation_for_vehicle(
     image_name = f"{violation_type}_{ts_str}.jpg"
     image_path = output_dir / image_name
     cv2.imwrite(str(image_path), annotated)
+    # 罰金 + 點數 不在系統上計算 (依 user 規範,由執法人員裁定)
     data = {
         "violation_type": violation_type,
         "violation_name": violation_name,
@@ -174,8 +182,8 @@ def _emit_violation_for_vehicle(
         "location": location,
         "camera_id": camera_id,
         "confidence": vehicle_conf,
-        "fine_amount": fine_amount,
-        "points": points,
+        "fine_amount": 0,
+        "points": 0,
         "image_path": f"/files/violations/{image_name}",
         "bbox": vehicle_bbox,
     }
@@ -2318,6 +2326,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     _image_name = f"SPEEDING_{_ts_str}.jpg"
                     _image_path = output_dir / _image_name
                     cv2.imwrite(str(_image_path), _annotated)
+                    # 罰金 + 點數 不在系統上計算 (依 user 規範)
                     _data = {
                         "violation_type": 'SPEEDING',
                         "violation_name": '超速',
@@ -2326,8 +2335,8 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         "location": location,
                         "camera_id": camera_id,
                         "confidence": _v.get('confidence'),
-                        "fine_amount": 1800,
-                        "points": 1,
+                        "fine_amount": 0,
+                        "points": 0,
                         "image_path": f"/files/violations/{_image_name}",
                         "bbox": _v.get("bbox"),
                         "speed_kmh": round(_speed_kmh, 1),
@@ -2421,6 +2430,58 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             print(f"⚠️ parking emit cam{camera_id}: {_ex_pk}", flush=True)
             except Exception as _ex_peval:
                 print(f"⚠️ parking evaluator cam{camera_id}: {_ex_peval}", flush=True)
+
+            # ---- 轉彎未禮讓行人 evaluator (§44 §48) ----
+            # 條件: crosswalk zone 內有 person + 車輛通過 zone 沒減速 + 距人 < 200px
+            try:
+                _cw_zones = select_zones(
+                    zones, scope=SCOPE_TRAFFIC,
+                    allowed_types=("crosswalk",),
+                    fallback_scopes=("parking_violation_settings",),
+                )
+                # 分離 vehicles vs persons
+                _persons = [d for d in detections if d.get('class_name') == 'person']
+                if _cw_zones and vehicles and _persons:
+                    _pyev = _PEDESTRIAN_YIELD_EVALUATORS.get(camera_id)
+                    if _pyev is None:
+                        from detection.pedestrian_yield import PedestrianYieldEvaluator
+                        _pyev = PedestrianYieldEvaluator(camera_id)
+                        _PEDESTRIAN_YIELD_EVALUATORS[camera_id] = _pyev
+                    _py_now = time.time()
+                    _py_triggers = _pyev.feed(vehicles, _persons, _cw_zones, _py_now)
+                    for _trig in _py_triggers:
+                        try:
+                            _emit_violation_for_vehicle(
+                                camera_id=camera_id,
+                                location=location,
+                                frame=frame,
+                                vehicle_bbox=_trig.vehicle_bbox,
+                                vehicle_class=_trig.vehicle_class or "car",
+                                vehicle_conf=None,
+                                violation_type=_pyev.VIOLATION_TYPE,
+                                violation_name=_pyev.VIOLATION_NAME,
+                                fine_amount=0,  # 罰金不在系統算
+                                points=0,
+                                output_dir=output_dir,
+                                trigger_ts=_py_now,
+                                extra_fields={
+                                    "speed_kmh": round(_trig.vehicle_speed_kmh, 1),
+                                    "flow_roi_hit": True,
+                                    "speed_roi_hit": False,
+                                },
+                            )
+                            print(
+                                f"⚠️ TURN_NOT_YIELD: zone={_trig.zone_name!r} "
+                                f"vehicle_track={_trig.vehicle_track_id} ({_trig.vehicle_class}) "
+                                f"speed={_trig.vehicle_speed_kmh:.1f}km/h "
+                                f"person_track={_trig.person_track_id} dist={_trig.distance_px:.0f}px "
+                                f"cam{camera_id}",
+                                flush=True,
+                            )
+                        except Exception as _ex_py:
+                            print(f"⚠️ pedestrian yield emit cam{camera_id}: {_ex_py}", flush=True)
+            except Exception as _ex_pyeval:
+                print(f"⚠️ pedestrian yield evaluator cam{camera_id}: {_ex_pyeval}", flush=True)
 
             # 視覺 track snapshot — 給 sensor_fusion router 拉。寫 module-level dict。
             # 優先用 world coord (走過 calibration 的攝影機),沒設 calibration 用
