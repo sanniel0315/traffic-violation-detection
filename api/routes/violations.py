@@ -662,7 +662,7 @@ def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)
     if not v.created_at or not v.camera_id:
         raise HTTPException(status_code=404, detail="missing time/camera")
 
-    out_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_osd_v5.mp4"
+    out_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_osd_v6.mp4"
     if not (out_path.exists() and out_path.stat().st_size > 4096):
         camera_name = f"cam_{int(v.camera_id)}"
         ts_unix = int(calendar.timegm(v.created_at.utctimetuple()))
@@ -673,23 +673,21 @@ def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)
         raw_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_raw.mp4"
         raw_path.write_bytes(clip_bytes)
 
-        # OSD = 兩行: 「事件時間 (event_time + pts 流動模擬,用 ffmpeg eif 算秒)」
-        # ffmpeg drawtext expression 對 :, %, {} escape 不可靠 → static textfile +
-        # 第二個 drawtext 顯示 +%{eif:trunc(t-12):d}秒 (相對於 event,負值=事件前)
-        # 用戶看到: 「2026-06-05 09:29:45」(靜態) + 「-12s/-11s/.../+12s」(流動偏移)
+        # OSD 靜態事件時間 (textfile) — ffmpeg 4.4 drawtext expand_text 對
+        # `:`, `%`, `{}` escape 不可靠,test 過 5 種變體 (%{localtime:fmt} /
+        # %{pts:localtime:N} / %{eif:trunc(t):d} 等) 都踩 Unterminated %{}
+        # 或殘字。User 想要影片時間流動,但 ffmpeg 4.x 做不到 reliable
+        # event_time+pts 流動 OSD。退而求其次:純靜態,影片播放器 progress
+        # bar 本身有流動感。
         TPE_TZ = timezone(timedelta(hours=8))
         v_ts = v.created_at if v.created_at.tzinfo else v.created_at.replace(tzinfo=timezone.utc)
         osd_text = v_ts.astimezone(TPE_TZ).strftime("%Y-%m-%d %H:%M:%S")
         osd_text_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_osd.txt"
         osd_text_path.write_text(osd_text, encoding="utf-8")
         font_path = _find_unicode_font_path() or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        # 第 1 個 drawtext: 靜態事件時間 (textfile,避開 escape 雷)
-        # 第 2 個 drawtext: 相對流動秒數 (eif 表達式,t=clip pts 秒,event 在 clip 12 秒處)
         drawtext = (
             f"drawtext=fontfile={font_path}:textfile={osd_text_path}:"
-            f"x=w-tw-30:y=h-th-66:fontsize=36:fontcolor=white:borderw=3:bordercolor=black,"
-            f"drawtext=fontfile={font_path}:text=t%{{eif\\:trunc(t-12)\\:d}}s:"
-            f"x=w-tw-30:y=h-th-30:fontsize=28:fontcolor=yellow:borderw=2:bordercolor=black"
+            f"x=w-tw-30:y=h-th-30:fontsize=36:fontcolor=white:borderw=3:bordercolor=black"
         )
         cmd = [
             "ffmpeg", "-y", "-i", str(raw_path),
