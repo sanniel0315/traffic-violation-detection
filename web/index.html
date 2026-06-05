@@ -9659,8 +9659,25 @@ const app=createApp({
         const _VIOL_TYPE_META={
             RED_LIGHT:{label:'闖紅燈', color:'var(--gov-fault)'},
             SPEEDING:{label:'超速', color:'var(--gov-warn)'},
-            ILLEGAL_PARKING:{label:'違停', color:'var(--gov-primary)'},
-            SIDEWALK:{label:'人行道', color:'var(--gov-accent, #8b5cf6)'},
+            ILLEGAL_PARKING:{label:'違規停車', color:'var(--gov-primary)'},
+            // 停車類 9 種 (跟 parkingSubKindOptions 同步)
+            RED_LINE_STOP:{label:'紅線臨停', color:'#ef4444'},
+            RED_LINE_PARKING:{label:'紅線停車', color:'#dc2626'},
+            YELLOW_LINE_PARKING:{label:'黃線停車', color:'#f59e0b'},
+            SIDEWALK:{label:'駕車行駛人行道', color:'#7c3aed'},
+            SIDEWALK_PARKING:{label:'在人行道停車', color:'#8b5cf6'},
+            BUS_STOP_STOP:{label:'公車招呼站臨停', color:'#0ea5e9'},
+            BUS_STOP_PARKING:{label:'公車招呼站停車', color:'#0284c7'},
+            CROSSWALK_STOP:{label:'停在斑馬線', color:'#409eff'},
+            // 其他常用
+            WRONG_WAY:{label:'逆向行駛', color:'var(--gov-fault)'},
+            NO_HELMET:{label:'未戴安全帽', color:'var(--gov-warn)'},
+            ILLEGAL_LANE_CHANGE:{label:'變換車道不依標線', color:'var(--gov-warn)'},
+            ILLEGAL_RIGHT_TURN:{label:'違規右轉', color:'var(--gov-warn)'},
+            LEFT_TURN_NO_INNER_LANE:{label:'左轉未入內側車道', color:'var(--gov-warn)'},
+            RED_LIGHT_RIGHT_TURN:{label:'紅燈右轉', color:'var(--gov-fault)'},
+            TURN_NOT_YIELD_PEDESTRIAN:{label:'轉彎未禮讓行人', color:'var(--gov-fault)'},
+            MAINTENANCE_ALERT:{label:'維運告警', color:'var(--gov-muted)'},
         };
         const hourlyStats=computed(()=>{
             const out={};
