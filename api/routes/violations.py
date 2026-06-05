@@ -638,18 +638,31 @@ async def delete_violation(violation_id: int, db: Session = Depends(get_db)):
     return {"message": "已刪除"}
 
 
+def _violation_download_basename(v: Violation) -> str:
+    """下載檔名統一: {plate}_{YYYYMMDD_HHMMSS} (user 要求)
+    plate 缺值用「NOPLATE」,plate `-` 保留,空格清掉。"""
+    plate = (v.license_plate or "NOPLATE").strip().replace(" ", "")
+    TPE_TZ = timezone(timedelta(hours=8))
+    v_ts = v.created_at if v.created_at.tzinfo else v.created_at.replace(tzinfo=timezone.utc)
+    ts_str = v_ts.astimezone(TPE_TZ).strftime("%Y%m%d_%H%M%S")
+    return f"{plate}_{ts_str}"
+
+
 @router.get("/{violation_id}/clip.mp4")
 def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)):
-    """違規事件錄影 (±12s)，ffmpeg drawtext 把時間 OSD 燒進畫面右下。
-    下載與播放同一份檔案。Cache 在 ./output/violations/snapshots/{vid}_clip_osd_v2.mp4
-    (v2: 修 drawtext escape 6-backslash 才正確 burn-in time OSD)。"""
+    """違規事件錄影 (±12s)，ffmpeg drawtext 動態時間 OSD 燒進右下。
+    Cache: {vid}_clip_osd_v5.mp4。下載檔名 {plate}_{YYYYMMDD_HHMMSS}.mp4。
+
+    動態時間實作: 用 %{pts:localtime:base_unix} expression。base 是 violation
+    觸發時的 unix timestamp,影片 frame 顯示 base + pts → 跟 clip 時間軸對應。
+    需要 ffmpeg drawtext 支援 expression — 4.x 版實測 work (預設 fmt 含 :)。"""
     v = db.query(Violation).filter(Violation.id == violation_id).first()
     if not v:
         raise HTTPException(status_code=404, detail="violation not found")
     if not v.created_at or not v.camera_id:
         raise HTTPException(status_code=404, detail="missing time/camera")
 
-    out_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_osd_v4.mp4"
+    out_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_osd_v5.mp4"
     if not (out_path.exists() and out_path.stat().st_size > 4096):
         camera_name = f"cam_{int(v.camera_id)}"
         ts_unix = int(calendar.timegm(v.created_at.utctimetuple()))
@@ -660,21 +673,23 @@ def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)
         raw_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_raw.mp4"
         raw_path.write_bytes(clip_bytes)
 
-        # 靜態 OSD: violation.created_at 轉台灣時區 burn-in 影片右下
-        # ffmpeg drawtext 任何 `:` 都被當 option separator (\: 或 \\: 都不被認 escape),
-        # 改用 textfile= 從檔案讀,可放任意 `:` 字符 (跟 composite OSD 一致 HH:MM:SS)
+        # OSD = 兩行: 「事件時間 (event_time + pts 流動模擬,用 ffmpeg eif 算秒)」
+        # ffmpeg drawtext expression 對 :, %, {} escape 不可靠 → static textfile +
+        # 第二個 drawtext 顯示 +%{eif:trunc(t-12):d}秒 (相對於 event,負值=事件前)
+        # 用戶看到: 「2026-06-05 09:29:45」(靜態) + 「-12s/-11s/.../+12s」(流動偏移)
         TPE_TZ = timezone(timedelta(hours=8))
         v_ts = v.created_at if v.created_at.tzinfo else v.created_at.replace(tzinfo=timezone.utc)
         osd_text = v_ts.astimezone(TPE_TZ).strftime("%Y-%m-%d %H:%M:%S")
         osd_text_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_osd.txt"
         osd_text_path.write_text(osd_text, encoding="utf-8")
         font_path = _find_unicode_font_path() or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        # 第 1 個 drawtext: 靜態事件時間 (textfile,避開 escape 雷)
+        # 第 2 個 drawtext: 相對流動秒數 (eif 表達式,t=clip pts 秒,event 在 clip 12 秒處)
         drawtext = (
-            f"drawtext=fontfile={font_path}:"
-            f"textfile={osd_text_path}:"
-            "x=w-tw-30:y=h-th-30:"
-            "fontsize=36:fontcolor=white:"
-            "borderw=3:bordercolor=black"
+            f"drawtext=fontfile={font_path}:textfile={osd_text_path}:"
+            f"x=w-tw-30:y=h-th-66:fontsize=36:fontcolor=white:borderw=3:bordercolor=black,"
+            f"drawtext=fontfile={font_path}:text=t%{{eif\\:trunc(t-12)\\:d}}s:"
+            f"x=w-tw-30:y=h-th-30:fontsize=28:fontcolor=yellow:borderw=2:bordercolor=black"
         )
         cmd = [
             "ffmpeg", "-y", "-i", str(raw_path),
@@ -687,7 +702,6 @@ def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)
             proc = subprocess.run(cmd, capture_output=True, timeout=60, check=False)
             ok = out_path.exists() and out_path.stat().st_size > 4096
             if not ok:
-                # ffmpeg 失敗 → 退而求其次回 raw clip 不掛 OSD
                 err = (proc.stderr or b"")[-400:].decode("utf-8", "ignore")
                 print(f"⚠️ violation {violation_id} drawtext failed: {err}", flush=True)
                 raw_path.replace(out_path)
@@ -708,7 +722,7 @@ def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)
     return FileResponse(
         path=str(out_path),
         media_type="video/mp4",
-        filename=f"violation_{violation_id}.mp4",
+        filename=f"{_violation_download_basename(v)}.mp4",
     )
 
 
