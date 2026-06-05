@@ -52,6 +52,11 @@ _violation_last_push: Dict[int, float] = {}
 # 停車類違規 evaluator (per camera 一個 instance,跨 frame 保 dwell 狀態)
 _PARKING_EVALUATORS: Dict[int, "object"] = {}
 
+# 視覺 track snapshot (per camera, BEV world coord) — 給 sensor_fusion router 拉。
+# 每 frame post-process 結尾覆寫,sensor_fusion API 即時讀。
+# 結構: [{track_id, world_x, world_y, vx, vy, class_name, confidence, bbox, timestamp}]
+_VEHICLE_TRACK_SNAPSHOTS: Dict[int, list] = {}
+
 
 def _push_violation_ring(camera_id: int, frame):
     """worker tick 呼叫，每 ~0.1s push 一張原解析度 frame 進 ring buffer。
@@ -2416,6 +2421,37 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             print(f"⚠️ parking emit cam{camera_id}: {_ex_pk}", flush=True)
             except Exception as _ex_peval:
                 print(f"⚠️ parking evaluator cam{camera_id}: {_ex_peval}", flush=True)
+
+            # 視覺 track snapshot — 給 sensor_fusion router 拉。寫 module-level dict。
+            # 只 include world coord 有效的 (走過 calibration),避免 fusion 拿 NULL coord
+            try:
+                _snap = []
+                for _vv in vehicles or []:
+                    _tid = _vv.get("track_id")
+                    if _tid is None:
+                        continue
+                    _tr = tracks.get(_tid) or {}
+                    _wxy = _tr.get("world_xy")
+                    if not _wxy:
+                        continue
+                    _kf = _tr.get("kalman")
+                    if _kf is not None and getattr(_kf, "vx", None) is not None:
+                        _vxs, _vys = float(getattr(_kf, "vx", 0.0)), float(getattr(_kf, "vy", 0.0))
+                    else:
+                        _spd = float(_vv.get("speed_kmh") or 0.0) / 3.6
+                        _vxs, _vys = _spd, 0.0
+                    _snap.append({
+                        "track_id": int(_tid),
+                        "world_x": float(_wxy[0]), "world_y": float(_wxy[1]),
+                        "vx": _vxs, "vy": _vys,
+                        "class_name": str(_vv.get("class_name") or ""),
+                        "confidence": float(_vv.get("confidence") or 0.0),
+                        "bbox": _vv.get("bbox"),
+                        "timestamp": float(_tr.get("t") or 0.0),
+                    })
+                _VEHICLE_TRACK_SNAPSHOTS[int(camera_id)] = _snap
+            except Exception as _ex_snap:
+                print(f"⚠️ track snapshot cam{camera_id}: {_ex_snap}", flush=True)
 
     # 後處理 thread：drain queue，跑 ROI/tracking/DB/violations。不阻塞 worker。
     import queue as _queue
