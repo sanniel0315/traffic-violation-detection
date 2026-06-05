@@ -20,22 +20,30 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from api.models import get_db, Violation
+from api.models import get_db, Violation, Camera
 
 router = APIRouter(prefix="/api/analytics", tags=["行為優化分析"])
 
 
 # ---------- 1. 違規熱點 ----------
+def _camera_name_map(db: Session) -> Dict[int, str]:
+    """cache cam_id → name 對應 (violations.location 多數空,fallback 用 cam name 當地點)"""
+    return {c.id: c.name for c in db.query(Camera).all()}
+
+
 @router.get("/hotspots")
 def get_hotspots(
     days: int = Query(30, ge=1, le=365),
     top: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    """熱點 = (location, hour, violation_type) 違規次數 top N"""
+    """熱點 = (camera_id/location, hour, violation_type) top N。
+    location 空時 fallback 用 camera_id+name 當地點 (現有 violations.location 全空)。"""
     start = datetime.utcnow() - timedelta(days=days)
+    cam_map = _camera_name_map(db)
     rows = (
         db.query(
+            Violation.camera_id,
             Violation.location,
             Violation.violation_type,
             Violation.violation_name,
@@ -43,9 +51,8 @@ def get_hotspots(
             func.count(Violation.id).label("cnt"),
         )
         .filter(Violation.created_at >= start)
-        .filter(Violation.location.isnot(None))
-        .filter(Violation.location != "")
-        .group_by(Violation.location, Violation.violation_type,
+        .filter(Violation.camera_id.isnot(None))
+        .group_by(Violation.camera_id, Violation.location, Violation.violation_type,
                   Violation.violation_name, "hour")
         .order_by(func.count(Violation.id).desc())
         .limit(top)
@@ -55,7 +62,8 @@ def get_hotspots(
         "days": days,
         "items": [
             {
-                "location": r.location,
+                "camera_id": int(r.camera_id),
+                "location": (r.location or "").strip() or cam_map.get(r.camera_id) or f"攝影機 {r.camera_id}",
                 "violation_type": r.violation_type,
                 "violation_name": r.violation_name,
                 "hour": int(r.hour) if r.hour else None,
@@ -88,36 +96,39 @@ def get_recommendations(
     days: int = Query(30, ge=1, le=365),
     db: Session = Depends(get_db),
 ):
-    """規則層推薦: 從 hotspots 找出超閾值組合,組合中文建議。"""
+    """規則層推薦: 從 hotspots 找出超閾值組合,組合中文建議。
+    location 空時 fallback 用 camera name 當地點。"""
     start = datetime.utcnow() - timedelta(days=days)
+    cam_map = _camera_name_map(db)
     rows = (
         db.query(
+            Violation.camera_id,
             Violation.location,
             Violation.violation_type,
             Violation.violation_name,
             func.count(Violation.id).label("cnt"),
         )
         .filter(Violation.created_at >= start)
-        .filter(Violation.location.isnot(None))
-        .filter(Violation.location != "")
-        .group_by(Violation.location, Violation.violation_type, Violation.violation_name)
+        .filter(Violation.camera_id.isnot(None))
+        .group_by(Violation.camera_id, Violation.location, Violation.violation_type, Violation.violation_name)
         .all()
     )
     recs: List[Dict[str, Any]] = []
     for r in rows:
         thr, tmpl = _REC_THRESHOLDS.get(r.violation_type, (1000, ""))
-        # 月化次數比較 (days < 30 月化拉)
         monthly = int(r.cnt) * (30.0 / max(1, days))
         if monthly >= thr and tmpl:
+            location = (r.location or "").strip() or cam_map.get(r.camera_id) or f"攝影機 {r.camera_id}"
             recs.append({
-                "location": r.location,
+                "camera_id": int(r.camera_id),
+                "location": location,
                 "violation_type": r.violation_type,
                 "violation_name": r.violation_name,
                 "count": int(r.cnt),
                 "monthly_estimate": round(monthly, 1),
                 "threshold_per_month": thr,
                 "severity": "high" if monthly >= thr * 2 else "medium",
-                "suggestion": f"{r.location} · {r.violation_name} {int(r.cnt)} 起 (約 {round(monthly)}/月) → {tmpl}",
+                "suggestion": f"{location} · {r.violation_name} {int(r.cnt)} 起 (約 {round(monthly)}/月) → {tmpl}",
             })
     recs.sort(key=lambda x: -x["monthly_estimate"])
     return {"days": days, "items": recs[:50]}
