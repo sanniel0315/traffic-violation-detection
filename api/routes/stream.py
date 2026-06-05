@@ -2277,9 +2277,17 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                     _pc = _det.crop(_veh_crop, [_ex1, _ey1, _ex2, _ey2])
                                     if _pc is None or getattr(_pc, 'size', 0) == 0:
                                         continue
-                                    # tighten 收緊邊界供 OCR (準確率高)，但 save 用 expanded 原圖
-                                    # (composite 4 cell overlay 才不會切到上下) — user 抱怨高度不夠
-                                    _pc_for_save = _pc.copy()
+                                    # tighten 收緊邊界供 OCR (準確率高)
+                                    # save 用「更寬鬆」pad (上下 55%, 左右 30%) 重 crop 一次,
+                                    # 因為 detector plate bbox 常常只抓「字寬度」漏掉上下框框,
+                                    # 25% pad 救不回 — user 報「車牌裁切一半」就是這個 (5df9f45 沒解徹底)
+                                    _es1, _et1, _es2, _et2 = _vpex(
+                                        [int(x) for x in _rb], _vw, _vh,
+                                        pad_x_ratio=0.30, pad_y_ratio=0.55,
+                                    )
+                                    _pc_for_save = _det.crop(_veh_crop, [_es1, _et1, _es2, _et2])
+                                    if _pc_for_save is None or getattr(_pc_for_save, 'size', 0) == 0:
+                                        _pc_for_save = _pc.copy()  # fallback 用小 pad 版
                                     _pc_tight, _ = _vptight(_pc)
                                     if _pc_tight is not None and getattr(_pc_tight, 'size', 0) > 0:
                                         _pc_for_ocr = _pc_tight
