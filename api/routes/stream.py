@@ -2423,7 +2423,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 print(f"⚠️ parking evaluator cam{camera_id}: {_ex_peval}", flush=True)
 
             # 視覺 track snapshot — 給 sensor_fusion router 拉。寫 module-level dict。
-            # 只 include world coord 有效的 (走過 calibration),避免 fusion 拿 NULL coord
+            # 優先用 world coord (走過 calibration 的攝影機),沒設 calibration 用
+            # bbox bottom-center pixel / 100 fallback 當虛擬 world (demo 用,真雷達
+            # 接入前 zone 沒 calibration 也能跑 fusion 算法看效果)。
             try:
                 _snap = []
                 for _vv in vehicles or []:
@@ -2432,8 +2434,16 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         continue
                     _tr = tracks.get(_tid) or {}
                     _wxy = _tr.get("world_xy")
-                    if not _wxy:
-                        continue
+                    if _wxy:
+                        _wx, _wy = float(_wxy[0]), float(_wxy[1])
+                        _calibrated = True
+                    else:
+                        # fallback: bbox bottom-center pixel / 100 ≈ 假設 1m=100px
+                        _bb = _vv.get("bbox") or {}
+                        _bx = (float(_bb.get("x1", 0)) + float(_bb.get("x2", 0))) / 200.0
+                        _by = float(_bb.get("y2", 0)) / 100.0
+                        _wx, _wy = _bx, _by
+                        _calibrated = False
                     _kf = _tr.get("kalman")
                     if _kf is not None and getattr(_kf, "vx", None) is not None:
                         _vxs, _vys = float(getattr(_kf, "vx", 0.0)), float(getattr(_kf, "vy", 0.0))
@@ -2442,12 +2452,13 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         _vxs, _vys = _spd, 0.0
                     _snap.append({
                         "track_id": int(_tid),
-                        "world_x": float(_wxy[0]), "world_y": float(_wxy[1]),
+                        "world_x": _wx, "world_y": _wy,
                         "vx": _vxs, "vy": _vys,
                         "class_name": str(_vv.get("class_name") or ""),
                         "confidence": float(_vv.get("confidence") or 0.0),
                         "bbox": _vv.get("bbox"),
                         "timestamp": float(_tr.get("t") or 0.0),
+                        "calibrated": _calibrated,
                     })
                 _VEHICLE_TRACK_SNAPSHOTS[int(camera_id)] = _snap
             except Exception as _ex_snap:
