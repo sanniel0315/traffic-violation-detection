@@ -6806,7 +6806,7 @@
                                  style="display:flex;gap:10px;align-items:flex-start;padding:8px 16px;border-bottom:1px solid var(--gov-border);font-family:var(--font-mono);font-size:12.5px">
                                 <span style="flex:0 0 auto;width:64px;padding:1px 6px;border-radius:3px;text-align:center;font-weight:700"
                                       :style="{background:l.level==='success'?'rgba(31,157,85,.15)':l.level==='error'?'rgba(196,58,49,.15)':'rgba(217,119,6,.15)',color:l.level==='success'?'var(--gov-ok)':l.level==='error'?'var(--gov-fault)':'var(--gov-warn)'}">{{ l.level||'info' }}</span>
-                                <span style="flex:0 0 auto;width:170px;color:var(--gov-muted)">{{ formatNVRTime(l.created_at) }}</span>
+                                <span style="flex:0 0 auto;width:170px;color:var(--gov-muted)">{{ formatNVRTime(l.timestamp || l.created_at) }}</span>
                                 <span style="flex:1;color:var(--gov-text)">{{ l.message }}</span>
                             </div>
                         </div>
@@ -7781,7 +7781,7 @@
                                  style="display:flex;gap:10px;align-items:flex-start;padding:8px 16px;border-bottom:1px solid var(--gov-border);font-family:var(--font-mono);font-size:12.5px">
                                 <span style="flex:0 0 auto;width:64px;padding:1px 6px;border-radius:3px;text-align:center;font-weight:700"
                                       :style="{background:l.level==='success'?'rgba(31,157,85,.15)':l.level==='error'?'rgba(196,58,49,.15)':'rgba(217,119,6,.15)',color:l.level==='success'?'var(--gov-ok)':l.level==='error'?'var(--gov-fault)':'var(--gov-warn)'}">{{ l.level||'info' }}</span>
-                                <span style="flex:0 0 auto;width:170px;color:var(--gov-muted)">{{ formatNVRTime(l.created_at) }}</span>
+                                <span style="flex:0 0 auto;width:170px;color:var(--gov-muted)">{{ formatNVRTime(l.timestamp || l.created_at) }}</span>
                                 <span style="flex:1;color:var(--gov-text)">{{ l.message }}</span>
                             </div>
                         </div>
