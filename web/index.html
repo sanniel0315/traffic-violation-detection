@@ -4809,6 +4809,122 @@
                         </div>
                     </div>
 
+                    <!-- Row 2.7: 行為優化分析 (5 卡片) — 從 49819 violations + traffic_events 挖洞察 -->
+                    <div style="margin-top:14px;display:grid;grid-template-columns:repeat(12,1fr);gap:14px">
+                        <!-- 1. AI 推薦 (最有 impact,給 6/12 寬) -->
+                        <div class="ds-card hoverable" style="grid-column:span 6;padding:16px 18px">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                                <div>
+                                    <div class="ds-section-num ds-section-num--text">AI · RECOMMEND</div>
+                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">AI 推薦 (行為優化建議)</div>
+                                </div>
+                                <el-tag size="small" :type="analyticsRecs.length?'warning':'info'">{{ analyticsRecs.length }} 項</el-tag>
+                            </div>
+                            <div v-if="analyticsRecs.length" style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto">
+                                <div v-for="(r, i) in analyticsRecs.slice(0,5)" :key="`rec-${i}`"
+                                     style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--gov-border);border-radius:6px;background:var(--gov-bg)">
+                                    <el-tag size="small" :type="r.severity==='high'?'danger':'warning'" effect="dark" style="flex:0 0 auto">{{ r.severity==='high'?'高':'中' }}</el-tag>
+                                    <div style="flex:1;font-size:13px;line-height:1.5;color:var(--gov-text)">{{ r.suggestion }}</div>
+                                </div>
+                            </div>
+                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">尚無達閾值的推薦項目</div>
+                        </div>
+                        <!-- 2. 安全分數 (6/12) -->
+                        <div class="ds-card hoverable" style="grid-column:span 6;padding:16px 18px">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                                <div>
+                                    <div class="ds-section-num ds-section-num--text">SAFETY · SCORE</div>
+                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">各路段安全分數 (0-100)</div>
+                                </div>
+                                <span style="font-size:12px;color:var(--gov-muted)">近 30 天</span>
+                            </div>
+                            <div v-if="analyticsSafety.length" style="display:flex;flex-direction:column;gap:10px">
+                                <div v-for="s in analyticsSafety.slice(0,5)" :key="`sf-${s.camera_id}`"
+                                     style="display:flex;align-items:center;gap:12px">
+                                    <span style="flex:0 0 auto;width:24px;font-size:12px;color:var(--gov-muted)">#{{ s.camera_id }}</span>
+                                    <div style="flex:1;height:14px;background:var(--gov-bg);border-radius:7px;overflow:hidden;position:relative">
+                                        <div :style="{width:s.score+'%',height:'100%',background:s.level==='safe'?'var(--gov-ok)':s.level==='warn'?'var(--gov-warn)':'var(--gov-fault)'}"></div>
+                                    </div>
+                                    <el-tag size="small" :type="s.level==='safe'?'success':s.level==='warn'?'warning':'danger'" effect="dark" style="flex:0 0 auto;min-width:64px;text-align:center">{{ s.score }}</el-tag>
+                                </div>
+                            </div>
+                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
+                        </div>
+                        <!-- 3. 違規熱點 top 10 (8/12) -->
+                        <div class="ds-card hoverable" style="grid-column:span 8;padding:16px 18px">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                                <div>
+                                    <div class="ds-section-num ds-section-num--text">HOTSPOTS</div>
+                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">違規熱點 top 10 (地點 × 時段 × 類型)</div>
+                                </div>
+                                <span style="font-size:12px;color:var(--gov-muted)">近 30 天</span>
+                            </div>
+                            <table v-if="analyticsHotspots.length" style="width:100%;font-size:13px;border-collapse:collapse">
+                                <thead>
+                                    <tr style="border-bottom:1px solid var(--gov-border);text-align:left;color:var(--gov-muted);font-size:12px">
+                                        <th style="padding:6px 4px">地點</th><th style="padding:6px 4px">時段</th>
+                                        <th style="padding:6px 4px">類型</th><th style="padding:6px 4px;text-align:right">次數</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="(h, i) in analyticsHotspots.slice(0,10)" :key="`hs-${i}`" style="border-bottom:1px solid var(--gov-border)">
+                                        <td style="padding:6px 4px">{{ h.location }}</td>
+                                        <td style="padding:6px 4px;font-family:var(--font-mono)">{{ h.hour!=null ? (h.hour<10?('0'+h.hour):h.hour) + ':00' : '-' }}</td>
+                                        <td style="padding:6px 4px"><el-tag size="small">{{ h.violation_name }}</el-tag></td>
+                                        <td style="padding:6px 4px;text-align:right;font-weight:700;font-family:var(--font-mono)">{{ h.count }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
+                        </div>
+                        <!-- 4. 車種×違規 (4/12) -->
+                        <div class="ds-card hoverable" style="grid-column:span 4;padding:16px 18px">
+                            <div style="margin-bottom:10px">
+                                <div class="ds-section-num ds-section-num--text">BY · VEHICLE</div>
+                                <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">車種違規分布</div>
+                            </div>
+                            <div v-if="analyticsVehTypes.length" style="display:flex;flex-direction:column;gap:10px">
+                                <div v-for="vt in analyticsVehTypes.slice(0,4)" :key="`vt-${vt.vehicle_type}`">
+                                    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+                                        <span style="font-weight:600">{{ vehicleTypeZh(vt.vehicle_type) }}</span>
+                                        <span style="color:var(--gov-muted);font-family:var(--font-mono)">{{ vt.total }} 起</span>
+                                    </div>
+                                    <div style="display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--gov-bg)">
+                                        <div v-for="b in vt.breakdown.slice(0,3)" :key="`b-${b.violation_type}`"
+                                             :title="`${b.violation_name} ${b.count}`"
+                                             :style="{flex:b.count, background:violationTypeColor(b.violation_type)}"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
+                        </div>
+                        <!-- 5. 24h 流量預測 (12/12 full width) -->
+                        <div class="ds-card hoverable" style="grid-column:span 12;padding:16px 18px">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                                <div>
+                                    <div class="ds-section-num ds-section-num--text">FORECAST · NEXT HOUR</div>
+                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">24h 流量趨勢 + 下小時預測 · cam_{{ analyticsForecastCam }}</div>
+                                </div>
+                                <div style="display:flex;gap:8px;align-items:center">
+                                    <span style="font-size:12px;color:var(--gov-muted)">peak {{ analyticsForecast.peak?.hour }}:00 ({{ analyticsForecast.peak?.count }})</span>
+                                    <el-tag size="small" type="warning">下小時 {{ analyticsForecast.forecast?.next_hour }}:00 預測 {{ analyticsForecast.forecast?.predicted_count }} 車</el-tag>
+                                </div>
+                            </div>
+                            <div v-if="analyticsForecast.history_24h?.length" style="display:flex;align-items:flex-end;gap:2px;height:80px">
+                                <div v-for="(h, i) in analyticsForecast.history_24h" :key="`fc-${i}`"
+                                     :title="`${h.hour}:00 平均 ${h.avg_count} 車`"
+                                     :style="{flex:1, height:Math.max(2, h.avg_count / (analyticsForecast.peak?.count || 1) * 100) + '%',
+                                              background: i === analyticsForecast.forecast?.next_hour ? 'var(--gov-warn)' : 'var(--gov-primary)',
+                                              borderRadius:'2px 2px 0 0', opacity: i === analyticsForecast.forecast?.next_hour ? 1 : 0.6}">
+                                </div>
+                            </div>
+                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
+                            <div v-if="analyticsForecast.history_24h?.length" style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--gov-muted);font-family:var(--font-mono)">
+                                <span>00</span><span>06</span><span>12</span><span>18</span><span>23</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Row 3: 違規明細 (full width，最重要的 actionable 資訊) -->
                     <div class="ds-card hoverable" style="margin-top:14px;overflow:visible">
                         <div style="padding:18px 22px;border-bottom:1px solid var(--gov-border);background:var(--gov-surface-2);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
@@ -9296,6 +9412,8 @@ const app=createApp({
             });
         };
         watch([dashboard,page],()=>{if(page.value==='dashboard')renderDashboardCharts();});
+        // 切到 dashboard 自動 fetch 分析資料
+        watch(page,(p)=>{if(p==='dashboard')loadAnalytics();},{immediate:true});
         const cameras=ref([]);
         const detectionStatus=ref({});
         const congestionStatus=ref({});
@@ -9686,6 +9804,33 @@ const app=createApp({
             RED_LIGHT_RIGHT_TURN:{label:'紅燈右轉', color:'var(--gov-fault)'},
             TURN_NOT_YIELD_PEDESTRIAN:{label:'轉彎未禮讓行人', color:'var(--gov-fault)'},
             MAINTENANCE_ALERT:{label:'維運告警', color:'var(--gov-muted)'},
+        };
+        // type → color helper (用 _VIOL_TYPE_META 內 color,沒 mapping 給灰色)
+        const violationTypeColor=(t)=>(_VIOL_TYPE_META[String(t||'')]?.color || 'var(--gov-muted)');
+        // 行為優化分析 5 個 endpoint 拿到的資料
+        const analyticsHotspots=ref([]);
+        const analyticsRecs=ref([]);
+        const analyticsSafety=ref([]);
+        const analyticsVehTypes=ref([]);
+        const analyticsForecast=ref({});
+        const analyticsForecastCam=ref(7);  // 預設 cam_7 (車流穩),user 可切換
+        const loadAnalytics=async()=>{
+            try{
+                const [hs, rc, sf, vt, fc] = await Promise.all([
+                    fetch('/api/analytics/hotspots?top=15').then(r=>r.json()),
+                    fetch('/api/analytics/recommendations').then(r=>r.json()),
+                    fetch('/api/analytics/safety_score').then(r=>r.json()),
+                    fetch('/api/analytics/vehicle_type_violations').then(r=>r.json()),
+                    fetch(`/api/analytics/flow_forecast?camera_id=${analyticsForecastCam.value}`).then(r=>r.json()),
+                ]);
+                analyticsHotspots.value = hs.items || [];
+                analyticsRecs.value = rc.items || [];
+                analyticsSafety.value = sf.items || [];
+                analyticsVehTypes.value = vt.items || [];
+                analyticsForecast.value = fc || {};
+            }catch(e){
+                console.error('analytics fetch failed', e);
+            }
         };
         const hourlyStats=computed(()=>{
             const out={};
@@ -16710,7 +16855,7 @@ const app=createApp({
             if(lprVisualTimer)clearInterval(lprVisualTimer);
         });
         
-        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
+        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsVehTypes,analyticsForecast,analyticsForecastCam,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,previewParkingZones,previewParkingZoneCount,parkingSubKindOptions,applyParkingSubKindToZone,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
