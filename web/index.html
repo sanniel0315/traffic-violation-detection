@@ -4611,6 +4611,7 @@
                 <div v-if="hasPerm('analysis_speed')" class="menu-item" :class="{active:page==='speed_detection'}" @click="openAnalysisPage('speed_detection')"><svg class="nav-icon"><use href="#i-gauge"/></svg><span>車速檢測</span></div>
                 <div v-if="hasPerm('analysis_congestion')" class="menu-item" :class="{active:page==='congestion_detection'}" @click="openAnalysisPage('congestion_detection')"><svg class="nav-icon"><use href="#i-alert"/></svg><span>壅塞檢測</span></div>
                 <div v-if="hasPerm('analysis_parking')" class="menu-item" :class="{active:page==='parking_violation_settings'}" @click="openAnalysisPage('parking_violation_settings')"><svg class="nav-icon"><use href="#i-target"/></svg><span>停車違規設定</span></div>
+                <div v-if="hasPerm('analysis_insights')" class="menu-item" :class="{active:page==='analytics_insights'}" @click="page='analytics_insights';loadAnalytics()"><svg class="nav-icon"><use href="#i-pie"/></svg><span>分析功能</span></div>
             </div>
             <div v-if="canManageCameras" class="menu-item" :class="{active:page==='cameras'}" @click="page='cameras';loadCameras()"><svg class="nav-icon"><use href="#i-video"/></svg><span>攝影機管理</span></div>
             <div v-if="canManageCameras" class="menu-item" :class="{active:page==='nx_viewer'}" @click="page='nx_viewer';loadNxSettings()"><svg class="nav-icon"><use href="#i-film"/></svg><span>Nx 串流</span></div>
@@ -4809,121 +4810,7 @@
                         </div>
                     </div>
 
-                    <!-- Row 2.7: 行為優化分析 (5 卡片) — 從 49819 violations + traffic_events 挖洞察 -->
-                    <div style="margin-top:14px;display:grid;grid-template-columns:repeat(12,1fr);gap:14px">
-                        <!-- 1. AI 推薦 (最有 impact,給 6/12 寬) -->
-                        <div class="ds-card hoverable" style="grid-column:span 6;padding:16px 18px">
-                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-                                <div>
-                                    <div class="ds-section-num ds-section-num--text">AI · RECOMMEND</div>
-                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">AI 推薦 (行為優化建議)</div>
-                                </div>
-                                <el-tag size="small" :type="analyticsRecs.length?'warning':'info'">{{ analyticsRecs.length }} 項</el-tag>
-                            </div>
-                            <div v-if="analyticsRecs.length" style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto">
-                                <div v-for="(r, i) in analyticsRecs.slice(0,5)" :key="`rec-${i}`"
-                                     style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--gov-border);border-radius:6px;background:var(--gov-bg)">
-                                    <el-tag size="small" :type="r.severity==='high'?'danger':'warning'" effect="dark" style="flex:0 0 auto">{{ r.severity==='high'?'高':'中' }}</el-tag>
-                                    <div style="flex:1;font-size:13px;line-height:1.5;color:var(--gov-text)">{{ r.suggestion }}</div>
-                                </div>
-                            </div>
-                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">尚無達閾值的推薦項目</div>
-                        </div>
-                        <!-- 2. 安全分數 (6/12) -->
-                        <div class="ds-card hoverable" style="grid-column:span 6;padding:16px 18px">
-                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-                                <div>
-                                    <div class="ds-section-num ds-section-num--text">SAFETY · SCORE</div>
-                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">各路段安全分數 (0-100)</div>
-                                </div>
-                                <span style="font-size:12px;color:var(--gov-muted)">近 30 天</span>
-                            </div>
-                            <div v-if="analyticsSafety.length" style="display:flex;flex-direction:column;gap:10px">
-                                <div v-for="s in analyticsSafety.slice(0,5)" :key="`sf-${s.camera_id}`"
-                                     style="display:flex;align-items:center;gap:12px">
-                                    <span style="flex:0 0 auto;width:24px;font-size:12px;color:var(--gov-muted)">#{{ s.camera_id }}</span>
-                                    <div style="flex:1;height:14px;background:var(--gov-bg);border-radius:7px;overflow:hidden;position:relative">
-                                        <div :style="{width:s.score+'%',height:'100%',background:s.level==='safe'?'var(--gov-ok)':s.level==='warn'?'var(--gov-warn)':'var(--gov-fault)'}"></div>
-                                    </div>
-                                    <el-tag size="small" :type="s.level==='safe'?'success':s.level==='warn'?'warning':'danger'" effect="dark" style="flex:0 0 auto;min-width:64px;text-align:center">{{ s.score }}</el-tag>
-                                </div>
-                            </div>
-                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
-                        </div>
-                        <!-- 3. 違規熱點 top 10 (8/12) -->
-                        <div class="ds-card hoverable" style="grid-column:span 8;padding:16px 18px">
-                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-                                <div>
-                                    <div class="ds-section-num ds-section-num--text">HOTSPOTS</div>
-                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">違規熱點 top 10 (地點 × 時段 × 類型)</div>
-                                </div>
-                                <span style="font-size:12px;color:var(--gov-muted)">近 30 天</span>
-                            </div>
-                            <table v-if="analyticsHotspots.length" style="width:100%;font-size:13px;border-collapse:collapse">
-                                <thead>
-                                    <tr style="border-bottom:1px solid var(--gov-border);text-align:left;color:var(--gov-muted);font-size:12px">
-                                        <th style="padding:6px 4px">地點</th><th style="padding:6px 4px">時段</th>
-                                        <th style="padding:6px 4px">類型</th><th style="padding:6px 4px;text-align:right">次數</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr v-for="(h, i) in analyticsHotspots.slice(0,10)" :key="`hs-${i}`" style="border-bottom:1px solid var(--gov-border)">
-                                        <td style="padding:6px 4px">{{ h.location }}</td>
-                                        <td style="padding:6px 4px;font-family:var(--font-mono)">{{ h.hour!=null ? (h.hour<10?('0'+h.hour):h.hour) + ':00' : '-' }}</td>
-                                        <td style="padding:6px 4px"><el-tag size="small">{{ h.violation_name }}</el-tag></td>
-                                        <td style="padding:6px 4px;text-align:right;font-weight:700;font-family:var(--font-mono)">{{ h.count }}</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
-                        </div>
-                        <!-- 4. 車種×違規 (4/12) -->
-                        <div class="ds-card hoverable" style="grid-column:span 4;padding:16px 18px">
-                            <div style="margin-bottom:10px">
-                                <div class="ds-section-num ds-section-num--text">BY · VEHICLE</div>
-                                <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">車種違規分布</div>
-                            </div>
-                            <div v-if="analyticsVehTypes.length" style="display:flex;flex-direction:column;gap:10px">
-                                <div v-for="vt in analyticsVehTypes.slice(0,4)" :key="`vt-${vt.vehicle_type}`">
-                                    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
-                                        <span style="font-weight:600">{{ vehicleTypeZh(vt.vehicle_type) }}</span>
-                                        <span style="color:var(--gov-muted);font-family:var(--font-mono)">{{ vt.total }} 起</span>
-                                    </div>
-                                    <div style="display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--gov-bg)">
-                                        <div v-for="b in vt.breakdown.slice(0,3)" :key="`b-${b.violation_type}`"
-                                             :title="`${b.violation_name} ${b.count}`"
-                                             :style="{flex:b.count, background:violationTypeColor(b.violation_type)}"></div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
-                        </div>
-                        <!-- 5. 24h 流量預測 (12/12 full width) -->
-                        <div class="ds-card hoverable" style="grid-column:span 12;padding:16px 18px">
-                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-                                <div>
-                                    <div class="ds-section-num ds-section-num--text">FORECAST · NEXT HOUR</div>
-                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">24h 流量趨勢 + 下小時預測 · cam_{{ analyticsForecastCam }}</div>
-                                </div>
-                                <div style="display:flex;gap:8px;align-items:center">
-                                    <span style="font-size:12px;color:var(--gov-muted)">peak {{ analyticsForecast.peak?.hour }}:00 ({{ analyticsForecast.peak?.count }})</span>
-                                    <el-tag size="small" type="warning">下小時 {{ analyticsForecast.forecast?.next_hour }}:00 預測 {{ analyticsForecast.forecast?.predicted_count }} 車</el-tag>
-                                </div>
-                            </div>
-                            <div v-if="analyticsForecast.history_24h?.length" style="display:flex;align-items:flex-end;gap:2px;height:80px">
-                                <div v-for="(h, i) in analyticsForecast.history_24h" :key="`fc-${i}`"
-                                     :title="`${h.hour}:00 平均 ${h.avg_count} 車`"
-                                     :style="{flex:1, height:Math.max(2, h.avg_count / (analyticsForecast.peak?.count || 1) * 100) + '%',
-                                              background: i === analyticsForecast.forecast?.next_hour ? 'var(--gov-warn)' : 'var(--gov-primary)',
-                                              borderRadius:'2px 2px 0 0', opacity: i === analyticsForecast.forecast?.next_hour ? 1 : 0.6}">
-                                </div>
-                            </div>
-                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
-                            <div v-if="analyticsForecast.history_24h?.length" style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--gov-muted);font-family:var(--font-mono)">
-                                <span>00</span><span>06</span><span>12</span><span>18</span><span>23</span>
-                            </div>
-                        </div>
-                    </div>
+                    <!-- Row 2.7 5 卡片已搬到 page='analytics_insights' (分析→分析功能 menu) -->
 
                     <!-- Row 3: 違規明細 (full width，最重要的 actionable 資訊) -->
                     <div class="ds-card hoverable" style="margin-top:14px;overflow:visible">
@@ -5617,6 +5504,136 @@
                     </div>
                 </div>
                 
+                <!-- 分析功能 page (5 個行為優化卡片) — 從 49819 violations + traffic_events 挖洞察 -->
+                <div v-if="page==='analytics_insights'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use href="#i-pie"/></svg></div>
+                                <h1 class="ds-section-title">分析<b>功能</b></h1>
+                                <p style="font-size:13px;color:var(--gov-muted);margin-top:6px;line-height:1.5">從歷史違規 + 流量資料挖洞察:違規熱點 / AI 推薦 / 安全分數 / 24h 預測 / 車種分布</p>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <el-button size="small" plain @click="loadAnalytics"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>重新整理</el-button>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(12,1fr);gap:14px">
+                        <!-- 1. AI 推薦 (6/12) -->
+                        <div class="ds-card hoverable" style="grid-column:span 6;padding:16px 18px">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                                <div>
+                                    <div class="ds-section-num ds-section-num--text">AI · RECOMMEND</div>
+                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">AI 推薦 (行為優化建議)</div>
+                                </div>
+                                <el-tag size="small" :type="analyticsRecs.length?'warning':'info'">{{ analyticsRecs.length }} 項</el-tag>
+                            </div>
+                            <div v-if="analyticsRecs.length" style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto">
+                                <div v-for="(r, i) in analyticsRecs.slice(0,8)" :key="`rec-${i}`"
+                                     style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--gov-border);border-radius:6px;background:var(--gov-bg)">
+                                    <el-tag size="small" :type="r.severity==='high'?'danger':'warning'" effect="dark" style="flex:0 0 auto">{{ r.severity==='high'?'高':'中' }}</el-tag>
+                                    <div style="flex:1;font-size:13px;line-height:1.5;color:var(--gov-text)">{{ r.suggestion }}</div>
+                                </div>
+                            </div>
+                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">尚無達閾值的推薦項目</div>
+                        </div>
+                        <!-- 2. 安全分數 (6/12) -->
+                        <div class="ds-card hoverable" style="grid-column:span 6;padding:16px 18px">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                                <div>
+                                    <div class="ds-section-num ds-section-num--text">SAFETY · SCORE</div>
+                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">各路段安全分數 (0-100)</div>
+                                </div>
+                                <span style="font-size:12px;color:var(--gov-muted)">近 30 天</span>
+                            </div>
+                            <div v-if="analyticsSafety.length" style="display:flex;flex-direction:column;gap:10px">
+                                <div v-for="s in analyticsSafety" :key="`sf-${s.camera_id}`"
+                                     style="display:flex;align-items:center;gap:12px">
+                                    <span style="flex:0 0 auto;width:24px;font-size:12px;color:var(--gov-muted)">#{{ s.camera_id }}</span>
+                                    <div style="flex:1;height:14px;background:var(--gov-bg);border-radius:7px;overflow:hidden;position:relative">
+                                        <div :style="{width:s.score+'%',height:'100%',background:s.level==='safe'?'var(--gov-ok)':s.level==='warn'?'var(--gov-warn)':'var(--gov-fault)'}"></div>
+                                    </div>
+                                    <el-tag size="small" :type="s.level==='safe'?'success':s.level==='warn'?'warning':'danger'" effect="dark" style="flex:0 0 auto;min-width:64px;text-align:center">{{ s.score }}</el-tag>
+                                </div>
+                            </div>
+                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
+                        </div>
+                        <!-- 3. 違規熱點 top 10 (8/12) -->
+                        <div class="ds-card hoverable" style="grid-column:span 8;padding:16px 18px">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                                <div>
+                                    <div class="ds-section-num ds-section-num--text">HOTSPOTS</div>
+                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">違規熱點 top 10 (地點 × 時段 × 類型)</div>
+                                </div>
+                                <span style="font-size:12px;color:var(--gov-muted)">近 30 天</span>
+                            </div>
+                            <table v-if="analyticsHotspots.length" style="width:100%;font-size:13px;border-collapse:collapse">
+                                <thead>
+                                    <tr style="border-bottom:1px solid var(--gov-border);text-align:left;color:var(--gov-muted);font-size:12px">
+                                        <th style="padding:6px 4px">地點</th><th style="padding:6px 4px">時段</th>
+                                        <th style="padding:6px 4px">類型</th><th style="padding:6px 4px;text-align:right">次數</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="(h, i) in analyticsHotspots.slice(0,10)" :key="`hs-${i}`" style="border-bottom:1px solid var(--gov-border)">
+                                        <td style="padding:6px 4px">{{ h.location }}</td>
+                                        <td style="padding:6px 4px;font-family:var(--font-mono)">{{ h.hour!=null ? (h.hour<10?('0'+h.hour):h.hour) + ':00' : '-' }}</td>
+                                        <td style="padding:6px 4px"><el-tag size="small">{{ h.violation_name }}</el-tag></td>
+                                        <td style="padding:6px 4px;text-align:right;font-weight:700;font-family:var(--font-mono)">{{ h.count }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
+                        </div>
+                        <!-- 4. 車種×違規 (4/12) -->
+                        <div class="ds-card hoverable" style="grid-column:span 4;padding:16px 18px">
+                            <div style="margin-bottom:10px">
+                                <div class="ds-section-num ds-section-num--text">BY · VEHICLE</div>
+                                <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">車種違規分布</div>
+                            </div>
+                            <div v-if="analyticsVehTypes.length" style="display:flex;flex-direction:column;gap:10px">
+                                <div v-for="vt in analyticsVehTypes.slice(0,5)" :key="`vt-${vt.vehicle_type}`">
+                                    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+                                        <span style="font-weight:600">{{ vehicleTypeZh(vt.vehicle_type) }}</span>
+                                        <span style="color:var(--gov-muted);font-family:var(--font-mono)">{{ vt.total }} 起</span>
+                                    </div>
+                                    <div style="display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--gov-bg)">
+                                        <div v-for="b in vt.breakdown.slice(0,3)" :key="`b-${b.violation_type}`"
+                                             :title="`${b.violation_name} ${b.count}`"
+                                             :style="{flex:b.count, background:violationTypeColor(b.violation_type)}"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
+                        </div>
+                        <!-- 5. 24h 流量預測 (12/12 full width) -->
+                        <div class="ds-card hoverable" style="grid-column:span 12;padding:16px 18px">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                                <div>
+                                    <div class="ds-section-num ds-section-num--text">FORECAST · NEXT HOUR</div>
+                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">24h 流量趨勢 + 下小時預測 · cam_{{ analyticsForecastCam }}</div>
+                                </div>
+                                <div style="display:flex;gap:8px;align-items:center">
+                                    <span style="font-size:12px;color:var(--gov-muted)">peak {{ analyticsForecast.peak?.hour }}:00 ({{ analyticsForecast.peak?.count }})</span>
+                                    <el-tag size="small" type="warning">下小時 {{ analyticsForecast.forecast?.next_hour }}:00 預測 {{ analyticsForecast.forecast?.predicted_count }} 車</el-tag>
+                                </div>
+                            </div>
+                            <div v-if="analyticsForecast.history_24h?.length" style="display:flex;align-items:flex-end;gap:2px;height:100px">
+                                <div v-for="(h, i) in analyticsForecast.history_24h" :key="`fc-${i}`"
+                                     :title="`${h.hour}:00 平均 ${h.avg_count} 車`"
+                                     :style="{flex:1, height:Math.max(2, h.avg_count / (analyticsForecast.peak?.count || 1) * 100) + '%',
+                                              background: i === analyticsForecast.forecast?.next_hour ? 'var(--gov-warn)' : 'var(--gov-primary)',
+                                              borderRadius:'2px 2px 0 0', opacity: i === analyticsForecast.forecast?.next_hour ? 1 : 0.6}">
+                                </div>
+                            </div>
+                            <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
+                            <div v-if="analyticsForecast.history_24h?.length" style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--gov-muted);font-family:var(--font-mono)">
+                                <span>00</span><span>06</span><span>12</span><span>18</span><span>23</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 攝影機管理 / 分析設定 -->
                 <div v-if="page==='cameras' || isAnalysisPage">
                     <div class="ds-page-hero">
@@ -9215,6 +9232,7 @@ const app=createApp({
             {key:'analysis_speed',label:'車速檢測'},
             {key:'analysis_congestion',label:'壅塞檢測'},
             {key:'analysis_parking',label:'停車違規設定'},
+            {key:'analysis_insights',label:'分析功能'},
             {key:'cameras',label:'攝影機管理'},
             {key:'frigate',label:'NVR 設定'},
             {key:'lpr',label:'車牌辨識'},
@@ -9226,12 +9244,12 @@ const app=createApp({
             admin:permissionCatalog.map(p=>p.key),
             ops:[
                 'map','statistics','violations','reports','repeat','monitor',
-                'analysis_traffic','analysis_speed','analysis_congestion','analysis_parking',
+                'analysis_traffic','analysis_speed','analysis_congestion','analysis_parking','analysis_insights',
                 'cameras','frigate','lpr','logs','hwmonitor'
             ],
             viewer:[
                 'map','statistics','violations','reports','repeat','monitor',
-                'analysis_traffic','analysis_speed','analysis_congestion','analysis_parking',
+                'analysis_traffic','analysis_speed','analysis_congestion','analysis_parking','analysis_insights',
                 'lpr','logs','hwmonitor'
             ]
         };
@@ -9264,7 +9282,7 @@ const app=createApp({
         const canReviewTickets=computed(()=>hasPerm('review'));
         const canManageCameras=computed(()=>hasPerm('cameras'));
         const canManageNvr=computed(()=>hasPerm('frigate'));
-        const canOpenAnalysisMenu=computed(()=>hasPerm('analysis_traffic')||hasPerm('analysis_speed')||hasPerm('analysis_congestion')||hasPerm('analysis_parking'));
+        const canOpenAnalysisMenu=computed(()=>hasPerm('analysis_traffic')||hasPerm('analysis_speed')||hasPerm('analysis_congestion')||hasPerm('analysis_parking')||hasPerm('analysis_insights'));
         const firstAllowedPage=()=>{
             const order=['monitor','map','statistics','violations','lpr','logs','hwmonitor'];
             for(const p of order){
@@ -9412,8 +9430,8 @@ const app=createApp({
             });
         };
         watch([dashboard,page],()=>{if(page.value==='dashboard')renderDashboardCharts();});
-        // 切到 dashboard 自動 fetch 分析資料
-        watch(page,(p)=>{if(p==='dashboard')loadAnalytics();},{immediate:true});
+        // 切到「分析功能」頁面自動 fetch 分析資料
+        watch(page,(p)=>{if(p==='analytics_insights')loadAnalytics();},{immediate:true});
         const cameras=ref([]);
         const detectionStatus=ref({});
         const congestionStatus=ref({});
@@ -9432,6 +9450,7 @@ const app=createApp({
             speed_detection:'analysis_speed',
             congestion_detection:'analysis_congestion',
             parking_violation_settings:'analysis_parking',
+            analytics_insights:'analysis_insights',
             cameras:'cameras',
             frigate:'frigate',
             lpr:'lpr',
@@ -9678,7 +9697,8 @@ const app=createApp({
             traffic_flow_settings:'車流設定',
             speed_detection:'車速檢測',
             congestion_detection:'壅塞檢測',
-            parking_violation_settings:'停車違規設定'
+            parking_violation_settings:'停車違規設定',
+            analytics_insights:'分析功能'
         }[page.value]||'攝影機列表'));
         const currentPageIcon=computed(()=>({
             dashboard:           'i-bar',
@@ -9691,6 +9711,7 @@ const app=createApp({
             speed_detection:     'i-gauge',
             congestion_detection:'i-alert',
             parking_violation_settings:'i-target',
+            analytics_insights:'i-pie',
             nx_viewer:           'i-film',
             mqtt:                'i-radio',
             logs:                'i-list',
