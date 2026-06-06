@@ -1580,9 +1580,12 @@ def _start_detection_service(camera: Camera) -> bool:
         "started_at": datetime.now().isoformat(),
         "camera_name": camera.name,
     }
+    # location 從 cam.location 來,空字串 fallback 用 cam.name (不然 violations
+    # 寫入時 location='' → analytics hotspots 無法 group by,user 看「未設定位置」)
+    _loc = str(camera.location or "").strip() or str(camera.name or "") or f"攝影機 {camera.id}"
     worker = threading.Thread(
         target=run_detection,
-        args=(camera.id, resolve_analysis_source(camera), camera.location, camera.detection_config, camera.zones or []),
+        args=(camera.id, resolve_analysis_source(camera), _loc, camera.detection_config, camera.zones or []),
         daemon=True,
         name=f"detection-{camera.id}",
     )
