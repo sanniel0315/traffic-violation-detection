@@ -5611,9 +5611,12 @@
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                                 <div>
                                     <div class="ds-section-num ds-section-num--text">FORECAST · NEXT HOUR</div>
-                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">24h 流量趨勢 + 下小時預測 · cam_{{ analyticsForecastCam }}</div>
+                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">24h 流量趨勢 + 下小時預測</div>
                                 </div>
-                                <div style="display:flex;gap:8px;align-items:center">
+                                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                                    <el-select v-model="analyticsForecastCam" size="small" style="width:180px" @change="loadAnalytics">
+                                        <el-option v-for="c in (cameras||[])" :key="`fc-cam-${c.id}`" :label="`${c.name} (cam_${c.id})`" :value="c.id"/>
+                                    </el-select>
                                     <span style="font-size:12px;color:var(--gov-muted)">peak {{ analyticsForecast.peak?.hour }}:00 ({{ analyticsForecast.peak?.count }})</span>
                                     <el-tag size="small" type="warning">下小時 {{ analyticsForecast.forecast?.next_hour }}:00 預測 {{ analyticsForecast.forecast?.predicted_count }} 車</el-tag>
                                 </div>
@@ -9430,8 +9433,13 @@ const app=createApp({
             });
         };
         watch([dashboard,page],()=>{if(page.value==='dashboard')renderDashboardCharts();});
-        // 切到「分析功能」頁面自動 fetch 分析資料
-        watch(page,(p)=>{if(p==='analytics_insights')loadAnalytics();},{immediate:true});
+        // 切到「分析功能」頁面自動 fetch cameras (給下拉) + 分析資料
+        watch(page,(p)=>{
+            if(p==='analytics_insights'){
+                if(!(cameras.value||[]).length)loadCameras();
+                loadAnalytics();
+            }
+        },{immediate:true});
         const cameras=ref([]);
         const detectionStatus=ref({});
         const congestionStatus=ref({});
