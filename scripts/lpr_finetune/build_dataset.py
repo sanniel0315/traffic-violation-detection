@@ -86,21 +86,45 @@ def query_high_confidence_plates(
     return hits
 
 
-def ocr_detect_chars(img: np.ndarray, ocr_url: str = "http://127.0.0.1:8010/") -> List[dict]:
-    """call OCR 微服務拿每個字符的 bbox + class。
+_YOLO_MODEL = None
+
+
+def _get_yolo_model(model_path: str = "models/lpr/Charcter-LP.pt"):
+    """lazy load YOLO model (:8010 服務只回 text + count,不回 char bbox,
+    要拿 char bbox 必須直接 inference)。"""
+    global _YOLO_MODEL
+    if _YOLO_MODEL is None:
+        from ultralytics import YOLO
+        _YOLO_MODEL = YOLO(model_path, task="detect")
+    return _YOLO_MODEL
+
+
+def ocr_detect_chars(img: np.ndarray, conf_threshold: float = 0.25) -> List[dict]:
+    """直接跑 YOLO model 拿每個字符的 bbox + class。
     回傳 [{class: 'A', confidence: 0.95, bbox: [x1,y1,x2,y2]}, ...]"""
-    _, buf = cv2.imencode(".png", img)
     try:
-        resp = requests.post(ocr_url, data=buf.tobytes(), timeout=10)
-        if not resp.ok:
+        model = _get_yolo_model()
+        results = model.predict(img, conf=conf_threshold, verbose=False)
+        if not results:
             return []
-        data = resp.json()
-        # OCR 服務回傳格式: {text, confidence, chars: [{class, conf, bbox}]}
-        # 不同版本可能略有差異,兼容處理
-        chars = data.get("chars") or data.get("characters") or []
-        return chars
+        r = results[0]
+        if r.boxes is None or len(r.boxes) == 0:
+            return []
+        names = r.names  # {class_id: 'A', ...}
+        out = []
+        for box in r.boxes:
+            cls_id = int(box.cls.item())
+            cls_name = names.get(cls_id, "?")
+            conf = float(box.conf.item())
+            xyxy = box.xyxy[0].tolist()  # [x1, y1, x2, y2]
+            out.append({
+                "class": cls_name,
+                "confidence": conf,
+                "bbox": xyxy,
+            })
+        return out
     except Exception as e:
-        print(f"  OCR error: {e}", file=sys.stderr)
+        print(f"  YOLO inference error: {e}", file=sys.stderr)
         return []
 
 
