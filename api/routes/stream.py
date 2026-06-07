@@ -82,13 +82,22 @@ def _push_violation_ring(camera_id: int, frame):
         pass
 
 
+# 「務實高準確性」策略 (user 規範):
+# 只寫高信心 plate 進 DB,中低信心一律 None,避免 ALDB-617 / RFG-760 之類錯誤資料污染統計
+PLATE_HIGH_CONFIDENCE_THRESHOLD = 0.85   # >= 此值才寫 license_plate
+PLATE_KEEP_CROP_THRESHOLD = 0.5          # >= 此值留 plate.png 供人工 review,但不寫 DB plate
+
+
 def _associate_plate_for_vehicle(frame, vehicle_bbox: dict, camera_id: int):
-    """對指定 vehicle bbox 跑 plate detect + OCR，回 (plate_number, plate_crop_bgr)。
-    嚴格綁定觸發車輛（不走 _latest_lpr_plate ±20s 避免抓到前車）。
-    OCR 走 tightened crop（準確）、save 走 expanded crop（composite 上下不被切）。
-    返回 ("", None) 表示沒抓到 conf>=0.5 的 plate。"""
+    """對指定 vehicle bbox 跑 plate detect + OCR,回 (plate_number, plate_crop_bgr, confidence)。
+
+    回傳邏輯 (務實準確性策略):
+      - conf >= 0.85: plate_number=辨識結果 (高信心,可信)
+      - 0.5 <= conf < 0.85: plate_number="" 但 plate_crop 保留 (中信心,留圖人工 review)
+      - conf < 0.5: plate_number="", plate_crop=None (低信心,放棄)
+    """
     if not vehicle_bbox:
-        return "", None
+        return "", None, 0.0
     try:
         bx1 = max(0, int(vehicle_bbox.get('x1', 0)))
         by1 = max(0, int(vehicle_bbox.get('y1', 0)))
@@ -96,7 +105,7 @@ def _associate_plate_for_vehicle(frame, vehicle_bbox: dict, camera_id: int):
         by2 = int(vehicle_bbox.get('y2', 0))
         veh_crop = frame[by1:by2, bx1:bx2]
         if veh_crop is None or veh_crop.size == 0:
-            return "", None
+            return "", None, 0.0
         from api.routes.lpr_stream import (
             get_plate_detector as _vpgd,
             get_recognizer as _vpr,
@@ -114,6 +123,8 @@ def _associate_plate_for_vehicle(frame, vehicle_bbox: dict, camera_id: int):
         if not detections:
             detections = _vpfb(veh_crop)
         ranked = _vprank(detections, vw, vh)
+        best_mid_crop = None  # 中信心 fallback crop (留圖但 plate_number 為空)
+        best_mid_conf = 0.0
         for r in ranked:
             rb = r.get('bbox') or []
             if len(rb) != 4:
@@ -128,9 +139,15 @@ def _associate_plate_for_vehicle(frame, vehicle_bbox: dict, camera_id: int):
             res = _vpo(pc_ocr, rec)
             pn = (res or {}).get('plate_number')
             conf = float((res or {}).get('confidence') or 0.0)
-            if pn and conf >= 0.5:
-                return str(pn).strip(), pc_save
-        return "", None
+            # 高信心: 直接回傳寫 DB
+            if pn and conf >= PLATE_HIGH_CONFIDENCE_THRESHOLD:
+                return str(pn).strip(), pc_save, conf
+            # 中信心: 記下 crop (留圖),但繼續找有沒有更高信心的
+            if conf >= PLATE_KEEP_CROP_THRESHOLD and conf > best_mid_conf:
+                best_mid_crop = pc_save
+                best_mid_conf = conf
+        # 沒找到高信心 → 回中信心 crop (plate_number 空,讓 caller 寫 license_plate=None)
+        return "", best_mid_crop, best_mid_conf
     except Exception as e:
         print(f"⚠️ plate-vehicle association err cam{camera_id}: {e}", flush=True)
         return "", None
@@ -160,7 +177,7 @@ def _emit_violation_for_vehicle(
     ring buffer 4-frame save + plate.png 寫盤。回 (violation_id, plate_number)。
     所有違規種類共用此 path，等同 SPEEDING pipeline。"""
     import time as _t
-    plate, plate_crop = _associate_plate_for_vehicle(frame, vehicle_bbox, camera_id)
+    plate, plate_crop, plate_conf = _associate_plate_for_vehicle(frame, vehicle_bbox, camera_id)
     annotated = frame.copy()
     if vehicle_bbox:
         cv2.rectangle(
@@ -2312,9 +2329,17 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                     _res = _vpo(_pc_for_ocr, _rec)
                                     _pn = (_res or {}).get('plate_number')
                                     _conf = float((_res or {}).get('confidence') or 0.0)
-                                    if _pn and _conf >= 0.5:
+                                    # 「務實高準確性」策略 (跟 _associate_plate_for_vehicle 對齊):
+                                    # >= 0.85 寫 plate_number,0.5-0.85 留 crop 但 plate 設空,
+                                    # < 0.5 完全放棄。避免低信心錯誤 plate 污染 DB。
+                                    if _pn and _conf >= PLATE_HIGH_CONFIDENCE_THRESHOLD:
                                         _plate = str(_pn).strip()
                                         _violation_plate_crop = _pc_for_save
+                                        break
+                                    elif _conf >= PLATE_KEEP_CROP_THRESHOLD:
+                                        # 中信心: 留 crop 給人工 review,但 _plate 保持空
+                                        if _violation_plate_crop is None:
+                                            _violation_plate_crop = _pc_for_save
                                         break
                         except Exception as _ex_lpv:
                             print(f"⚠️ plate-vehicle association err cam{camera_id}: {_ex_lpv}", flush=True)
