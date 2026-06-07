@@ -231,6 +231,63 @@ def get_flow_forecast(
     }
 
 
+# ---------- 6. 違規 30 天 trend (每日違規數) ----------
+@router.get("/violation_trend")
+def get_violation_trend(
+    days: int = Query(30, ge=7, le=180),
+    db: Session = Depends(get_db),
+):
+    """過去 N 天每日違規數,給 line chart 用。
+    top 5 type 各一條線 + 「其他」一條合計。"""
+    start = datetime.utcnow() - timedelta(days=days)
+    # 1. 找 top 5 type
+    top_types = db.execute(text("""
+        SELECT violation_type, COUNT(*) AS cnt
+        FROM violations
+        WHERE created_at >= :start
+        GROUP BY violation_type
+        ORDER BY cnt DESC
+        LIMIT 5
+    """), {"start": start}).fetchall()
+    top_type_names = [r.violation_type for r in top_types]
+    # 2. 每日每 type 計數
+    rows = db.execute(text("""
+        SELECT
+            DATE(created_at) AS day,
+            violation_type,
+            COUNT(*) AS cnt
+        FROM violations
+        WHERE created_at >= :start
+        GROUP BY day, violation_type
+        ORDER BY day
+    """), {"start": start}).fetchall()
+    # 3. 整理 day → {type: cnt}
+    by_day: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for r in rows:
+        d = str(r.day)
+        t = r.violation_type if r.violation_type in top_type_names else "OTHER"
+        by_day[d][t] += int(r.cnt)
+    # 4. 補齊缺少的天
+    days_list: List[str] = []
+    cursor = (datetime.utcnow() - timedelta(days=days)).date()
+    end_date = datetime.utcnow().date()
+    while cursor <= end_date:
+        days_list.append(str(cursor))
+        cursor += timedelta(days=1)
+    # 5. 組 series
+    series: List[Dict[str, Any]] = []
+    for tname in top_type_names + ["OTHER"]:
+        data = [by_day[d].get(tname, 0) for d in days_list]
+        if sum(data) > 0:
+            series.append({"type": tname, "data": data})
+    return {
+        "days": days,
+        "labels": days_list,
+        "series": series,
+        "total_per_day": [sum(by_day[d].values()) for d in days_list],
+    }
+
+
 # ---------- 5. 車種 × 違規 交叉統計 ----------
 @router.get("/vehicle_type_violations")
 def get_vehicle_type_violations(

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """台灣車牌辨識模組 - 增強版 Tesseract"""
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import cv2
 import numpy as np
@@ -581,25 +581,104 @@ class PlateRecognizer:
         except Exception:
             return img
 
+    def _preprocess_variants(self, img: np.ndarray) -> List[Tuple[str, np.ndarray]]:
+        """產生 5 種 preprocess 變體,給 ensemble OCR 用 (最高準確性策略)。
+        每個變體針對不同 plate 條件:
+          - original    原圖,品質好時準
+          - clahe       對比強化,弱光/逆光時準
+          - upscale_2x  放大 2 倍,遠距小 plate 時準
+          - bilateral   去噪保邊,壓縮 artifact 多時準
+          - gray_otsu   灰階 + 自適應二值,字符邊緣清楚時準
+        """
+        variants: List[Tuple[str, np.ndarray]] = []
+        try:
+            variants.append(("original", img))
+        except Exception:
+            pass
+        try:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+            clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+            enh = clahe.apply(gray)
+            variants.append(("clahe", cv2.cvtColor(enh, cv2.COLOR_GRAY2BGR)))
+        except Exception:
+            pass
+        try:
+            h, w = img.shape[:2]
+            up = cv2.resize(img, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
+            variants.append(("upscale_2x", up))
+        except Exception:
+            pass
+        try:
+            denoised = cv2.bilateralFilter(img, 9, 75, 75)
+            variants.append(("bilateral", denoised))
+        except Exception:
+            pass
+        try:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+            _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            variants.append(("gray_otsu", cv2.cvtColor(otsu, cv2.COLOR_GRAY2BGR)))
+        except Exception:
+            pass
+        return variants
+
     def recognize_easy(self, img: np.ndarray) -> Dict[str, Any]:
-        """YOLO 字元偵測辨識車牌"""
+        """YOLO 字元偵測辨識車牌 — Ensemble 版 (5 preprocess 變體投票,最高準確性)。
+
+        Pipeline:
+          1. 對 plate crop 跑 5 種 preprocess (原圖/CLAHE/2x/bilateral/二值)
+          2. 每個變體 call OCR 微服務 (:8010) 拿 (text, conf)
+          3. 投票: 出現次數 × confidence sum 加權,取最高分 plate
+          4. 同票 fallback 用最高 conf 結果
+          5. 仍失敗 → recognize_chars 字元分割 OCR fallback
+        """
         if img is None or img.size == 0:
             return {"plate_number": None, "confidence": 0, "valid": False, "type": None, "raw": ""}
         try:
-            # 原圖直送 OCR 微服務（不做前處理）
-            easy_text, easy_conf = self._ocr_easy(img)
-            if easy_text and len(easy_text) >= 4:
-                plate, ptype = self._clean(easy_text)
-                valid = bool(plate and self._validate(plate))
-                if valid or easy_conf >= 0.3:
+            variants = self._preprocess_variants(img)
+            # 跑每個變體
+            results: List[Tuple[str, str, float]] = []  # (variant_name, plate_text, conf)
+            for vname, vimg in variants:
+                try:
+                    txt, conf = self._ocr_easy(vimg)
+                    if txt and len(txt) >= 4:
+                        cleaned, _ = self._clean(txt)
+                        if cleaned:
+                            results.append((vname, cleaned, conf))
+                except Exception:
+                    continue
+            if results:
+                # 加權投票: 出現次數 × sum(conf) 為分數
+                from collections import defaultdict
+                score: Dict[str, float] = defaultdict(float)
+                count: Dict[str, int] = defaultdict(int)
+                first_seen: Dict[str, Tuple[str, float]] = {}
+                for vname, plate, conf in results:
+                    score[plate] += conf
+                    count[plate] += 1
+                    if plate not in first_seen:
+                        first_seen[plate] = (vname, conf)
+                # 加權分數 = 出現次數 * 平均 conf
+                ranked = sorted(score.keys(),
+                                key=lambda p: (count[p], score[p] / max(count[p], 1)),
+                                reverse=True)
+                winner = ranked[0]
+                avg_conf = score[winner] / max(count[winner], 1)
+                valid = bool(self._validate(winner))
+                # 多變體都同意 = 高信心 (加 bonus 但封頂 0.99)
+                ensemble_bonus = min(0.15, (count[winner] - 1) * 0.05)
+                final_conf = min(0.99, avg_conf + ensemble_bonus)
+                if valid or final_conf >= 0.3:
                     return {
-                        "plate_number": plate or easy_text,
-                        "confidence": easy_conf,
+                        "plate_number": winner,
+                        "confidence": final_conf,
                         "valid": valid,
-                        "type": ptype,
-                        "raw": easy_text,
+                        "type": None,
+                        "raw": winner,
+                        "ensemble_votes": count[winner],
+                        "ensemble_total": len(results),
+                        "ensemble_variants_agree": [v for v, p, _ in results if p == winner],
                     }
-            # EasyOCR 失敗 → fallback 到字元分割 OCR
+            # Ensemble 全 fail → fallback 字元分割 OCR
             char_res = self.recognize_chars(img)
             if char_res.get("plate_number"):
                 return char_res

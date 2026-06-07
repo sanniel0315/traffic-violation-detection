@@ -9843,6 +9843,7 @@ const app=createApp({
         const analyticsVehTypes=ref([]);
         const analyticsForecast=ref({});
         const analyticsForecastCam=ref(7);  // 預設 cam_7 (車流穩),user 可切換
+        const analyticsTrend=ref({labels:[],series:[],total_per_day:[]});  // 30 天違規 trend
         const loadAnalytics=async()=>{
             try{
                 const [hs, rc, sf, vt, fc] = await Promise.all([

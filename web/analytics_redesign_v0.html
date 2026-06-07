@@ -1,0 +1,1194 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>分析功能 v0 — Redesign</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        /* ================================================================
+           Design System (繼承 traffic-violation-detection gov tokens,
+           衍生 oklch 變體創造層次。所有 shadow 用 gov-primary RGB,品牌一致)
+           ================================================================ */
+        :root {
+            /* Primary — 繼承 gov-primary,衍生明暗階 */
+            --gov-primary: #0b5ea8;
+            --gov-primary-rgb: 11, 94, 168;
+            --gov-primary-50: oklch(98% 0.015 250);
+            --gov-primary-100: oklch(94% 0.04 250);
+            --gov-primary-200: oklch(88% 0.07 250);
+            --gov-primary-500: #0b5ea8;
+            --gov-primary-600: oklch(40% 0.12 250);
+            --gov-primary-700: oklch(32% 0.13 250);
+            --gov-primary-900: oklch(20% 0.06 250);
+
+            /* Surfaces */
+            --gov-bg: #f6f8fb;
+            --gov-surface: #ffffff;
+            --gov-surface-elevated: #ffffff;
+            --gov-surface-2: oklch(97.5% 0.01 250);
+            --gov-border: oklch(91% 0.015 250);
+            --gov-border-strong: oklch(82% 0.025 250);
+            --gov-divider: oklch(94% 0.012 250);
+
+            /* Text */
+            --gov-text: oklch(20% 0.02 250);
+            --gov-text-secondary: oklch(45% 0.02 250);
+            --gov-muted: oklch(58% 0.015 250);
+
+            /* Semantic */
+            --gov-ok: #1f9d55;
+            --gov-warn: #d97706;
+            --gov-fault: #c43a31;
+            --gov-info: var(--gov-primary);
+
+            /* Typography */
+            --font-display: 'Manrope', ui-sans-serif, -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-body: 'Manrope', ui-sans-serif, -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+            /* Spacing scale (4px base) */
+            --sp-1: 4px;   --sp-2: 8px;   --sp-3: 12px;
+            --sp-4: 16px;  --sp-5: 20px;  --sp-6: 24px;
+            --sp-8: 32px;  --sp-10: 40px; --sp-12: 48px;
+
+            /* Radius */
+            --r-sm: 6px;
+            --r-md: 8px;
+            --r-lg: 12px;
+            --r-xl: 16px;
+            --r-2xl: 20px;
+            --r-full: 999px;
+
+            /* Shadow (gov-primary RGB based,品牌色為基底不用黑) */
+            --shadow-1: 0 1px 2px rgba(var(--gov-primary-rgb), 0.04),
+                        0 0 0 1px rgba(var(--gov-primary-rgb), 0.05);
+            --shadow-2: 0 4px 12px -2px rgba(var(--gov-primary-rgb), 0.08),
+                        0 0 0 1px rgba(var(--gov-primary-rgb), 0.05);
+            --shadow-3: 0 12px 32px -8px rgba(var(--gov-primary-rgb), 0.16),
+                        0 0 0 1px rgba(var(--gov-primary-rgb), 0.06);
+            --shadow-focus: 0 0 0 3px rgba(var(--gov-primary-rgb), 0.18);
+
+            /* Motion */
+            --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+            --ease-in-out: cubic-bezier(0.4, 0, 0.6, 1);
+            --t-fast: 140ms;
+            --t-base: 240ms;
+            --t-slow: 480ms;
+        }
+
+        /* Dark mode (Tweaks toggle) */
+        [data-theme="dark"] {
+            --gov-bg: oklch(15% 0.015 250);
+            --gov-surface: oklch(18% 0.02 250);
+            --gov-surface-elevated: oklch(22% 0.025 250);
+            --gov-surface-2: oklch(20% 0.022 250);
+            --gov-border: oklch(28% 0.025 250);
+            --gov-border-strong: oklch(35% 0.03 250);
+            --gov-divider: oklch(25% 0.022 250);
+            --gov-text: oklch(96% 0.01 250);
+            --gov-text-secondary: oklch(75% 0.02 250);
+            --gov-muted: oklch(58% 0.015 250);
+            --gov-primary-100: oklch(28% 0.06 250);
+            --gov-primary-200: oklch(35% 0.08 250);
+            --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4),
+                        0 0 0 1px rgba(255, 255, 255, 0.04);
+            --shadow-2: 0 8px 24px -4px rgba(0, 0, 0, 0.5),
+                        0 0 0 1px rgba(255, 255, 255, 0.06);
+            --shadow-3: 0 20px 48px -12px rgba(0, 0, 0, 0.6),
+                        0 0 0 1px rgba(255, 255, 255, 0.08);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--gov-bg);
+            color: var(--gov-text);
+            font-family: var(--font-body);
+            font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+            font-size: 14px;
+            line-height: 1.55;
+            text-wrap: pretty;
+            -webkit-font-smoothing: antialiased;
+            transition: background var(--t-base) var(--ease-out),
+                        color var(--t-base) var(--ease-out);
+        }
+
+        .layout {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: var(--sp-8) var(--sp-6) var(--sp-12);
+        }
+
+        /* ============= Page hero ============= */
+        .hero {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: var(--sp-8);
+            align-items: end;
+            margin-bottom: var(--sp-8);
+        }
+        .hero-eyebrow {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: var(--gov-primary);
+            margin: 0 0 var(--sp-3);
+        }
+        .hero-title {
+            font-family: var(--font-display);
+            font-size: clamp(36px, 4.5vw, 56px);
+            font-weight: 800;
+            letter-spacing: -0.025em;
+            line-height: 1.05;
+            margin: 0 0 var(--sp-3);
+            color: var(--gov-text);
+        }
+        .hero-title b { color: var(--gov-primary); font-weight: 800; }
+        .hero-sub {
+            font-size: 15px;
+            color: var(--gov-text-secondary);
+            margin: 0;
+            max-width: 56ch;
+        }
+        .hero-meta {
+            display: flex;
+            gap: var(--sp-2);
+            align-items: center;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--sp-2);
+            padding: var(--sp-2) var(--sp-4);
+            border-radius: var(--r-md);
+            font-family: var(--font-body);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all var(--t-fast) var(--ease-out);
+            background: var(--gov-surface);
+            color: var(--gov-text);
+            border: 1px solid var(--gov-border);
+        }
+        .btn:hover { background: var(--gov-surface-2); border-color: var(--gov-border-strong); }
+        .btn.primary {
+            background: var(--gov-primary);
+            color: white;
+            border-color: var(--gov-primary);
+        }
+        .btn.primary:hover { background: var(--gov-primary-700); }
+        .btn:focus-visible { box-shadow: var(--shadow-focus); outline: 0; }
+
+        /* ============= KPI ribbon (4 metric chips horizontal) ============= */
+        .kpi-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: var(--sp-3);
+            margin-bottom: var(--sp-8);
+        }
+        .kpi {
+            background: var(--gov-surface);
+            border: 1px solid var(--gov-border);
+            border-radius: var(--r-lg);
+            padding: var(--sp-5) var(--sp-6);
+            box-shadow: var(--shadow-1);
+            transition: all var(--t-fast) var(--ease-out);
+            position: relative;
+            overflow: hidden;
+        }
+        .kpi:hover { box-shadow: var(--shadow-2); transform: translateY(-1px); }
+        .kpi::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(120% 60% at 100% 0%, var(--gov-primary-50), transparent 50%);
+            pointer-events: none;
+            opacity: 0.6;
+        }
+        .kpi-label {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--gov-muted);
+            margin: 0 0 var(--sp-2);
+            position: relative;
+        }
+        .kpi-value {
+            font-family: var(--font-display);
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+            line-height: 1;
+            color: var(--gov-text);
+            position: relative;
+        }
+        .kpi-value .unit { font-size: 14px; font-weight: 500; color: var(--gov-muted); margin-left: 4px; }
+        .kpi-trend {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: var(--sp-2);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--gov-ok);
+            position: relative;
+        }
+        .kpi-trend.down { color: var(--gov-fault); }
+        .kpi-trend.warn { color: var(--gov-warn); }
+
+        /* ============= Cards grid ============= */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: var(--sp-5);
+        }
+        .card {
+            background: var(--gov-surface);
+            border: 1px solid var(--gov-border);
+            border-radius: var(--r-xl);
+            padding: var(--sp-6);
+            box-shadow: var(--shadow-1);
+            transition: all var(--t-fast) var(--ease-out);
+            display: flex;
+            flex-direction: column;
+        }
+        .card:hover { box-shadow: var(--shadow-2); }
+        .card-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: var(--sp-3);
+            margin-bottom: var(--sp-5);
+        }
+        .card-eyebrow {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--gov-primary);
+            margin: 0 0 var(--sp-2);
+        }
+        .card-title {
+            font-family: var(--font-display);
+            font-size: 17px;
+            font-weight: 700;
+            letter-spacing: -0.015em;
+            line-height: 1.25;
+            color: var(--gov-text);
+            margin: 0;
+        }
+        .card-meta {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--gov-muted);
+            white-space: nowrap;
+        }
+        .card.span-4 { grid-column: span 4; }
+        .card.span-5 { grid-column: span 5; }
+        .card.span-6 { grid-column: span 6; }
+        .card.span-7 { grid-column: span 7; }
+        .card.span-8 { grid-column: span 8; }
+        .card.span-12 { grid-column: span 12; }
+
+        /* ============= AI 推薦 卡片 ============= */
+        .rec-list { display: flex; flex-direction: column; gap: var(--sp-3); flex: 1; }
+        .rec {
+            position: relative;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: var(--sp-3);
+            padding: var(--sp-3) var(--sp-4);
+            background: var(--gov-surface-2);
+            border-radius: var(--r-md);
+            border: 1px solid transparent;
+            transition: all var(--t-fast) var(--ease-out);
+            cursor: pointer;
+        }
+        .rec:hover {
+            background: var(--gov-surface);
+            border-color: var(--gov-border);
+            box-shadow: var(--shadow-1);
+            transform: translateX(2px);
+        }
+        .rec-sev {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            border-radius: var(--r-md);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+        }
+        .rec-sev.high {
+            background: oklch(96% 0.05 25);
+            color: var(--gov-fault);
+            box-shadow: inset 0 0 0 1px oklch(85% 0.08 25);
+        }
+        .rec-sev.med {
+            background: oklch(96% 0.05 75);
+            color: var(--gov-warn);
+            box-shadow: inset 0 0 0 1px oklch(85% 0.08 75);
+        }
+        .rec-body { min-width: 0; }
+        .rec-loc {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--gov-text);
+            margin: 0 0 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .rec-msg {
+            font-size: 12px;
+            color: var(--gov-text-secondary);
+            line-height: 1.5;
+            margin: 0;
+        }
+        .rec-metric {
+            font-family: var(--font-mono);
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--gov-text);
+            text-align: right;
+            line-height: 1;
+        }
+        .rec-metric .unit { font-size: 10px; color: var(--gov-muted); display: block; margin-top: 4px; font-weight: 500; }
+
+        /* ============= 安全分數 卡片 ============= */
+        .safety-wrap { display: grid; grid-template-columns: auto 1fr; gap: var(--sp-6); align-items: center; flex: 1; }
+        .safety-gauge {
+            position: relative;
+            width: 140px;
+            height: 140px;
+        }
+        .gauge-svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+        .gauge-track { fill: none; stroke: var(--gov-border); stroke-width: 14; }
+        .gauge-progress {
+            fill: none;
+            stroke-width: 14;
+            stroke-linecap: round;
+            transition: stroke-dasharray var(--t-slow) var(--ease-out);
+        }
+        .gauge-label {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        .gauge-value {
+            font-family: var(--font-display);
+            font-size: 40px;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            line-height: 1;
+            color: var(--gov-text);
+        }
+        .gauge-unit {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--gov-muted);
+            margin-top: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+        .safety-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+        .safety-row {
+            display: grid;
+            grid-template-columns: 24px 1fr 48px;
+            gap: var(--sp-3);
+            align-items: center;
+            padding: var(--sp-2) 0;
+        }
+        .safety-rank {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--gov-muted);
+            text-align: right;
+        }
+        .safety-bar {
+            height: 6px;
+            background: var(--gov-divider);
+            border-radius: var(--r-full);
+            overflow: hidden;
+            position: relative;
+        }
+        .safety-bar-fill {
+            height: 100%;
+            border-radius: var(--r-full);
+            transition: width var(--t-slow) var(--ease-out);
+        }
+        .safety-bar-name {
+            font-size: 11px;
+            color: var(--gov-text-secondary);
+            margin-bottom: 4px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .safety-score-text {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 600;
+            text-align: right;
+        }
+
+        /* ============= 違規熱點 卡片 ============= */
+        .hot-top3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: var(--sp-3);
+            margin-bottom: var(--sp-5);
+        }
+        .hot-card {
+            position: relative;
+            padding: var(--sp-4);
+            border-radius: var(--r-md);
+            background: var(--gov-surface-2);
+            border: 1px solid var(--gov-border);
+            transition: all var(--t-fast) var(--ease-out);
+            cursor: pointer;
+            overflow: hidden;
+        }
+        .hot-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
+        .hot-card::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, transparent 40%, rgba(var(--gov-primary-rgb), 0.06) 100%);
+            pointer-events: none;
+        }
+        .hot-rank {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--gov-muted);
+            letter-spacing: 0.1em;
+            margin-bottom: var(--sp-2);
+        }
+        .hot-count {
+            font-family: var(--font-display);
+            font-size: 32px;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            line-height: 1;
+            color: var(--gov-primary);
+            margin-bottom: var(--sp-1);
+        }
+        .hot-meta {
+            font-size: 12px;
+            color: var(--gov-text-secondary);
+            line-height: 1.4;
+        }
+        .hot-meta b { color: var(--gov-text); font-weight: 600; }
+
+        /* 24h heatmap */
+        .heatmap {
+            display: grid;
+            grid-template-columns: 36px repeat(24, 1fr);
+            gap: 2px;
+            align-items: center;
+            margin-top: var(--sp-4);
+        }
+        .heatmap-label {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--gov-muted);
+        }
+        .heatmap-cell {
+            aspect-ratio: 1;
+            border-radius: 3px;
+            background: var(--gov-divider);
+            transition: all var(--t-fast) var(--ease-out);
+            cursor: pointer;
+        }
+        .heatmap-cell:hover {
+            transform: scale(1.4);
+            box-shadow: var(--shadow-2);
+            z-index: 2;
+            position: relative;
+        }
+        .heatmap-legend {
+            display: flex;
+            align-items: center;
+            gap: var(--sp-2);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--gov-muted);
+            margin-top: var(--sp-3);
+        }
+        .heatmap-scale {
+            display: flex;
+            gap: 2px;
+        }
+        .heatmap-scale span {
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+        }
+
+        /* ============= 車種違規分布 (donut) ============= */
+        .donut-wrap {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: var(--sp-4);
+            flex: 1;
+        }
+        .donut {
+            position: relative;
+            width: 180px;
+            height: 180px;
+        }
+        .donut svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+        .donut-label {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .donut-total {
+            font-family: var(--font-display);
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            line-height: 1;
+            color: var(--gov-text);
+        }
+        .donut-unit {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--gov-muted);
+            margin-top: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+        }
+        .donut-legend {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: var(--sp-2);
+        }
+        .donut-row {
+            display: grid;
+            grid-template-columns: 14px 1fr auto;
+            gap: var(--sp-2);
+            align-items: center;
+            padding: var(--sp-2) var(--sp-2);
+            border-radius: var(--r-sm);
+            transition: background var(--t-fast) var(--ease-out);
+        }
+        .donut-row:hover { background: var(--gov-surface-2); }
+        .donut-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 3px;
+        }
+        .donut-name { font-size: 12px; color: var(--gov-text); font-weight: 500; }
+        .donut-pct { font-family: var(--font-mono); font-size: 11px; color: var(--gov-muted); }
+
+        /* ============= 24h 流量預測 (smooth area) ============= */
+        .forecast-head {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: var(--sp-4);
+            margin-bottom: var(--sp-4);
+            flex-wrap: wrap;
+        }
+        .forecast-stat {
+            display: flex;
+            gap: var(--sp-6);
+        }
+        .stat {
+            border-left: 2px solid var(--gov-border);
+            padding-left: var(--sp-3);
+        }
+        .stat-label {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--gov-muted);
+            margin-bottom: 4px;
+        }
+        .stat-value {
+            font-family: var(--font-display);
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--gov-text);
+            line-height: 1;
+        }
+        .stat-value .unit { font-size: 12px; color: var(--gov-muted); margin-left: 4px; font-weight: 500; }
+        .stat.forecast .stat-value { color: var(--gov-warn); }
+        .cam-select {
+            background: var(--gov-surface);
+            border: 1px solid var(--gov-border);
+            border-radius: var(--r-md);
+            padding: var(--sp-2) var(--sp-3);
+            font-size: 12px;
+            font-family: var(--font-body);
+            color: var(--gov-text);
+            cursor: pointer;
+        }
+        .cam-select:focus { outline: 0; box-shadow: var(--shadow-focus); }
+        .area-chart { height: 220px; width: 100%; }
+        .area-axis {
+            display: flex;
+            justify-content: space-between;
+            margin-top: var(--sp-2);
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--gov-muted);
+            padding: 0 4px;
+        }
+
+        /* ============= Tweaks Panel ============= */
+        .tweaks-trigger {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: var(--gov-text);
+            color: var(--gov-surface);
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: var(--shadow-3);
+            z-index: 100;
+            transition: transform var(--t-fast) var(--ease-out);
+        }
+        .tweaks-trigger:hover { transform: scale(1.08); }
+        .tweaks-trigger svg { width: 18px; height: 18px; }
+        .tweaks {
+            position: fixed;
+            bottom: 80px;
+            right: 24px;
+            width: 260px;
+            background: var(--gov-surface);
+            border: 1px solid var(--gov-border);
+            border-radius: var(--r-lg);
+            padding: var(--sp-5);
+            box-shadow: var(--shadow-3);
+            z-index: 99;
+            opacity: 0;
+            transform: translateY(8px);
+            pointer-events: none;
+            transition: all var(--t-base) var(--ease-out);
+        }
+        .tweaks.open { opacity: 1; transform: translateY(0); pointer-events: auto; }
+        .tweaks-title {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--gov-muted);
+            margin: 0 0 var(--sp-4);
+        }
+        .tweak-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: var(--sp-3);
+            gap: var(--sp-3);
+            font-size: 13px;
+        }
+        .toggle {
+            position: relative;
+            width: 36px; height: 20px;
+            background: var(--gov-border);
+            border-radius: 999px;
+            cursor: pointer;
+            transition: background var(--t-fast) var(--ease-out);
+        }
+        .toggle::after {
+            content: '';
+            position: absolute;
+            top: 2px; left: 2px;
+            width: 16px; height: 16px;
+            background: white;
+            border-radius: 50%;
+            transition: transform var(--t-fast) var(--ease-out);
+        }
+        .toggle.on { background: var(--gov-primary); }
+        .toggle.on::after { transform: translateX(16px); }
+        .tweak-segments {
+            display: flex;
+            gap: 2px;
+            background: var(--gov-surface-2);
+            padding: 2px;
+            border-radius: var(--r-md);
+        }
+        .tweak-seg {
+            flex: 1;
+            padding: 4px 10px;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            text-transform: uppercase;
+            border-radius: var(--r-sm);
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            color: var(--gov-muted);
+            transition: all var(--t-fast) var(--ease-out);
+        }
+        .tweak-seg.active { background: var(--gov-surface); color: var(--gov-text); box-shadow: var(--shadow-1); }
+
+        /* Density compact */
+        [data-density="compact"] .card { padding: var(--sp-4); }
+        [data-density="compact"] .kpi { padding: var(--sp-4); }
+        [data-density="compact"] .kpi-value { font-size: 26px; }
+        [data-density="compact"] .hero-title { font-size: clamp(28px, 3.5vw, 42px); }
+        [data-density="compact"] .layout { padding: var(--sp-5) var(--sp-5) var(--sp-8); }
+
+        /* ============= Responsive ============= */
+        @media (max-width: 1100px) {
+            .kpi-row { grid-template-columns: repeat(2, 1fr); }
+            .card.span-4, .card.span-5, .card.span-6, .card.span-7, .card.span-8 { grid-column: span 12; }
+            .safety-wrap { grid-template-columns: 1fr; }
+            .hot-top3 { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 640px) {
+            .kpi-row { grid-template-columns: 1fr; }
+            .hero { grid-template-columns: 1fr; align-items: stretch; }
+        }
+    </style>
+</head>
+<body>
+<div class="layout">
+
+    <!-- ============= Page Hero ============= -->
+    <header class="hero">
+        <div>
+            <p class="hero-eyebrow">analytics / insights</p>
+            <h1 class="hero-title">分析<b>功能</b></h1>
+            <p class="hero-sub">從 52,306 違規 + 2,638,327 流量事件挖洞察:違規熱點 / AI 推薦 / 安全分數 / 24h 預測 / 車種分布。</p>
+        </div>
+        <div class="hero-meta">
+            <span style="font-family:var(--font-mono);font-size:11px;color:var(--gov-muted);letter-spacing:0.08em">DATA · LAST 30 DAYS</span>
+            <button class="btn primary">重新整理</button>
+        </div>
+    </header>
+
+    <!-- ============= KPI ribbon ============= -->
+    <div class="kpi-row">
+        <div class="kpi">
+            <p class="kpi-label">total violations</p>
+            <p class="kpi-value">52,306</p>
+            <p class="kpi-trend">↑ 8.4% vs 上週</p>
+        </div>
+        <div class="kpi">
+            <p class="kpi-label">hotspots</p>
+            <p class="kpi-value">20</p>
+            <p class="kpi-trend warn">3 處達高風險閾值</p>
+        </div>
+        <div class="kpi">
+            <p class="kpi-label">avg safety</p>
+            <p class="kpi-value">49.2<span class="unit">/100</span></p>
+            <p class="kpi-trend down">↓ 12 分 (cam_2 偏低)</p>
+        </div>
+        <div class="kpi">
+            <p class="kpi-label">next hour</p>
+            <p class="kpi-value">1,458<span class="unit">車</span></p>
+            <p class="kpi-trend">peak 21:00 預期</p>
+        </div>
+    </div>
+
+    <!-- ============= 5 cards grid ============= -->
+    <div class="grid">
+
+        <!-- 1. AI 推薦 -->
+        <div class="card span-6">
+            <div class="card-head">
+                <div>
+                    <p class="card-eyebrow">ai · recommend</p>
+                    <h2 class="card-title">AI 推薦 行為優化建議</h2>
+                </div>
+                <span class="card-meta">2 項</span>
+            </div>
+            <div class="rec-list">
+                <div class="rec">
+                    <div class="rec-sev high">高</div>
+                    <div class="rec-body">
+                        <p class="rec-loc">台62基隆段隧道口 · 超速</p>
+                        <p class="rec-msg">月均 13,020 起達高風險閾值 → 建議增設測速告示 / 調速限</p>
+                    </div>
+                    <div class="rec-metric">13,020<span class="unit">起/月</span></div>
+                </div>
+                <div class="rec">
+                    <div class="rec-sev med">中</div>
+                    <div class="rec-body">
+                        <p class="rec-loc">國8 · 紅線臨停</p>
+                        <p class="rec-msg">月均 47 起達閾值 → 建議加強標線 / 巡邏取締</p>
+                    </div>
+                    <div class="rec-metric">47<span class="unit">起/月</span></div>
+                </div>
+                <div style="text-align:center;color:var(--gov-muted);font-size:12px;padding:var(--sp-4) 0;font-family:var(--font-mono)">
+                    -- 其他 18 處未達閾值 --
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. 安全分數 -->
+        <div class="card span-6">
+            <div class="card-head">
+                <div>
+                    <p class="card-eyebrow">safety · score</p>
+                    <h2 class="card-title">各路段 安全分數</h2>
+                </div>
+                <span class="card-meta">0–100 / 越高越安全</span>
+            </div>
+            <div class="safety-wrap">
+                <div class="safety-gauge">
+                    <svg class="gauge-svg" viewBox="0 0 140 140">
+                        <circle class="gauge-track" cx="70" cy="70" r="60"/>
+                        <circle class="gauge-progress" cx="70" cy="70" r="60"
+                                stroke="var(--gov-warn)"
+                                stroke-dasharray="185.6 376.99"/>
+                    </svg>
+                    <div class="gauge-label">
+                        <div class="gauge-value">49</div>
+                        <div class="gauge-unit">avg</div>
+                    </div>
+                </div>
+                <div class="safety-list">
+                    <div class="safety-row">
+                        <span class="safety-rank">#7</span>
+                        <div>
+                            <div class="safety-bar-name"><span>國8</span></div>
+                            <div class="safety-bar"><div class="safety-bar-fill" style="width:98%;background:var(--gov-ok)"></div></div>
+                        </div>
+                        <span class="safety-score-text" style="color:var(--gov-ok)">98.4</span>
+                    </div>
+                    <div class="safety-row">
+                        <span class="safety-rank">#2</span>
+                        <div>
+                            <div class="safety-bar-name"><span>台62基隆段隧道口</span></div>
+                            <div class="safety-bar"><div class="safety-bar-fill" style="width:0%;background:var(--gov-fault)"></div></div>
+                        </div>
+                        <span class="safety-score-text" style="color:var(--gov-fault)">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. 違規熱點 + heatmap -->
+        <div class="card span-8">
+            <div class="card-head">
+                <div>
+                    <p class="card-eyebrow">hotspots · 24h pattern</p>
+                    <h2 class="card-title">違規熱點 (地點 × 時段 × 類型)</h2>
+                </div>
+                <span class="card-meta">top 20 · 近 30 天</span>
+            </div>
+            <div class="hot-top3">
+                <div class="hot-card">
+                    <p class="hot-rank">#1 PEAK</p>
+                    <p class="hot-count">1,397</p>
+                    <p class="hot-meta"><b>台62基隆段隧道口</b><br>08:00 · 超速</p>
+                </div>
+                <div class="hot-card">
+                    <p class="hot-rank">#2</p>
+                    <p class="hot-count">1,117</p>
+                    <p class="hot-meta"><b>台62基隆段隧道口</b><br>05:00 · 超速</p>
+                </div>
+                <div class="hot-card">
+                    <p class="hot-rank">#3</p>
+                    <p class="hot-count">1,069</p>
+                    <p class="hot-meta"><b>台62基隆段隧道口</b><br>06:00 · 超速</p>
+                </div>
+            </div>
+            <div id="heatmap" class="heatmap"></div>
+            <div class="heatmap-legend">
+                <span>低</span>
+                <div class="heatmap-scale">
+                    <span style="background:var(--gov-divider)"></span>
+                    <span style="background:oklch(85% 0.06 250)"></span>
+                    <span style="background:oklch(70% 0.1 250)"></span>
+                    <span style="background:oklch(55% 0.13 250)"></span>
+                    <span style="background:var(--gov-primary)"></span>
+                </div>
+                <span>高</span>
+                <span style="margin-left:auto">每格 = 1 小時違規數</span>
+            </div>
+        </div>
+
+        <!-- 4. 車種違規分布 (donut) -->
+        <div class="card span-4">
+            <div class="card-head">
+                <div>
+                    <p class="card-eyebrow">by · vehicle</p>
+                    <h2 class="card-title">車種違規分布</h2>
+                </div>
+            </div>
+            <div class="donut-wrap">
+                <div class="donut">
+                    <svg viewBox="0 0 200 200">
+                        <!-- 中空 ring + 4 segments,SVG hand-write -->
+                        <circle cx="100" cy="100" r="74" fill="none" stroke="var(--gov-divider)" stroke-width="22"/>
+                        <!-- car 92% -->
+                        <circle cx="100" cy="100" r="74" fill="none" stroke="var(--gov-primary)" stroke-width="22"
+                                stroke-dasharray="427.6 464.96" transform="rotate(0 100 100)"/>
+                        <!-- light_truck 5% -->
+                        <circle cx="100" cy="100" r="74" fill="none" stroke="oklch(60% 0.13 230)" stroke-width="22"
+                                stroke-dasharray="23.25 464.96" stroke-dashoffset="-427.6"/>
+                        <!-- motorcycle 3% -->
+                        <circle cx="100" cy="100" r="74" fill="none" stroke="oklch(65% 0.16 190)" stroke-width="22"
+                                stroke-dasharray="13.95 464.96" stroke-dashoffset="-450.85"/>
+                    </svg>
+                    <div class="donut-label">
+                        <div class="donut-total">12,521</div>
+                        <div class="donut-unit">total</div>
+                    </div>
+                </div>
+                <div class="donut-legend">
+                    <div class="donut-row">
+                        <span class="donut-dot" style="background:var(--gov-primary)"></span>
+                        <span class="donut-name">汽車</span>
+                        <span class="donut-pct">11,581 · 92.5%</span>
+                    </div>
+                    <div class="donut-row">
+                        <span class="donut-dot" style="background:oklch(60% 0.13 230)"></span>
+                        <span class="donut-name">自小貨車</span>
+                        <span class="donut-pct">595 · 4.8%</span>
+                    </div>
+                    <div class="donut-row">
+                        <span class="donut-dot" style="background:oklch(65% 0.16 190)"></span>
+                        <span class="donut-name">機車</span>
+                        <span class="donut-pct">345 · 2.8%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 5. 24h 流量預測 (area chart) -->
+        <div class="card span-12">
+            <div class="card-head">
+                <div>
+                    <p class="card-eyebrow">forecast · next hour</p>
+                    <h2 class="card-title">24h 流量趨勢 + 下小時預測</h2>
+                </div>
+                <select class="cam-select" id="camSelect">
+                    <option value="7">cam_7 · 國8</option>
+                    <option value="2">cam_2 · 台62基隆段隧道口</option>
+                </select>
+            </div>
+            <div class="forecast-head">
+                <div class="forecast-stat">
+                    <div class="stat">
+                        <div class="stat-label">peak hour</div>
+                        <div class="stat-value">21:00<span class="unit">/ 1,711 車</span></div>
+                    </div>
+                    <div class="stat forecast">
+                        <div class="stat-label">forecast next</div>
+                        <div class="stat-value">10:00<span class="unit">/ 1,458 車</span></div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-label">model</div>
+                        <div class="stat-value" style="font-size:13px;color:var(--gov-text-secondary)">same-hour mean · 7 days</div>
+                    </div>
+                </div>
+            </div>
+            <svg class="area-chart" id="areaChart" viewBox="0 0 1200 220" preserveAspectRatio="none"></svg>
+            <div class="area-axis">
+                <span>00</span><span>04</span><span>08</span><span>12</span><span>16</span><span>20</span><span>23</span>
+            </div>
+        </div>
+
+    </div>
+
+</div>
+
+<!-- ============= Tweaks Panel ============= -->
+<button class="tweaks-trigger" id="tweaksBtn" title="Tweaks">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+    </svg>
+</button>
+<div class="tweaks" id="tweaksPanel">
+    <p class="tweaks-title">Tweaks</p>
+    <div class="tweak-row">
+        <span>深色模式</span>
+        <div class="toggle" id="darkToggle"></div>
+    </div>
+    <div class="tweak-row">
+        <span>密度</span>
+        <div class="tweak-segments">
+            <button class="tweak-seg active" data-density="cozy">cozy</button>
+            <button class="tweak-seg" data-density="compact">compact</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ===== Heatmap data (mock,reflects production 違規 hour distribution) =====
+    const HEAT_DATA = [
+        // type → 24 hr counts (從 hotspots top 20 推算)
+        { type: 'SPEEDING', counts: [620, 540, 480, 520, 1117, 1069, 1006, 1397, 1044, 880, 720, 640, 580, 540, 510, 580, 720, 950, 1180, 1400, 1711, 1340, 940, 720] },
+    ];
+    const heatmap = document.getElementById('heatmap');
+    const hourLabels = ['SPEEDING'];
+    HEAT_DATA.forEach((row, ri) => {
+        const label = document.createElement('span');
+        label.className = 'heatmap-label';
+        label.textContent = row.type;
+        heatmap.appendChild(label);
+        const max = Math.max(...row.counts);
+        row.counts.forEach((v, hi) => {
+            const cell = document.createElement('div');
+            cell.className = 'heatmap-cell';
+            const ratio = v / max;
+            // 5-step quantize matching legend
+            const tier = ratio < 0.1 ? 0 : ratio < 0.3 ? 1 : ratio < 0.55 ? 2 : ratio < 0.85 ? 3 : 4;
+            const colors = [
+                'var(--gov-divider)',
+                'oklch(85% 0.06 250)',
+                'oklch(70% 0.1 250)',
+                'oklch(55% 0.13 250)',
+                'var(--gov-primary)',
+            ];
+            cell.style.background = colors[tier];
+            cell.title = `${hi.toString().padStart(2,'0')}:00 · ${v} 起`;
+            heatmap.appendChild(cell);
+        });
+    });
+
+    // ===== Area chart (24h flow forecast,hand-write SVG path) =====
+    function drawAreaChart(camId) {
+        const datasets = {
+            7: { data: [120, 80, 60, 50, 110, 280, 720, 1280, 1620, 1740, 1828, 1690, 1540, 1500, 1620, 1740, 1810, 1690, 1580, 1620, 1711, 1340, 720, 380], peak: 21, next: 10 },
+            2: { data: [80, 60, 40, 50, 280, 1260, 1120, 980, 800, 640, 500, 420, 360, 320, 300, 320, 400, 540, 680, 720, 540, 420, 280, 160], peak: 6, next: 10 },
+        };
+        const { data, peak, next } = datasets[camId] || datasets[7];
+        const svg = document.getElementById('areaChart');
+        svg.innerHTML = '';
+        const W = 1200, H = 220;
+        const max = Math.max(...data);
+        const stepX = W / 23;
+        // smooth path via cubic bezier
+        let d = `M 0 ${H - (data[0] / max) * (H - 20) - 10}`;
+        for (let i = 1; i < data.length; i++) {
+            const x = i * stepX;
+            const y = H - (data[i] / max) * (H - 20) - 10;
+            const px = (i - 1) * stepX;
+            const py = H - (data[i - 1] / max) * (H - 20) - 10;
+            const cpx1 = px + stepX / 2;
+            const cpx2 = x - stepX / 2;
+            d += ` C ${cpx1} ${py}, ${cpx2} ${y}, ${x} ${y}`;
+        }
+        const areaD = d + ` L ${W} ${H} L 0 ${H} Z`;
+
+        // gradient defs
+        const ns = 'http://www.w3.org/2000/svg';
+        const defs = document.createElementNS(ns, 'defs');
+        defs.innerHTML = `
+            <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="var(--gov-primary)" stop-opacity="0.35"/>
+                <stop offset="100%" stop-color="var(--gov-primary)" stop-opacity="0"/>
+            </linearGradient>
+        `;
+        svg.appendChild(defs);
+
+        const area = document.createElementNS(ns, 'path');
+        area.setAttribute('d', areaD);
+        area.setAttribute('fill', 'url(#areaGrad)');
+        svg.appendChild(area);
+
+        const line = document.createElementNS(ns, 'path');
+        line.setAttribute('d', d);
+        line.setAttribute('fill', 'none');
+        line.setAttribute('stroke', 'var(--gov-primary)');
+        line.setAttribute('stroke-width', '2.5');
+        line.setAttribute('stroke-linecap', 'round');
+        svg.appendChild(line);
+
+        // peak marker (vertical line)
+        const peakX = peak * stepX;
+        const peakY = H - (data[peak] / max) * (H - 20) - 10;
+        const peakLine = document.createElementNS(ns, 'line');
+        peakLine.setAttribute('x1', peakX);
+        peakLine.setAttribute('x2', peakX);
+        peakLine.setAttribute('y1', peakY);
+        peakLine.setAttribute('y2', H);
+        peakLine.setAttribute('stroke', 'var(--gov-text-secondary)');
+        peakLine.setAttribute('stroke-width', '1');
+        peakLine.setAttribute('stroke-dasharray', '4 4');
+        peakLine.setAttribute('opacity', '0.5');
+        svg.appendChild(peakLine);
+        const peakDot = document.createElementNS(ns, 'circle');
+        peakDot.setAttribute('cx', peakX);
+        peakDot.setAttribute('cy', peakY);
+        peakDot.setAttribute('r', '5');
+        peakDot.setAttribute('fill', 'var(--gov-primary)');
+        peakDot.setAttribute('stroke', 'var(--gov-surface)');
+        peakDot.setAttribute('stroke-width', '2');
+        svg.appendChild(peakDot);
+
+        // forecast next-hour marker
+        const nextX = next * stepX;
+        const nextY = H - (data[next] / max) * (H - 20) - 10;
+        const nextRing = document.createElementNS(ns, 'circle');
+        nextRing.setAttribute('cx', nextX);
+        nextRing.setAttribute('cy', nextY);
+        nextRing.setAttribute('r', '10');
+        nextRing.setAttribute('fill', 'none');
+        nextRing.setAttribute('stroke', 'var(--gov-warn)');
+        nextRing.setAttribute('stroke-width', '2');
+        nextRing.setAttribute('opacity', '0.8');
+        svg.appendChild(nextRing);
+        const nextDot = document.createElementNS(ns, 'circle');
+        nextDot.setAttribute('cx', nextX);
+        nextDot.setAttribute('cy', nextY);
+        nextDot.setAttribute('r', '4');
+        nextDot.setAttribute('fill', 'var(--gov-warn)');
+        svg.appendChild(nextDot);
+    }
+    drawAreaChart(7);
+    document.getElementById('camSelect').addEventListener('change', (e) => drawAreaChart(parseInt(e.target.value)));
+
+    // ===== Tweaks panel =====
+    const tweaksBtn = document.getElementById('tweaksBtn');
+    const tweaksPanel = document.getElementById('tweaksPanel');
+    tweaksBtn.addEventListener('click', () => tweaksPanel.classList.toggle('open'));
+    document.addEventListener('click', (e) => {
+        if (!tweaksPanel.contains(e.target) && !tweaksBtn.contains(e.target)) tweaksPanel.classList.remove('open');
+    });
+    const darkToggle = document.getElementById('darkToggle');
+    darkToggle.addEventListener('click', () => {
+        darkToggle.classList.toggle('on');
+        document.documentElement.setAttribute('data-theme', darkToggle.classList.contains('on') ? 'dark' : '');
+    });
+    document.querySelectorAll('.tweak-seg').forEach(b => {
+        b.addEventListener('click', () => {
+            document.querySelectorAll('.tweak-seg').forEach(x => x.classList.remove('active'));
+            b.classList.add('active');
+            document.documentElement.setAttribute('data-density', b.dataset.density);
+        });
+    });
+</script>
+</body>
+</html>
