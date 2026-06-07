@@ -169,16 +169,31 @@ def ocr_plate(img_bytes: bytes) -> dict:
     raw_text = ''.join(c[1] for c in chars)
     avg_conf = sum(c[2] for c in chars) / len(chars)
 
+    # 字符間距檢查 — 偵測「漏字」case (例 BJX-9202 漏 J → BX-9202 也是合法格式
+    # 修復器無法分辨,但 char x 距離會有大 gap)
+    # 若任 2 個相鄰字符 x 距離 > 平均 gap × 1.6 → 表示中間漏字
+    missing_char_penalty = 1.0
+    if len(chars) >= 3:
+        xs = [c[0] for c in chars]
+        gaps = [xs[i+1] - xs[i] for i in range(len(xs) - 1)]
+        if gaps:
+            avg_gap = sum(gaps) / len(gaps)
+            max_gap = max(gaps)
+            # 1.6 倍門檻: 正常字符間距變異 < 30%, 漏字會直接 ×2
+            if avg_gap > 0 and max_gap / avg_gap > 1.6:
+                # 漏字機率高,扣 50% conf (raw_text 6 字符 + 大 gap = 應該 7 字符)
+                missing_char_penalty = 0.5
+
     # 台灣車牌格式修復 + 字元相似性 swap
     repaired_text, repair_score, matched = _repair_plate(raw_text)
     if matched:
         # 符合格式 — 用修復後 text，conf 加權 (原 OCR conf × repair score)
         final_text = repaired_text
-        final_conf = avg_conf * (0.6 + 0.4 * repair_score)
+        final_conf = avg_conf * (0.6 + 0.4 * repair_score) * missing_char_penalty
     else:
         # 不合台灣車牌格式 — 大幅降權，pipeline 端 min_confidence filter 會自動丟
         final_text = repaired_text  # 仍含 dash 方便人眼判讀
-        final_conf = avg_conf * 0.35
+        final_conf = avg_conf * 0.35 * missing_char_penalty
 
     return {
         "text": final_text,
@@ -186,6 +201,7 @@ def ocr_plate(img_bytes: bytes) -> dict:
         "confidence": round(final_conf, 3),
         "raw_confidence": round(avg_conf, 3),
         "matched_format": matched,
+        "missing_char_suspected": missing_char_penalty < 1.0,
         "time": round(dt, 3),
         "chars": len(chars),
     }
