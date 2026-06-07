@@ -55,6 +55,9 @@ _PARKING_EVALUATORS: Dict[int, "object"] = {}
 # 行人未禮讓 evaluator (per camera 一個 instance)
 _PEDESTRIAN_YIELD_EVALUATORS: Dict[int, "object"] = {}
 
+# 逆向行駛 evaluator (per camera 一個 instance,跨 frame 累積 dominant flow)
+_WRONG_WAY_EVALUATORS: Dict[int, "object"] = {}
+
 # 視覺 track snapshot (per camera, BEV world coord) — 給 sensor_fusion router 拉。
 # 每 frame post-process 結尾覆寫,sensor_fusion API 即時讀。
 # 結構: [{track_id, world_x, world_y, vx, vy, class_name, confidence, bbox, timestamp}]
@@ -2511,6 +2514,57 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             print(f"⚠️ pedestrian yield emit cam{camera_id}: {_ex_py}", flush=True)
             except Exception as _ex_pyeval:
                 print(f"⚠️ pedestrian yield evaluator cam{camera_id}: {_ex_pyeval}", flush=True)
+
+            # ---- 逆向行駛 evaluator (§45) ----
+            # 用「zone 內 dominant flow direction」統計法,不需 user 額外設定:
+            # 每 zone 累積 active vehicles 速度向量 → dominant flow → 對該 zone 內
+            # 每台 vehicle 算 cosine,連續 5 frame 反向 (cos < -0.5) 即觸發。
+            try:
+                _ww_flow_zones = select_zones(
+                    zones, scope=SCOPE_TRAFFIC,
+                    allowed_types=("detection", "flow_detection", "speed_roi"),
+                )
+                if _ww_flow_zones and vehicles:
+                    _wwev = _WRONG_WAY_EVALUATORS.get(camera_id)
+                    if _wwev is None:
+                        from detection.wrong_way import WrongWayEvaluator
+                        _wwev = WrongWayEvaluator(camera_id)
+                        _WRONG_WAY_EVALUATORS[camera_id] = _wwev
+                    _ww_now = time.time()
+                    _ww_triggers = _wwev.feed(vehicles, tracks, _ww_flow_zones, _ww_now)
+                    for _trig in _ww_triggers:
+                        try:
+                            _emit_violation_for_vehicle(
+                                camera_id=camera_id,
+                                location=location,
+                                frame=frame,
+                                vehicle_bbox=_trig.vehicle_bbox,
+                                vehicle_class=_trig.vehicle_class or "car",
+                                vehicle_conf=None,
+                                violation_type=_wwev.VIOLATION_TYPE,
+                                violation_name=_wwev.VIOLATION_NAME,
+                                fine_amount=0,  # 罰金不在系統算
+                                points=0,
+                                output_dir=output_dir,
+                                trigger_ts=_ww_now,
+                                extra_fields={
+                                    "speed_kmh": round(_trig.vehicle_speed_kmh, 1),
+                                    "flow_roi_hit": True,
+                                    "speed_roi_hit": False,
+                                },
+                            )
+                            print(
+                                f"⚠️ WRONG_WAY: zone={_trig.zone_name!r} "
+                                f"track={_trig.vehicle_track_id} ({_trig.vehicle_class}) "
+                                f"speed={_trig.vehicle_speed_kmh:.1f}km/h "
+                                f"cos={_trig.cosine:.2f} dom_dir={_trig.dominant_direction_deg:.0f}° "
+                                f"cam{camera_id}",
+                                flush=True,
+                            )
+                        except Exception as _ex_ww:
+                            print(f"⚠️ wrong_way emit cam{camera_id}: {_ex_ww}", flush=True)
+            except Exception as _ex_wweval:
+                print(f"⚠️ wrong_way evaluator cam{camera_id}: {_ex_wweval}", flush=True)
 
             # 視覺 track snapshot — 給 sensor_fusion router 拉。寫 module-level dict。
             # 優先用 world coord (走過 calibration 的攝影機),沒設 calibration 用
