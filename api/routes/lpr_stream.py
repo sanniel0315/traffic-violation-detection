@@ -1740,15 +1740,63 @@ class LPRStreamTask:
             db.close()
 
     def _save_record_db(self, record: dict):
+        """每車取最佳 conf 策略 (user 規範: 不要調閥值,每個都抓最好的):
+        - 同 cam 內 60 秒視窗,plate「後段數字相似」視為同車
+          (BJX-9202 跟 BX-9202 都以 9202 結尾 → 同車不同 OCR 結果)
+        - 新 OCR conf > 既有 best → UPDATE 既有 row (取勝者),不再 INSERT
+        - 新 plate signature 或視窗外 → INSERT 新 row
+        - 在記憶體 _best_record_cache 維護: signature → (record_id, best_conf, last_seen_ts)
+        """
         try:
             from api.models import SessionLocal, LPRRecord
+            import time as _t
+
+            plate = record.get("plate_number") or ""
+            new_conf = float(record.get("confidence", 0))
+            # signature = plate 後段 4+ 數字 (車牌數字部分穩定,字母會被誤識別)
+            digits = "".join(ch for ch in plate if ch.isdigit())
+            sig = digits[-4:] if len(digits) >= 4 else plate
+            now_ts = _t.time()
+            cache_key = (self.camera_id, sig) if sig else None
+
+            # init cache (lazy,避免 __init__ 改動)
+            if not hasattr(self, "_best_record_cache"):
+                self._best_record_cache = {}  # key → (record_id, best_conf, last_seen_ts)
+            cache = self._best_record_cache
+
+            # 清掉視窗外的 cache (60 秒)
+            stale = [k for k, v in cache.items() if now_ts - v[2] > 60]
+            for k in stale:
+                cache.pop(k, None)
+
             db = SessionLocal()
             try:
+                if cache_key and cache_key in cache:
+                    prev_rec_id, prev_conf, _ = cache[cache_key]
+                    if new_conf <= prev_conf:
+                        # 既有更好,丟棄新 record (不寫盤,user 視為「該車已有更佳辨識」)
+                        cache[cache_key] = (prev_rec_id, prev_conf, now_ts)  # refresh ts
+                        return
+                    # 新的更好 — UPDATE 既有 row
+                    prev_row = db.query(LPRRecord).filter(LPRRecord.id == prev_rec_id).first()
+                    if prev_row:
+                        prev_row.plate_number = plate or prev_row.plate_number
+                        prev_row.confidence = new_conf
+                        prev_row.valid = bool(record.get("valid", False))
+                        if record.get("snapshot"):
+                            prev_row.snapshot = record.get("snapshot")
+                        if record.get("raw"):
+                            prev_row.raw = record.get("raw")
+                        prev_row.created_at = datetime.utcnow()
+                        db.commit()
+                        cache[cache_key] = (prev_row.id, new_conf, now_ts)
+                        return
+                # 新 record (新 signature 或視窗外)
                 row = LPRRecord(
                     camera_id=self.camera_id,
                     camera_name=self.camera_name,
-                    plate_number=record.get("plate_number"),
-                    confidence=float(record.get("confidence", 0)),
+                    plate_number=plate or None,
+                    confidence=new_conf,
                     valid=bool(record.get("valid", False)),
                     vehicle_type=record.get("vehicle_type"),
                     snapshot=record.get("snapshot"),
@@ -1757,6 +1805,8 @@ class LPRStreamTask:
                 )
                 db.add(row)
                 db.commit()
+                if cache_key:
+                    cache[cache_key] = (row.id, new_conf, now_ts)
             finally:
                 db.close()
         except Exception as e:
