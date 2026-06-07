@@ -169,20 +169,25 @@ def ocr_plate(img_bytes: bytes) -> dict:
     raw_text = ''.join(c[1] for c in chars)
     avg_conf = sum(c[2] for c in chars) / len(chars)
 
-    # 字符間距檢查 — 偵測「漏字」case (例 BJX-9202 漏 J → BX-9202 也是合法格式
-    # 修復器無法分辨,但 char x 距離會有大 gap)
-    # 若任 2 個相鄰字符 x 距離 > 平均 gap × 1.6 → 表示中間漏字
+    # 漏字偵測 — 從 raw_chars 算字符寬度,跟 chars span 比推算「理論字符數」
+    # 例 BJX-9202 漏 J: chars=6 但 span/char_width ≈ 7 → 推測漏 1 字符
     missing_char_penalty = 1.0
-    if len(chars) >= 3:
-        xs = [c[0] for c in chars]
-        gaps = [xs[i+1] - xs[i] for i in range(len(xs) - 1)]
-        if gaps:
-            avg_gap = sum(gaps) / len(gaps)
-            max_gap = max(gaps)
-            # 1.6 倍門檻: 正常字符間距變異 < 30%, 漏字會直接 ×2
-            if avg_gap > 0 and max_gap / avg_gap > 1.6:
-                # 漏字機率高,扣 50% conf (raw_text 6 字符 + 大 gap = 應該 7 字符)
-                missing_char_penalty = 0.5
+    if len(chars) >= 3 and len(raw_chars) >= 3:
+        # 用 raw_chars 算 char 寬度 (純英數,排除 dash)
+        char_widths = [c[2] - c[0] for c in raw_chars if c[4] != '-']
+        if char_widths:
+            import statistics as _st
+            char_w_med = _st.median(char_widths)
+            xs = sorted(c[0] for c in chars)
+            span = xs[-1] - xs[0]
+            if char_w_med > 0:
+                # 推算理論字符數 = span / (char_width × ~1.1 含字間距)
+                expected_chars = span / (char_w_med * 1.1) + 1
+                # 實際字符數 比推算少 >= 0.6 → 漏字
+                shortfall = expected_chars - len(chars)
+                if shortfall >= 0.6:
+                    # 扣分 — shortfall=1 (漏 1 字) penalty 0.5,shortfall=2 penalty 0.35
+                    missing_char_penalty = max(0.35, 1.0 - shortfall * 0.4)
 
     # 台灣車牌格式修復 + 字元相似性 swap
     repaired_text, repair_score, matched = _repair_plate(raw_text)
