@@ -84,8 +84,9 @@ def _push_violation_ring(camera_id: int, frame):
 
 # 「務實高準確性」策略 (user 規範):
 # 只寫高信心 plate 進 DB,中低信心一律 None,避免 ALDB-617 / RFG-760 之類錯誤資料污染統計
-PLATE_HIGH_CONFIDENCE_THRESHOLD = 0.85   # >= 此值才寫 license_plate
-PLATE_KEEP_CROP_THRESHOLD = 0.5          # >= 此值留 plate.png 供人工 review,但不寫 DB plate
+# 0.85 試過太嚴 0% 命中 → 降到 0.7 (production OCR 服務多數高信心約 0.7-0.95 區間)
+PLATE_HIGH_CONFIDENCE_THRESHOLD = 0.70   # >= 此值才寫 license_plate
+PLATE_KEEP_CROP_THRESHOLD = 0.4          # >= 此值留 plate.png 供人工 review,但不寫 DB plate
 
 
 def _associate_plate_for_vehicle(frame, vehicle_bbox: dict, camera_id: int):
