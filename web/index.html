@@ -7755,7 +7755,10 @@
                                         <td style="font-weight:700;color:#0d6e9f">{{ row.last_candidate_plate || '-' }}</td>
                                         <td style="font-size:12px;color:#64748b">
                                             <div>{{ row.last_rejected_reason || '-' }}</div>
-                                            <div v-if="row.latest_history_at" style="font-size:11px;color:#94a3b8">最新 {{ row.latest_history_at }}</div>
+                                            <!-- 「最新」優先用本次 (worker 重啟後實際辨識),否則 fallback DB 最後紀錄 -->
+                                            <div v-if="row.last_plate" style="font-size:11px;color:#94a3b8">本次最新 <strong style="color:#1565c0">{{ row.last_plate }}</strong></div>
+                                            <div v-else-if="row.latest_history_at" style="font-size:11px;color:#94a3b8" :title="'資料庫舊紀錄,本次 worker 未產生新辨識'">最近一筆 {{ row.latest_history_at }} (舊)</div>
+                                            <div v-else style="font-size:11px;color:#cbd5e1">(本次無辨識)</div>
                                         </td>
                                     </tr>
                                     <tr v-if="!lprDebugRows.length">
