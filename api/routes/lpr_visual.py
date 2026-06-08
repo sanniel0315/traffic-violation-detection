@@ -529,11 +529,58 @@ def visual_snapshot(camera_id: int):
                 frame = None
         if frame is None:
             # fallback 2: cap.read (非 frigate 管理的 camera 或 file source)
-            cap = cv2.VideoCapture(resolve_analysis_source(camera))
-            ret, frame = cap.read()
-            cap.release()
-            if not ret:
-                raise HTTPException(status_code=500, detail="無法擷取畫面")
+            try:
+                cap = cv2.VideoCapture(resolve_analysis_source(camera))
+                ret, frame = cap.read()
+                cap.release()
+                if not ret:
+                    frame = None
+            except Exception:
+                frame = None
+        if frame is None:
+            # fallback 3: 直 stream 全死 → 拉該 cam 最近一筆 LPR record snapshot,
+            # 貼「離線中 — 最後影像 {ts}」橫幅 (user 要求:LPR 一定有影像)
+            from api.models import LPRRecord
+            import os.path as _osp
+            last_rec = (
+                db.query(LPRRecord)
+                  .filter(LPRRecord.camera_id == camera_id)
+                  .order_by(LPRRecord.created_at.desc())
+                  .first()
+            )
+            if last_rec and last_rec.snapshot:
+                snap_path = _osp.join("/workspace/storage/lpr_snapshots", str(last_rec.snapshot))
+                if _osp.exists(snap_path):
+                    cached = cv2.imread(snap_path)
+                    if cached is not None:
+                        # 紅色實心橫幅 + 大字標示「離線最後影像」,直接 return 不跑 yolo (避免再疊框)
+                        fh, fw = cached.shape[:2]
+                        # 大圖 (1920+) 用 fh//8 ≈ 130px,小圖最少 90px
+                        bar_h = max(90, fh // 8)
+                        # 紅色實心 (BGR: 0,0,200 暗紅) 蓋滿頂部
+                        cv2.rectangle(cached, (0, 0), (fw, bar_h), (0, 0, 200), -1)
+                        # 細白邊框分隔
+                        cv2.rectangle(cached, (0, bar_h), (fw, bar_h + 3), (255, 255, 255), -1)
+                        ts_str = str(last_rec.created_at)[:19] if last_rec.created_at else ""
+                        # 字體 scale 按 frame 寬度動態 (1920 → 1.6, 640 → 0.6)
+                        s1 = max(0.6, fw / 1200.0)
+                        s2 = max(0.5, fw / 1800.0)
+                        t1 = max(2, int(s1 * 2))
+                        t2 = max(1, int(s2 * 2))
+                        msg1 = f"OFFLINE - last frame {ts_str}"
+                        msg2 = f"cam: {camera.name}  plate: {last_rec.plate_number or '-'}"
+                        # 上行大字白色
+                        cv2.putText(cached, msg1, (24, int(bar_h * 0.45)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, s1, (255, 255, 255), t1)
+                        # 下行中字淺黃
+                        cv2.putText(cached, msg2, (24, int(bar_h * 0.85)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, s2, (180, 240, 255), t2)
+                        ok, buf = cv2.imencode('.jpg', cached, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                        if ok:
+                            return Response(content=buf.tobytes(), media_type="image/jpeg")
+            # 連 LPR record 都沒有 (新 cam / DB 空) — 吐 placeholder (不要 raise 500 讓前端 retry hang)
+            return Response(content=_placeholder_jpeg(f"camera {camera.name} offline"),
+                            media_type="image/jpeg")
         
         detected = []
 
