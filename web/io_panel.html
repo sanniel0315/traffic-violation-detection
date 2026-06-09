@@ -624,6 +624,80 @@
         </div>
       </div>
 
+      <!-- CARD 4: Modbus TCP IO 模組 (tPET 系列等網路 IO,多站並存) -->
+      <div class="card">
+        <div class="card-title">
+          網路 IO 模組 (Modbus TCP)
+          <span style="font-size:12px;font-weight:500;color:var(--gov-muted);margin-left:8px;">tPET / tET / Moxa ioLogik 等</span>
+        </div>
+
+        <!-- 已配置 modules 列表 -->
+        <div class="card-title-inner" style="font-size:13px;font-weight:600;color:var(--gov-muted);margin-bottom:8px;">已配置站號 ({{ tcpModules.length }})</div>
+        <div v-if="!tcpModules.length" style="padding:18px;color:#9ca3af;font-size:13px;text-align:center;background:var(--gov-surface-2);border-radius:6px;">尚無網路 IO 模組,點下方「新增」加入第一台</div>
+        <div v-for="m in tcpModules" :key="m.id" style="border:1px solid var(--gov-border);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--gov-surface)">
+          <!-- module header -->
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div>
+              <span style="font-weight:700;color:var(--gov-text)">{{ m.name }}</span>
+              <span style="font-size:11px;color:var(--gov-muted);font-family:var(--font-mono);margin-left:6px">{{ m.id }} · {{ m.ip }}:{{ m.port }} · slave {{ m.unit_id }}</span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span :style="{display:'inline-block',width:'8px',height:'8px',borderRadius:'50%',background:m.ok?'var(--gov-ok)':'var(--gov-fault)'}"></span>
+              <span style="font-size:11px" :style="{color:m.ok?'var(--gov-ok)':'var(--gov-fault)'}">{{ m.ok ? '連線正常' : (m.error || '未連線') }}</span>
+              <el-button size="small" plain @click="reconnectTcpModule(m.id)">重連</el-button>
+              <el-button size="small" type="danger" plain @click="deleteTcpModule(m.id)">刪除</el-button>
+            </div>
+          </div>
+          <!-- DI/DO snapshot -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+            <div>
+              <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-mono);margin-bottom:6px">DIGITAL INPUT ({{ m.di_count }})</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <span v-for="(v,i) in (m.di||[])" :key="`di-${m.id}-${i}`"
+                      :style="{padding:'4px 10px',borderRadius:'4px',fontSize:'12px',fontFamily:'var(--font-mono)',background:v?'var(--gov-ok)':'var(--gov-surface-2)',color:v?'#fff':'var(--gov-muted)',border:'1px solid '+(v?'var(--gov-ok)':'var(--gov-border)')}">
+                  DI{{ i }} {{ v?'ON':'OFF' }}
+                </span>
+                <span v-if="!(m.di||[]).length" style="color:#9ca3af;font-size:12px">無資料</span>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-mono);margin-bottom:6px">DIGITAL OUTPUT ({{ m.do_count }})</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <button v-for="(v,i) in (m.do||[])" :key="`do-${m.id}-${i}`"
+                        @click="toggleTcpDO(m.id, i, !v)"
+                        :style="{padding:'4px 10px',borderRadius:'4px',fontSize:'12px',fontFamily:'var(--font-mono)',background:v?'var(--gov-primary)':'var(--gov-surface-2)',color:v?'#fff':'var(--gov-text)',border:'1px solid '+(v?'var(--gov-primary)':'var(--gov-border)'),cursor:'pointer'}">
+                  DO{{ i }} {{ v?'ON':'OFF' }}
+                </button>
+                <span v-if="!(m.do||[]).length" style="color:#9ca3af;font-size:12px">無資料</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 新增 module 表單 (摺疊) -->
+        <div style="margin-top:14px">
+          <el-button size="small" type="primary" plain v-if="!showAddTcp" @click="showAddTcp=true">+ 新增網路 IO 模組</el-button>
+          <div v-else style="border:1px dashed var(--gov-primary);border-radius:8px;padding:12px;background:var(--gov-primary-soft)">
+            <div style="font-weight:600;margin-bottom:10px;color:var(--gov-primary)">新增 Modbus TCP IO 模組</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+              <div><label style="font-size:12px;color:var(--gov-muted)">站號 (id)</label><el-input size="small" v-model="newTcpForm.id" placeholder="junction_1"/></div>
+              <div><label style="font-size:12px;color:var(--gov-muted)">顯示名稱</label><el-input size="small" v-model="newTcpForm.name" placeholder="路口 1 號 tPET"/></div>
+              <div><label style="font-size:12px;color:var(--gov-muted)">IP</label><el-input size="small" v-model="newTcpForm.ip" placeholder="192.168.255.1"/></div>
+              <div><label style="font-size:12px;color:var(--gov-muted)">Port</label><el-input-number size="small" v-model="newTcpForm.port" :min="1" :max="65535"/></div>
+              <div><label style="font-size:12px;color:var(--gov-muted)">Slave ID</label><el-input-number size="small" v-model="newTcpForm.unit_id" :min="1" :max="247"/></div>
+              <div><label style="font-size:12px;color:var(--gov-muted)">Timeout (秒)</label><el-input-number size="small" v-model="newTcpForm.timeout" :min="0.5" :max="10" :step="0.5"/></div>
+              <div><label style="font-size:12px;color:var(--gov-muted)">DI 通道數</label><el-input-number size="small" v-model="newTcpForm.di_count" :min="0" :max="64"/></div>
+              <div><label style="font-size:12px;color:var(--gov-muted)">DO 通道數</label><el-input-number size="small" v-model="newTcpForm.do_count" :min="0" :max="64"/></div>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+              <el-button size="small" @click="showAddTcp=false">取消</el-button>
+              <el-button size="small" type="primary" @click="addTcpModule">儲存並連線</el-button>
+            </div>
+            <div v-if="addTcpMsg" style="margin-top:8px;font-size:12px" :style="{color:addTcpMsg.startsWith('OK')?'var(--gov-ok)':'var(--gov-fault)'}">{{ addTcpMsg }}</div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -781,10 +855,75 @@
           ws.value.onerror = () => { wsConnected.value = false; };
         }
 
+        // ── Modbus TCP IO modules ──
+        const tcpModules = ref([]);
+        const showAddTcp = ref(false);
+        const addTcpMsg = ref('');
+        const newTcpForm = ref({
+          id: '', name: '', ip: '192.168.255.1', port: 502, unit_id: 1,
+          timeout: 1.5, di_count: 2, do_count: 2,
+        });
+        async function fetchTcpModules() {
+          try {
+            const r = await fetch('/api/io_tcp/modules');
+            const d = await r.json();
+            tcpModules.value = d.modules || [];
+          } catch (e) { /* silent */ }
+        }
+        async function addTcpModule() {
+          addTcpMsg.value = '';
+          const f = newTcpForm.value;
+          if (!f.id || !f.name || !f.ip) {
+            addTcpMsg.value = '請填站號 / 名稱 / IP';
+            return;
+          }
+          try {
+            const r = await fetch('/api/io_tcp/modules', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ...f, di_addr: 0, do_addr: 0, enabled: true }),
+            });
+            const d = await r.json();
+            if (!r.ok) {
+              addTcpMsg.value = `失敗: ${d.detail || r.status}`;
+              return;
+            }
+            addTcpMsg.value = d.ok ? `OK 已連線 (${d.id})` : `OK 已加入,但連線失敗: ${d.error || ''}`;
+            await fetchTcpModules();
+            // reset form
+            setTimeout(() => {
+              showAddTcp.value = false;
+              addTcpMsg.value = '';
+              newTcpForm.value = { id: '', name: '', ip: '192.168.255.1', port: 502, unit_id: 1, timeout: 1.5, di_count: 2, do_count: 2 };
+            }, 1500);
+          } catch (e) {
+            addTcpMsg.value = `錯誤: ${e.message}`;
+          }
+        }
+        async function deleteTcpModule(id) {
+          if (!confirm(`確定刪除 ${id}?`)) return;
+          await fetch(`/api/io_tcp/modules/${id}`, { method: 'DELETE' });
+          await fetchTcpModules();
+        }
+        async function reconnectTcpModule(id) {
+          await fetch(`/api/io_tcp/${id}/reconnect`, { method: 'POST' });
+          await fetchTcpModules();
+        }
+        async function toggleTcpDO(id, ch, on) {
+          await fetch(`/api/io_tcp/${id}/do/${ch}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ on }),
+          });
+          await fetchTcpModules();
+        }
+
         onMounted(() => {
           fetchStatus();
           fetchSyncConfig();
+          fetchTcpModules();
           setInterval(fetchStatus, 2000);
+          setInterval(fetchTcpModules, 3000);
           connectWS();
         });
 
@@ -806,7 +945,16 @@
           formatTime,
           setRelay,
           saveConfig,
-          triggerSync
+          triggerSync,
+          // Modbus TCP IO
+          tcpModules,
+          showAddTcp,
+          addTcpMsg,
+          newTcpForm,
+          addTcpModule,
+          deleteTcpModule,
+          reconnectTcpModule,
+          toggleTcpDO,
         };
       }
     });
