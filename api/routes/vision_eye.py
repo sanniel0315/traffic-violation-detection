@@ -231,10 +231,29 @@ def vision_eye_snapshot(camera_id: int):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (60, 220, 130), 1)
 
         # HUD 左上 — 中文 cam name 用 PIL,其他英文用 cv2
-        cv2.rectangle(frame, (10, 10), (560, 50), (0, 0, 0), -1)
-        cv2.rectangle(frame, (10, 10), (560, 50), (60, 220, 130), 1)
+        # 從 lpr_records 撈該 cam 最近一筆,讓 HUD 多一行「最近車牌」demo 完整度
+        latest_plate_line = ""
+        try:
+            from api.models import LPRRecord
+            last_rec = (
+                db.query(LPRRecord)
+                  .filter(LPRRecord.camera_id == camera_id)
+                  .order_by(LPRRecord.created_at.desc())
+                  .first()
+            )
+            if last_rec and last_rec.plate_number:
+                ts_short = str(last_rec.created_at)[11:19] if last_rec.created_at else ""
+                latest_plate_line = f"最近車牌 {last_rec.plate_number} · {ts_short}"
+        except Exception:
+            pass
+
+        hud_h = 70 if latest_plate_line else 50
+        cv2.rectangle(frame, (10, 10), (620, hud_h), (0, 0, 0), -1)
+        cv2.rectangle(frame, (10, 10), (620, hud_h), (60, 220, 130), 1)
         text_items.append((f"攝影機  {camera.name}", (20, 14), 16, (60, 220, 130)))
         text_items.append((f"追蹤 {n_drawn} 個物件 · AI 語義化視覺", (20, 32), 14, (220, 220, 220)))
+        if latest_plate_line:
+            text_items.append((latest_plate_line, (20, 50), 13, (255, 210, 60)))
 
         # 一次性 PIL render 中文
         frame = _draw_zh_batch(frame, text_items)
