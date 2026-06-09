@@ -10088,7 +10088,8 @@ const app=createApp({
         });
         // ===== 雷達式 BEV 視圖 =====
         // 沒有真雷達,從 /api/sensor_fusion/{cam}/tracks (visual → mock radar → fuse) 拉資料
-        const radarCameraId=ref(2);
+        // default 用 cam_7 (國8 流量大,初次打開可見 dot);user 可切換 select
+        const radarCameraId=ref(7);
         const radarTracks=ref([]);
         const radarStats=ref({visual_count:0, radar_count:0});
         let _radarTimer=null;
