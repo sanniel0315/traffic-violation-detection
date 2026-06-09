@@ -20,6 +20,7 @@
       --gov-mute-2:        #8b95a4;
       --gov-border:        #d7dee8;
       --gov-ok:            #1f9d55;
+      --gov-warn:          #d97706;
       --gov-fault:         #c43a31;
       --font-mono:         "IBM Plex Mono", ui-monospace, monospace;
     }
@@ -663,11 +664,17 @@
             <div>
               <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-mono);margin-bottom:6px">DIGITAL OUTPUT ({{ m.do_count }})</div>
               <div style="display:flex;gap:6px;flex-wrap:wrap">
-                <button v-for="(v,i) in (m.do||[])" :key="`do-${m.id}-${i}`"
-                        @click="toggleTcpDO(m.id, i, !v)"
-                        :style="{padding:'4px 10px',borderRadius:'4px',fontSize:'12px',fontFamily:'var(--font-mono)',background:v?'var(--gov-primary)':'var(--gov-surface-2)',color:v?'#fff':'var(--gov-text)',border:'1px solid '+(v?'var(--gov-primary)':'var(--gov-border)'),cursor:'pointer'}">
-                  DO{{ i }} {{ v?'ON':'OFF' }}
-                </button>
+                <div v-for="(v,i) in (m.do||[])" :key="`do-${m.id}-${i}`" style="display:flex;gap:2px">
+                  <button @click="toggleTcpDO(m.id, i, !v)"
+                          :style="{padding:'4px 10px',borderRadius:'4px 0 0 4px',fontSize:'12px',fontFamily:'var(--font-mono)',background:v?'var(--gov-primary)':'var(--gov-surface-2)',color:v?'#fff':'var(--gov-text)',border:'1px solid '+(v?'var(--gov-primary)':'var(--gov-border)'),cursor:'pointer'}">
+                    DO{{ i }} {{ v?'ON':'OFF' }}
+                  </button>
+                  <button @click="pulseTcpDO(m.id, i, 1000)"
+                          title="脈衝 1 秒 (違規警示用途)"
+                          style="padding:4px 8px;border-radius:0 4px 4px 0;font-size:11px;font-family:var(--font-mono);background:var(--gov-surface-2);color:var(--gov-warn);border:1px solid var(--gov-border);border-left:none;cursor:pointer">
+                    ⚡1s
+                  </button>
+                </div>
                 <span v-if="!(m.do||[]).length" style="color:#9ca3af;font-size:12px">無資料</span>
               </div>
             </div>
@@ -917,6 +924,16 @@
           });
           await fetchTcpModules();
         }
+        async function pulseTcpDO(id, ch, duration_ms) {
+          await fetch(`/api/io_tcp/${id}/pulse/${ch}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ duration_ms }),
+          });
+          // 立即更新一次,duration 後再更新一次反映 OFF
+          await fetchTcpModules();
+          setTimeout(fetchTcpModules, duration_ms + 200);
+        }
 
         onMounted(() => {
           fetchStatus();
@@ -955,6 +972,7 @@
           deleteTcpModule,
           reconnectTcpModule,
           toggleTcpDO,
+          pulseTcpDO,
         };
       }
     });

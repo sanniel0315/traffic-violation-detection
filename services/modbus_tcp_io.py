@@ -159,6 +159,24 @@ class ModbusTcpIO:
                 self._error = str(e)
                 return list(self._last_do)
 
+    def pulse_output(self, channel: int, duration_ms: int = 1000) -> bool:
+        """DO 短脈衝 — ON 後背景 thread sleep N ms 自動 OFF。
+        return 立即,不等 OFF 完成 (避免 web 阻塞)。"""
+        if not self.write_output(channel, True):
+            return False
+        if duration_ms <= 0:
+            return True
+        def _off_later():
+            try:
+                time.sleep(duration_ms / 1000.0)
+                self.write_output(channel, False)
+            except Exception:
+                pass
+        t = threading.Thread(target=_off_later, daemon=True,
+                             name=f"io_tcp_pulse_{self.cfg.id}_DO{channel}")
+        t.start()
+        return True
+
     def write_output(self, channel: int, on: bool) -> bool:
         """寫單一 DO (FC05)"""
         if channel < 0 or channel >= self.cfg.do_count:

@@ -50,6 +50,10 @@ class DOCommand(BaseModel):
     on: bool
 
 
+class PulseCommand(BaseModel):
+    duration_ms: int = 1000
+
+
 def _module_status(mod: ModbusTcpIO) -> dict:
     di = mod.read_inputs()
     do = mod.read_outputs()
@@ -122,6 +126,20 @@ def set_do(module_id: str, ch: int, cmd: DOCommand):
         raise HTTPException(status_code=503, detail=mod.error or "write failed")
     _log("info", f"[{module_id}] DO{ch} → {'ON' if cmd.on else 'OFF'}")
     return {"id": module_id, "ch": ch, "on": cmd.on}
+
+
+@router.post("/{module_id}/pulse/{ch}")
+def pulse_do(module_id: str, ch: int, cmd: PulseCommand):
+    """DO 短脈衝 — ON N 毫秒後自動 OFF (違規警示燈 / 蜂鳴器 用途)"""
+    mod = get_module(module_id)
+    if mod is None:
+        raise HTTPException(status_code=404, detail=f"module {module_id} not found")
+    if cmd.duration_ms <= 0 or cmd.duration_ms > 60000:
+        raise HTTPException(status_code=400, detail="duration_ms must be 1..60000")
+    if not mod.pulse_output(ch, cmd.duration_ms):
+        raise HTTPException(status_code=503, detail=mod.error or "pulse failed")
+    _log("info", f"[{module_id}] DO{ch} pulse {cmd.duration_ms}ms")
+    return {"id": module_id, "ch": ch, "duration_ms": cmd.duration_ms, "ok": True}
 
 
 @router.post("/{module_id}/reconnect")
