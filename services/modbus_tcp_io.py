@@ -86,7 +86,7 @@ class ModbusTcpIO:
                 # smoke test — 讀 DO coils
                 rr = self._client.read_coils(address=self.cfg.do_addr,
                                               count=self.cfg.do_count,
-                                              slave=self.cfg.unit_id)
+                                              device_id=self.cfg.unit_id)
                 if rr.isError():
                     self._ok = False
                     self._error = f"smoke read_coils err: {rr}"
@@ -126,7 +126,7 @@ class ModbusTcpIO:
             try:
                 rr = self._client.read_discrete_inputs(address=self.cfg.di_addr,
                                                        count=self.cfg.di_count,
-                                                       slave=self.cfg.unit_id)
+                                                       device_id=self.cfg.unit_id)
                 if rr.isError():
                     self._ok = False
                     self._error = f"read_discrete_inputs err: {rr}"
@@ -147,7 +147,7 @@ class ModbusTcpIO:
             try:
                 rr = self._client.read_coils(address=self.cfg.do_addr,
                                               count=self.cfg.do_count,
-                                              slave=self.cfg.unit_id)
+                                              device_id=self.cfg.unit_id)
                 if rr.isError():
                     self._ok = False
                     self._error = f"read_coils err: {rr}"
@@ -170,7 +170,7 @@ class ModbusTcpIO:
             try:
                 wr = self._client.write_coil(address=self.cfg.do_addr + channel,
                                               value=bool(on),
-                                              slave=self.cfg.unit_id)
+                                              device_id=self.cfg.unit_id)
                 if wr.isError():
                     self._ok = False
                     self._error = f"write_coil err: {wr}"
