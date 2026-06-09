@@ -308,6 +308,10 @@
             0%, 100% { box-shadow: 0 0 0 3px rgba(31,157,85,0.18); }
             50%      { box-shadow: 0 0 0 6px rgba(31,157,85,0); }
         }
+        @keyframes radar-sweep {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+        }
         .ds-method-tag {
             display: inline-block;
             font-family: var(--font-mono);
@@ -5735,6 +5739,109 @@
                                 <span>{{ trendPathData.labels[trendPathData.labels.length-1]?.slice(5) }}</span>
                             </div>
                         </div>
+                        <!-- 7. 雷達式 BEV 視圖 (12/12 full width) — 無雷達硬體,從 YOLO 視覺反推 -->
+                        <div class="ds-card hoverable" style="grid-column:span 12;padding:16px 18px">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+                                <div>
+                                    <div class="ds-section-num ds-section-num--text">RADAR · BEV</div>
+                                    <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">雷達式視圖 (從視覺反推 BEV)</div>
+                                    <div style="font-size:11px;color:var(--gov-muted);margin-top:2px">無雷達硬體,以 YOLO tracks 投影 world_xy 模擬雷達 PPI 顯示</div>
+                                </div>
+                                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                                    <el-select v-model="radarCameraId" size="small" style="width:180px" @change="loadRadarTracks">
+                                        <el-option v-for="c in (cameras||[])" :key="`rd-cam-${c.id}`" :label="`${c.name} (cam_${c.id})`" :value="c.id"/>
+                                    </el-select>
+                                    <el-tag size="small" type="info">visual {{ radarStats.visual_count || 0 }}</el-tag>
+                                    <el-tag size="small" type="warning">radar {{ radarStats.radar_count || 0 }}</el-tag>
+                                    <el-tag size="small" type="success">fused {{ (radarTracks||[]).length }}</el-tag>
+                                    <el-button size="small" plain @click="loadRadarTracks"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>掃描</el-button>
+                                </div>
+                            </div>
+                            <!-- SVG radar — 400 viewport, 中心攝影機, 80m max range -->
+                            <div style="display:grid;grid-template-columns:1fr 220px;gap:18px;align-items:start">
+                                <div style="position:relative;width:100%;aspect-ratio:1/1;max-width:480px;margin:0 auto">
+                                    <svg viewBox="-220 -220 440 440" style="width:100%;height:100%;background:radial-gradient(circle, #051227 0%, #020812 80%);border-radius:50%;box-shadow:0 0 24px rgba(11,94,168,0.25) inset">
+                                        <!-- concentric range rings 20/40/60/80m -->
+                                        <circle v-for="r in [50,100,150,200]" :key="`ring-${r}`" cx="0" cy="0" :r="r" fill="none" stroke="#1f8e6e" stroke-width="1" stroke-opacity="0.35" stroke-dasharray="3 3"/>
+                                        <!-- range labels -->
+                                        <text v-for="(r,i) in [50,100,150,200]" :key="`rl-${r}`" :x="r-2" y="-4" font-size="9" font-family="monospace" fill="#3dcfa0" opacity="0.6" text-anchor="end">{{ (i+1)*20 }}m</text>
+                                        <!-- radial lines every 30° -->
+                                        <line v-for="ang in [0,30,60,90,120,150]" :key="`rad-${ang}`" x1="0" y1="0"
+                                              :x2="200 * Math.cos((ang-90)*Math.PI/180)" :y2="200 * Math.sin((ang-90)*Math.PI/180)"
+                                              stroke="#1f8e6e" stroke-width="0.5" stroke-opacity="0.25"/>
+                                        <line v-for="ang in [0,30,60,90,120,150]" :key="`rad2-${ang}`" x1="0" y1="0"
+                                              :x2="-200 * Math.cos((ang-90)*Math.PI/180)" :y2="-200 * Math.sin((ang-90)*Math.PI/180)"
+                                              stroke="#1f8e6e" stroke-width="0.5" stroke-opacity="0.25"/>
+                                        <!-- sweep beam (rotating wedge) -->
+                                        <g style="transform-origin:center;animation:radar-sweep 4s linear infinite">
+                                            <defs>
+                                                <radialGradient id="radar-sweep-grad">
+                                                    <stop offset="0%" stop-color="#3dcfa0" stop-opacity="0.75"/>
+                                                    <stop offset="100%" stop-color="#3dcfa0" stop-opacity="0"/>
+                                                </radialGradient>
+                                            </defs>
+                                            <path d="M 0,0 L 200,0 A 200,200 0 0,0 173,-100 Z" fill="url(#radar-sweep-grad)" opacity="0.55"/>
+                                        </g>
+                                        <!-- track dots — world_x = 前方 (svg y 負向上), world_y = 左右,顯示分類 + 速度 + 信心 -->
+                                        <g v-for="t in (radarTracks||[])" :key="`tk-${t.id}`">
+                                            <circle :cx="Math.max(-210, Math.min(210, t.world_y * 2.5))"
+                                                    :cy="Math.max(-210, Math.min(210, -t.world_x * 2.5))"
+                                                    r="5"
+                                                    :fill="radarDotColor(t.class)"
+                                                    stroke="white" stroke-width="0.8" opacity="0.95">
+                                                <animate attributeName="r" values="5;8;5" dur="2s" repeatCount="indefinite"/>
+                                            </circle>
+                                            <!-- 語義化 label: 類別 + 速度 (而不是只 km/h) -->
+                                            <text :x="Math.max(-210, Math.min(210, t.world_y * 2.5)) + 8"
+                                                  :y="Math.max(-210, Math.min(210, -t.world_x * 2.5)) - 8"
+                                                  font-size="9" font-family="monospace" :fill="radarDotColor(t.class)" font-weight="700">
+                                                {{ radarClassZh(t.class) }}
+                                            </text>
+                                            <text :x="Math.max(-210, Math.min(210, t.world_y * 2.5)) + 8"
+                                                  :y="Math.max(-210, Math.min(210, -t.world_x * 2.5)) + 3"
+                                                  font-size="8" font-family="monospace" fill="#dbeafe">
+                                                {{ Math.round(t.speed_kmh) }} km/h · {{ (t.class_confidence*100).toFixed(0) }}%
+                                            </text>
+                                        </g>
+                                        <!-- 攝影機中心點 -->
+                                        <circle cx="0" cy="0" r="4" fill="#3dcfa0" stroke="white" stroke-width="1"/>
+                                        <text x="6" y="14" font-size="9" font-family="monospace" fill="#3dcfa0">CAM</text>
+                                    </svg>
+                                </div>
+                                <!-- legend + active tracks list -->
+                                <div>
+                                    <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-mono);letter-spacing:0.1em;margin-bottom:6px">LEGEND</div>
+                                    <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:14px">
+                                        <div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#22d3ee"></span>小客車</div>
+                                        <div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#fbbf24"></span>大貨車/卡車</div>
+                                        <div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f472b6"></span>機車</div>
+                                        <div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#a78bfa"></span>大客車</div>
+                                    </div>
+                                    <!-- AI 語義化推論面板 — 從 fused tracks 即時推算結構/速率/壅塞/優化建議 -->
+                                    <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-mono);letter-spacing:0.1em;margin-bottom:6px">AI · SEMANTIC</div>
+                                    <div v-if="radarInsights.length" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
+                                        <div v-for="(ins, idx) in radarInsights" :key="`ri-${idx}`"
+                                             style="display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border:1px solid var(--gov-border);border-radius:4px;background:var(--gov-bg);font-size:12px;line-height:1.4">
+                                            <span :style="{color:ins.color,fontWeight:700,flex:'0 0 auto'}">{{ ins.icon }}</span>
+                                            <div style="flex:1">
+                                                <div style="font-size:10px;color:var(--gov-muted);letter-spacing:0.06em">{{ ins.type }}</div>
+                                                <div>{{ ins.label }}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div v-else style="font-size:11px;color:var(--gov-muted);font-style:italic;margin-bottom:14px">無偵測訊號 → 語義化推論待 tracks</div>
+                                    <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-mono);letter-spacing:0.1em;margin-bottom:6px">ACTIVE TRACKS ({{ (radarTracks||[]).length }})</div>
+                                    <div v-if="(radarTracks||[]).length" style="max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
+                                        <div v-for="t in (radarTracks||[]).slice(0,12)" :key="`tk-row-${t.id}`"
+                                             style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 6px;background:var(--gov-bg);border-radius:4px;font-family:var(--font-mono)">
+                                            <span>#{{ t.id }} <span :style="{color:radarDotColor(t.class)}">●</span></span>
+                                            <span style="color:var(--gov-muted)">{{ Math.round(t.speed_kmh) }}km/h</span>
+                                        </div>
+                                    </div>
+                                    <div v-else style="text-align:center;padding:24px 8px;color:var(--gov-muted);font-size:12px">無偵測訊號<br><span style="font-size:10px">(攝影機需啟動車流偵測)</span></div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -9978,6 +10085,86 @@ const app=createApp({
         const analyticsHighRiskCount=computed(()=>{
             const arr = analyticsSafety.value || [];
             return arr.filter(s => (Number(s.score) || 100) < 40).length;
+        });
+        // ===== 雷達式 BEV 視圖 =====
+        // 沒有真雷達,從 /api/sensor_fusion/{cam}/tracks (visual → mock radar → fuse) 拉資料
+        const radarCameraId=ref(2);
+        const radarTracks=ref([]);
+        const radarStats=ref({visual_count:0, radar_count:0});
+        let _radarTimer=null;
+        const radarDotColor=(cls)=>{
+            const c = String(cls||'').toLowerCase();
+            if (c.includes('truck')) return '#fbbf24';
+            if (c.includes('motorcycle')||c.includes('bike')) return '#f472b6';
+            if (c.includes('bus')) return '#a78bfa';
+            return '#22d3ee'; // car / default
+        };
+        // 中文 class label
+        const radarClassZh=(cls)=>{
+            const c = String(cls||'').toLowerCase();
+            if (c === 'heavy_truck') return '大貨車';
+            if (c === 'light_truck') return '小貨車';
+            if (c.includes('truck')) return '貨車';
+            if (c.includes('motorcycle')||c.includes('bike')) return '機車';
+            if (c.includes('bus')) return '大客車';
+            if (c === 'car' || c === 'non_truck') return '小客車';
+            if (c === 'person') return '行人';
+            return c || '未知';
+        };
+        const loadRadarTracks=async()=>{
+            try {
+                const r = await fetch(`/api/sensor_fusion/${radarCameraId.value}/tracks`, {credentials:'include'});
+                if (!r.ok) return;
+                const d = await r.json();
+                radarTracks.value = d.tracks || [];
+                radarStats.value = {visual_count:d.visual_count||0, radar_count:d.radar_count||0};
+            } catch(e) { /* silent */ }
+        };
+        // 語義化推論摘要 — 結構分析 + 風險評估 + 優化建議
+        const radarInsights=computed(()=>{
+            const ts = radarTracks.value || [];
+            const n = ts.length;
+            if (!n) return [];
+            const avgSpeed = ts.reduce((s,t)=>s+(Number(t.speed_kmh)||0), 0) / n;
+            const dist = {};
+            ts.forEach(t => {
+                const z = radarClassZh(t.class);
+                dist[z] = (dist[z]||0) + 1;
+            });
+            // 近距離聚集 (BEV world_x < 20m)
+            const closeCount = ts.filter(t => Math.abs(Number(t.world_x)||0) < 20).length;
+            const out = [];
+            // 結構分析
+            const compose = Object.entries(dist).map(([k,v])=>`${k} ${v}`).join(' · ');
+            out.push({type:'分類', icon:'●', color:'var(--gov-info)', label:compose});
+            // 平均速率
+            const spdLabel = avgSpeed > 60 ? '高速' : avgSpeed > 30 ? '中速' : '低速';
+            out.push({type:'速率', icon:'➤', color:'var(--gov-primary)', label:`平均 ${avgSpeed.toFixed(1)} km/h (${spdLabel})`});
+            // 行為優化推論
+            if (closeCount >= 5) {
+                out.push({type:'壅塞警示', icon:'⚠', color:'var(--gov-fault)', label:`20 m 內聚集 ${closeCount} 台 → 建議調控號誌秒數`});
+            }
+            const motoRatio = (dist['機車']||0) / n;
+            if (motoRatio >= 0.35) {
+                out.push({type:'優化建議', icon:'↗', color:'var(--gov-warn)', label:`機車佔比 ${(motoRatio*100).toFixed(0)}% 偏高 → 建議劃設機車優先道`});
+            }
+            if (avgSpeed > 80) {
+                out.push({type:'安全隱患', icon:'⚠', color:'var(--gov-fault)', label:`平均速率超 80 km/h → 建議增設測速告示`});
+            }
+            if (avgSpeed < 10 && n >= 3) {
+                out.push({type:'壅塞警示', icon:'⚠', color:'var(--gov-fault)', label:`流量 ${n} 台但平均 ${avgSpeed.toFixed(1)} km/h → 疑似阻塞`});
+            }
+            return out;
+        });
+        watch(()=>page.value, (newPage)=>{
+            if (newPage === 'analytics_insights') {
+                loadRadarTracks();
+                if (_radarTimer) clearInterval(_radarTimer);
+                _radarTimer = setInterval(loadRadarTracks, 1500);
+            } else if (_radarTimer) {
+                clearInterval(_radarTimer);
+                _radarTimer = null;
+            }
         });
         // Hotspots → 24h heatmap (聚合 hour 維度 + 色階 buckets)
         const analyticsHourHeatmap=computed(()=>{
@@ -17071,7 +17258,7 @@ const app=createApp({
             if(lprVisualTimer)clearInterval(lprVisualTimer);
         });
         
-        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
+        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,radarCameraId,radarTracks,radarStats,radarDotColor,radarClassZh,radarInsights,loadRadarTracks,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,previewParkingZones,previewParkingZoneCount,parkingSubKindOptions,applyParkingSubKindToZone,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
