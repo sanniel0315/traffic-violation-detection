@@ -5647,17 +5647,32 @@
                                     <el-tag size="small" type="warning">下小時 {{ analyticsForecast.forecast?.next_hour }}:00 預測 {{ analyticsForecast.forecast?.predicted_count }} 車</el-tag>
                                 </div>
                             </div>
-                            <div v-if="analyticsForecast.history_24h?.length" style="display:flex;align-items:flex-end;gap:2px;height:100px">
+                            <div v-if="analyticsForecast.history_24h?.length" style="display:flex;align-items:flex-end;gap:2px;height:120px;position:relative">
                                 <div v-for="(h, i) in analyticsForecast.history_24h" :key="`fc-${i}`"
                                      :title="`${h.hour}:00 平均 ${h.avg_count} 車`"
-                                     :style="{flex:1, height:Math.max(2, h.avg_count / (analyticsForecast.peak?.count || 1) * 100) + '%',
-                                              background: i === analyticsForecast.forecast?.next_hour ? 'var(--gov-warn)' : 'var(--gov-primary)',
-                                              borderRadius:'2px 2px 0 0', opacity: i === analyticsForecast.forecast?.next_hour ? 1 : 0.6}">
+                                     style="flex:1;position:relative;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%">
+                                    <!-- peak / next label (絕對定位浮在 bar 上方) -->
+                                    <span v-if="i === analyticsForecast.peak?.hour"
+                                          style="position:absolute;top:-2px;font-size:10px;font-weight:700;color:var(--gov-primary);font-family:var(--font-mono);white-space:nowrap">
+                                        ★{{ h.avg_count }}
+                                    </span>
+                                    <span v-else-if="i === analyticsForecast.forecast?.next_hour"
+                                          style="position:absolute;top:-2px;font-size:10px;font-weight:700;color:var(--gov-warn);font-family:var(--font-mono);white-space:nowrap">
+                                        NEXT
+                                    </span>
+                                    <div :style="{width:'100%', height:Math.max(2, h.avg_count / (analyticsForecast.peak?.count || 1) * 90) + '%',
+                                                  background: i === analyticsForecast.forecast?.next_hour ? 'var(--gov-warn)' : (i === analyticsForecast.peak?.hour ? 'var(--gov-primary)' : 'var(--gov-primary)'),
+                                                  borderRadius:'2px 2px 0 0',
+                                                  opacity: i === analyticsForecast.forecast?.next_hour ? 1 : (i === analyticsForecast.peak?.hour ? 1 : 0.45)}">
+                                    </div>
                                 </div>
                             </div>
                             <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
-                            <div v-if="analyticsForecast.history_24h?.length" style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--gov-muted);font-family:var(--font-mono)">
-                                <span>00</span><span>06</span><span>12</span><span>18</span><span>23</span>
+                            <!-- x-axis: 24 cells 用 grid 對齊 bar 位置 -->
+                            <div v-if="analyticsForecast.history_24h?.length" style="display:grid;grid-template-columns:repeat(24,1fr);margin-top:6px;font-size:10px;color:var(--gov-muted);font-family:var(--font-mono)">
+                                <span v-for="i in 24" :key="`xt-${i}`" style="text-align:center">
+                                    {{ (i-1) % 4 === 0 ? String(i-1).padStart(2,'0') : '' }}
+                                </span>
                             </div>
                         </div>
                         <!-- 6. 30 天違規 trend (12/12 full width) — line chart per type -->
