@@ -5035,7 +5035,7 @@
                                 </svg>
                                 <el-tag class="badge status-badge" :type="c.status==='online'?'success':'info'" size="small">{{ c.status==='online'?'線上':'離線' }}</el-tag>
                                 <el-tag v-if="!c.enabled" class="badge" style="right:12px;top:44px;left:auto" size="small" type="danger">已關閉</el-tag>
-                                <span v-if="detectionStatus[c.id]?.running" class="badge detection-badge">● 偵測中</span>
+                                <span v-if="detectionStatus[c.id]?.running" class="badge detection-badge"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:5px;vertical-align:middle"></span>偵測中</span>
                                 <button class="monitor-zoom-button" type="button" @click.stop="openMonitorZoom(c)" :title="`放大 ${c.name}`">⤢</button>
                                 <el-tag class="badge" style="left:12px;top:auto;bottom:12px;right:auto" size="small" type="info">啟動 {{ activeFeatureCount(c.id) }}/3</el-tag>
                                 <el-tag class="badge" style="right:12px;bottom:12px;top:auto;left:auto" size="small" :type="c.monitorSnapshotMode?'info':'warning'">{{ c.monitorSnapshotMode?'快照':'串流' }} / {{ resolveCameraStreamMode(c)==='overlay'?'疊加':'原始' }}</el-tag>
@@ -5676,7 +5676,7 @@
                                     <!-- peak / next label (絕對定位浮在 bar 上方) -->
                                     <span v-if="i === analyticsForecast.peak?.hour"
                                           style="position:absolute;top:-2px;font-size:10px;font-weight:700;color:var(--gov-primary);font-family:var(--font-mono);white-space:nowrap">
-                                        ★{{ h.avg_count }}
+                                        peak {{ h.avg_count }}
                                     </span>
                                     <span v-else-if="i === analyticsForecast.forecast?.next_hour"
                                           style="position:absolute;top:-2px;font-size:10px;font-weight:700;color:var(--gov-warn);font-family:var(--font-mono);white-space:nowrap">
@@ -5775,8 +5775,7 @@
                                     <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-mono);letter-spacing:0.1em;margin-bottom:6px">AI · SEMANTIC</div>
                                     <div v-if="radarInsights.length" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
                                         <div v-for="(ins, idx) in radarInsights" :key="`ri-${idx}`"
-                                             style="display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border:1px solid var(--gov-border);border-radius:4px;background:var(--gov-bg);font-size:12px;line-height:1.4">
-                                            <span :style="{color:ins.color,fontWeight:700,flex:'0 0 auto'}">{{ ins.icon }}</span>
+                                             :style="{display:'flex',gap:'8px',alignItems:'flex-start',padding:'6px 8px',border:'1px solid var(--gov-border)',borderLeft:'3px solid '+ins.color,borderRadius:'4px',background:'var(--gov-bg)',fontSize:'12px',lineHeight:'1.4'}">
                                             <div style="flex:1">
                                                 <div style="font-size:10px;color:var(--gov-muted);letter-spacing:0.06em">{{ ins.type }}</div>
                                                 <div>{{ ins.label }}</div>
@@ -5788,7 +5787,7 @@
                                     <div v-if="(radarTracks||[]).length" style="max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
                                         <div v-for="t in (radarTracks||[]).slice(0,12)" :key="`tk-row-${t.id}`"
                                              style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 6px;background:var(--gov-bg);border-radius:4px;font-family:var(--font-mono)">
-                                            <span>#{{ t.id }} <span :style="{color:radarDotColor(t.class)}">●</span></span>
+                                            <span>#{{ t.id }} <span :style="{display:'inline-block',width:'8px',height:'8px',borderRadius:'50%',background:radarDotColor(t.class),verticalAlign:'middle',marginLeft:'4px'}"></span></span>
                                             <span style="color:var(--gov-muted)">{{ Math.round(t.speed_kmh) }}km/h</span>
                                         </div>
                                     </div>
@@ -5850,7 +5849,7 @@
                                         <el-tag v-if="c.detection_config?.speeding" size="small" type="warning">超速</el-tag>
                                         <el-tag size="small" :type="c.detection_config?.analysis_stream_profile==='low'?'warning':'info'">分析: {{ c.detection_config?.analysis_stream_profile==='low'?'低碼流':'高碼流' }}</el-tag>
                                         <el-tag v-if="c.zones?.length" size="small">{{ c.zones.length }} ROI</el-tag>
-                                        <el-tag v-if="detectionStatus[c.id]?.running" size="small" type="success" effect="dark">● 偵測中</el-tag>
+                                        <el-tag v-if="detectionStatus[c.id]?.running" size="small" type="success" effect="dark"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:5px;vertical-align:middle"></span>偵測中</el-tag>
                                         <el-tag size="small" type="info">已啟動 {{ activeFeatureCount(c.id) }}/3</el-tag>
                                         <el-tag v-if="c.snapshotError" size="small" type="danger">串流逾時</el-tag>
                                     </div>
@@ -10096,23 +10095,23 @@ const app=createApp({
             const out = [];
             // 結構分析
             const compose = Object.entries(dist).map(([k,v])=>`${k} ${v}`).join(' · ');
-            out.push({type:'分類', icon:'●', color:'var(--gov-info)', label:compose});
+            out.push({type:'分類', color:'var(--gov-info)', label:compose});
             // 平均速率
             const spdLabel = avgSpeed > 60 ? '高速' : avgSpeed > 30 ? '中速' : '低速';
-            out.push({type:'速率', icon:'➤', color:'var(--gov-primary)', label:`平均 ${avgSpeed.toFixed(1)} km/h (${spdLabel})`});
+            out.push({type:'速率', color:'var(--gov-primary)', label:`平均 ${avgSpeed.toFixed(1)} km/h (${spdLabel})`});
             // 行為優化推論
             if (closeCount >= 5) {
-                out.push({type:'壅塞警示', icon:'⚠', color:'var(--gov-fault)', label:`20 m 內聚集 ${closeCount} 台 → 建議調控號誌秒數`});
+                out.push({type:'壅塞警示', color:'var(--gov-fault)', label:`20 m 內聚集 ${closeCount} 台 → 建議調控號誌秒數`});
             }
             const motoRatio = (dist['機車']||0) / n;
             if (motoRatio >= 0.35) {
-                out.push({type:'優化建議', icon:'↗', color:'var(--gov-warn)', label:`機車佔比 ${(motoRatio*100).toFixed(0)}% 偏高 → 建議劃設機車優先道`});
+                out.push({type:'優化建議', color:'var(--gov-warn)', label:`機車佔比 ${(motoRatio*100).toFixed(0)}% 偏高 → 建議劃設機車優先道`});
             }
             if (avgSpeed > 80) {
-                out.push({type:'安全隱患', icon:'⚠', color:'var(--gov-fault)', label:`平均速率超 80 km/h → 建議增設測速告示`});
+                out.push({type:'安全隱患', color:'var(--gov-fault)', label:`平均速率超 80 km/h → 建議增設測速告示`});
             }
             if (avgSpeed < 10 && n >= 3) {
-                out.push({type:'壅塞警示', icon:'⚠', color:'var(--gov-fault)', label:`流量 ${n} 台但平均 ${avgSpeed.toFixed(1)} km/h → 疑似阻塞`});
+                out.push({type:'壅塞警示', color:'var(--gov-fault)', label:`流量 ${n} 台但平均 ${avgSpeed.toFixed(1)} km/h → 疑似阻塞`});
             }
             return out;
         });
@@ -12091,7 +12090,7 @@ const app=createApp({
             list.push({
                 key:'nvr-status',
                 tone:frigateStatus.status==='online'?'success':'warn',
-                icon:frigateStatus.status==='online'?'●':'!',
+                icon:frigateStatus.status==='online'?'OK':'!',
                 title:frigateStatus.status==='online'?'NVR 已連線':'NVR 連線中斷',
                 text:frigateStatus.status==='online'
                     ? `Frigate ${frigateStatus.version||'-'} · ${frigateStatus.cameras?.length||0} 台攝影機在線`
@@ -12653,7 +12652,7 @@ const app=createApp({
                     const popHtml=`
                         <div class="cam-map-popup" data-camid="${c.id}">
                             <div class="cam-map-popup-title">${c.name}
-                                <span style="color:${color};font-size:11px">●${c.status==='online'?'線上':'離線'}</span>
+                                <span style="font-size:11px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};vertical-align:middle;margin-right:4px"></span><span style="color:${color}">${c.status==='online'?'線上':'離線'}</span></span>
                             </div>
                             <div class="cam-map-popup-img-wrap">
                                 <img class="cam-map-popup-img" alt="載入影像中...">
