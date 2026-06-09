@@ -16,11 +16,49 @@ import math
 import os
 import sys
 
+from PIL import Image, ImageDraw, ImageFont
+
 sys.path.insert(0, '/workspace')
 
 from api.utils.camera_stream import resolve_analysis_source
 
 router = APIRouter(prefix="/api/vision_eye", tags=["vision-eye"])
+
+# ─── 中文字體 (PIL — cv2.putText 不支援中文,會輸出 ???) ───
+_FONT_PATH_CANDIDATES = [
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+]
+_FONT_PATH = next((p for p in _FONT_PATH_CANDIDATES if os.path.exists(p)), None)
+_FONT_CACHE: dict = {}
+
+
+def _font(size: int):
+    if not _FONT_PATH:
+        return None
+    if size not in _FONT_CACHE:
+        try:
+            _FONT_CACHE[size] = ImageFont.truetype(_FONT_PATH, size)
+        except Exception:
+            _FONT_CACHE[size] = None
+    return _FONT_CACHE[size]
+
+
+def _draw_zh_batch(frame: np.ndarray, items: list) -> np.ndarray:
+    """batch 寫中文 — items = [(text, (x,y), size, (B,G,R)), ...]
+    回傳新 frame (in-place 改寫 BGR np.ndarray)。"""
+    if not items or not _FONT_PATH:
+        return frame
+    pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil)
+    for text, pos, size, c_bgr in items:
+        font = _font(size)
+        if not font or not text:
+            continue
+        rgb = (int(c_bgr[2]), int(c_bgr[1]), int(c_bgr[0]))
+        draw.text(pos, text, font=font, fill=rgb)
+    return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
 
 
 # 中文 class label
@@ -140,6 +178,8 @@ def vision_eye_snapshot(camera_id: int):
         cv2.rectangle(overlay, (0, 0), (fw, fh), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.18, frame, 0.82, 0, frame)
 
+        # 蒐集中文 text items 最後 PIL batch render (一次 BGR↔RGB conversion)
+        text_items: list = []
         n_drawn = 0
         for det in detections or []:
             cls_name = str(det.get('class_name') or '').lower()
@@ -160,38 +200,44 @@ def vision_eye_snapshot(camera_id: int):
             # bbox 細框
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
 
-            # 端點圓 (對應物件) + 中心點圓 (鏡頭)
+            # 端點圓 (對應物件)
             cv2.circle(frame, (bcx, bcy), 6, color, -1)
             cv2.circle(frame, (bcx, bcy), 6, (255, 255, 255), 1)
 
-            # 標籤: 中文類別 + 距離 (px) + 速度 (從 tracker 查)
+            # 標籤: 中文類別 + 速度 + 距離 (px) — 用 PIL 寫中文
             dist_px = int(math.hypot(bcx - cam_cx, bcy - cam_cy))
             label = _CLS_ZH.get(cls_name, cls_name)
             tid = det.get('track_id')
             speed_kmh = speed_map.get(int(tid) if tid is not None else -1, 0.0)
             label_speed = f"  {speed_kmh:.0f} km/h" if speed_kmh > 0.5 else ""
             text1 = f"{label}{label_speed}"
-            text2 = f"d {dist_px}px"
+            text2 = f"距離 {dist_px} px"
 
-            # 標籤背景
-            (tw, th), _ = cv2.getTextSize(text1, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            # 標籤背景 (cv2 — 純色矩形 ok)
+            label_w = max(120, len(text1) * 14)
             lx = x1
-            ly = max(y1 - 6, th + 4)
-            cv2.rectangle(frame, (lx - 2, ly - th - 4), (lx + tw + 6, ly + 4), color, -1)
-            cv2.putText(frame, text1, (lx + 2, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-            cv2.putText(frame, text2, (lx + 2, ly + 16),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
+            ly = max(y1 - 30, 4)
+            cv2.rectangle(frame, (lx - 2, ly - 2), (lx + label_w, ly + 38), color, -1)
+            # 黑字 (中文用 PIL)
+            text_items.append((text1, (lx + 4, ly + 2), 16, (0, 0, 0)))
+            text_items.append((text2, (lx + 4, ly + 20), 12, (40, 40, 40)))
             n_drawn += 1
 
         # 中心點 (鏡頭視角) — pulse-style 三層圓
         cv2.circle(frame, (cam_cx, cam_cy), 14, (60, 220, 130), 2)
         cv2.circle(frame, (cam_cx, cam_cy), 8, (60, 220, 130), -1)
+        # VISION EYE 標籤 (英文用 cv2 即可)
         cv2.putText(frame, "VISION EYE", (cam_cx - 56, cam_cy - 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (60, 220, 130), 1)
 
-        # HUD 左上
-        hud = f"cam: {camera.name}  |  tracked: {n_drawn}  |  AI semantic vision"
-        cv2.putText(frame, hud, (16, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        # HUD 左上 — 中文 cam name 用 PIL,其他英文用 cv2
+        cv2.rectangle(frame, (10, 10), (560, 50), (0, 0, 0), -1)
+        cv2.rectangle(frame, (10, 10), (560, 50), (60, 220, 130), 1)
+        text_items.append((f"攝影機  {camera.name}", (20, 14), 16, (60, 220, 130)))
+        text_items.append((f"追蹤 {n_drawn} 個物件 · AI 語義化視覺", (20, 32), 14, (220, 220, 220)))
+
+        # 一次性 PIL render 中文
+        frame = _draw_zh_batch(frame, text_items)
 
         ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 82])
         if not ok:
