@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from services.parking_occupancy import (
     evaluate_occupancy, fetch_frame, load_slots, get_source_meta,
     auto_session_start, auto_session_status, auto_session_stop_and_get,
+    reset_auto_positions,
     _CONFIG_PATH,
 )
 
@@ -116,6 +117,13 @@ def list_sources():
 def get_occupancy(source: str = Query(..., description="source key e.g. twipcam:tpe-005013")):
     """跑 yolo 判定每 slot occupied/empty + 統計"""
     return evaluate_occupancy(source)
+
+
+@router.post("/auto/reset")
+def auto_reset(source: str = Query(...)):
+    """重置 auto mode 累積位置 (例如停車場攝影機角度變了想重來)"""
+    n = reset_auto_positions(source)
+    return {"source": source, "cleared": n}
 
 
 @router.get("/history")

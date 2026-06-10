@@ -346,10 +346,127 @@ def _bbox_iou_with_polygon(bbox: Tuple[int, int, int, int],
 # {source: [[x1,y1,x2,y2,seen_count,last_seen_ts], ...]}
 _AUTO_POSITIONS: Dict[str, list] = {}
 _AUTO_POS_LOCK = threading.Lock()
-_AUTO_POS_TTL_SEC = 3600.0   # 1 小時沒見過自動刪 (避免累積過時位置)
-_AUTO_POS_CONF = 0.15        # 低 threshold,盡量抓到所有車
-_AUTO_POS_MERGE_IOU = 0.7    # 高 IoU 才 merge (避免相鄰車輛被合併)
-_AUTO_POS_OCC_IOU = 0.5      # 當下佔用判定 (寬一些,容忍 yolo bbox 抖動)
+# IO trigger throttle (per source 60 秒只觸發一次,避免狂發 pulse)
+_IO_TRIGGER_LAST_AT: Dict[str, float] = {}
+_IO_TRIGGER_THROTTLE_SEC = 60.0
+_IO_TRIGGER_LOCK = threading.Lock()
+
+
+def maybe_trigger_io(result: Dict, meta: Dict) -> Dict:
+    """meta 內若有 io_trigger 設定且 rate >= threshold,觸發 io_tcp pulse.
+    return {triggered, reason}"""
+    cfg = meta.get("io_trigger") or {}
+    if not cfg.get("enabled"):
+        return {"triggered": False, "reason": "io_trigger 未啟用"}
+    module_id = cfg.get("module_id")
+    do_ch = int(cfg.get("do_ch", 0))
+    threshold = float(cfg.get("threshold_rate", 95.0))
+    pulse_ms = int(cfg.get("pulse_ms", 1000))
+    rate = float(result.get("occupancy_rate") or 0)
+    if rate < threshold:
+        return {"triggered": False, "reason": f"rate {rate}% < threshold {threshold}%"}
+    if not module_id:
+        return {"triggered": False, "reason": "未指定 module_id"}
+    src = result.get("source") or ""
+    now = time.time()
+    with _IO_TRIGGER_LOCK:
+        last = _IO_TRIGGER_LAST_AT.get(src, 0.0)
+        if (now - last) < _IO_TRIGGER_THROTTLE_SEC:
+            return {"triggered": False, "reason": "60 秒內已觸發過"}
+        _IO_TRIGGER_LAST_AT[src] = now
+    try:
+        from services.modbus_tcp_io import get_module
+        mod = get_module(module_id)
+        if mod is None:
+            return {"triggered": False, "reason": f"module {module_id} 未配置"}
+        ok = mod.pulse_output(do_ch, pulse_ms)
+        return {"triggered": ok, "module_id": module_id, "do_ch": do_ch,
+                "pulse_ms": pulse_ms, "rate": rate,
+                "reason": f"rate {rate}% >= {threshold}%" if ok else mod.error}
+    except Exception as e:
+        return {"triggered": False, "reason": str(e)}
+_AUTO_POS_TTL_SEC = 3600.0
+_AUTO_POS_CONF = 0.12         # 低 threshold,盡量抓到所有車 (sliced 後 false pos 在 NMS 過濾)
+_AUTO_POS_MERGE_IOU = 0.6     # IoU 0.6 才 merge,相鄰車不誤合
+_AUTO_POS_OCC_IOU = 0.4
+# Sliced inference — 3×3 切片 + 全圖各跑一次,對「俯角遠處小車」(停車場典型) 偵測率提升明顯
+_SLICE_ROWS = 3
+_SLICE_COLS = 3
+_SLICE_OVERLAP = 0.2
+
+
+def _yolo_sliced_detect(yolo_local, frame: np.ndarray) -> list:
+    """切 frame 成 R×C tile 各自跑 yolo,coord 加 offset 回 full-frame.
+    最後跟全圖一起跑 NMS (IoU > 0.5 抑制) 去重."""
+    h, w = frame.shape[:2]
+    tile_w = max(64, w // _SLICE_COLS)
+    tile_h = max(64, h // _SLICE_ROWS)
+    ov_w = int(tile_w * _SLICE_OVERLAP)
+    ov_h = int(tile_h * _SLICE_OVERLAP)
+    all_dets = []
+    for r in range(_SLICE_ROWS):
+        for c in range(_SLICE_COLS):
+            x0 = max(0, c * tile_w - ov_w)
+            y0 = max(0, r * tile_h - ov_h)
+            x1 = min(w, (c + 1) * tile_w + ov_w)
+            y1 = min(h, (r + 1) * tile_h + ov_h)
+            tile = frame[y0:y1, x0:x1]
+            if tile.size == 0:
+                continue
+            try:
+                dets = yolo_local.detect(tile)
+            except Exception:
+                continue
+            for d in dets or []:
+                bb = d.get("bbox") or {}
+                all_dets.append({
+                    "class_name": d.get("class_name", ""),
+                    "conf": float(d.get("confidence") or d.get("conf") or 0.0),
+                    "bbox": {
+                        "x1": int(bb.get("x1", 0)) + x0,
+                        "y1": int(bb.get("y1", 0)) + y0,
+                        "x2": int(bb.get("x2", 0)) + x0,
+                        "y2": int(bb.get("y2", 0)) + y0,
+                    },
+                })
+    # 全圖補大型物 (sliced 可能切斷貨車/巴士)
+    try:
+        for d in (yolo_local.detect(frame) or []):
+            bb = d.get("bbox") or {}
+            all_dets.append({
+                "class_name": d.get("class_name", ""),
+                "conf": float(d.get("confidence") or d.get("conf") or 0.0),
+                "bbox": {
+                    "x1": int(bb.get("x1", 0)), "y1": int(bb.get("y1", 0)),
+                    "x2": int(bb.get("x2", 0)), "y2": int(bb.get("y2", 0)),
+                },
+            })
+    except Exception:
+        pass
+
+    # NMS
+    def _iou_d(a, b):
+        ix1 = max(a["x1"], b["x1"]); iy1 = max(a["y1"], b["y1"])
+        ix2 = min(a["x2"], b["x2"]); iy2 = min(a["y2"], b["y2"])
+        iw = max(0, ix2 - ix1); ih = max(0, iy2 - iy1)
+        inter = iw * ih
+        ar = (a["x2"] - a["x1"]) * (a["y2"] - a["y1"])
+        br = (b["x2"] - b["x1"]) * (b["y2"] - b["y1"])
+        return inter / max(1, ar + br - inter)
+    all_dets.sort(key=lambda d: d.get("conf", 0.0), reverse=True)
+    kept = []
+    for d in all_dets:
+        if any(_iou_d(d["bbox"], k["bbox"]) > 0.5 for k in kept):
+            continue
+        kept.append(d)
+    return kept
+
+
+def reset_auto_positions(source_key: str) -> int:
+    """清掉 _AUTO_POSITIONS[source],回 cleared 數"""
+    with _AUTO_POS_LOCK:
+        old = _AUTO_POSITIONS.pop(source_key, [])
+    return len(old)
 
 
 def _eval_auto_mode(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
@@ -362,7 +479,7 @@ def _eval_auto_mode(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
     try:
         from detection.vehicle_detector import VehicleDetector
         yolo_local = VehicleDetector(conf_threshold=_AUTO_POS_CONF)
-        detections = yolo_local.detect(frame)
+        detections = _yolo_sliced_detect(yolo_local, frame)
     except Exception as e:
         return {"source": source_key, "source_name": meta.get("name", source_key),
                 "error": f"yolo: {e}", "total": 0, "occupied": 0, "available": 0,
@@ -472,9 +589,9 @@ def evaluate_occupancy(source_key: str) -> Dict:
     h, w = frame.shape[:2]
     # 跑 yolo
     try:
-        from api.routes.lpr_visual import get_yolo
-        yolo = get_yolo()
-        detections = yolo.detect(frame)
+        from detection.vehicle_detector import VehicleDetector
+        yolo_local_roi = VehicleDetector(conf_threshold=0.12)
+        detections = _yolo_sliced_detect(yolo_local_roi, frame)
     except Exception as e:
         return {"source": source_key, "error": f"yolo detect err: {e}",
                 "total": len(slots_cfg), "occupied": 0, "available": 0,
