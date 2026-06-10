@@ -12,13 +12,28 @@ import os
 
 import cv2
 import numpy as np
+from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 from services.parking_occupancy import (
     evaluate_occupancy, fetch_frame, load_slots, get_source_meta,
     _CONFIG_PATH,
 )
+
+
+class SlotPolygon(BaseModel):
+    id: str
+    label: Optional[str] = None
+    polygon: List[List[float]]
+
+
+class SlotsSaveBody(BaseModel):
+    source: str
+    name: Optional[str] = None
+    image_url: Optional[str] = None
+    slots: List[SlotPolygon]
 
 
 router = APIRouter(prefix="/api/parking", tags=["parking"])
@@ -51,6 +66,50 @@ def list_sources():
 def get_occupancy(source: str = Query(..., description="source key e.g. twipcam:tpe-005013")):
     """跑 yolo 判定每 slot occupied/empty + 統計"""
     return evaluate_occupancy(source)
+
+
+@router.get("/snapshot/raw")
+def get_snapshot_raw(source: str = Query(..., description="source key")):
+    """回 raw frame (沒 overlay) — 供 ROI 編輯器當底圖"""
+    import numpy as np
+    frame = fetch_frame(source)
+    if frame is None:
+        ph = np.zeros((360, 640, 3), dtype=np.uint8)
+        cv2.putText(ph, "FRAME UNAVAILABLE", (24, 180),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+        ok, buf = cv2.imencode(".jpg", ph, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        return Response(content=buf.tobytes(), media_type="image/jpeg")
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    return Response(content=buf.tobytes(), media_type="image/jpeg")
+
+
+@router.post("/slots/save")
+def save_slots(body: SlotsSaveBody):
+    """覆寫 data/parking_slots.json 內該 source 的 slots."""
+    # 讀現有 (或從 default 起手)
+    existing: dict = {}
+    if os.path.exists(_CONFIG_PATH):
+        try:
+            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = {}
+    else:
+        from services.parking_occupancy import _DEFAULT_CONFIG
+        existing = json.loads(json.dumps(_DEFAULT_CONFIG))  # deep copy
+
+    entry = existing.get(body.source) or {}
+    if body.name:
+        entry["name"] = body.name
+    if body.image_url:
+        entry["image_url"] = body.image_url
+    entry["slots"] = [s.model_dump() for s in body.slots]
+    existing[body.source] = entry
+
+    os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+    with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(existing, f, ensure_ascii=False, indent=2)
+    return {"ok": True, "source": body.source, "saved": len(body.slots)}
 
 
 @router.get("/snapshot")

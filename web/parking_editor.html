@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>停車場車位 ROI 編輯器</title>
+<link rel="icon" href="/favicon.ico">
+<script src="/web/lib/vue.global.prod.js"></script>
+<script src="/web/lib/element-plus.min.js"></script>
+<link rel="stylesheet" href="/web/lib/element-plus.css">
+<style>
+  body { font-family: "Noto Sans TC", system-ui, sans-serif; padding: 20px; background: #eef2f6; margin: 0; }
+  .container { max-width: 1280px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+  h2 { margin: 0 0 12px; color: #0b5ea8; }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 12px; background: #f6f9fd; border: 1px solid #d7dee8; border-radius: 6px; margin-bottom: 12px; }
+  .canvas-wrap { position: relative; display: inline-block; border: 1px solid #c5dbf0; border-radius: 6px; overflow: hidden; background: #000; }
+  .canvas-wrap img { display: block; max-width: 100%; }
+  .canvas-wrap canvas { position: absolute; top: 0; left: 0; cursor: crosshair; }
+  .hint { background: #eaf2fb; border-left: 3px solid #0b5ea8; padding: 8px 12px; font-size: 13px; color: #1f2937; border-radius: 4px; margin-bottom: 12px; }
+  .slot-list { margin-top: 16px; }
+  .slot-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #f6f9fd; border-radius: 6px; margin-bottom: 6px; font-family: monospace; font-size: 13px; }
+  .slot-id { font-weight: 700; color: #0b5ea8; min-width: 60px; }
+  .slot-poly { color: #5b6778; font-size: 11px; flex: 1; word-break: break-all; }
+  .save-bar { position: sticky; bottom: 0; background: #fff; padding: 12px 0; border-top: 1px solid #d7dee8; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="container">
+    <h2>停車場車位 ROI 編輯器 — {{ sourceName || sourceKey }}</h2>
+
+    <div class="hint">
+      操作:
+      <strong>左鍵</strong> 在影像上點擊建立 polygon 頂點 (4 點以上),
+      <strong>右鍵</strong> 取消上一點,
+      <strong>Enter / 完成本格</strong> 完成當前 polygon (進入下一格),
+      <strong>Esc</strong> 取消當前繪製。
+    </div>
+
+    <div class="toolbar">
+      <span>來源:</span>
+      <el-input v-model="sourceKey" size="small" style="width:240px" placeholder="twipcam:tpe-005013"/>
+      <el-button size="small" plain @click="reloadImage">載入影像</el-button>
+      <el-divider direction="vertical"/>
+      <span>當前車位 id:</span>
+      <el-input v-model="currentSlotId" size="small" style="width:120px" placeholder="A1"/>
+      <span>label:</span>
+      <el-input v-model="currentSlotLabel" size="small" style="width:120px"/>
+      <el-button size="small" type="primary" @click="finishCurrent" :disabled="currentPoints.length < 3">完成本格</el-button>
+      <el-button size="small" @click="cancelCurrent" :disabled="!currentPoints.length">取消繪製</el-button>
+      <el-button size="small" plain @click="loadExistingSlots">重新載入</el-button>
+    </div>
+
+    <div class="canvas-wrap">
+      <img ref="img" :src="rawImgUrl" @load="onImgLoad" crossorigin="anonymous"/>
+      <canvas ref="canvas"
+              @mousedown="onCanvasClick"
+              @mousemove="onCanvasMove"
+              @contextmenu.prevent="undoPoint"></canvas>
+    </div>
+
+    <div class="slot-list">
+      <h3 style="margin:14px 0 8px;color:#0b5ea8">已標 {{ slots.length }} 格</h3>
+      <div v-if="!slots.length" style="color:#9ca3af;font-size:13px;padding:10px">尚無車位,在影像上點擊開始</div>
+      <div v-for="(s, idx) in slots" :key="s.id + idx" class="slot-row">
+        <span class="slot-id">{{ s.id }}</span>
+        <el-input v-model="s.label" size="small" style="width:120px"/>
+        <span class="slot-poly">{{ s.polygon.map(p => `(${p[0]},${p[1]})`).join(' ') }}</span>
+        <el-button size="small" type="danger" plain @click="removeSlot(idx)">刪除</el-button>
+      </div>
+    </div>
+
+    <div class="save-bar">
+      <div style="font-size:12px;color:#5b6778">{{ saveMsg }}</div>
+      <div>
+        <el-button @click="closeWin">關閉</el-button>
+        <el-button type="primary" @click="saveSlots" :loading="saving">儲存全部 ({{ slots.length }} 格)</el-button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, reactive, onMounted, computed, nextTick } = Vue;
+const app = createApp({
+  setup() {
+    const params = new URLSearchParams(location.search);
+    const sourceKey = ref(params.get('source') || 'twipcam:tpe-005013');
+    const sourceName = ref('');
+    const _rawTick = ref(Date.now());
+    const rawImgUrl = computed(() => `/api/parking/snapshot/raw?source=${encodeURIComponent(sourceKey.value)}&t=${_rawTick.value}`);
+    const img = ref(null);
+    const canvas = ref(null);
+    const slots = ref([]);
+    const currentPoints = ref([]);   // [[x,y]] 像素 coord
+    const currentSlotId = ref('A1');
+    const currentSlotLabel = ref('A1');
+    const mouseXY = ref(null);
+    const saving = ref(false);
+    const saveMsg = ref('');
+    let imgW = 1, imgH = 1, scaleX = 1, scaleY = 1;
+
+    const reloadImage = () => { _rawTick.value = Date.now(); };
+
+    const onImgLoad = () => {
+      const el = img.value;
+      if (!el) return;
+      imgW = el.naturalWidth;
+      imgH = el.naturalHeight;
+      // canvas 跟 img 顯示尺寸對齊
+      const cv = canvas.value;
+      const dispW = el.clientWidth;
+      const dispH = el.clientHeight;
+      cv.width = dispW;
+      cv.height = dispH;
+      scaleX = imgW / dispW;
+      scaleY = imgH / dispH;
+      redraw();
+    };
+
+    const redraw = () => {
+      const cv = canvas.value;
+      if (!cv) return;
+      const ctx = cv.getContext('2d');
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      // 已存 slots — 半透綠
+      for (const s of slots.value) {
+        if (!s.polygon || s.polygon.length < 3) continue;
+        ctx.fillStyle = 'rgba(31,157,85,0.32)';
+        ctx.strokeStyle = '#1f9d55';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        s.polygon.forEach((p, i) => {
+          const x = p[0] / scaleX;
+          const y = p[1] / scaleY;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        // label
+        const cx = s.polygon.reduce((a, p) => a + p[0], 0) / s.polygon.length / scaleX;
+        const cy = s.polygon.reduce((a, p) => a + p[1], 0) / s.polygon.length / scaleY;
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = '#0b5ea8';
+        ctx.lineWidth = 1;
+        ctx.font = 'bold 12px monospace';
+        const txt = s.label || s.id;
+        const tw = ctx.measureText(txt).width;
+        ctx.fillStyle = '#0b5ea8';
+        ctx.fillRect(cx - tw / 2 - 4, cy - 9, tw + 8, 16);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(txt, cx - tw / 2, cy + 3);
+      }
+      // 當前繪製中 polygon — 紅色
+      if (currentPoints.value.length > 0) {
+        ctx.strokeStyle = '#dc2626';
+        ctx.fillStyle = 'rgba(220,38,38,0.28)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        currentPoints.value.forEach((p, i) => {
+          const x = p[0] / scaleX, y = p[1] / scaleY;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        // 預覽線 (滑鼠位置)
+        if (mouseXY.value && currentPoints.value.length > 0) {
+          ctx.lineTo(mouseXY.value[0], mouseXY.value[1]);
+        }
+        ctx.stroke();
+        if (currentPoints.value.length >= 3) {
+          ctx.closePath();
+          ctx.fill();
+        }
+        // 頂點圓
+        ctx.fillStyle = '#dc2626';
+        for (const p of currentPoints.value) {
+          ctx.beginPath();
+          ctx.arc(p[0] / scaleX, p[1] / scaleY, 4, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      }
+    };
+
+    const onCanvasClick = (e) => {
+      const cv = canvas.value;
+      const rect = cv.getBoundingClientRect();
+      const dx = e.clientX - rect.left;
+      const dy = e.clientY - rect.top;
+      // 轉成 image pixel coord
+      const px = Math.round(dx * scaleX);
+      const py = Math.round(dy * scaleY);
+      currentPoints.value = [...currentPoints.value, [px, py]];
+      redraw();
+    };
+
+    const onCanvasMove = (e) => {
+      if (!currentPoints.value.length) return;
+      const cv = canvas.value;
+      const rect = cv.getBoundingClientRect();
+      mouseXY.value = [e.clientX - rect.left, e.clientY - rect.top];
+      redraw();
+    };
+
+    const undoPoint = () => {
+      if (!currentPoints.value.length) return;
+      currentPoints.value = currentPoints.value.slice(0, -1);
+      redraw();
+    };
+
+    const cancelCurrent = () => {
+      currentPoints.value = [];
+      mouseXY.value = null;
+      redraw();
+    };
+
+    const finishCurrent = () => {
+      if (currentPoints.value.length < 3) {
+        ElementPlus.ElMessage.warning('至少 3 點');
+        return;
+      }
+      const sid = currentSlotId.value.trim() || `slot_${slots.value.length + 1}`;
+      slots.value.push({
+        id: sid,
+        label: (currentSlotLabel.value.trim() || sid),
+        polygon: currentPoints.value.slice(),
+      });
+      // 自動 increment id (A1→A2, B1→B2 等)
+      const m = sid.match(/^([A-Z]+)(\d+)$/);
+      if (m) {
+        const nextN = String(parseInt(m[2], 10) + 1);
+        currentSlotId.value = m[1] + nextN;
+        currentSlotLabel.value = m[1] + nextN;
+      }
+      currentPoints.value = [];
+      mouseXY.value = null;
+      redraw();
+    };
+
+    const removeSlot = (idx) => {
+      slots.value.splice(idx, 1);
+      redraw();
+    };
+
+    const onKeydown = (e) => {
+      if (e.key === 'Enter') finishCurrent();
+      else if (e.key === 'Escape') cancelCurrent();
+    };
+
+    const loadExistingSlots = async () => {
+      try {
+        const r = await fetch(`/api/parking/occupancy?source=${encodeURIComponent(sourceKey.value)}`);
+        const d = await r.json();
+        sourceName.value = d.source_name || '';
+        slots.value = (d.slots || []).map(s => ({
+          id: s.id, label: s.label, polygon: s.polygon,
+        }));
+        redraw();
+      } catch (e) {
+        ElementPlus.ElMessage.error('載入失敗: ' + e.message);
+      }
+    };
+
+    const saveSlots = async () => {
+      saving.value = true;
+      saveMsg.value = '';
+      try {
+        const r = await fetch('/api/parking/slots/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source: sourceKey.value,
+            name: sourceName.value,
+            slots: slots.value.map(s => ({
+              id: s.id, label: s.label, polygon: s.polygon,
+            })),
+          }),
+        });
+        const d = await r.json();
+        if (r.ok) {
+          saveMsg.value = `儲存成功 — ${d.saved} 格`;
+          ElementPlus.ElMessage.success(`儲存成功 (${d.saved} 格)`);
+        } else {
+          saveMsg.value = '儲存失敗: ' + (d.detail || r.status);
+        }
+      } catch (e) {
+        saveMsg.value = '錯誤: ' + e.message;
+      } finally {
+        saving.value = false;
+      }
+    };
+
+    const closeWin = () => window.close();
+
+    onMounted(() => {
+      window.addEventListener('keydown', onKeydown);
+      loadExistingSlots();
+    });
+
+    return {
+      sourceKey, sourceName, rawImgUrl, img, canvas, slots,
+      currentPoints, currentSlotId, currentSlotLabel,
+      saving, saveMsg,
+      reloadImage, onImgLoad, onCanvasClick, onCanvasMove, undoPoint,
+      cancelCurrent, finishCurrent, removeSlot, loadExistingSlots,
+      saveSlots, closeWin,
+    };
+  },
+});
+app.use(ElementPlus);
+app.mount('#app');
+</script>
+</body>
+</html>
