@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from services.parking_occupancy import (
     evaluate_occupancy, fetch_frame, load_slots, get_source_meta,
+    auto_session_start, auto_session_status, auto_session_stop_and_get,
     _CONFIG_PATH,
 )
 
@@ -137,42 +138,61 @@ def auto_detect_slots(source: str = Query(..., description="source key"),
                       expand: float = Query(0.08, ge=0.0, le=0.5,
                                             description="bbox 外擴比例"),
                       conf: float = Query(0.15, ge=0.05, le=0.9,
-                                          description="YOLO conf threshold (停車場滿小車多,需低)"),
-                      merge_overlap: bool = Query(True,
-                                                  description="多輛車重疊框時合併")):
-    """一鍵自動偵測車位 — 拉 frame + YOLO detect 所有車輛 bbox,
-    每個 car/truck bbox 外擴 N% 後當作車位 polygon 回傳.
-    (假設停在那的車佔了一個車位;空車場需手動補.)
-
-    回 list of slots (不直接寫 config,讓前端 preview + user 確認再儲存)."""
+                                          description="YOLO conf threshold"),
+                      frames: int = Query(5, ge=1, le=20,
+                                          description="抓即時影像 frame 數累積"),
+                      interval_sec: float = Query(10.0, ge=1.0, le=120.0,
+                                                  description="frame 間隔秒 (TwiPcam 通常 30-60 秒才會更新一次,間隔太短拿到相同 frame)"),
+                      merge_overlap: bool = Query(True)):
+    """多 frame 累積自動偵測車位 — 抓即時影像 N 張,每張間隔 K 秒,
+    YOLO detect 全部車輛 bbox 累積後合併 (IoU > 0.5 視為同位置).
+    停車場滿時車輛位置變化 → 多 frame 涵蓋更多車位."""
+    import time as _t
     import numpy as np
 
-    frame = fetch_frame(source)
-    if frame is None:
-        raise HTTPException(status_code=503, detail="frame unavailable")
-    h_img, w_img = frame.shape[:2]
+    vehicle_classes = {"car", "truck", "bus", "heavy_truck", "light_truck", "non_truck"}
+    all_raw_boxes: list = []
+    frame_info = []
+    w_img, h_img = 0, 0
+    yolo_local = None
     try:
-        # 自動偵測停車位時用低 conf (停車場多小車重疊,需要看到所有可能車輛)
         from detection.vehicle_detector import VehicleDetector
         yolo_local = VehicleDetector(conf_threshold=float(conf))
-        detections = yolo_local.detect(frame)
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"yolo detect err: {e}")
+        raise HTTPException(status_code=503, detail=f"yolo init err: {e}")
 
-    vehicle_classes = {"car", "truck", "bus", "heavy_truck", "light_truck", "non_truck"}
-    raw_boxes = []
-    for det in detections or []:
-        cls = str(det.get("class_name") or "").lower()
-        if cls not in vehicle_classes:
+    for fi in range(frames):
+        if fi > 0:
+            _t.sleep(interval_sec)
+        # 第 2 張之後 bypass cache 強制重拉即時影像
+        frame = fetch_frame(source, bypass_cache=(fi > 0))
+        if frame is None:
             continue
-        bb = det.get("bbox", {})
-        x1 = int(bb.get("x1", 0))
-        y1 = int(bb.get("y1", 0))
-        x2 = int(bb.get("x2", 0))
-        y2 = int(bb.get("y2", 0))
-        if x2 <= x1 or y2 <= y1:
+        if w_img == 0:
+            h_img, w_img = frame.shape[:2]
+        try:
+            detections = yolo_local.detect(frame)
+        except Exception as e:
+            frame_info.append({"frame": fi, "err": str(e)})
             continue
-        raw_boxes.append([x1, y1, x2, y2])
+        n_this = 0
+        for det in detections or []:
+            cls = str(det.get("class_name") or "").lower()
+            if cls not in vehicle_classes:
+                continue
+            bb = det.get("bbox", {})
+            x1 = int(bb.get("x1", 0)); y1 = int(bb.get("y1", 0))
+            x2 = int(bb.get("x2", 0)); y2 = int(bb.get("y2", 0))
+            if x2 <= x1 or y2 <= y1:
+                continue
+            all_raw_boxes.append([x1, y1, x2, y2])
+            n_this += 1
+        frame_info.append({"frame": fi, "vehicles": n_this})
+
+    if w_img == 0:
+        raise HTTPException(status_code=503, detail="所有 frame 都 fetch 失敗")
+
+    raw_boxes = all_raw_boxes
 
     # 合併過度重疊 (IoU > 0.6)
     def _iou(a, b):
@@ -185,18 +205,28 @@ def auto_detect_slots(source: str = Query(..., description="source key"),
         return inter / max(1, ar + br - inter)
 
     if merge_overlap:
-        merged = []
+        # 多 frame 累積後 merge: IoU > 0.5 視為同位置 (合併用平均座標而非聯集,
+        # 避免框越合越大),累積出現越多次的位置可信度越高
+        merged = []   # [[x1,y1,x2,y2,count], ...]
         for bx in raw_boxes:
             absorbed = False
             for i, m in enumerate(merged):
-                if _iou(bx, m) > 0.6:
-                    merged[i] = [min(m[0], bx[0]), min(m[1], bx[1]),
-                                 max(m[2], bx[2]), max(m[3], bx[3])]
+                if _iou(bx, m[:4]) > 0.5:
+                    cnt = m[4] + 1
+                    # 加權移動平均 (新框 vs 累積)
+                    nx1 = (m[0] * m[4] + bx[0]) / cnt
+                    ny1 = (m[1] * m[4] + bx[1]) / cnt
+                    nx2 = (m[2] * m[4] + bx[2]) / cnt
+                    ny2 = (m[3] * m[4] + bx[3]) / cnt
+                    merged[i] = [int(nx1), int(ny1), int(nx2), int(ny2), cnt]
                     absorbed = True
                     break
             if not absorbed:
-                merged.append(bx)
-        boxes = merged
+                merged.append([bx[0], bx[1], bx[2], bx[3], 1])
+        # 過濾僅出現一次 (frames > 1 時) — 減少 false positive
+        if frames > 1:
+            merged = [m for m in merged if m[4] >= 1]   # 暫不過濾,讓 user 自己刪
+        boxes = [m[:4] for m in merged]
     else:
         boxes = raw_boxes
 
@@ -216,10 +246,37 @@ def auto_detect_slots(source: str = Query(..., description="source key"),
     return {
         "source": source,
         "frame_w": w_img, "frame_h": h_img,
+        "frames_used": frames,
+        "interval_sec": interval_sec,
         "detected_vehicles": len(raw_boxes),
+        "merged_slots": len(boxes),
         "slots": slots_out,
-        "note": "從 YOLO car 偵測自動產生,可在編輯器調整或刪除",
+        "frame_info": frame_info,
+        "note": f"從 {frames} 張即時影像累積 yolo 偵測產生,可在編輯器調整或刪除",
     }
+
+
+@router.post("/slots/auto_session/start")
+def slots_auto_start(source: str = Query(...),
+                     conf: float = Query(0.15, ge=0.05, le=0.9),
+                     expand: float = Query(0.08, ge=0.0, le=0.5),
+                     interval_sec: float = Query(30.0, ge=5.0, le=300.0),
+                     max_frames: int = Query(60, ge=1, le=500)):
+    """啟動背景累積偵測 — thread 每 interval_sec 拉即時影像 + yolo + merge,
+    max_frames 後自動停 (60 frames × 30s = 30 分鐘 max)."""
+    return auto_session_start(source, conf=conf, expand=expand,
+                               interval_sec=interval_sec, max_frames=max_frames)
+
+
+@router.get("/slots/auto_session/status")
+def slots_auto_status(source: str = Query(...)):
+    return auto_session_status(source)
+
+
+@router.post("/slots/auto_session/stop")
+def slots_auto_stop(source: str = Query(...)):
+    """停止背景 session 並回 merged slots polygon list"""
+    return auto_session_stop_and_get(source)
 
 
 @router.post("/slots/save")

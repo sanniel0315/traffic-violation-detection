@@ -42,10 +42,20 @@
       <el-input v-model="currentSlotId" size="small" style="width:120px" placeholder="A1"/>
       <span>label:</span>
       <el-input v-model="currentSlotLabel" size="small" style="width:120px"/>
-      <el-button size="small" type="success" :loading="autoDetecting" @click="autoDetectSlots">自動偵測車位</el-button>
+      <el-button size="small" type="success" :loading="autoDetecting" @click="autoDetectSlots" v-if="!sessionRunning">自動偵測車位 (單張)</el-button>
+      <el-button size="small" type="primary" @click="startSession" v-if="!sessionRunning">背景累積偵測</el-button>
+      <el-button size="small" type="danger" @click="stopSessionAndImport" v-if="sessionRunning">停止累積並匯入</el-button>
       <el-button size="small" @click="cancelCurrent" :disabled="!dragging">取消拖拉</el-button>
       <el-button size="small" plain @click="loadExistingSlots">重新載入</el-button>
-      <el-button size="small" type="danger" plain @click="clearAllSlots" :disabled="!slots.length">清空全部</el-button>
+      <el-button size="small" type="danger" plain @click="clearAllSlots" :disabled="!slots.length || sessionRunning">清空全部</el-button>
+    </div>
+    <div v-if="sessionRunning || sessionStatus.frames_processed" style="margin:8px 0;padding:10px 14px;background:#fff8e1;border-left:3px solid #d97706;border-radius:4px;font-size:13px;font-family:monospace;color:#1f2937">
+      累積偵測:
+      <strong>{{ sessionStatus.frames_processed || 0 }}</strong> frames 處理 ·
+      累積 detection <strong>{{ sessionStatus.total_detections || 0 }}</strong> 次 ·
+      合併 <strong style="color:#0b5ea8">{{ sessionStatus.merged_slots || 0 }}</strong> 格
+      <span v-if="sessionRunning" style="color:#d97706;margin-left:10px">● 偵測中 (每 30 秒 1 張)</span>
+      <span v-else style="color:#1f9d55;margin-left:10px">已停止</span>
     </div>
 
     <div class="canvas-wrap">
@@ -100,6 +110,9 @@ const app = createApp({
     const saving = ref(false);
     const saveMsg = ref('');
     const autoDetecting = ref(false);
+    const sessionRunning = ref(false);
+    const sessionStatus = ref({frames_processed: 0, merged_slots: 0, total_detections: 0});
+    let _sessionPollTimer = null;
     let imgW = 1, imgH = 1, scaleX = 1, scaleY = 1;
 
     const reloadImage = () => { _rawTick.value = Date.now(); };
@@ -280,6 +293,52 @@ const app = createApp({
       }
     };
 
+    const startSession = async () => {
+      try {
+        const r = await fetch(`/api/parking/slots/auto_session/start?source=${encodeURIComponent(sourceKey.value)}&interval_sec=30&max_frames=120`, {method:'POST'});
+        const d = await r.json();
+        if (!d.ok) {
+          ElementPlus.ElMessage.warning(d.error || '無法啟動');
+          if (d.error && d.error.includes('already running')) sessionRunning.value = true;
+          return;
+        }
+        sessionRunning.value = true;
+        ElementPlus.ElMessage.success('背景累積開始,每 30 秒拉一張即時影像');
+        pollSessionStatus();
+        _sessionPollTimer = setInterval(pollSessionStatus, 5000);
+      } catch (e) {
+        ElementPlus.ElMessage.error('錯誤: ' + e.message);
+      }
+    };
+    const pollSessionStatus = async () => {
+      try {
+        const r = await fetch(`/api/parking/slots/auto_session/status?source=${encodeURIComponent(sourceKey.value)}`);
+        sessionStatus.value = await r.json();
+        if (!sessionStatus.value.running) {
+          sessionRunning.value = false;
+          if (_sessionPollTimer) { clearInterval(_sessionPollTimer); _sessionPollTimer = null; }
+        }
+      } catch (e) {}
+    };
+    const stopSessionAndImport = async () => {
+      try {
+        const r = await fetch(`/api/parking/slots/auto_session/stop?source=${encodeURIComponent(sourceKey.value)}`, {method:'POST'});
+        const d = await r.json();
+        if (_sessionPollTimer) { clearInterval(_sessionPollTimer); _sessionPollTimer = null; }
+        sessionRunning.value = false;
+        const baseN = slots.value.length;
+        const newSlots = (d.slots || []).map((s, i) => ({
+          id: `P${baseN + i + 1}`, label: `P${baseN + i + 1}`,
+          polygon: s.polygon,
+        }));
+        slots.value = [...slots.value, ...newSlots];
+        ElementPlus.ElMessage.success(`累積 ${d.frames_processed} 張影像,匯入 ${newSlots.length} 格 (可微調)`);
+        redraw();
+      } catch (e) {
+        ElementPlus.ElMessage.error('停止失敗: ' + e.message);
+      }
+    };
+
     const clearAllSlots = () => {
       if (!confirm('確定清空全部 ' + slots.value.length + ' 格?')) return;
       slots.value = [];
@@ -342,11 +401,12 @@ const app = createApp({
       sourceKey, sourceName, rawImgUrl, img, canvas, slots,
       currentSlotId, currentSlotLabel,
       dragging, dragStart, dragEnd,
-      saving, saveMsg, autoDetecting,
+      saving, saveMsg, autoDetecting, sessionRunning, sessionStatus,
       reloadImage, onImgLoad,
       onMouseDown, onMouseMove, onMouseUp,
       cancelCurrent, removeSlot, loadExistingSlots,
       autoDetectSlots, clearAllSlots,
+      startSession, stopSessionAndImport,
       saveSlots, closeWin,
     };
   },
