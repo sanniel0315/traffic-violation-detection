@@ -346,8 +346,10 @@ def _bbox_iou_with_polygon(bbox: Tuple[int, int, int, int],
 # {source: [[x1,y1,x2,y2,seen_count,last_seen_ts], ...]}
 _AUTO_POSITIONS: Dict[str, list] = {}
 _AUTO_POS_LOCK = threading.Lock()
-_AUTO_POS_TTL_SEC = 1800.0   # 30 分鐘沒見過自動刪
-_AUTO_POS_CONF = 0.18
+_AUTO_POS_TTL_SEC = 3600.0   # 1 小時沒見過自動刪 (避免累積過時位置)
+_AUTO_POS_CONF = 0.15        # 低 threshold,盡量抓到所有車
+_AUTO_POS_MERGE_IOU = 0.7    # 高 IoU 才 merge (避免相鄰車輛被合併)
+_AUTO_POS_OCC_IOU = 0.5      # 當下佔用判定 (寬一些,容忍 yolo bbox 抖動)
 
 
 def _eval_auto_mode(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
@@ -390,11 +392,11 @@ def _eval_auto_mode(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
     now = time.time()
     with _AUTO_POS_LOCK:
         positions = _AUTO_POSITIONS.setdefault(source_key, [])
-        # 對每個 current detection 並進 positions
+        # 對每個 current detection 累積進 positions
         for bx in current_boxes:
             absorbed = False
             for i, p in enumerate(positions):
-                if _iou(bx, p[:4]) > 0.5:
+                if _iou(bx, p[:4]) > _AUTO_POS_MERGE_IOU:
                     cnt = p[4] + 1
                     nx1 = (p[0]*p[4] + bx[0]) / cnt
                     ny1 = (p[1]*p[4] + bx[1]) / cnt
@@ -408,20 +410,18 @@ def _eval_auto_mode(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
         # TTL GC
         positions[:] = [p for p in positions if (now - p[5]) <= _AUTO_POS_TTL_SEC]
 
-        # 算佔用: 對每 position 看是否有 current detection match
+        # 算佔用: 對每 position 看是否有 current detection match,
+        # 車位 polygon 用車身大小 (不外擴)
         slot_results = []
         for idx, p in enumerate(positions):
             x1, y1, x2, y2, _cnt, last = p
-            # 外擴 5% 後算 polygon
-            dw = int((x2-x1) * 0.05); dh = int((y2-y1) * 0.05)
-            poly = [[max(0,x1-dw), max(0,y1-dh)],
-                    [min(w_img-1,x2+dw), max(0,y1-dh)],
-                    [min(w_img-1,x2+dw), min(h_img-1,y2+dh)],
-                    [max(0,x1-dw), min(h_img-1,y2+dh)]]
-            # 佔用 = 當前是否有 detection IoU > 0.4 cover
+            poly = [[max(0,x1), max(0,y1)],
+                    [min(w_img-1,x2), max(0,y1)],
+                    [min(w_img-1,x2), min(h_img-1,y2)],
+                    [max(0,x1), min(h_img-1,y2)]]
             occ = False
             for cb in current_boxes:
-                if _iou([x1,y1,x2,y2], cb) > 0.4:
+                if _iou([x1,y1,x2,y2], cb) > _AUTO_POS_OCC_IOU:
                     occ = True
                     break
             lbl = f"P{idx+1}"
@@ -432,7 +432,7 @@ def _eval_auto_mode(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
             })
     occupied = sum(1 for s in slot_results if s["occupied"])
     total = len(slot_results)
-    return {
+    result = {
         "source": source_key, "source_name": meta.get("name", source_key),
         "frame_w": w_img, "frame_h": h_img,
         "total": total, "occupied": occupied,
@@ -442,6 +442,8 @@ def _eval_auto_mode(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
         "slots": slot_results,
         "mode": "auto",
     }
+    record_to_history(result)
+    return result
 
 
 def evaluate_occupancy(source_key: str) -> Dict:
@@ -524,7 +526,7 @@ def evaluate_occupancy(source_key: str) -> Dict:
     total = len(slot_results)
     available = total - occupied
     rate = (occupied / total * 100.0) if total else 0.0
-    return {
+    result = {
         "source": source_key,
         "source_name": meta.get("name", source_key),
         "frame_w": w, "frame_h": h,
@@ -532,4 +534,7 @@ def evaluate_occupancy(source_key: str) -> Dict:
         "occupancy_rate": round(rate, 1),
         "detected_vehicles": len(vehicles),
         "slots": slot_results,
+        "mode": "roi",
     }
+    record_to_history(result)
+    return result
