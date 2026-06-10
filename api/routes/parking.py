@@ -118,6 +118,40 @@ def get_occupancy(source: str = Query(..., description="source key e.g. twipcam:
     return evaluate_occupancy(source)
 
 
+@router.get("/history")
+def get_history(source: str = Query(..., description="source key"),
+                hours: int = Query(24, ge=1, le=720, description="近 N 小時")):
+    """佔用率歷史時序 — 從 ParkingSample table 撈"""
+    from datetime import datetime, timedelta
+    from api.models import SessionLocal, ParkingSample
+    start = datetime.utcnow() - timedelta(hours=hours)
+    db = SessionLocal()
+    try:
+        rows = (db.query(ParkingSample)
+                  .filter(ParkingSample.source == source,
+                          ParkingSample.created_at >= start)
+                  .order_by(ParkingSample.created_at.asc())
+                  .all())
+        return {
+            "source": source,
+            "hours": hours,
+            "count": len(rows),
+            "samples": [
+                {
+                    "ts": r.created_at.isoformat() if r.created_at else None,
+                    "total": r.total,
+                    "occupied": r.occupied,
+                    "available": r.available,
+                    "occupancy_rate": r.occupancy_rate,
+                    "detected_vehicles": r.detected_vehicles,
+                }
+                for r in rows
+            ],
+        }
+    finally:
+        db.close()
+
+
 @router.get("/snapshot/raw")
 def get_snapshot_raw(source: str = Query(..., description="source key")):
     """回 raw frame (沒 overlay) — 供 ROI 編輯器當底圖"""
