@@ -6004,6 +6004,9 @@
                                 </el-select>
                             </div>
                         </div>
+                        <div v-if="(parkingData?.total || 0) === 0" style="padding:18px;background:#fff8e1;border-left:4px solid #d97706;border-radius:6px;margin-bottom:14px;font-size:14px;color:#92400e">
+                            <strong>尚未標車位 ROI —</strong> 偵測沒車子是因為「車位」還沒定義.點上方<strong>「編輯車位」</strong>,在編輯器內按<strong>「自動偵測車位」</strong>(單張) 或 <strong>「背景累積偵測」</strong>(累積多 frame,涵蓋率更高).標完儲存後再啟動偵測.
+                        </div>
                         <div style="display:grid;grid-template-columns:1fr 320px;gap:14px;align-items:stretch">
                             <div style="background:#020812;border-radius:6px;overflow:hidden;position:relative">
                                 <img :src="parkingSnapshotUrl" style="width:100%;display:block"/>
