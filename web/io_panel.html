@@ -684,10 +684,7 @@
         <!-- 模擬偵測 demo (BYDA DFS 模式 — 偵測 → 即時反饋) -->
         <div style="margin-top:14px;padding:12px;border:1px dashed var(--gov-primary-line);border-radius:8px;background:var(--gov-primary-soft)">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-            <div>
-              <div style="font-weight:600;color:var(--gov-primary)">影像分析 — 模擬偵測</div>
-              <div style="font-size:11px;color:var(--gov-muted);margin-top:2px">隨機 fake 車牌/速度/類別,觸發第一個可用 module DO0 短脈衝 (不寫 violations DB)</div>
-            </div>
+            <div style="font-weight:600;color:var(--gov-primary)">影像分析 — 模擬偵測</div>
             <el-button size="small" type="primary" @click="runSimulateDetection" :loading="simRunning">執行模擬偵測</el-button>
           </div>
           <div v-if="simResult" style="margin-top:10px;padding:10px;background:#fff;border:1px solid var(--gov-border);border-radius:6px;font-size:12px;font-family:var(--font-mono)">
