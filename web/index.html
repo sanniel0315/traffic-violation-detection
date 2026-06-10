@@ -5767,21 +5767,51 @@
                                 <div>
                                     <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-mono);letter-spacing:0.14em;margin-bottom:6px">VIRTUAL MAP · BEV</div>
                                     <div style="position:relative;background:linear-gradient(180deg,#0a1530 0%,#020812 100%);border-radius:6px;overflow:hidden;padding:8px">
-                                        <svg viewBox="-100 -10 200 320" style="width:100%;height:auto;display:block">
-                                            <!-- 道路梯形 (近寬遠窄 mock 透視) + 中央分隔白虛線 + 兩側白實線 -->
+                                        <svg viewBox="-100 -10 200 340" style="width:100%;height:auto;display:block">
                                             <defs>
                                                 <linearGradient id="road-fade" x1="0" x2="0" y1="0" y2="1">
                                                     <stop offset="0%" stop-color="#1f2937" stop-opacity="0.3"/>
                                                     <stop offset="100%" stop-color="#374151" stop-opacity="0.95"/>
                                                 </linearGradient>
+                                                <!-- 來車方向箭頭 marker -->
+                                                <marker id="dot-dir" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+                                                    <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+                                                </marker>
                                             </defs>
-                                            <polygon points="-25,0 25,0 70,300 -70,300" fill="url(#road-fade)" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
-                                            <!-- 左右車道邊線 (白實線) -->
-                                            <line x1="-25" y1="0" x2="-70" y2="300" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
-                                            <line x1="25" y1="0" x2="70" y2="300" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
-                                            <!-- 中央分隔白虛線 (隨距離透視收窄,做兩條 mock 雙黃線) -->
-                                            <line x1="0" y1="0" x2="0" y2="300" stroke="#fafafa" stroke-width="1.2" stroke-dasharray="6 8" opacity="0.55"/>
-                                            <!-- 距離刻度 (公尺) -->
+                                            <!-- per-cam 現場路型 -->
+                                            <!-- ① 山道 (cam_2 台62隧道口 / cam_3 62_1) — S 彎 + 前方隧道 -->
+                                            <g v-if="radarRoadPreset==='mountain'">
+                                                <path d="M -55,300 Q -10,200 20,80 Q 25,40 30,0 L 80,0 Q 70,40 65,80 Q 35,200 -10,300 Z"
+                                                      fill="url(#road-fade)" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+                                                <path d="M -55,300 Q -10,200 20,80 Q 25,40 30,0" stroke="#fafafa" stroke-width="1.4" fill="none" opacity="0.65"/>
+                                                <path d="M -10,300 Q 35,200 65,80 Q 70,40 80,0" stroke="#fafafa" stroke-width="1.4" fill="none" opacity="0.65"/>
+                                                <path d="M -32,300 Q 12,200 42,80 Q 47,40 55,0" stroke="#fafafa" stroke-width="1" fill="none" stroke-dasharray="5 7" opacity="0.5"/>
+                                                <!-- 隧道入口黑矩形 (遠方) -->
+                                                <rect x="20" y="-8" width="55" height="16" fill="#0a0a0a" stroke="#fafafa" stroke-width="0.5" opacity="0.85"/>
+                                                <text x="47" y="2" font-size="6" font-family="monospace" fill="#3dcfa0" text-anchor="middle">TUNNEL</text>
+                                            </g>
+                                            <!-- ② 高速 3-lane 直線 (cam_6 台62_LPR) -->
+                                            <g v-else-if="radarRoadPreset==='highway3'">
+                                                <polygon points="-45,0 45,0 80,300 -80,300" fill="url(#road-fade)" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+                                                <line x1="-45" y1="0" x2="-80" y2="300" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
+                                                <line x1="45" y1="0" x2="80" y2="300" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
+                                                <line x1="-15" y1="0" x2="-27" y2="300" stroke="#fafafa" stroke-width="1" stroke-dasharray="6 8" opacity="0.55"/>
+                                                <line x1="15" y1="0" x2="27" y2="300" stroke="#fafafa" stroke-width="1" stroke-dasharray="6 8" opacity="0.55"/>
+                                            </g>
+                                            <!-- ③ 國道交流道 (cam_7 國8) — 主路 + 右匝道分流 -->
+                                            <g v-else-if="radarRoadPreset==='interchange'">
+                                                <polygon points="-30,0 30,0 50,300 -70,300" fill="url(#road-fade)" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+                                                <!-- 右匝道分流 (Q 曲線) -->
+                                                <path d="M 30,0 Q 65,120 95,260 L 95,300 L 60,300 Q 55,200 30,80 Z" fill="url(#road-fade)" opacity="0.9"/>
+                                                <line x1="-30" y1="0" x2="-70" y2="300" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
+                                                <line x1="30" y1="0" x2="50" y2="300" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
+                                                <path d="M 30,0 Q 65,120 95,260" stroke="#fafafa" stroke-width="1.5" fill="none" opacity="0.65"/>
+                                                <line x1="0" y1="0" x2="-12" y2="300" stroke="#fafafa" stroke-width="1" stroke-dasharray="6 8" opacity="0.55"/>
+                                                <!-- 高架橋柱陰影 (cam_7 視野有橋) -->
+                                                <rect x="-100" y="-10" width="50" height="60" fill="#0a0a0a" opacity="0.55"/>
+                                                <text x="-75" y="20" font-size="5" font-family="monospace" fill="#94a3b8" text-anchor="middle">高架橋</text>
+                                            </g>
+                                            <!-- 距離刻度 (公尺) — 共用 -->
                                             <g v-for="m in [20,40,60,80]" :key="`scale-${m}`">
                                                 <line :x1="-(25 + (m/100)*45)" :y1="300 - m * 3"
                                                       :x2="-(25 + (m/100)*45) - 6" :y2="300 - m * 3"
@@ -5792,6 +5822,11 @@
                                             <!-- 攝影機位置 (frame 底部中心) -->
                                             <circle cx="0" cy="300" r="5" fill="#3dcfa0" stroke="#fff" stroke-width="1"/>
                                             <text x="6" y="312" font-size="7" font-family="monospace" fill="#3dcfa0">CAM</text>
+                                            <!-- 來車方向標示 (車從遠處往攝影機來,亦即 svg 上方→下方) -->
+                                            <g transform="translate(-65, 322)">
+                                                <line x1="0" y1="0" x2="20" y2="0" stroke="#3dcfa0" stroke-width="1.4" marker-end="url(#dot-dir)" color="#3dcfa0"/>
+                                                <text x="24" y="3" font-size="7" font-family="monospace" fill="#3dcfa0">來車方向</text>
+                                            </g>
                                             <!-- 軌跡 polyline (歷史點連線,fade 越遠越透明) -->
                                             <g v-for="(hist, tid) in trackHistory" :key="`trail-${tid}`">
                                                 <polyline v-if="hist.length >= 2"
@@ -10134,6 +10169,16 @@ const app=createApp({
         const trackHistory = ref({});  // {track_id: [{x,y,t,speed}, ...]}
         const TRACK_HIST_LIMIT = 12;
         const TRACK_HIST_TTL_MS = 8000;
+        // per-cam 現場路型 preset
+        // cam_2 (台62隧道口) / cam_3 (62_1) — 山道彎+隧道
+        // cam_6 (台62_LPR) — 3-lane 高速直線
+        // cam_7 (國8) — 國道交流道 (主路 + 右匝道)
+        const radarRoadPreset = computed(() => {
+            const id = radarCameraId.value;
+            if (id === 6) return 'highway3';
+            if (id === 7) return 'interchange';
+            return 'mountain';  // cam_2 / cam_3 (default)
+        });
         const loadRadarTracks=async()=>{
             _visionEyeTick.value = Date.now();  // 推 img src 重抓
             try {
