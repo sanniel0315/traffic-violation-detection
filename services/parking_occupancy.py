@@ -413,8 +413,19 @@ _SLICE_OVERLAP = 0.2
 
 
 def _yolo_sliced_detect(yolo_local, frame: np.ndarray) -> list:
-    """切 frame 成 R×C tile 各自跑 yolo,coord 加 offset 回 full-frame.
-    最後跟全圖一起跑 NMS (IoU > 0.5 抑制) 去重."""
+    """sliced inference — 預設手寫 (停車場場景效果較好),env PARKING_USE_SAHI=1 可切 SAHI.
+    切 frame 成 R×C tile 各自跑 yolo,coord 加 offset 回 full-frame."""
+    if os.getenv("PARKING_USE_SAHI", "0") == "1":
+        try:
+            from services.parking_sahi import is_available, sahi_detect
+            if is_available():
+                sahi_results = sahi_detect(frame, confidence=_AUTO_POS_CONF,
+                                            slice_size=256, overlap=0.2)
+                if sahi_results:
+                    return sahi_results
+        except Exception as e:
+            print(f"[parking] sahi fallback: {e}", flush=True)
+    # 預設手寫 sliced
     h, w = frame.shape[:2]
     tile_w = max(64, w // _SLICE_COLS)
     tile_h = max(64, h // _SLICE_ROWS)
