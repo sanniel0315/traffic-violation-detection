@@ -5757,16 +5757,16 @@
                                     <el-button size="small" plain @click="loadRadarTracks"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>掃描</el-button>
                                 </div>
                             </div>
-                            <!-- 左: VisionEye live image / 右: 虛擬地圖 BEV — 1:1 等寬等高,內容由同一 sensor_fusion 來源同步 -->
+                            <!-- 左: VisionEye live image (保留原寬高比) / 右: 虛擬地圖 BEV 縮放配合影像高度 -->
                             <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:stretch">
-                                <!-- 左 — VisionEye live -->
-                                <div style="position:relative;background:#020812;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:420px">
-                                    <img :src="visionEyeUrl" style="width:100%;height:100%;object-fit:cover;display:block" @error="onVisionEyeError"/>
+                                <!-- 左 — VisionEye live (自然 aspect ratio,影像高度決定全 row 高度) -->
+                                <div style="position:relative;background:#020812;border-radius:6px;overflow:hidden;display:flex;flex-direction:column">
+                                    <img :src="visionEyeUrl" style="width:100%;display:block" @error="onVisionEyeError"/>
                                 </div>
-                                <!-- 右 — 虛擬地圖 BEV (top-down 道路 + dot + 軌跡 polyline + 車速 label) -->
-                                <div style="display:flex;flex-direction:column">
+                                <!-- 右 — 虛擬地圖 BEV,跟左影像同高 -->
+                                <div style="display:flex;flex-direction:column;min-height:0">
                                     <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-mono);letter-spacing:0.14em;margin-bottom:6px">虛擬地圖</div>
-                                    <div style="position:relative;background:linear-gradient(180deg,#0a1530 0%,#020812 100%);border-radius:6px;overflow:hidden;padding:8px;flex:1;display:flex;align-items:center;justify-content:center">
+                                    <div style="position:relative;background:linear-gradient(180deg,#0a1530 0%,#020812 100%);border-radius:6px;overflow:hidden;padding:8px;flex:1;display:flex;align-items:center;justify-content:center;min-height:0">
                                         <svg viewBox="-100 -10 200 340" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;max-height:100%;display:block">
                                             <defs>
                                                 <linearGradient id="road-fade" x1="0" x2="0" y1="0" y2="1">
