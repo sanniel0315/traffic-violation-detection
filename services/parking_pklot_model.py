@@ -138,26 +138,107 @@ def detect_slots(frame: np.ndarray, conf: float = 0.05,
     return kept
 
 
+def _yolo_car_centers(frame: np.ndarray, conf: float = 0.15) -> List[tuple]:
+    """跑 YOLO car detect (sliced) 回傳所有 car/truck bbox 中心點 (x,y).
+    用來確認 PKLot slot 是否真的有車 (排除草地誤判)."""
+    try:
+        from services.parking_occupancy import _yolo_sliced_detect
+        from detection.vehicle_detector import VehicleDetector
+        yolo = VehicleDetector(conf_threshold=conf)
+        dets = _yolo_sliced_detect(yolo, frame)
+    except Exception as e:
+        print(f"[pklot] yolo confirm err: {e}", flush=True)
+        return []
+    vc = {"car", "truck", "bus", "heavy_truck", "light_truck", "non_truck"}
+    centers = []
+    for d in dets or []:
+        cls = str(d.get("class_name") or "").lower()
+        if cls not in vc:
+            continue
+        bb = d.get("bbox", {})
+        x1 = int(bb.get("x1", 0)); y1 = int(bb.get("y1", 0))
+        x2 = int(bb.get("x2", 0)); y2 = int(bb.get("y2", 0))
+        if x2 <= x1 or y2 <= y1:
+            continue
+        centers.append(((x1 + x2) // 2, (y1 + y2) // 2, x1, y1, x2, y2))
+    return centers
+
+
+def _bbox_iou(a, b):
+    ix1 = max(a[0], b[0]); iy1 = max(a[1], b[1])
+    ix2 = min(a[2], b[2]); iy2 = min(a[3], b[3])
+    iw = max(0, ix2 - ix1); ih = max(0, iy2 - iy1)
+    inter = iw * ih
+    ar = (a[2] - a[0]) * (a[3] - a[1])
+    br = (b[2] - b[0]) * (b[3] - b[1])
+    return inter / max(1, ar + br - inter)
+
+
 def evaluate_pklot(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
-    """用 PKLot model 直接評估 — 每個 detected box 就是一個 slot,
-    class 區分空/滿."""
+    """PKLot + YOLO 雙確認:
+    1. PKLot 給「車位 polygon」(空+滿)
+    2. YOLO car 給「真實有車輛的 bbox」
+    3. 每個 slot 覆蓋判定: 任一 YOLO car bbox 跟 slot IoU > 0.3 → occupied
+       (排除 PKLot 把草地誤判為「空車位」+ 排除 PKLot 把車身誤判為「空」)
+    4. PKLot empty 且 YOLO 也沒車 → 真空車位
+    5. PKLot empty 但 YOLO 該位置有車 → 確認 occupied (PKLot 誤判)
+    6. 完全沒車的 slot (PKLot empty + YOLO 無) 若 conf < 0.1 → 過濾掉 (可能誤判草地)"""
     if not is_available():
         return {"source": source_key, "source_name": meta.get("name", source_key),
                 "error": "PKLot model 未安裝", "total": 0, "occupied": 0,
                 "available": 0, "occupancy_rate": 0.0, "slots": [], "mode": "pklot"}
     h_img, w_img = frame.shape[:2]
-    detections = detect_slots(frame, conf=0.05)  # 低 conf + sliced 涵蓋率高
+    pklot_dets = detect_slots(frame, conf=0.05)
+    car_centers = _yolo_car_centers(frame, conf=0.12)
+    car_bboxes = [(c[2], c[3], c[4], c[5]) for c in car_centers]
+
     slot_results = []
-    for idx, det in enumerate(detections):
+    for idx, det in enumerate(pklot_dets):
         x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
+        slot_bbox = (x1, y1, x2, y2)
+        # 雙確認: YOLO 任一 car bbox 跟 slot IoU > 0.3 → occupied
+        yolo_occ = False
+        for cb in car_bboxes:
+            if _bbox_iou(slot_bbox, cb) > 0.3:
+                yolo_occ = True
+                break
+        # 任一 YOLO car center 落 slot 內也算
+        if not yolo_occ:
+            for c in car_centers:
+                cx, cy = c[0], c[1]
+                if x1 <= cx <= x2 and y1 <= cy <= y2:
+                    yolo_occ = True
+                    break
+
+        pklot_occ = det["occupied"]
+        final_occ = yolo_occ
+
+        # 嚴格過濾 — 排除 PKLot 把道路/草地/路口誤判為車位:
+        # 規則 1: YOLO 沒看到車 + PKLot conf < 0.18 → 八成不是真車位,過濾
+        # 規則 2: YOLO 沒看到車 + PKLot 自己也說 occupied → 嚴重誤判,過濾
+        # 規則 3: 通過 = YOLO 有車 (高信度有車位) OR PKLot conf >= 0.18 且 PKLot 說 empty (model 對空車位確信)
+        if not yolo_occ:
+            if det["conf"] < 0.18:
+                continue
+            if pklot_occ:  # PKLot 說「有車」但 YOLO 看不到 → 八成是把樹/車道誤認車
+                continue
+
         polygon = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
         lbl = f"P{idx + 1}"
         slot_results.append({
             "id": lbl, "label": lbl,
-            "occupied": det["occupied"],
+            "occupied": final_occ,
             "conf": round(det["conf"], 3),
             "polygon": polygon,
+            "pklot_says_occupied": pklot_occ,
+            "yolo_confirms_car": yolo_occ,
         })
+
+    # 重新編號 (過濾後)
+    for i, s in enumerate(slot_results):
+        s["id"] = f"P{i+1}"
+        s["label"] = f"P{i+1}"
+
     occupied = sum(1 for s in slot_results if s["occupied"])
     total = len(slot_results)
     return {
@@ -166,7 +247,7 @@ def evaluate_pklot(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
         "total": total, "occupied": occupied,
         "available": total - occupied,
         "occupancy_rate": round((occupied / total * 100.0) if total else 0.0, 1),
-        "detected_vehicles": occupied,
+        "detected_vehicles": len(car_centers),
         "slots": slot_results,
-        "mode": "pklot",
+        "mode": "pklot+yolo",
     }
