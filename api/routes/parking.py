@@ -39,6 +39,55 @@ class SlotsSaveBody(BaseModel):
 router = APIRouter(prefix="/api/parking", tags=["parking"])
 
 
+_TWIPCAM_LIST_CACHE: dict = {"ts": 0.0, "data": []}
+_TWIPCAM_TTL = 3600.0  # 1 小時 cache
+
+
+def _load_twipcam_list() -> list:
+    import time as _t
+    import requests as _req
+    now = _t.time()
+    if _TWIPCAM_LIST_CACHE["data"] and (now - _TWIPCAM_LIST_CACHE["ts"]) < _TWIPCAM_TTL:
+        return _TWIPCAM_LIST_CACHE["data"]
+    try:
+        r = _req.get("https://www.twipcam.com/api/v1/cam-list.json", timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            _TWIPCAM_LIST_CACHE["data"] = data
+            _TWIPCAM_LIST_CACHE["ts"] = now
+            return data
+    except Exception as e:
+        print(f"[parking] twipcam list fetch err: {e}", flush=True)
+    return _TWIPCAM_LIST_CACHE["data"]
+
+
+@router.get("/twipcam/search")
+def twipcam_search(q: str = Query("", description="關鍵字 (名稱/id 模糊比對)"),
+                   limit: int = Query(50, ge=1, le=500)):
+    """從 TwiPcam cam-list.json 搜尋 cam (cache 1h).回 id/name/lat/lon/cam_url + snapshot_url"""
+    data = _load_twipcam_list()
+    q = (q or "").strip().lower()
+    out = []
+    for c in data:
+        if not isinstance(c, dict):
+            continue
+        cid = str(c.get("id", ""))
+        name = str(c.get("name", ""))
+        if q and (q not in cid.lower()) and (q not in name.lower()):
+            continue
+        out.append({
+            "id": cid,
+            "name": name,
+            "lat": c.get("lat"),
+            "lon": c.get("lon"),
+            "cam_url": c.get("cam_url", ""),
+            "snapshot_url": f"https://c01.twipcam.com/cam/snapshot/{cid}.jpg",
+        })
+        if len(out) >= limit:
+            break
+    return {"total_in_list": len(data), "matched": len(out), "items": out}
+
+
 @router.get("/sources")
 def list_sources():
     """已配置 source 列表 (key/name/slot 數)"""
