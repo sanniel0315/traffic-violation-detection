@@ -29,6 +29,7 @@ from api.routes import sensor_fusion as sensor_fusion_route
 from api.routes import analytics as analytics_route
 from api.routes import vision_eye as vision_eye_route
 from api.routes import io_tcp as io_tcp_route
+from api.routes import parking as parking_route
 TZ_TAIPEI = ZoneInfo("Asia/Taipei")
 
 
@@ -251,6 +252,7 @@ app.include_router(sensor_fusion_route.router)
 app.include_router(analytics_route.router)
 app.include_router(vision_eye_route.router)
 app.include_router(io_tcp_route.router)
+app.include_router(parking_route.router)
 # 啟動時把 io_tcp_modules.json 內所有 module 自動連起來
 try:
     from services.modbus_tcp_io import init_from_config as _init_io_tcp
