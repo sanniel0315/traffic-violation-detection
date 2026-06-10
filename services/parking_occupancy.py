@@ -610,8 +610,20 @@ def evaluate_occupancy(source_key: str) -> Dict:
                 "error": "frame unavailable", "total": 0, "occupied": 0,
                 "available": 0, "occupancy_rate": 0.0, "slots": [], "mode": "auto"}
 
-    # 沒標 slot → 走 zero-config auto mode (偵測到車的位置就是車位)
+    # 沒標 slot → 優先用 PKLot pretrained model (直接識「空/有車車位」),
+    # PKLot weights 不在則 fallback zero-config auto mode (yolo car detection)
     if not slots_cfg:
+        # PKLot model 開關 (預設 ON,有 weights 就用)
+        if os.getenv("PARKING_DISABLE_PKLOT", "0") != "1":
+            try:
+                from services.parking_pklot_model import is_available as pklot_avail, evaluate_pklot
+                if pklot_avail():
+                    result = evaluate_pklot(source_key, frame, meta)
+                    if result.get("total", 0) > 0:
+                        record_to_history(result)
+                        return result
+            except Exception as e:
+                print(f"[parking] pklot fallback: {e}", flush=True)
         return _eval_auto_mode(source_key, frame, meta)
 
     h, w = frame.shape[:2]
