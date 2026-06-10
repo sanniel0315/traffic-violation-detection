@@ -35,6 +35,7 @@ class SlotsSaveBody(BaseModel):
     source: str
     name: Optional[str] = None
     image_url: Optional[str] = None
+    stream_url: Optional[str] = None
     slots: List[SlotPolygon]
 
 
@@ -339,8 +340,10 @@ def save_slots(body: SlotsSaveBody):
     entry = existing.get(body.source) or {}
     if body.name:
         entry["name"] = body.name
-    if body.image_url:
+    if body.image_url is not None:
         entry["image_url"] = body.image_url
+    if body.stream_url is not None:
+        entry["stream_url"] = body.stream_url
     entry["slots"] = [s.model_dump() for s in body.slots]
     existing[body.source] = entry
 

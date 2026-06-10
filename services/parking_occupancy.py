@@ -265,14 +265,31 @@ def fetch_frame(source_key: str, bypass_cache: bool = False) -> Optional[np.ndar
                 return cached[1].copy()
 
     frame = None
-    if source_key.startswith("twipcam:"):
+    meta = get_source_meta(source_key)
+    # 優先 stream_url (RTSP / MJPEG / HLS — cv2.VideoCapture 直拉)
+    stream_url = meta.get("stream_url", "") if meta else ""
+    if stream_url:
+        try:
+            cap = cv2.VideoCapture(stream_url)
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+            ret, frame_in = cap.read()
+            cap.release()
+            if ret and frame_in is not None:
+                frame = frame_in
+            else:
+                print(f"[parking] stream_url 拉失敗 {stream_url}", flush=True)
+        except Exception as e:
+            print(f"[parking] stream_url err: {e}", flush=True)
+
+    if frame is None and source_key.startswith("twipcam:"):
         import requests as _req
         url = source_key.split(":", 1)[1]
         if not url.startswith("http"):
-            meta = get_source_meta(source_key)
             url = meta.get("image_url", "")
         try:
-            # bypass_cache 時加 ts query + no-cache header 強制拿新 frame
             if bypass_cache:
                 sep = "&" if "?" in url else "?"
                 fetch_url = f"{url}{sep}_t={int(now*1000)}"

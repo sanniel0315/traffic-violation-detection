@@ -5977,13 +5977,20 @@
 
                             <!-- 表單 (自動填或手動填) -->
                             <div style="font-weight:600;color:var(--gov-primary);margin:14px 0 8px">來源設定 (自動填或手動)</div>
-                            <div style="display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:10px;align-items:end">
-                                <div><label style="font-size:12px;color:var(--gov-muted)">來源 key</label><el-input size="small" v-model="parkingAddForm.key" placeholder="twipcam:tpe-005013 或 cam:7"/></div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end;margin-bottom:8px">
+                                <div><label style="font-size:12px;color:var(--gov-muted)">來源 key</label><el-input size="small" v-model="parkingAddForm.key" placeholder="twipcam:tpe-005013 或 rtsp:cam1"/></div>
                                 <div><label style="font-size:12px;color:var(--gov-muted)">顯示名稱</label><el-input size="small" v-model="parkingAddForm.name" placeholder="百齡橋停車場"/></div>
-                                <div><label style="font-size:12px;color:var(--gov-muted)">影像 URL</label><el-input size="small" v-model="parkingAddForm.image_url" placeholder="https://..."/></div>
-                                <el-button size="small" type="primary" @click="addParkingSource">儲存</el-button>
                             </div>
-                            <div style="font-size:11px;color:var(--gov-muted);margin-top:6px">儲存後點「編輯車位」標 polygon</div>
+                            <div style="margin-bottom:8px">
+                                <label style="font-size:12px;color:var(--gov-muted)">HTTP 影像 URL (snapshot JPG)</label>
+                                <el-input size="small" v-model="parkingAddForm.image_url" placeholder="https://... (空白則用串流)"/>
+                            </div>
+                            <div style="margin-bottom:8px">
+                                <label style="font-size:12px;color:var(--gov-muted)">串流 URL (RTSP / MJPEG / HLS — cv2 直拉,優先用)</label>
+                                <el-input size="small" v-model="parkingAddForm.stream_url" placeholder="rtsp://user:pass@ip:port/stream  或  https://.../mjpeg"/>
+                            </div>
+                            <el-button size="small" type="primary" @click="addParkingSource">儲存</el-button>
+                            <div style="font-size:11px;color:var(--gov-muted);margin-top:6px">填了 stream_url 會優先用串流直拉 (更新即時),HTTP URL 是 fallback</div>
                         </div>
                     </div>
 
@@ -10330,7 +10337,7 @@ const app=createApp({
         const parkingLiveRunning=ref(false);
         const parkingIntervalMs=ref(2500);
         const parkingShowAdd=ref(false);
-        const parkingAddForm=ref({key:'', name:'', image_url:''});
+        const parkingAddForm=ref({key:'', name:'', image_url:'', stream_url:''});
         const parkingSnapshotUrl=computed(()=> `/api/parking/snapshot?source=${encodeURIComponent(parkingSource.value)}&t=${_parkingTick.value}`);
         const loadParkingSources=async()=>{
             try {
@@ -10395,13 +10402,13 @@ const app=createApp({
             try {
                 const r = await fetch('/api/parking/slots/save', {
                     method:'POST', headers:{'Content-Type':'application/json'},
-                    body: JSON.stringify({source:f.key, name:f.name, image_url:f.image_url, slots:[]}),
+                    body: JSON.stringify({source:f.key, name:f.name, image_url:f.image_url, stream_url:f.stream_url, slots:[]}),
                 });
                 if (r.ok) {
                     await loadParkingSources();
                     parkingSource.value = f.key;
                     parkingShowAdd.value = false;
-                    parkingAddForm.value = {key:'', name:'', image_url:''};
+                    parkingAddForm.value = {key:'', name:'', image_url:'', stream_url:''};
                     ElementPlus.ElMessage.success('已新增,進「編輯車位」標 polygon');
                 }
             } catch(e) {
