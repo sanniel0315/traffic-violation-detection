@@ -142,6 +142,83 @@ def pulse_do(module_id: str, ch: int, cmd: PulseCommand):
     return {"id": module_id, "ch": ch, "duration_ms": cmd.duration_ms, "ok": True}
 
 
+class SimulateBody(BaseModel):
+    module_id: Optional[str] = None    # 不給就用 first available
+    do_ch: int = 0
+    duration_ms: int = 500
+    violation_type: Optional[str] = None  # SPEEDING/RED_LIGHT/ILLEGAL_PARKING — 不給隨機
+
+
+@router.post("/simulate_detection")
+def simulate_detection(body: SimulateBody):
+    """模擬一次違規偵測 — 隨機 fake plate/speed/類別,觸發 IO module DO pulse.
+    不寫 violations DB,只 log + 觸發實機 IO (BYDA DFS demo 模式)."""
+    import random
+    import string
+    from datetime import datetime
+
+    plate_letters = "".join(random.choices(string.ascii_uppercase, k=3))
+    plate_digits = "".join(random.choices(string.digits, k=4))
+    fake_plate = f"{plate_letters}-{plate_digits}"
+
+    vehicle_classes = ["小客車", "機車", "貨車", "大客車", "大貨車"]
+    fake_class = random.choice(vehicle_classes)
+    fake_speed = random.randint(55, 95)
+    fake_type = body.violation_type or random.choice(
+        ["SPEEDING", "RED_LIGHT", "ILLEGAL_PARKING", "RED_LINE_STOP", "WRONG_WAY"]
+    )
+    type_label = {
+        "SPEEDING": "超速",
+        "RED_LIGHT": "闖紅燈",
+        "ILLEGAL_PARKING": "違規停車",
+        "RED_LINE_STOP": "紅線臨停",
+        "WRONG_WAY": "逆向行駛",
+    }.get(fake_type, fake_type)
+
+    # 選 module — body 指定 or 第一個 ok 的
+    target_id = body.module_id
+    if not target_id:
+        for cfg in list_configs():
+            mod = get_module(cfg.id)
+            if mod and mod.ok:
+                target_id = cfg.id
+                break
+    triggered = False
+    trigger_error = ""
+    if target_id:
+        mod = get_module(target_id)
+        if mod is None:
+            trigger_error = f"module {target_id} not initialised"
+        else:
+            ok = mod.pulse_output(body.do_ch, body.duration_ms)
+            triggered = ok
+            if not ok:
+                trigger_error = mod.error or "pulse failed"
+    else:
+        trigger_error = "無可用 module"
+
+    event = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "plate": fake_plate,
+        "vehicle_class": fake_class,
+        "speed_kmh": fake_speed,
+        "violation_type": fake_type,
+        "violation_label": type_label,
+        "triggered": triggered,
+        "triggered_module": target_id,
+        "do_ch": body.do_ch,
+        "duration_ms": body.duration_ms,
+        "trigger_error": trigger_error,
+        "note": "DEMO — 未寫入 violations DB",
+    }
+    _log("info",
+         f"[模擬偵測] {type_label} · {fake_class} · 車牌 {fake_plate} · "
+         f"{fake_speed} km/h → "
+         + (f"觸發 {target_id} DO{body.do_ch} pulse {body.duration_ms}ms"
+            if triggered else f"觸發失敗 ({trigger_error})"))
+    return event
+
+
 @router.post("/{module_id}/reconnect")
 def reconnect_module(module_id: str):
     mod = get_module(module_id)
