@@ -5713,24 +5713,11 @@
                                 </div>
                             </div>
                             <svg v-if="trendPathData.paths.length" viewBox="0 0 1200 200" preserveAspectRatio="none" style="width:100%;height:200px">
-                                <!-- per-type linear gradient (top: color 28% alpha, bottom: 0%) -->
-                                <defs>
-                                    <linearGradient v-for="p in trendPathData.paths" :key="`gd-${p.type}`"
-                                                    :id="p.gradId" x1="0" x2="0" y1="0" y2="1">
-                                        <stop offset="0%" :stop-color="p.color" stop-opacity="0.28"/>
-                                        <stop offset="100%" :stop-color="p.color" stop-opacity="0"/>
-                                    </linearGradient>
-                                </defs>
-                                <!-- grid lines -->
-                                <line x1="0" :y1="50" x2="1200" :y2="50" stroke="var(--gov-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
-                                <line x1="0" :y1="100" x2="1200" :y2="100" stroke="var(--gov-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
-                                <line x1="0" :y1="150" x2="1200" :y2="150" stroke="var(--gov-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
-                                <!-- area fills (gradient) -->
-                                <path v-for="p in trendPathData.paths" :key="`ar-${p.type}`"
-                                      :d="p.dArea" :fill="`url(#${p.gradId})`" stroke="none"/>
-                                <!-- series stroke paths -->
-                                <path v-for="p in trendPathData.paths" :key="`tr-${p.type}`"
-                                      :d="p.d" :stroke="p.color" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                                <!-- 中央 baseline (緞帶圖以中線堆疊) -->
+                                <line x1="0" y1="100" x2="1200" y2="100" stroke="var(--gov-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
+                                <!-- 緞帶: 每個 series 一個 stacked smooth ribbon -->
+                                <path v-for="p in trendPathData.paths" :key="`rib-${p.type}`"
+                                      :d="p.dRibbon" :fill="p.color" opacity="0.78" stroke="rgba(255,255,255,0.4)" stroke-width="0.5"/>
                             </svg>
                             <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
                             <div v-if="trendPathData.labels && trendPathData.labels.length" style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--gov-muted);font-family:var(--font-mono)">
@@ -5767,7 +5754,7 @@
                                 <div style="display:flex;flex-direction:column;min-height:0">
                                     <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-mono);letter-spacing:0.14em;margin-bottom:6px">虛擬地圖</div>
                                     <div style="position:relative;background:linear-gradient(180deg,#0a1530 0%,#020812 100%);border-radius:6px;overflow:hidden;padding:8px;flex:1;display:flex;align-items:center;justify-content:center;min-height:0">
-                                        <svg viewBox="-100 -10 200 340" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;max-height:100%;display:block">
+                                        <svg viewBox="-160 -10 320 200" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;max-height:100%;display:block">
                                             <defs>
                                                 <linearGradient id="road-fade" x1="0" x2="0" y1="0" y2="1">
                                                     <stop offset="0%" stop-color="#1f2937" stop-opacity="0.3"/>
@@ -5778,76 +5765,72 @@
                                                     <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
                                                 </marker>
                                             </defs>
-                                            <!-- per-cam 現場路型 -->
-                                            <!-- ① 山道 (cam_2 台62隧道口 / cam_3 62_1) — S 彎 + 前方隧道 -->
+                                            <!-- per-cam 現場路型 (新座標系: y 0..178, x ±100 內) -->
+                                            <!-- ① 山道 (cam_2 / cam_3) — S 彎 + 前方隧道 -->
                                             <g v-if="radarRoadPreset==='mountain'">
-                                                <path d="M -55,300 Q -10,200 20,80 Q 25,40 30,0 L 80,0 Q 70,40 65,80 Q 35,200 -10,300 Z"
+                                                <path d="M -50,178 Q -8,118 18,48 Q 22,24 28,0 L 70,0 Q 62,24 58,48 Q 32,118 -8,178 Z"
                                                       fill="url(#road-fade)" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
-                                                <path d="M -55,300 Q -10,200 20,80 Q 25,40 30,0" stroke="#fafafa" stroke-width="1.4" fill="none" opacity="0.65"/>
-                                                <path d="M -10,300 Q 35,200 65,80 Q 70,40 80,0" stroke="#fafafa" stroke-width="1.4" fill="none" opacity="0.65"/>
-                                                <path d="M -32,300 Q 12,200 42,80 Q 47,40 55,0" stroke="#fafafa" stroke-width="1" fill="none" stroke-dasharray="5 7" opacity="0.5"/>
-                                                <!-- 隧道入口黑矩形 (遠方) -->
-                                                <rect x="20" y="-8" width="55" height="16" fill="#0a0a0a" stroke="#fafafa" stroke-width="0.5" opacity="0.85"/>
-                                                <text x="47" y="2" font-size="6" font-family="monospace" fill="#3dcfa0" text-anchor="middle">TUNNEL</text>
+                                                <path d="M -50,178 Q -8,118 18,48 Q 22,24 28,0" stroke="#fafafa" stroke-width="1.4" fill="none" opacity="0.65"/>
+                                                <path d="M -8,178 Q 32,118 58,48 Q 62,24 70,0" stroke="#fafafa" stroke-width="1.4" fill="none" opacity="0.65"/>
+                                                <path d="M -29,178 Q 12,118 38,48 Q 42,24 48,0" stroke="#fafafa" stroke-width="1" fill="none" stroke-dasharray="5 7" opacity="0.5"/>
+                                                <rect x="18" y="-8" width="55" height="16" fill="#0a0a0a" stroke="#fafafa" stroke-width="0.5" opacity="0.85"/>
+                                                <text x="45" y="2" font-size="6" font-family="monospace" fill="#3dcfa0" text-anchor="middle">TUNNEL</text>
                                             </g>
-                                            <!-- ② 高速 3-lane 直線 (cam_6 台62_LPR) -->
+                                            <!-- ② 高速 3-lane 直線 (cam_6) -->
                                             <g v-else-if="radarRoadPreset==='highway3'">
-                                                <polygon points="-45,0 45,0 80,300 -80,300" fill="url(#road-fade)" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
-                                                <line x1="-45" y1="0" x2="-80" y2="300" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
-                                                <line x1="45" y1="0" x2="80" y2="300" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
-                                                <line x1="-15" y1="0" x2="-27" y2="300" stroke="#fafafa" stroke-width="1" stroke-dasharray="6 8" opacity="0.55"/>
-                                                <line x1="15" y1="0" x2="27" y2="300" stroke="#fafafa" stroke-width="1" stroke-dasharray="6 8" opacity="0.55"/>
+                                                <polygon points="-40,0 40,0 75,178 -75,178" fill="url(#road-fade)" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+                                                <line x1="-40" y1="0" x2="-75" y2="178" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
+                                                <line x1="40" y1="0" x2="75" y2="178" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
+                                                <line x1="-13" y1="0" x2="-25" y2="178" stroke="#fafafa" stroke-width="1" stroke-dasharray="6 8" opacity="0.55"/>
+                                                <line x1="13" y1="0" x2="25" y2="178" stroke="#fafafa" stroke-width="1" stroke-dasharray="6 8" opacity="0.55"/>
                                             </g>
-                                            <!-- ③ 國道交流道 (cam_7 國8) — 主路 + 右匝道分流 -->
+                                            <!-- ③ 國道交流道 (cam_7) -->
                                             <g v-else-if="radarRoadPreset==='interchange'">
-                                                <polygon points="-30,0 30,0 50,300 -70,300" fill="url(#road-fade)" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
-                                                <!-- 右匝道分流 (Q 曲線) -->
-                                                <path d="M 30,0 Q 65,120 95,260 L 95,300 L 60,300 Q 55,200 30,80 Z" fill="url(#road-fade)" opacity="0.9"/>
-                                                <line x1="-30" y1="0" x2="-70" y2="300" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
-                                                <line x1="30" y1="0" x2="50" y2="300" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
-                                                <path d="M 30,0 Q 65,120 95,260" stroke="#fafafa" stroke-width="1.5" fill="none" opacity="0.65"/>
-                                                <line x1="0" y1="0" x2="-12" y2="300" stroke="#fafafa" stroke-width="1" stroke-dasharray="6 8" opacity="0.55"/>
-                                                <!-- 高架橋柱陰影 (cam_7 視野有橋) -->
-                                                <rect x="-100" y="-10" width="50" height="60" fill="#0a0a0a" opacity="0.55"/>
-                                                <text x="-75" y="20" font-size="5" font-family="monospace" fill="#94a3b8" text-anchor="middle">高架橋</text>
+                                                <polygon points="-28,0 28,0 48,178 -65,178" fill="url(#road-fade)" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+                                                <path d="M 28,0 Q 60,70 90,155 L 90,178 L 58,178 Q 50,118 28,48 Z" fill="url(#road-fade)" opacity="0.9"/>
+                                                <line x1="-28" y1="0" x2="-65" y2="178" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
+                                                <line x1="28" y1="0" x2="48" y2="178" stroke="#fafafa" stroke-width="1.5" opacity="0.65"/>
+                                                <path d="M 28,0 Q 60,70 90,155" stroke="#fafafa" stroke-width="1.5" fill="none" opacity="0.65"/>
+                                                <line x1="0" y1="0" x2="-10" y2="178" stroke="#fafafa" stroke-width="1" stroke-dasharray="6 8" opacity="0.55"/>
+                                                <rect x="-160" y="-10" width="60" height="50" fill="#0a0a0a" opacity="0.55"/>
+                                                <text x="-130" y="18" font-size="6" font-family="monospace" fill="#94a3b8" text-anchor="middle">高架橋</text>
                                             </g>
-                                            <!-- 距離刻度 (公尺) — 共用 -->
+                                            <!-- 距離刻度 (左側,新 y=178-m*2) -->
                                             <g v-for="m in [20,40,60,80]" :key="`scale-${m}`">
-                                                <line :x1="-(25 + (m/100)*45)" :y1="300 - m * 3"
-                                                      :x2="-(25 + (m/100)*45) - 6" :y2="300 - m * 3"
+                                                <line :x1="-(40 + (m/100)*35)" :y1="178 - m * 2"
+                                                      :x2="-(40 + (m/100)*35) - 8" :y2="178 - m * 2"
                                                       stroke="#3dcfa0" stroke-width="0.5" opacity="0.6"/>
-                                                <text :x="-(25 + (m/100)*45) - 8" :y="300 - m * 3 + 3"
+                                                <text :x="-(40 + (m/100)*35) - 10" :y="178 - m * 2 + 3"
                                                       font-size="7" font-family="monospace" fill="#3dcfa0" opacity="0.7" text-anchor="end">{{ m }}m</text>
                                             </g>
-                                            <!-- 攝影機位置 (frame 底部中心) -->
-                                            <circle cx="0" cy="300" r="5" fill="#3dcfa0" stroke="#fff" stroke-width="1"/>
-                                            <text x="6" y="312" font-size="7" font-family="monospace" fill="#3dcfa0">CAM</text>
-                                            <!-- 來車方向標示 (車從遠處往攝影機來,亦即 svg 上方→下方) -->
-                                            <g transform="translate(-65, 322)">
-                                                <line x1="0" y1="0" x2="20" y2="0" stroke="#3dcfa0" stroke-width="1.4" marker-end="url(#dot-dir)" color="#3dcfa0"/>
-                                                <text x="24" y="3" font-size="7" font-family="monospace" fill="#3dcfa0">來車方向</text>
+                                            <!-- 攝影機位置 -->
+                                            <circle cx="0" cy="178" r="5" fill="#3dcfa0" stroke="#fff" stroke-width="1"/>
+                                            <text x="6" y="188" font-size="7" font-family="monospace" fill="#3dcfa0">CAM</text>
+                                            <!-- 來車方向標 (右下) -->
+                                            <g transform="translate(95, 186)">
+                                                <line x1="-20" y1="0" x2="0" y2="0" stroke="#3dcfa0" stroke-width="1.4" marker-end="url(#dot-dir)" color="#3dcfa0"/>
+                                                <text x="-24" y="3" font-size="7" font-family="monospace" fill="#3dcfa0" text-anchor="end">來車方向</text>
                                             </g>
-                                            <!-- 軌跡 polyline (歷史點連線,fade 越遠越透明) -->
+                                            <!-- 軌跡 polyline (新 scale: x*2.5, y=178-x*2.0) -->
                                             <g v-for="(hist, tid) in trackHistory" :key="`trail-${tid}`">
                                                 <polyline v-if="hist.length >= 2"
-                                                          :points="hist.map(p => `${Math.max(-95,Math.min(95,p.y*2.5))},${Math.max(0,Math.min(300, 300 - p.x*3))}`).join(' ')"
+                                                          :points="hist.map(p => `${Math.max(-90,Math.min(90,p.y*2.5))},${Math.max(0,Math.min(178, 178 - p.x*2.0))}`).join(' ')"
                                                           :stroke="radarDotColor(hist[hist.length-1].cls)"
                                                           stroke-width="1.4" fill="none" stroke-linecap="round" opacity="0.55"/>
                                             </g>
-                                            <!-- 當前 dot (mapped from world_x/y) + 車速 label -->
+                                            <!-- 當前 dot + 車速 label -->
                                             <g v-for="t in (radarTracks||[])" :key="`bev-${t.id}`">
-                                                <circle :cx="Math.max(-95,Math.min(95, t.world_y * 2.5))"
-                                                        :cy="Math.max(0,Math.min(300, 300 - t.world_x * 3))"
+                                                <circle :cx="Math.max(-90,Math.min(90, t.world_y * 2.5))"
+                                                        :cy="Math.max(0,Math.min(178, 178 - t.world_x * 2.0))"
                                                         r="4" :fill="radarDotColor(t.class)" stroke="#fff" stroke-width="0.6">
                                                     <animate attributeName="r" values="4;6;4" dur="1.6s" repeatCount="indefinite"/>
                                                 </circle>
-                                                <!-- 車速 label 顯示在 dot 右側 -->
-                                                <rect :x="Math.max(-95,Math.min(95, t.world_y * 2.5)) + 6"
-                                                      :y="Math.max(0,Math.min(300, 300 - t.world_x * 3)) - 7"
+                                                <rect :x="Math.max(-90,Math.min(90, t.world_y * 2.5)) + 6"
+                                                      :y="Math.max(0,Math.min(178, 178 - t.world_x * 2.0)) - 7"
                                                       rx="2" ry="2" width="32" height="11"
                                                       :fill="radarDotColor(t.class)" opacity="0.92"/>
-                                                <text :x="Math.max(-95,Math.min(95, t.world_y * 2.5)) + 22"
-                                                      :y="Math.max(0,Math.min(300, 300 - t.world_x * 3)) + 1"
+                                                <text :x="Math.max(-90,Math.min(90, t.world_y * 2.5)) + 22"
+                                                      :y="Math.max(0,Math.min(178, 178 - t.world_x * 2.0)) + 1"
                                                       font-size="7" font-family="monospace" fill="#000" text-anchor="middle" font-weight="700">
                                                     {{ Math.round(t.speed_kmh) }}km/h
                                                 </text>
@@ -10299,29 +10282,67 @@ const app=createApp({
                 WRONG_WAY:       'var(--gov-fault)',
                 OTHER:           'var(--gov-muted)',
             };
-            const paths = series.map(s=>{
+            // 緞帶圖 (streamgraph) — 各 series 對稱堆疊在中央 baseline,smooth area band
+            const validSeries = series.filter(s => (s.data || []).length === labels.length);
+            // 每個 x 點的 total — 用來算 baseline 居中
+            const N = labels.length;
+            const totals = new Array(N).fill(0);
+            for (const s of validSeries) {
                 const data = s.data || [];
-                if (!data.length) return null;
-                // 線 path
-                const pts = data.map((v,i)=>{
-                    const x = i * xstep;
-                    const y = H - (v / totalMax) * (H - 10) - 5;
-                    return {x, y};
-                });
-                const d = pts.map((p,i)=>`${i===0?'M':'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
-                // area path — line + close to baseline (用於 fill gradient)
-                const dArea = d + ` L ${pts[pts.length-1].x.toFixed(1)} ${H} L ${pts[0].x.toFixed(1)} ${H} Z`;
+                for (let i = 0; i < N; i++) totals[i] += Number(data[i]) || 0;
+            }
+            const maxTotal = Math.max(1, ...totals);
+            // 圖高 0..H,內部餘 5px padding;baseline 中線 = H/2,各 series 上/下對稱堆疊
+            const drawH = H - 10;  // 上下各 5 padding
+            const yScale = drawH / maxTotal;
+            // 對每個 x 算 cumulative bottom + height 給每個 series
+            // streamgraph 風格:第 i series 的 y_lo = -cumulative_below / 2 - 自身高度/2 +H/2
+            // 簡化:從 baseline (中線) 向上下交錯堆 (奇數 above / 偶數 below) — 對稱緞帶
+            // 但更穩定做法: stack 全往中央堆,即 stacks symmetric around midline
+            // 算法:每 x 的 total → baseline_top = H/2 - total*yScale/2, 從上往下累積
+            const sePoints = validSeries.map(s => Array.from({length:N}, () => ({lo:0,hi:0})));
+            for (let i = 0; i < N; i++) {
+                let cursor = H / 2 - totals[i] * yScale / 2;
+                for (let k = 0; k < validSeries.length; k++) {
+                    const v = Number(validSeries[k].data[i]) || 0;
+                    const h = v * yScale;
+                    sePoints[k][i] = { x: i * xstep, lo: cursor, hi: cursor + h };
+                    cursor += h;
+                }
+            }
+            // smooth path 用 quadratic curve (Q) — 點之間中點為 anchor 製造緞帶柔順
+            const smoothPath = (points) => {
+                if (!points.length) return '';
+                let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+                for (let i = 1; i < points.length; i++) {
+                    const px = (points[i-1].x + points[i].x) / 2;
+                    const py = (points[i-1].y + points[i].y) / 2;
+                    d += ` Q ${points[i-1].x.toFixed(1)} ${points[i-1].y.toFixed(1)} ${px.toFixed(1)} ${py.toFixed(1)}`;
+                }
+                d += ` L ${points[points.length-1].x.toFixed(1)} ${points[points.length-1].y.toFixed(1)}`;
+                return d;
+            };
+            const paths = validSeries.map((s, k) => {
+                const pts = sePoints[k];
+                const upper = pts.map(p => ({x: p.x, y: p.lo}));
+                const lower = pts.map(p => ({x: p.x, y: p.hi})).reverse();
+                const dRibbon = smoothPath(upper) + ' ' + smoothPath(lower) + ' Z';
+                // 中線 path (用於 stroke 高亮緞帶中軸)
+                const mid = pts.map(p => ({x: p.x, y: (p.lo + p.hi) / 2}));
+                const dMid = smoothPath(mid);
                 return {
                     type: s.type,
                     name: (_VIOL_TYPE_META[s.type]?.label) || s.type,
                     color: colors[s.type] || 'var(--gov-muted)',
-                    d,
-                    dArea,
+                    dRibbon,
+                    dMid,
+                    d: dMid,     // backward-compat (給 legend / 其他 reference)
+                    dArea: dRibbon,
                     gradId: `trend-grad-${s.type}`,
-                    total: data.reduce((a,b)=>a+b,0),
+                    total: (s.data || []).reduce((a,b)=>a+b,0),
                 };
             }).filter(Boolean);
-            return {paths,ymax:totalMax,xstep,labels};
+            return {paths,ymax:maxTotal,xstep,labels};
         });
         const hourlyStats=computed(()=>{
             const out={};
