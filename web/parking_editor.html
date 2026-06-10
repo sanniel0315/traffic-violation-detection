@@ -30,7 +30,8 @@
 
     <div class="hint">
       <strong>建議:</strong>先點「<strong>自動偵測車位</strong>」一鍵抓所有車輛 bbox 當車位 (常滿停車場準確度高)。
-      漏掉的車位用<strong>滑鼠拖拉</strong>補畫;不要的車位點刪除。Esc 取消當前拖拉。
+      漏掉的車位用<strong>滑鼠拖拉</strong>補畫;不要的車位點刪除。
+      已存的車位框可<strong>直接拖拉 4 個紅色頂點</strong>調整大小/形狀。Esc 取消當前操作。
     </div>
 
     <div class="toolbar">
@@ -107,6 +108,9 @@ const app = createApp({
     const dragging = ref(false);
     const dragStart = ref(null);   // [x,y] image px
     const dragEnd = ref(null);     // [x,y] image px
+    // 編輯頂點 state
+    const editingPoint = ref(null);  // {slotIdx, pointIdx} 或 null
+    const HANDLE_HIT_PX = 12;        // 命中半徑 (canvas px)
     const saving = ref(false);
     const saveMsg = ref('');
     const autoDetecting = ref(false);
@@ -138,8 +142,9 @@ const app = createApp({
       if (!cv) return;
       const ctx = cv.getContext('2d');
       ctx.clearRect(0, 0, cv.width, cv.height);
-      // 已存 slots — 半透綠
-      for (const s of slots.value) {
+      // 已存 slots — 半透綠 + 4 個紅色 handle 頂點 (可拖拉調整)
+      for (let si = 0; si < slots.value.length; si++) {
+        const s = slots.value[si];
         if (!s.polygon || s.polygon.length < 3) continue;
         ctx.fillStyle = 'rgba(31,157,85,0.32)';
         ctx.strokeStyle = '#1f9d55';
@@ -154,12 +159,25 @@ const app = createApp({
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
+        // 4 個 handle (紅圓 + 白邊),編輯中那個放大
+        for (let pi = 0; pi < s.polygon.length; pi++) {
+          const x = s.polygon[pi][0] / scaleX;
+          const y = s.polygon[pi][1] / scaleY;
+          const isEditing = editingPoint.value &&
+                            editingPoint.value.slotIdx === si &&
+                            editingPoint.value.pointIdx === pi;
+          const r = isEditing ? 7 : 5;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, 2 * Math.PI);
+          ctx.fillStyle = '#dc2626';
+          ctx.fill();
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
         // label
         const cx = s.polygon.reduce((a, p) => a + p[0], 0) / s.polygon.length / scaleX;
         const cy = s.polygon.reduce((a, p) => a + p[1], 0) / s.polygon.length / scaleY;
-        ctx.fillStyle = '#fff';
-        ctx.strokeStyle = '#0b5ea8';
-        ctx.lineWidth = 1;
         ctx.font = 'bold 12px monospace';
         const txt = s.label || s.id;
         const tw = ctx.measureText(txt).width;
@@ -199,8 +217,36 @@ const app = createApp({
       ];
     };
 
+    // hit-test 滑鼠是否在某 slot 的某 vertex 上,return {slotIdx, pointIdx} 或 null
+    const _hitHandle = (e) => {
+      const cv = canvas.value;
+      const r = cv.getBoundingClientRect();
+      const mx = e.clientX - r.left;
+      const my = e.clientY - r.top;
+      for (let si = slots.value.length - 1; si >= 0; si--) {
+        const poly = slots.value[si].polygon || [];
+        for (let pi = 0; pi < poly.length; pi++) {
+          const hx = poly[pi][0] / scaleX;
+          const hy = poly[pi][1] / scaleY;
+          const dx = mx - hx, dy = my - hy;
+          if (dx * dx + dy * dy <= HANDLE_HIT_PX * HANDLE_HIT_PX) {
+            return { slotIdx: si, pointIdx: pi };
+          }
+        }
+      }
+      return null;
+    };
+
     const onMouseDown = (e) => {
       if (e.button !== 0) return;
+      // 先檢查是否點在 handle 上 → 進入頂點編輯模式
+      const hit = _hitHandle(e);
+      if (hit) {
+        editingPoint.value = hit;
+        redraw();
+        return;
+      }
+      // 否則進入矩形拖拉模式
       dragStart.value = _toImagePx(e);
       dragEnd.value = dragStart.value.slice();
       dragging.value = true;
@@ -208,12 +254,34 @@ const app = createApp({
     };
 
     const onMouseMove = (e) => {
+      // 頂點編輯中 → 更新該點座標
+      if (editingPoint.value) {
+        const [px, py] = _toImagePx(e);
+        const { slotIdx, pointIdx } = editingPoint.value;
+        if (slots.value[slotIdx] && slots.value[slotIdx].polygon[pointIdx]) {
+          slots.value[slotIdx].polygon[pointIdx] = [px, py];
+          redraw();
+        }
+        return;
+      }
+      // hover handle 改 cursor
+      const cv = canvas.value;
+      if (cv) {
+        const hit = _hitHandle(e);
+        cv.style.cursor = hit ? 'move' : 'crosshair';
+      }
       if (!dragging.value) return;
       dragEnd.value = _toImagePx(e);
       redraw();
     };
 
     const onMouseUp = (e) => {
+      // 結束頂點編輯
+      if (editingPoint.value) {
+        editingPoint.value = null;
+        redraw();
+        return;
+      }
       if (!dragging.value) return;
       dragging.value = false;
       if (!dragStart.value || !dragEnd.value) { redraw(); return; }
@@ -253,6 +321,7 @@ const app = createApp({
     const cancelCurrent = () => {
       dragStart.value = null; dragEnd.value = null;
       dragging.value = false;
+      editingPoint.value = null;
       redraw();
     };
 

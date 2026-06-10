@@ -406,24 +406,6 @@ def get_snapshot(source: str = Query(..., description="source key")):
             cv2.putText(frame, label, (cx - tw // 2, cy + th // 2 + 1),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
 
-    # HUD — 中文用 PIL (cv2.putText 不支援)
-    name = result.get('source_name', '')
-    occ = result.get('occupied', 0)
-    tot = result.get('total', 0)
-    rate = result.get('occupancy_rate', 0)
-    hud_line1 = name
-    hud_line2 = f"已佔用 {occ} / 總車位 {tot}  ·  佔用率 {rate}%"
-    cv2.rectangle(frame, (8, 8), (440, 56), (0, 0, 0), -1)
-    cv2.rectangle(frame, (8, 8), (440, 56), (60, 220, 130), 1)
-    try:
-        from api.routes.vision_eye import _draw_zh_batch
-        frame = _draw_zh_batch(frame, [
-            (hud_line1, (18, 12), 15, (60, 220, 130)),
-            (hud_line2, (18, 33), 13, (240, 240, 240)),
-        ])
-    except Exception:
-        cv2.putText(frame, hud_line2, (16, 28),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-
+    # HUD 文字移除 — 影像保持乾淨,統計顯示在 UI 旁邊
     ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
     return Response(content=buf.tobytes(), media_type="image/jpeg")
