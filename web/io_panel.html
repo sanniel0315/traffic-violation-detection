@@ -681,6 +681,31 @@
           </div>
         </div>
 
+        <!-- 模擬偵測 demo (BYDA DFS 模式 — 偵測 → 即時反饋) -->
+        <div style="margin-top:14px;padding:12px;border:1px dashed var(--gov-primary-line);border-radius:8px;background:var(--gov-primary-soft)">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+            <div>
+              <div style="font-weight:600;color:var(--gov-primary)">影像分析 — 模擬偵測</div>
+              <div style="font-size:11px;color:var(--gov-muted);margin-top:2px">隨機 fake 車牌/速度/類別,觸發第一個可用 module DO0 短脈衝 (不寫 violations DB)</div>
+            </div>
+            <el-button size="small" type="primary" @click="runSimulateDetection" :loading="simRunning">執行模擬偵測</el-button>
+          </div>
+          <div v-if="simResult" style="margin-top:10px;padding:10px;background:#fff;border:1px solid var(--gov-border);border-radius:6px;font-size:12px;font-family:var(--font-mono)">
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px 14px">
+              <div><span style="color:var(--gov-muted)">時間</span><br>{{ simResult.timestamp.slice(11) }}</div>
+              <div><span style="color:var(--gov-muted)">車牌</span><br><b style="color:var(--gov-primary)">{{ simResult.plate }}</b></div>
+              <div><span style="color:var(--gov-muted)">車種</span><br>{{ simResult.vehicle_class }}</div>
+              <div><span style="color:var(--gov-muted)">速度</span><br>{{ simResult.speed_kmh }} km/h</div>
+              <div><span style="color:var(--gov-muted)">違規類型</span><br>{{ simResult.violation_label }}</div>
+              <div><span style="color:var(--gov-muted)">觸發站號</span><br>{{ simResult.triggered_module || '--' }}</div>
+              <div><span style="color:var(--gov-muted)">通道</span><br>DO{{ simResult.do_ch }} · {{ simResult.duration_ms }}ms</div>
+              <div><span style="color:var(--gov-muted)">結果</span><br><span :style="{color:simResult.triggered?'var(--gov-ok)':'var(--gov-fault)',fontWeight:700}">{{ simResult.triggered ? '已觸發' : '失敗' }}</span></div>
+            </div>
+            <div v-if="simResult.trigger_error" style="margin-top:6px;color:var(--gov-fault);font-size:11px">錯誤: {{ simResult.trigger_error }}</div>
+            <div style="margin-top:6px;color:var(--gov-muted);font-size:11px">{{ simResult.note }}</div>
+          </div>
+        </div>
+
         <!-- 新增 module 表單 (摺疊) -->
         <div style="margin-top:14px">
           <el-button size="small" type="primary" plain v-if="!showAddTcp" @click="showAddTcp=true">+ 新增網路 IO 模組</el-button>
@@ -924,6 +949,27 @@
           });
           await fetchTcpModules();
         }
+        // 模擬偵測 (BYDA DFS 影像分析 demo)
+        const simResult = ref(null);
+        const simRunning = ref(false);
+        async function runSimulateDetection() {
+          simRunning.value = true;
+          try {
+            const r = await fetch('/api/io_tcp/simulate_detection', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ duration_ms: 500 }),
+            });
+            simResult.value = await r.json();
+            await fetchTcpModules();
+            // pulse 結束後再 sync 一次反映 OFF
+            setTimeout(fetchTcpModules, 700);
+          } catch (e) {
+            simResult.value = { trigger_error: e.message };
+          } finally {
+            simRunning.value = false;
+          }
+        }
         async function pulseTcpDO(id, ch, duration_ms) {
           await fetch(`/api/io_tcp/${id}/pulse/${ch}`, {
             method: 'POST',
@@ -973,6 +1019,9 @@
           reconnectTcpModule,
           toggleTcpDO,
           pulseTcpDO,
+          simResult,
+          simRunning,
+          runSimulateDetection,
         };
       }
     });
