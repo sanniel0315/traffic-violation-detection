@@ -29,11 +29,8 @@
     <h2>停車場車位 ROI 編輯器 — {{ sourceName || sourceKey }}</h2>
 
     <div class="hint">
-      操作 (矩形拖拉模式):
-      <strong>按住左鍵</strong> 從車位左上角開始,
-      <strong>拖到右下角</strong>,
-      <strong>放開</strong> 自動建立一格 (label 自動 increment A1→A2→...);
-      <strong>Esc</strong> 取消當前拖拉。
+      <strong>建議:</strong>先點「<strong>自動偵測車位</strong>」一鍵抓所有車輛 bbox 當車位 (常滿停車場準確度高)。
+      漏掉的車位用<strong>滑鼠拖拉</strong>補畫;不要的車位點刪除。Esc 取消當前拖拉。
     </div>
 
     <div class="toolbar">
@@ -45,8 +42,10 @@
       <el-input v-model="currentSlotId" size="small" style="width:120px" placeholder="A1"/>
       <span>label:</span>
       <el-input v-model="currentSlotLabel" size="small" style="width:120px"/>
+      <el-button size="small" type="success" :loading="autoDetecting" @click="autoDetectSlots">自動偵測車位</el-button>
       <el-button size="small" @click="cancelCurrent" :disabled="!dragging">取消拖拉</el-button>
       <el-button size="small" plain @click="loadExistingSlots">重新載入</el-button>
+      <el-button size="small" type="danger" plain @click="clearAllSlots" :disabled="!slots.length">清空全部</el-button>
     </div>
 
     <div class="canvas-wrap">
@@ -100,6 +99,7 @@ const app = createApp({
     const dragEnd = ref(null);     // [x,y] image px
     const saving = ref(false);
     const saveMsg = ref('');
+    const autoDetecting = ref(false);
     let imgW = 1, imgH = 1, scaleX = 1, scaleY = 1;
 
     const reloadImage = () => { _rawTick.value = Date.now(); };
@@ -252,6 +252,42 @@ const app = createApp({
       if (e.key === 'Escape') cancelCurrent();
     };
 
+    const autoDetectSlots = async () => {
+      autoDetecting.value = true;
+      try {
+        const r = await fetch(`/api/parking/slots/auto?source=${encodeURIComponent(sourceKey.value)}&expand=0.08`, {
+          method: 'POST',
+        });
+        const d = await r.json();
+        if (!r.ok) {
+          ElementPlus.ElMessage.error(d.detail || '自動偵測失敗');
+          return;
+        }
+        // 跟現有 slots 合併 (id 重排避免衝突)
+        const baseN = slots.value.length;
+        const newSlots = (d.slots || []).map((s, i) => ({
+          id: `P${baseN + i + 1}`,
+          label: `P${baseN + i + 1}`,
+          polygon: s.polygon,
+        }));
+        slots.value = [...slots.value, ...newSlots];
+        ElementPlus.ElMessage.success(`偵測 ${d.detected_vehicles} 台車輛,新增 ${newSlots.length} 格 (可微調或刪除)`);
+        redraw();
+      } catch (e) {
+        ElementPlus.ElMessage.error('錯誤: ' + e.message);
+      } finally {
+        autoDetecting.value = false;
+      }
+    };
+
+    const clearAllSlots = () => {
+      if (!confirm('確定清空全部 ' + slots.value.length + ' 格?')) return;
+      slots.value = [];
+      currentSlotId.value = 'A1';
+      currentSlotLabel.value = 'A1';
+      redraw();
+    };
+
     const loadExistingSlots = async () => {
       try {
         const r = await fetch(`/api/parking/occupancy?source=${encodeURIComponent(sourceKey.value)}`);
@@ -306,10 +342,11 @@ const app = createApp({
       sourceKey, sourceName, rawImgUrl, img, canvas, slots,
       currentSlotId, currentSlotLabel,
       dragging, dragStart, dragEnd,
-      saving, saveMsg,
+      saving, saveMsg, autoDetecting,
       reloadImage, onImgLoad,
       onMouseDown, onMouseMove, onMouseUp,
       cancelCurrent, removeSlot, loadExistingSlots,
+      autoDetectSlots, clearAllSlots,
       saveSlots, closeWin,
     };
   },

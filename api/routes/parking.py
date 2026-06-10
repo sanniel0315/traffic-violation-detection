@@ -132,6 +132,96 @@ def get_snapshot_raw(source: str = Query(..., description="source key")):
     return Response(content=buf.tobytes(), media_type="image/jpeg")
 
 
+@router.post("/slots/auto")
+def auto_detect_slots(source: str = Query(..., description="source key"),
+                      expand: float = Query(0.08, ge=0.0, le=0.5,
+                                            description="bbox 外擴比例"),
+                      conf: float = Query(0.15, ge=0.05, le=0.9,
+                                          description="YOLO conf threshold (停車場滿小車多,需低)"),
+                      merge_overlap: bool = Query(True,
+                                                  description="多輛車重疊框時合併")):
+    """一鍵自動偵測車位 — 拉 frame + YOLO detect 所有車輛 bbox,
+    每個 car/truck bbox 外擴 N% 後當作車位 polygon 回傳.
+    (假設停在那的車佔了一個車位;空車場需手動補.)
+
+    回 list of slots (不直接寫 config,讓前端 preview + user 確認再儲存)."""
+    import numpy as np
+
+    frame = fetch_frame(source)
+    if frame is None:
+        raise HTTPException(status_code=503, detail="frame unavailable")
+    h_img, w_img = frame.shape[:2]
+    try:
+        # 自動偵測停車位時用低 conf (停車場多小車重疊,需要看到所有可能車輛)
+        from detection.vehicle_detector import VehicleDetector
+        yolo_local = VehicleDetector(conf_threshold=float(conf))
+        detections = yolo_local.detect(frame)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"yolo detect err: {e}")
+
+    vehicle_classes = {"car", "truck", "bus", "heavy_truck", "light_truck", "non_truck"}
+    raw_boxes = []
+    for det in detections or []:
+        cls = str(det.get("class_name") or "").lower()
+        if cls not in vehicle_classes:
+            continue
+        bb = det.get("bbox", {})
+        x1 = int(bb.get("x1", 0))
+        y1 = int(bb.get("y1", 0))
+        x2 = int(bb.get("x2", 0))
+        y2 = int(bb.get("y2", 0))
+        if x2 <= x1 or y2 <= y1:
+            continue
+        raw_boxes.append([x1, y1, x2, y2])
+
+    # 合併過度重疊 (IoU > 0.6)
+    def _iou(a, b):
+        ix1 = max(a[0], b[0]); iy1 = max(a[1], b[1])
+        ix2 = min(a[2], b[2]); iy2 = min(a[3], b[3])
+        iw = max(0, ix2 - ix1); ih = max(0, iy2 - iy1)
+        inter = iw * ih
+        ar = (a[2]-a[0]) * (a[3]-a[1])
+        br = (b[2]-b[0]) * (b[3]-b[1])
+        return inter / max(1, ar + br - inter)
+
+    if merge_overlap:
+        merged = []
+        for bx in raw_boxes:
+            absorbed = False
+            for i, m in enumerate(merged):
+                if _iou(bx, m) > 0.6:
+                    merged[i] = [min(m[0], bx[0]), min(m[1], bx[1]),
+                                 max(m[2], bx[2]), max(m[3], bx[3])]
+                    absorbed = True
+                    break
+            if not absorbed:
+                merged.append(bx)
+        boxes = merged
+    else:
+        boxes = raw_boxes
+
+    # 外擴 + 轉 polygon
+    slots_out = []
+    for idx, (x1, y1, x2, y2) in enumerate(boxes):
+        w = x2 - x1; h = y2 - y1
+        dx = int(w * expand); dy = int(h * expand)
+        nx1 = max(0, x1 - dx); ny1 = max(0, y1 - dy)
+        nx2 = min(w_img - 1, x2 + dx); ny2 = min(h_img - 1, y2 + dy)
+        lbl = f"P{idx + 1}"
+        slots_out.append({
+            "id": lbl,
+            "label": lbl,
+            "polygon": [[nx1, ny1], [nx2, ny1], [nx2, ny2], [nx1, ny2]],
+        })
+    return {
+        "source": source,
+        "frame_w": w_img, "frame_h": h_img,
+        "detected_vehicles": len(raw_boxes),
+        "slots": slots_out,
+        "note": "從 YOLO car 偵測自動產生,可在編輯器調整或刪除",
+    }
+
+
 @router.post("/slots/save")
 def save_slots(body: SlotsSaveBody):
     """覆寫 data/parking_slots.json 內該 source 的 slots."""
