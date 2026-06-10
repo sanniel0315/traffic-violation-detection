@@ -342,6 +342,108 @@ def _bbox_iou_with_polygon(bbox: Tuple[int, int, int, int],
     return inter / float(a1 + a2 - inter)
 
 
+# 自動車位累積 (zero-config 模式) — per-source in-memory dict:
+# {source: [[x1,y1,x2,y2,seen_count,last_seen_ts], ...]}
+_AUTO_POSITIONS: Dict[str, list] = {}
+_AUTO_POS_LOCK = threading.Lock()
+_AUTO_POS_TTL_SEC = 1800.0   # 30 分鐘沒見過自動刪
+_AUTO_POS_CONF = 0.18
+
+
+def _eval_auto_mode(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
+    """Zero-config — 偵測到車的位置就是車位.每次 evaluate:
+    1. yolo detect 當前 cars
+    2. 對每車 bbox merge 進 _AUTO_POSITIONS (IoU>0.5 → 加權平均座標 + count)
+    3. 算 occupancy: 累積每位置看是否有 current detection match
+    4. 30 分沒見過自動 GC"""
+    h_img, w_img = frame.shape[:2]
+    try:
+        from detection.vehicle_detector import VehicleDetector
+        yolo_local = VehicleDetector(conf_threshold=_AUTO_POS_CONF)
+        detections = yolo_local.detect(frame)
+    except Exception as e:
+        return {"source": source_key, "source_name": meta.get("name", source_key),
+                "error": f"yolo: {e}", "total": 0, "occupied": 0, "available": 0,
+                "occupancy_rate": 0.0, "slots": []}
+
+    vehicle_classes = {"car", "truck", "bus", "heavy_truck", "light_truck", "non_truck"}
+    current_boxes = []
+    for det in detections or []:
+        cls = str(det.get("class_name") or "").lower()
+        if cls not in vehicle_classes:
+            continue
+        bb = det.get("bbox", {})
+        x1 = int(bb.get("x1", 0)); y1 = int(bb.get("y1", 0))
+        x2 = int(bb.get("x2", 0)); y2 = int(bb.get("y2", 0))
+        if x2 <= x1 or y2 <= y1:
+            continue
+        current_boxes.append([x1, y1, x2, y2])
+
+    def _iou(a, b):
+        ix1=max(a[0],b[0]); iy1=max(a[1],b[1])
+        ix2=min(a[2],b[2]); iy2=min(a[3],b[3])
+        iw=max(0,ix2-ix1); ih=max(0,iy2-iy1)
+        inter=iw*ih
+        ar=(a[2]-a[0])*(a[3]-a[1]); br=(b[2]-b[0])*(b[3]-b[1])
+        return inter/max(1, ar+br-inter)
+
+    now = time.time()
+    with _AUTO_POS_LOCK:
+        positions = _AUTO_POSITIONS.setdefault(source_key, [])
+        # 對每個 current detection 並進 positions
+        for bx in current_boxes:
+            absorbed = False
+            for i, p in enumerate(positions):
+                if _iou(bx, p[:4]) > 0.5:
+                    cnt = p[4] + 1
+                    nx1 = (p[0]*p[4] + bx[0]) / cnt
+                    ny1 = (p[1]*p[4] + bx[1]) / cnt
+                    nx2 = (p[2]*p[4] + bx[2]) / cnt
+                    ny2 = (p[3]*p[4] + bx[3]) / cnt
+                    positions[i] = [int(nx1), int(ny1), int(nx2), int(ny2), cnt, now]
+                    absorbed = True
+                    break
+            if not absorbed:
+                positions.append([bx[0], bx[1], bx[2], bx[3], 1, now])
+        # TTL GC
+        positions[:] = [p for p in positions if (now - p[5]) <= _AUTO_POS_TTL_SEC]
+
+        # 算佔用: 對每 position 看是否有 current detection match
+        slot_results = []
+        for idx, p in enumerate(positions):
+            x1, y1, x2, y2, _cnt, last = p
+            # 外擴 5% 後算 polygon
+            dw = int((x2-x1) * 0.05); dh = int((y2-y1) * 0.05)
+            poly = [[max(0,x1-dw), max(0,y1-dh)],
+                    [min(w_img-1,x2+dw), max(0,y1-dh)],
+                    [min(w_img-1,x2+dw), min(h_img-1,y2+dh)],
+                    [max(0,x1-dw), min(h_img-1,y2+dh)]]
+            # 佔用 = 當前是否有 detection IoU > 0.4 cover
+            occ = False
+            for cb in current_boxes:
+                if _iou([x1,y1,x2,y2], cb) > 0.4:
+                    occ = True
+                    break
+            lbl = f"P{idx+1}"
+            slot_results.append({
+                "id": lbl, "label": lbl,
+                "occupied": occ, "conf": round(min(1.0, _cnt/5.0), 3),
+                "polygon": poly,
+            })
+    occupied = sum(1 for s in slot_results if s["occupied"])
+    total = len(slot_results)
+    return {
+        "source": source_key, "source_name": meta.get("name", source_key),
+        "frame_w": w_img, "frame_h": h_img,
+        "total": total, "occupied": occupied,
+        "available": total - occupied,
+        "occupancy_rate": round((occupied/total*100.0) if total else 0.0, 1),
+        "detected_vehicles": len(current_boxes),
+        "slots": slot_results,
+        "mode": "auto",
+    }
+
+
 def evaluate_occupancy(source_key: str) -> Dict:
     """跑佔用判定 — return:
     {
@@ -353,24 +455,17 @@ def evaluate_occupancy(source_key: str) -> Dict:
     """
     meta = get_source_meta(source_key)
     slots_cfg = load_slots(source_key)
-    if not slots_cfg:
-        return {"source": source_key,
-                "source_name": meta.get("name", source_key),
-                "error": "尚未標車位,請點「自動偵測車位」或「背景累積偵測」",
-                "total": 0, "occupied": 0, "available": 0,
-                "occupancy_rate": 0.0, "slots": []}
 
     frame = fetch_frame(source_key)
     if frame is None:
-        # frame 拿不到 → 全 unknown,但仍 return slots 結構
-        return {
-            "source": source_key, "source_name": meta.get("name", source_key),
-            "error": "frame unavailable", "total": len(slots_cfg),
-            "occupied": 0, "available": 0, "occupancy_rate": 0.0,
-            "slots": [{"id": s["id"], "label": s.get("label", str(s["id"])),
-                       "occupied": None, "conf": 0.0, "polygon": s["polygon"]}
-                      for s in slots_cfg],
-        }
+        return {"source": source_key,
+                "source_name": meta.get("name", source_key),
+                "error": "frame unavailable", "total": 0, "occupied": 0,
+                "available": 0, "occupancy_rate": 0.0, "slots": [], "mode": "auto"}
+
+    # 沒標 slot → 走 zero-config auto mode (偵測到車的位置就是車位)
+    if not slots_cfg:
+        return _eval_auto_mode(source_key, frame, meta)
 
     h, w = frame.shape[:2]
     # 跑 yolo
