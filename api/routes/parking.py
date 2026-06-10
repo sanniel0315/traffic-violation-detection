@@ -375,29 +375,36 @@ def get_snapshot(source: str = Query(..., description="source key")):
         if len(poly) < 3:
             continue
         pts = np.array(poly, dtype=np.int32).reshape(-1, 1, 2)
-        if slot.get("occupied"):
-            fill_color = (0, 60, 200)        # 紅 (BGR)
-            stroke_color = (0, 80, 240)
-            label_color = (255, 255, 255)
-        else:
-            fill_color = (60, 180, 80)        # 綠
-            stroke_color = (80, 220, 100)
-            label_color = (0, 0, 0)
-        # 半透明填色
-        slot_overlay = frame.copy()
-        cv2.fillPoly(slot_overlay, [pts], fill_color)
-        cv2.addWeighted(slot_overlay, 0.40, frame, 0.60, 0, frame)
-        cv2.polylines(frame, [pts], True, stroke_color, 2)
-        # label 在 polygon 中心
         cx = int(sum(p[0] for p in poly) / len(poly))
         cy = int(sum(p[1] for p in poly) / len(poly))
         label = str(slot.get("label", slot.get("id", "")))
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-        cv2.rectangle(frame, (cx - tw // 2 - 3, cy - th // 2 - 3),
-                      (cx + tw // 2 + 3, cy + th // 2 + 3),
-                      stroke_color, -1)
-        cv2.putText(frame, label, (cx - tw // 2, cy + th // 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, label_color, 1)
+
+        if not slot.get("occupied"):
+            # 空車位: 畫綠色框 + 號碼,讓 user 看哪些位是空的
+            fill_color = (60, 180, 80)        # 綠 (BGR)
+            stroke_color = (80, 220, 100)
+            slot_overlay = frame.copy()
+            cv2.fillPoly(slot_overlay, [pts], fill_color)
+            cv2.addWeighted(slot_overlay, 0.40, frame, 0.60, 0, frame)
+            cv2.polylines(frame, [pts], True, stroke_color, 2)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(frame, (cx - tw // 2 - 3, cy - th // 2 - 3),
+                          (cx + tw // 2 + 3, cy + th // 2 + 3),
+                          stroke_color, -1)
+            cv2.putText(frame, label, (cx - tw // 2, cy + th // 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+        else:
+            # 有車的車位: 不畫框,只在車中心標號碼 (避免遮住車身)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+            # 黑底白字 + 細外框,清楚浮在車身上
+            cv2.rectangle(frame, (cx - tw // 2 - 4, cy - th // 2 - 4),
+                          (cx + tw // 2 + 4, cy + th // 2 + 4),
+                          (0, 0, 0), -1)
+            cv2.rectangle(frame, (cx - tw // 2 - 4, cy - th // 2 - 4),
+                          (cx + tw // 2 + 4, cy + th // 2 + 4),
+                          (255, 255, 255), 1)
+            cv2.putText(frame, label, (cx - tw // 2, cy + th // 2 + 1),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
 
     # HUD — 中文用 PIL (cv2.putText 不支援)
     name = result.get('source_name', '')
