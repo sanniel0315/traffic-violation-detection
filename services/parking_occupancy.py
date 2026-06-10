@@ -29,9 +29,9 @@ _CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 # 實際生產建議寫 data/parking_slots.json 覆蓋 (per-機器自訂)
 _DEFAULT_CONFIG = {
     "twipcam:tpe-005013": {
-        "name": "百齡橋停車場 (TwiPcam demo)",
+        "name": "百齡橋停車場 (台北市政府 PB048)",
         "image_url": "https://c01.twipcam.com/cam/snapshot/tpe-005013.jpg",
-        "note": "示範 8 格,實際 80+ 格可用 ROI 編輯器補齊",
+        "note": "預設 8 格示範,進「編輯車位」可補齊 80+ 格",
         "slots": [
             {"id": "A1", "label": "A1", "polygon": [[5, 250], [105, 230], [120, 360], [10, 395]]},
             {"id": "A2", "label": "A2", "polygon": [[110, 235], [200, 220], [215, 350], [125, 365]]},
