@@ -29,11 +29,11 @@
     <h2>停車場車位 ROI 編輯器 — {{ sourceName || sourceKey }}</h2>
 
     <div class="hint">
-      操作:
-      <strong>左鍵</strong> 在影像上點擊建立 polygon 頂點 (4 點以上),
-      <strong>右鍵</strong> 取消上一點,
-      <strong>Enter / 完成本格</strong> 完成當前 polygon (進入下一格),
-      <strong>Esc</strong> 取消當前繪製。
+      操作 (矩形拖拉模式):
+      <strong>按住左鍵</strong> 從車位左上角開始,
+      <strong>拖到右下角</strong>,
+      <strong>放開</strong> 自動建立一格 (label 自動 increment A1→A2→...);
+      <strong>Esc</strong> 取消當前拖拉。
     </div>
 
     <div class="toolbar">
@@ -45,17 +45,18 @@
       <el-input v-model="currentSlotId" size="small" style="width:120px" placeholder="A1"/>
       <span>label:</span>
       <el-input v-model="currentSlotLabel" size="small" style="width:120px"/>
-      <el-button size="small" type="primary" @click="finishCurrent" :disabled="currentPoints.length < 3">完成本格</el-button>
-      <el-button size="small" @click="cancelCurrent" :disabled="!currentPoints.length">取消繪製</el-button>
+      <el-button size="small" @click="cancelCurrent" :disabled="!dragging">取消拖拉</el-button>
       <el-button size="small" plain @click="loadExistingSlots">重新載入</el-button>
     </div>
 
     <div class="canvas-wrap">
       <img ref="img" :src="rawImgUrl" @load="onImgLoad" crossorigin="anonymous"/>
       <canvas ref="canvas"
-              @mousedown="onCanvasClick"
-              @mousemove="onCanvasMove"
-              @contextmenu.prevent="undoPoint"></canvas>
+              @mousedown="onMouseDown"
+              @mousemove="onMouseMove"
+              @mouseup="onMouseUp"
+              @mouseleave="onMouseUp"
+              @contextmenu.prevent></canvas>
     </div>
 
     <div class="slot-list">
@@ -91,10 +92,12 @@ const app = createApp({
     const img = ref(null);
     const canvas = ref(null);
     const slots = ref([]);
-    const currentPoints = ref([]);   // [[x,y]] 像素 coord
     const currentSlotId = ref('A1');
     const currentSlotLabel = ref('A1');
-    const mouseXY = ref(null);
+    // 矩形拖拉 state
+    const dragging = ref(false);
+    const dragStart = ref(null);   // [x,y] image px
+    const dragEnd = ref(null);     // [x,y] image px
     const saving = ref(false);
     const saveMsg = ref('');
     let imgW = 1, imgH = 1, scaleX = 1, scaleY = 1;
@@ -152,88 +155,91 @@ const app = createApp({
         ctx.fillStyle = '#fff';
         ctx.fillText(txt, cx - tw / 2, cy + 3);
       }
-      // 當前繪製中 polygon — 紅色
-      if (currentPoints.value.length > 0) {
+      // 當前拖拉中矩形 — 紅色
+      if (dragging.value && dragStart.value && dragEnd.value) {
+        const x1 = dragStart.value[0] / scaleX;
+        const y1 = dragStart.value[1] / scaleY;
+        const x2 = dragEnd.value[0] / scaleX;
+        const y2 = dragEnd.value[1] / scaleY;
+        const left = Math.min(x1, x2);
+        const top = Math.min(y1, y2);
+        const w = Math.abs(x2 - x1);
+        const h = Math.abs(y2 - y1);
         ctx.strokeStyle = '#dc2626';
         ctx.fillStyle = 'rgba(220,38,38,0.28)';
         ctx.lineWidth = 2;
-        ctx.beginPath();
-        currentPoints.value.forEach((p, i) => {
-          const x = p[0] / scaleX, y = p[1] / scaleY;
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        });
-        // 預覽線 (滑鼠位置)
-        if (mouseXY.value && currentPoints.value.length > 0) {
-          ctx.lineTo(mouseXY.value[0], mouseXY.value[1]);
-        }
-        ctx.stroke();
-        if (currentPoints.value.length >= 3) {
-          ctx.closePath();
-          ctx.fill();
-        }
-        // 頂點圓
+        ctx.fillRect(left, top, w, h);
+        ctx.strokeRect(left, top, w, h);
+        // 尺寸 label
         ctx.fillStyle = '#dc2626';
-        for (const p of currentPoints.value) {
-          ctx.beginPath();
-          ctx.arc(p[0] / scaleX, p[1] / scaleY, 4, 0, 2 * Math.PI);
-          ctx.fill();
-        }
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(`${Math.round(w * scaleX)} × ${Math.round(h * scaleY)} px`, left + 4, top - 4);
       }
     };
 
-    const onCanvasClick = (e) => {
+    const _toImagePx = (e) => {
       const cv = canvas.value;
-      const rect = cv.getBoundingClientRect();
-      const dx = e.clientX - rect.left;
-      const dy = e.clientY - rect.top;
-      // 轉成 image pixel coord
-      const px = Math.round(dx * scaleX);
-      const py = Math.round(dy * scaleY);
-      currentPoints.value = [...currentPoints.value, [px, py]];
+      const r = cv.getBoundingClientRect();
+      return [
+        Math.round((e.clientX - r.left) * scaleX),
+        Math.round((e.clientY - r.top) * scaleY),
+      ];
+    };
+
+    const onMouseDown = (e) => {
+      if (e.button !== 0) return;
+      dragStart.value = _toImagePx(e);
+      dragEnd.value = dragStart.value.slice();
+      dragging.value = true;
       redraw();
     };
 
-    const onCanvasMove = (e) => {
-      if (!currentPoints.value.length) return;
-      const cv = canvas.value;
-      const rect = cv.getBoundingClientRect();
-      mouseXY.value = [e.clientX - rect.left, e.clientY - rect.top];
+    const onMouseMove = (e) => {
+      if (!dragging.value) return;
+      dragEnd.value = _toImagePx(e);
       redraw();
     };
 
-    const undoPoint = () => {
-      if (!currentPoints.value.length) return;
-      currentPoints.value = currentPoints.value.slice(0, -1);
-      redraw();
-    };
-
-    const cancelCurrent = () => {
-      currentPoints.value = [];
-      mouseXY.value = null;
-      redraw();
-    };
-
-    const finishCurrent = () => {
-      if (currentPoints.value.length < 3) {
-        ElementPlus.ElMessage.warning('至少 3 點');
+    const onMouseUp = (e) => {
+      if (!dragging.value) return;
+      dragging.value = false;
+      if (!dragStart.value || !dragEnd.value) { redraw(); return; }
+      const x1 = Math.min(dragStart.value[0], dragEnd.value[0]);
+      const y1 = Math.min(dragStart.value[1], dragEnd.value[1]);
+      const x2 = Math.max(dragStart.value[0], dragEnd.value[0]);
+      const y2 = Math.max(dragStart.value[1], dragEnd.value[1]);
+      const w = x2 - x1, h = y2 - y1;
+      // 太小的框忽略 (誤點)
+      if (w < 8 || h < 8) {
+        dragStart.value = null; dragEnd.value = null;
+        redraw();
         return;
       }
       const sid = currentSlotId.value.trim() || `slot_${slots.value.length + 1}`;
+      const lbl = currentSlotLabel.value.trim() || sid;
+      // 矩形存成 polygon (4 點,順序: 左上→右上→右下→左下)
       slots.value.push({
         id: sid,
-        label: (currentSlotLabel.value.trim() || sid),
-        polygon: currentPoints.value.slice(),
+        label: lbl,
+        polygon: [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
       });
-      // 自動 increment id (A1→A2, B1→B2 等)
+      // 自動 increment id (A1→A2 / B1→B2)
       const m = sid.match(/^([A-Z]+)(\d+)$/);
       if (m) {
         const nextN = String(parseInt(m[2], 10) + 1);
         currentSlotId.value = m[1] + nextN;
         currentSlotLabel.value = m[1] + nextN;
+      } else {
+        currentSlotId.value = `slot_${slots.value.length + 1}`;
+        currentSlotLabel.value = currentSlotId.value;
       }
-      currentPoints.value = [];
-      mouseXY.value = null;
+      dragStart.value = null; dragEnd.value = null;
+      redraw();
+    };
+
+    const cancelCurrent = () => {
+      dragStart.value = null; dragEnd.value = null;
+      dragging.value = false;
       redraw();
     };
 
@@ -243,8 +249,7 @@ const app = createApp({
     };
 
     const onKeydown = (e) => {
-      if (e.key === 'Enter') finishCurrent();
-      else if (e.key === 'Escape') cancelCurrent();
+      if (e.key === 'Escape') cancelCurrent();
     };
 
     const loadExistingSlots = async () => {
@@ -299,10 +304,12 @@ const app = createApp({
 
     return {
       sourceKey, sourceName, rawImgUrl, img, canvas, slots,
-      currentPoints, currentSlotId, currentSlotLabel,
+      currentSlotId, currentSlotLabel,
+      dragging, dragStart, dragEnd,
       saving, saveMsg,
-      reloadImage, onImgLoad, onCanvasClick, onCanvasMove, undoPoint,
-      cancelCurrent, finishCurrent, removeSlot, loadExistingSlots,
+      reloadImage, onImgLoad,
+      onMouseDown, onMouseMove, onMouseUp,
+      cancelCurrent, removeSlot, loadExistingSlots,
       saveSlots, closeWin,
     };
   },
