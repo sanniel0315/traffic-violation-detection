@@ -25,23 +25,14 @@ import numpy as np
 _CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                              "data", "parking_slots.json")
 
-# 預設 demo 配置 (當 data/parking_slots.json 不存在時 fallback,跟 code 一起 deploy)
-# 實際生產建議寫 data/parking_slots.json 覆蓋 (per-機器自訂)
+# 預設 source 配置 — 只列出 source meta,slots 留空讓 user 用「自動偵測」/
+# 「背景累積」/ 拖拉 自己決定 (不再 hardcode 預設車位框)
 _DEFAULT_CONFIG = {
     "twipcam:tpe-005013": {
         "name": "百齡橋停車場 (台北市政府 PB048)",
         "image_url": "https://c01.twipcam.com/cam/snapshot/tpe-005013.jpg",
-        "note": "預設 8 格示範,進「編輯車位」可補齊 80+ 格",
-        "slots": [
-            {"id": "A1", "label": "A1", "polygon": [[5, 250], [105, 230], [120, 360], [10, 395]]},
-            {"id": "A2", "label": "A2", "polygon": [[110, 235], [200, 220], [215, 350], [125, 365]]},
-            {"id": "A3", "label": "A3", "polygon": [[205, 220], [285, 210], [305, 340], [220, 350]]},
-            {"id": "B1", "label": "B1", "polygon": [[235, 165], [305, 158], [320, 215], [248, 222]]},
-            {"id": "B2", "label": "B2", "polygon": [[310, 158], [380, 152], [395, 215], [325, 220]]},
-            {"id": "B3", "label": "B3", "polygon": [[385, 150], [450, 145], [465, 210], [400, 215]]},
-            {"id": "C1", "label": "C1", "polygon": [[355, 95], [415, 92], [428, 145], [368, 148]]},
-            {"id": "C2", "label": "C2", "polygon": [[420, 92], [480, 88], [495, 145], [435, 148]]},
-        ],
+        "note": "請點「自動偵測車位」或「背景累積偵測」標 polygon",
+        "slots": [],
     }
 }
 
@@ -363,8 +354,11 @@ def evaluate_occupancy(source_key: str) -> Dict:
     meta = get_source_meta(source_key)
     slots_cfg = load_slots(source_key)
     if not slots_cfg:
-        return {"source": source_key, "error": "no slots configured", "total": 0,
-                "occupied": 0, "available": 0, "occupancy_rate": 0.0, "slots": []}
+        return {"source": source_key,
+                "source_name": meta.get("name", source_key),
+                "error": "尚未標車位,請點「自動偵測車位」或「背景累積偵測」",
+                "total": 0, "occupied": 0, "available": 0,
+                "occupancy_rate": 0.0, "slots": []}
 
     frame = fetch_frame(source_key)
     if frame is None:
