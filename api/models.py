@@ -157,6 +157,23 @@ class CongestionSample(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class ParkingSample(Base):
+    """停車場佔用率歷史 — evaluate_occupancy 寫入 (5 分鐘 throttle 避免過密)"""
+    __tablename__ = "parking_samples"
+    __table_args__ = (
+        Index("ix_parking_samples_source_ts", "source", "created_at"),
+    )
+    id = Column(Integer, primary_key=True, index=True)
+    source = Column(String(80), index=True)            # twipcam:tpe-005013 / cam:7
+    source_name = Column(String(120))
+    total = Column(Integer, default=0)
+    occupied = Column(Integer, default=0)
+    available = Column(Integer, default=0)
+    occupancy_rate = Column(Float, default=0.0)
+    detected_vehicles = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class TrafficReportAgg(Base):
     __tablename__ = "traffic_report_aggs"
     __table_args__ = (
