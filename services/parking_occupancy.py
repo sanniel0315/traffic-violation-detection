@@ -49,6 +49,190 @@ _LATEST_FRAME_CACHE: Dict[str, Tuple[float, np.ndarray]] = {}
 _FRAME_CACHE_TTL = 2.0  # 同 source 2 秒內共用 frame,降低 fetch 次數
 _CACHE_LOCK = threading.Lock()
 
+# 歷史寫入 throttle (per-source 5 分鐘記一筆)
+_HISTORY_LAST_AT: Dict[str, float] = {}
+_HISTORY_THROTTLE_SEC = 300.0
+_HISTORY_LOCK = threading.Lock()
+
+# 自動偵測 background session (per-source)
+_AUTO_SESSIONS: Dict[str, Dict] = {}
+_AUTO_LOCK = threading.Lock()
+
+
+def auto_session_start(source: str, conf: float = 0.15, expand: float = 0.08,
+                       interval_sec: float = 30.0, max_frames: int = 60) -> Dict:
+    """啟動背景自動偵測 — thread 每 interval 拉 frame yolo + merge,
+    max_frames 達到自動停 (避免無限跑)."""
+    with _AUTO_LOCK:
+        old = _AUTO_SESSIONS.get(source)
+        if old and old.get("running"):
+            return {"ok": False, "error": "session already running",
+                    "frames_processed": old.get("frames_processed", 0),
+                    "merged_slots": len(old.get("merged_boxes", []))}
+        sess = {
+            "running": True, "frames_processed": 0, "merged_boxes": [],
+            "all_raw_count": 0, "started_at": time.time(),
+            "conf": conf, "expand": expand, "interval_sec": interval_sec,
+            "max_frames": max_frames, "frame_w": 0, "frame_h": 0,
+            "last_frame_at": 0.0, "stop_event": threading.Event(),
+        }
+        _AUTO_SESSIONS[source] = sess
+
+    def _runner():
+        try:
+            from detection.vehicle_detector import VehicleDetector
+            yolo_local = VehicleDetector(conf_threshold=float(conf))
+        except Exception as e:
+            sess["error"] = f"yolo init: {e}"
+            sess["running"] = False
+            return
+        vehicle_classes = {"car", "truck", "bus", "heavy_truck", "light_truck", "non_truck"}
+        first = True
+        while sess["frames_processed"] < max_frames and not sess["stop_event"].is_set():
+            if not first:
+                if sess["stop_event"].wait(interval_sec):
+                    break
+            first = False
+            frame = fetch_frame(source, bypass_cache=True)
+            if frame is None:
+                continue
+            if sess["frame_w"] == 0:
+                sess["frame_h"], sess["frame_w"] = frame.shape[:2]
+            try:
+                dets = yolo_local.detect(frame)
+            except Exception:
+                continue
+            for det in dets or []:
+                cls = str(det.get("class_name") or "").lower()
+                if cls not in vehicle_classes:
+                    continue
+                bb = det.get("bbox", {})
+                x1 = int(bb.get("x1", 0)); y1 = int(bb.get("y1", 0))
+                x2 = int(bb.get("x2", 0)); y2 = int(bb.get("y2", 0))
+                if x2 <= x1 or y2 <= y1:
+                    continue
+                sess["all_raw_count"] += 1
+                _merge_box_into(sess["merged_boxes"], [x1, y1, x2, y2])
+            sess["frames_processed"] += 1
+            sess["last_frame_at"] = time.time()
+        sess["running"] = False
+
+    t = threading.Thread(target=_runner, daemon=True, name=f"parking_auto_{source}")
+    sess["thread"] = t
+    t.start()
+    return {"ok": True, "source": source, "started_at": sess["started_at"]}
+
+
+def _merge_box_into(merged: list, bx: list) -> None:
+    """IoU > 0.5 合併 (加權平均座標 + count++)"""
+    def _iou(a, b):
+        ix1 = max(a[0], b[0]); iy1 = max(a[1], b[1])
+        ix2 = min(a[2], b[2]); iy2 = min(a[3], b[3])
+        iw = max(0, ix2 - ix1); ih = max(0, iy2 - iy1)
+        inter = iw * ih
+        ar = (a[2]-a[0]) * (a[3]-a[1])
+        br = (b[2]-b[0]) * (b[3]-b[1])
+        return inter / max(1, ar + br - inter)
+
+    for i, m in enumerate(merged):
+        if _iou(bx, m[:4]) > 0.5:
+            cnt = m[4] + 1
+            nx1 = (m[0] * m[4] + bx[0]) / cnt
+            ny1 = (m[1] * m[4] + bx[1]) / cnt
+            nx2 = (m[2] * m[4] + bx[2]) / cnt
+            ny2 = (m[3] * m[4] + bx[3]) / cnt
+            merged[i] = [int(nx1), int(ny1), int(nx2), int(ny2), cnt]
+            return
+    merged.append([bx[0], bx[1], bx[2], bx[3], 1])
+
+
+def auto_session_status(source: str) -> Dict:
+    sess = _AUTO_SESSIONS.get(source)
+    if not sess:
+        return {"running": False, "frames_processed": 0, "merged_slots": 0,
+                "total_detections": 0}
+    return {
+        "running": sess.get("running", False),
+        "frames_processed": sess.get("frames_processed", 0),
+        "merged_slots": len(sess.get("merged_boxes", [])),
+        "total_detections": sess.get("all_raw_count", 0),
+        "frame_w": sess.get("frame_w", 0),
+        "frame_h": sess.get("frame_h", 0),
+        "started_at": sess.get("started_at"),
+        "last_frame_at": sess.get("last_frame_at"),
+        "max_frames": sess.get("max_frames"),
+        "interval_sec": sess.get("interval_sec"),
+        "error": sess.get("error", ""),
+    }
+
+
+def auto_session_stop_and_get(source: str) -> Dict:
+    """停止 session 並回回 merged slots (轉成 polygon 4 點 + 外擴)"""
+    sess = _AUTO_SESSIONS.get(source)
+    if not sess:
+        return {"slots": [], "frames_processed": 0, "merged_slots": 0}
+    sess.get("stop_event") and sess["stop_event"].set()
+    expand = float(sess.get("expand", 0.08))
+    w_img = sess.get("frame_w", 1)
+    h_img = sess.get("frame_h", 1)
+    slots_out = []
+    for idx, m in enumerate(sess.get("merged_boxes", [])):
+        x1, y1, x2, y2, _cnt = m
+        w = x2 - x1; h = y2 - y1
+        dx = int(w * expand); dy = int(h * expand)
+        nx1 = max(0, x1 - dx); ny1 = max(0, y1 - dy)
+        nx2 = min(w_img - 1, x2 + dx); ny2 = min(h_img - 1, y2 + dy)
+        lbl = f"P{idx + 1}"
+        slots_out.append({
+            "id": lbl, "label": lbl,
+            "polygon": [[nx1, ny1], [nx2, ny1], [nx2, ny2], [nx1, ny2]],
+            "samples": _cnt,
+        })
+    return {
+        "slots": slots_out,
+        "frames_processed": sess.get("frames_processed", 0),
+        "merged_slots": len(sess.get("merged_boxes", [])),
+        "total_detections": sess.get("all_raw_count", 0),
+        "frame_w": w_img, "frame_h": h_img,
+    }
+
+
+def record_to_history(result: Dict) -> bool:
+    """寫一筆 ParkingSample (per-source 5 分鐘 throttle).
+    Return True = 已寫入, False = 跳過 (throttle 中或無 total)."""
+    if not result or not result.get("total"):
+        return False
+    src = result.get("source") or ""
+    if not src:
+        return False
+    now = time.time()
+    with _HISTORY_LOCK:
+        last = _HISTORY_LAST_AT.get(src, 0.0)
+        if (now - last) < _HISTORY_THROTTLE_SEC:
+            return False
+        _HISTORY_LAST_AT[src] = now
+    try:
+        from api.models import SessionLocal, ParkingSample
+        db = SessionLocal()
+        try:
+            row = ParkingSample(
+                source=src,
+                source_name=result.get("source_name", src),
+                total=int(result.get("total") or 0),
+                occupied=int(result.get("occupied") or 0),
+                available=int(result.get("available") or 0),
+                occupancy_rate=float(result.get("occupancy_rate") or 0.0),
+                detected_vehicles=int(result.get("detected_vehicles") or 0),
+            )
+            db.add(row)
+            db.commit()
+            return True
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[parking] record_to_history err: {e}", flush=True)
+        return False
+
 
 def load_slots(source_key: str) -> List[Dict]:
     """讀 parking_slots.json,回傳 source_key 對應的 slots list.
@@ -80,24 +264,32 @@ def get_source_meta(source_key: str) -> Dict:
         return {}
 
 
-def fetch_frame(source_key: str) -> Optional[np.ndarray]:
-    """從 source 拉一張 frame (BGR ndarray).有 2 秒 cache."""
+def fetch_frame(source_key: str, bypass_cache: bool = False) -> Optional[np.ndarray]:
+    """從 source 拉一張 frame (BGR ndarray).有 2 秒 cache (multi-frame 累積時可 bypass)."""
     now = time.time()
-    with _CACHE_LOCK:
-        cached = _LATEST_FRAME_CACHE.get(source_key)
-        if cached and (now - cached[0]) < _FRAME_CACHE_TTL:
-            return cached[1].copy()
+    if not bypass_cache:
+        with _CACHE_LOCK:
+            cached = _LATEST_FRAME_CACHE.get(source_key)
+            if cached and (now - cached[0]) < _FRAME_CACHE_TTL:
+                return cached[1].copy()
 
     frame = None
     if source_key.startswith("twipcam:"):
         import requests as _req
         url = source_key.split(":", 1)[1]
         if not url.startswith("http"):
-            # 從 config 反查 image_url
             meta = get_source_meta(source_key)
             url = meta.get("image_url", "")
         try:
-            r = _req.get(url, timeout=8)
+            # bypass_cache 時加 ts query + no-cache header 強制拿新 frame
+            if bypass_cache:
+                sep = "&" if "?" in url else "?"
+                fetch_url = f"{url}{sep}_t={int(now*1000)}"
+                headers = {"Cache-Control": "no-cache, no-store", "Pragma": "no-cache"}
+            else:
+                fetch_url = url
+                headers = {}
+            r = _req.get(fetch_url, timeout=8, headers=headers)
             if r.status_code == 200 and len(r.content) > 5000:
                 frame = cv2.imdecode(np.frombuffer(r.content, dtype=np.uint8), cv2.IMREAD_COLOR)
         except Exception as e:
