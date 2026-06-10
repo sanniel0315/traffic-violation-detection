@@ -4716,7 +4716,7 @@
                         <div class="ds-card hoverable" style="padding:20px 22px">
                             <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px 16px">
                                 <div style="display:flex;align-items:baseline;gap:10px">
-                                    <span class="ds-section-num ds-section-num--text">24H TREND</span>
+                                    <span class="ds-section-num ds-section-num--text">24 小時趨勢</span>
                                     <span style="font-size:15px;font-weight:700;color:var(--gov-text)">過去 24 小時違規趨勢</span>
                                 </div>
                                 <div style="font-family:var(--font-mono);font-size:13px;color:var(--gov-muted);letter-spacing:.02em">
@@ -4743,7 +4743,7 @@
                         <div class="ds-card hoverable" style="padding:20px 22px">
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                                 <div>
-                                    <div class="ds-section-num ds-section-num--text">LAST 1H</div>
+                                    <div class="ds-section-num ds-section-num--text">最近 1 小時</div>
                                     <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:6px">最近一小時分類</div>
                                 </div>
                                 <span style="font-family:var(--font-mono);font-size:22px;font-weight:700;color:var(--gov-primary)">{{ hourlyTotalCount }}</span>
@@ -4765,7 +4765,7 @@
                     <div class="ds-analytics-grid">
                         <div class="ds-card hoverable ds-analytics-card">
                             <div class="ds-analytics-head">
-                                <span class="ds-section-num ds-section-num--text">BY TYPE</span>
+                                <span class="ds-section-num ds-section-num--text">違規類型</span>
                                 <span class="ds-analytics-title">違規類型占比</span>
                             </div>
                             <div v-if="(dashboard.type_dist||[]).length" class="ds-analytics-canvas">
@@ -4779,7 +4779,7 @@
                         </div>
                         <div class="ds-card hoverable ds-analytics-card">
                             <div class="ds-analytics-head">
-                                <span class="ds-section-num ds-section-num--text">BY CAMERA</span>
+                                <span class="ds-section-num ds-section-num--text">攝影機別</span>
                                 <span class="ds-analytics-title">攝影機別違規</span>
                             </div>
                             <div v-if="(dashboard.camera_dist||[]).length" class="ds-ranking-table">
@@ -4798,7 +4798,7 @@
                         </div>
                         <div class="ds-card hoverable ds-analytics-card">
                             <div class="ds-analytics-head">
-                                <span class="ds-section-num ds-section-num--text">BY VEHICLE</span>
+                                <span class="ds-section-num ds-section-num--text">車種分布</span>
                                 <span class="ds-analytics-title">車種分布</span>
                             </div>
                             <div v-if="(dashboard.vehicle_dist||[]).length" class="ds-analytics-canvas"><canvas id="dashChartVehicle"></canvas></div>
@@ -4806,7 +4806,7 @@
                         </div>
                         <div class="ds-card hoverable ds-analytics-card">
                             <div class="ds-analytics-head">
-                                <span class="ds-section-num ds-section-num--text">OVERSPEED</span>
+                                <span class="ds-section-num ds-section-num--text">超速分布</span>
                                 <span class="ds-analytics-title">超速幅度 (km/h)</span>
                             </div>
                             <div v-if="dashboardHasSpeed" class="ds-analytics-canvas"><canvas id="dashChartSpeed"></canvas></div>
@@ -4820,7 +4820,7 @@
                     <div class="ds-card hoverable" style="margin-top:14px;overflow:visible">
                         <div style="padding:18px 22px;border-bottom:1px solid var(--gov-border);background:var(--gov-surface-2);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
                             <div>
-                                <div class="ds-section-num ds-section-num--text">VIOLATIONS · TODAY</div>
+                                <div class="ds-section-num ds-section-num--text">今日違規</div>
                                 <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">今日違規明細</div>
                             </div>
                             <div style="display:flex;align-items:center;gap:10px">
@@ -5553,7 +5553,7 @@
                         <div class="ds-card hoverable" style="grid-column:span 6;padding:16px 18px">
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                                 <div>
-                                    <div class="ds-section-num ds-section-num--text">AI · RECOMMEND</div>
+                                    <div class="ds-section-num ds-section-num--text">AI 推薦</div>
                                     <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">AI 推薦 (行為優化建議)</div>
                                 </div>
                                 <el-tag size="small" :type="analyticsRecs.length?'warning':'info'">{{ analyticsRecs.length }} 項</el-tag>
@@ -5571,7 +5571,7 @@
                         <div class="ds-card hoverable" style="grid-column:span 6;padding:16px 18px">
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                                 <div>
-                                    <div class="ds-section-num ds-section-num--text">SAFETY · SCORE</div>
+                                    <div class="ds-section-num ds-section-num--text">安全分數</div>
                                     <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">各路段安全分數 (0-100)</div>
                                 </div>
                                 <span style="font-size:12px;color:var(--gov-muted)">近 30 天</span>
@@ -5592,7 +5592,7 @@
                         <div class="ds-card hoverable" style="grid-column:span 8;padding:16px 18px">
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                                 <div>
-                                    <div class="ds-section-num ds-section-num--text">HOTSPOTS</div>
+                                    <div class="ds-section-num ds-section-num--text">違規熱點</div>
                                     <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">違規熱點 top 10 (地點 × 時段 × 類型)</div>
                                 </div>
                                 <span style="font-size:12px;color:var(--gov-muted)">近 30 天</span>
@@ -5636,7 +5636,7 @@
                         <!-- 4. 車種×違規 (4/12) -->
                         <div class="ds-card hoverable" style="grid-column:span 4;padding:16px 18px">
                             <div style="margin-bottom:10px">
-                                <div class="ds-section-num ds-section-num--text">BY · VEHICLE</div>
+                                <div class="ds-section-num ds-section-num--text">車種違規</div>
                                 <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">車種違規分布</div>
                             </div>
                             <div v-if="analyticsVehTypes.length" style="display:flex;flex-direction:column;gap:10px">
@@ -5658,7 +5658,7 @@
                         <div class="ds-card hoverable" style="grid-column:span 12;padding:16px 18px">
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                                 <div>
-                                    <div class="ds-section-num ds-section-num--text">FORECAST · NEXT HOUR</div>
+                                    <div class="ds-section-num ds-section-num--text">下小時預測</div>
                                     <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">24h 流量趨勢 + 下小時預測</div>
                                 </div>
                                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -5701,7 +5701,7 @@
                         <div class="ds-card hoverable" style="grid-column:span 12;padding:16px 18px">
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
                                 <div>
-                                    <div class="ds-section-num ds-section-num--text">TREND · 30 DAYS</div>
+                                    <div class="ds-section-num ds-section-num--text">30 天趨勢</div>
                                     <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">30 天違規 趨勢 (依類型分線)</div>
                                 </div>
                                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -5743,7 +5743,7 @@
                         <div class="ds-card hoverable" style="grid-column:span 12;padding:16px 18px">
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
                                 <div>
-                                    <div class="ds-section-num ds-section-num--text">RADAR · BEV</div>
+                                    <div class="ds-section-num ds-section-num--text">雷達式視圖</div>
                                     <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">雷達式視圖 (從視覺反推 BEV)</div>
                                     <div style="font-size:11px;color:var(--gov-muted);margin-top:2px">無雷達硬體,以 YOLO tracks 投影 world_xy 模擬雷達 PPI 顯示</div>
                                 </div>
