@@ -484,7 +484,9 @@ def _yolo_sliced_detect(yolo_local, frame: np.ndarray) -> list:
     all_dets.sort(key=lambda d: d.get("conf", 0.0), reverse=True)
     kept = []
     for d in all_dets:
-        if any(_iou_d(d["bbox"], k["bbox"]) > 0.5 for k in kept):
+        # NMS IoU > 0.3 抑制 (從 0.5 降到 0.3 — 同台車跨 tile 切斷後 2 個 bbox
+        # 通常 IoU 落 0.3-0.5 區間,更嚴 NMS 才合併)
+        if any(_iou_d(d["bbox"], k["bbox"]) > 0.3 for k in kept):
             continue
         kept.append(d)
     return kept
