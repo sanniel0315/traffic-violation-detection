@@ -39,6 +39,11 @@ class SlotsSaveBody(BaseModel):
     slots: List[SlotPolygon]
 
 
+class MaskSaveBody(BaseModel):
+    source: str
+    parking_area_mask: List[List[float]]   # polygon [[x,y], ...] or [] to clear
+
+
 router = APIRouter(prefix="/api/parking", tags=["parking"])
 
 
@@ -320,6 +325,35 @@ def slots_auto_status(source: str = Query(...)):
 def slots_auto_stop(source: str = Query(...)):
     """停止背景 session 並回 merged slots polygon list"""
     return auto_session_stop_and_get(source)
+
+
+@router.post("/mask/save")
+def save_mask(body: MaskSaveBody):
+    """寫入 source 的停車場區域 mask polygon (用來過濾非停車場區域誤判).
+    polygon=[] 清除 mask."""
+    existing: dict = {}
+    if os.path.exists(_CONFIG_PATH):
+        try:
+            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = {}
+    else:
+        from services.parking_occupancy import _DEFAULT_CONFIG
+        existing = json.loads(json.dumps(_DEFAULT_CONFIG))
+
+    entry = existing.get(body.source) or {}
+    if body.parking_area_mask:
+        entry["parking_area_mask"] = body.parking_area_mask
+    else:
+        entry.pop("parking_area_mask", None)
+    existing[body.source] = entry
+
+    os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+    with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(existing, f, ensure_ascii=False, indent=2)
+    return {"ok": True, "source": body.source,
+            "mask_points": len(body.parking_area_mask)}
 
 
 @router.post("/slots/save")

@@ -29,6 +29,15 @@ _PKLOT_MODEL = None
 _PKLOT_LOCK = threading.Lock()
 _PKLOT_AVAILABLE: Optional[bool] = None
 
+# Temporal accumulation — 跨多 frame 累積 slot 位置 (提升精確度過濾偶發誤判)
+# per-source: [[x1,y1,x2,y2, n_seen, n_occupied, last_seen_ts], ...]
+_PKLOT_POSITIONS: Dict[str, List] = {}
+_PKLOT_POS_LOCK = threading.Lock()
+_PKLOT_MIN_SEEN = 3        # 跨 3 frame 都見才算有效車位 (過濾偶發誤判)
+_PKLOT_TTL_SEC = 1800.0    # 30 分鐘沒見過自動刪
+_PKLOT_MERGE_IOU = 0.55    # IoU > 0.55 視為同位置累積
+_PKLOT_OCC_RATIO = 0.4     # n_occupied / n_seen > 0.4 → 視為 occupied
+
 
 def is_available() -> bool:
     global _PKLOT_AVAILABLE
@@ -174,6 +183,22 @@ def _bbox_iou(a, b):
     return inter / max(1, ar + br - inter)
 
 
+def _point_in_poly(px: float, py: float, poly: List) -> bool:
+    """ray-casting polygon point-in-poly,poly = [[x,y], ...]"""
+    if not poly or len(poly) < 3:
+        return True   # 沒設 mask 視為都通過
+    n = len(poly)
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = poly[i][0], poly[i][1]
+        xj, yj = poly[j][0], poly[j][1]
+        if ((yi > py) != (yj > py)) and (px < (xj - xi) * (py - yi) / (yj - yi + 1e-9) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
 def evaluate_pklot(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
     """PKLot + YOLO 雙確認:
     1. PKLot 給「車位 polygon」(空+滿)
@@ -187,15 +212,25 @@ def evaluate_pklot(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
         return {"source": source_key, "source_name": meta.get("name", source_key),
                 "error": "PKLot model 未安裝", "total": 0, "occupied": 0,
                 "available": 0, "occupancy_rate": 0.0, "slots": [], "mode": "pklot"}
+    import time as _t
+    now = _t.time()
     h_img, w_img = frame.shape[:2]
     pklot_dets = detect_slots(frame, conf=0.05)
     car_centers = _yolo_car_centers(frame, conf=0.12)
     car_bboxes = [(c[2], c[3], c[4], c[5]) for c in car_centers]
+    area_mask = meta.get("parking_area_mask") or []
 
-    slot_results = []
+    # 當下這 frame 通過嚴格雙確認的 candidate slots
+    candidates = []  # [(bbox, final_occupied)]
     for idx, det in enumerate(pklot_dets):
         x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
         slot_bbox = (x1, y1, x2, y2)
+        # mask 過濾
+        if area_mask:
+            cx = (x1 + x2) / 2.0
+            cy = (y1 + y2) / 2.0
+            if not _point_in_poly(cx, cy, area_mask):
+                continue
         # 雙確認: YOLO 任一 car bbox 跟 slot IoU > 0.3 → occupied
         yolo_occ = False
         for cb in car_bboxes:
@@ -220,24 +255,53 @@ def evaluate_pklot(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
         if not yolo_occ:
             if det["conf"] < 0.18:
                 continue
-            if pklot_occ:  # PKLot 說「有車」但 YOLO 看不到 → 八成是把樹/車道誤認車
+            if pklot_occ:
                 continue
 
+        candidates.append((slot_bbox, final_occ))
+
+    # Temporal accumulation — 累積進 _PKLOT_POSITIONS,只有跨多 frame 持續見的才算有效車位
+    with _PKLOT_POS_LOCK:
+        positions = _PKLOT_POSITIONS.setdefault(source_key, [])
+        for bbox, occ in candidates:
+            matched = False
+            for p in positions:
+                if _bbox_iou(bbox, (p[0], p[1], p[2], p[3])) > _PKLOT_MERGE_IOU:
+                    # 加權平均更新座標 (穩定 bbox 位置)
+                    n = p[4] + 1
+                    p[0] = int((p[0] * p[4] + bbox[0]) / n)
+                    p[1] = int((p[1] * p[4] + bbox[1]) / n)
+                    p[2] = int((p[2] * p[4] + bbox[2]) / n)
+                    p[3] = int((p[3] * p[4] + bbox[3]) / n)
+                    p[4] = n
+                    if occ:
+                        p[5] += 1
+                    p[6] = now
+                    matched = True
+                    break
+            if not matched:
+                positions.append([bbox[0], bbox[1], bbox[2], bbox[3],
+                                   1, 1 if occ else 0, now])
+        # TTL GC
+        positions[:] = [p for p in positions if (now - p[6]) <= _PKLOT_TTL_SEC]
+        # 取「穩定」的位置 (跨 _PKLOT_MIN_SEEN frame 都見過)
+        stable = [p for p in positions if p[4] >= _PKLOT_MIN_SEEN]
+
+    slot_results = []
+    for idx, p in enumerate(stable):
+        x1, y1, x2, y2, n_seen, n_occ, last = p
+        occupied_ratio = n_occ / max(1, n_seen)
         polygon = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
-        lbl = f"P{idx + 1}"
+        lbl = f"P{idx+1}"
         slot_results.append({
             "id": lbl, "label": lbl,
-            "occupied": final_occ,
-            "conf": round(det["conf"], 3),
+            "occupied": occupied_ratio > _PKLOT_OCC_RATIO,
+            "conf": round(min(1.0, n_seen / 5.0), 3),  # 穩定度當 conf
             "polygon": polygon,
-            "pklot_says_occupied": pklot_occ,
-            "yolo_confirms_car": yolo_occ,
+            "n_seen": n_seen,
+            "n_occupied": n_occ,
+            "occupied_ratio": round(occupied_ratio, 2),
         })
-
-    # 重新編號 (過濾後)
-    for i, s in enumerate(slot_results):
-        s["id"] = f"P{i+1}"
-        s["label"] = f"P{i+1}"
 
     occupied = sum(1 for s in slot_results if s["occupied"])
     total = len(slot_results)
@@ -249,5 +313,15 @@ def evaluate_pklot(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
         "occupancy_rate": round((occupied / total * 100.0) if total else 0.0, 1),
         "detected_vehicles": len(car_centers),
         "slots": slot_results,
-        "mode": "pklot+yolo",
+        "mode": "pklot+yolo+temporal",
+        "candidates_this_frame": len(candidates),
+        "stable_positions": total,
+        "min_seen_threshold": _PKLOT_MIN_SEEN,
     }
+
+
+def reset_pklot_positions(source_key: str) -> int:
+    """清掉 _PKLOT_POSITIONS[source] 累積"""
+    with _PKLOT_POS_LOCK:
+        old = _PKLOT_POSITIONS.pop(source_key, [])
+    return len(old)
