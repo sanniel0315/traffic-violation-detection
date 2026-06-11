@@ -12,9 +12,11 @@ import os
 
 import cv2
 import numpy as np
+import time
+import threading
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from services.parking_occupancy import (
@@ -194,10 +196,107 @@ def get_history(source: str = Query(..., description="source key"),
         db.close()
 
 
+@router.get("/stream")
+def stream_parking(source: str = Query(..., description="source key"),
+                    show_boxes: bool = Query(True),
+                    show_vehicles: bool = Query(True),
+                    eval_interval_sec: float = Query(2.0, ge=0.5, le=30.0,
+                        description="跑 evaluate (PKLot+YOLO) 間隔,期間用 cached overlay")):
+    """MJPEG 串流 (multipart/x-mixed-replace):
+    - 高 fps 拉 frame (stream_url cv2.VideoCapture 開一次持續 read)
+    - 低 fps 跑 evaluate (cache slots + car bboxes)
+    - 每 frame 用 cached overlay 渲染,不卡頓"""
+    from services.parking_pklot_model import _yolo_car_centers as _yolo_cars
+
+    def render_overlay(frame: np.ndarray, slots: list, cars: list):
+        if show_vehicles:
+            for c in cars:
+                cx, cy, x1, y1, x2, y2 = c
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (210, 210, 30), 1)
+                cv2.circle(frame, (cx, cy), 3, (210, 210, 30), -1)
+        if show_boxes:
+            for slot in slots:
+                poly = slot.get("polygon") or []
+                if len(poly) < 3:
+                    continue
+                pts = np.array(poly, dtype=np.int32).reshape(-1, 1, 2)
+                cx = int(sum(p[0] for p in poly) / len(poly))
+                cy = int(sum(p[1] for p in poly) / len(poly))
+                label = str(slot.get("label", slot.get("id", "")))
+                if not slot.get("occupied"):
+                    slot_overlay = frame.copy()
+                    cv2.fillPoly(slot_overlay, [pts], (60, 180, 80))
+                    cv2.addWeighted(slot_overlay, 0.40, frame, 0.60, 0, frame)
+                    cv2.polylines(frame, [pts], True, (80, 220, 100), 2)
+                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+                    cv2.rectangle(frame, (cx - tw // 2 - 4, cy - th // 2 - 4),
+                                  (cx + tw // 2 + 4, cy + th // 2 + 4),
+                                  (80, 220, 100), -1)
+                    cv2.putText(frame, label, (cx - tw // 2, cy + th // 2 + 1),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2)
+        return frame
+
+    def gen():
+        cached_slots = []
+        cached_cars = []
+        last_eval = 0.0
+        # 開 cap (stream_url 模式) 持續拉 frame,沒設則用 fetch_frame fallback
+        meta = get_source_meta(source) or {}
+        stream_url = meta.get("stream_url", "")
+        cap = None
+        if stream_url:
+            try:
+                cap = cv2.VideoCapture(stream_url)
+                try:
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
+            except Exception:
+                cap = None
+        try:
+            while True:
+                # fetch frame (cap 模式快 / fetch_frame fallback 慢)
+                if cap is not None:
+                    ret, frame = cap.read()
+                    if not ret or frame is None:
+                        # cap 斷線 retry
+                        cap.release()
+                        cap = cv2.VideoCapture(stream_url)
+                        time.sleep(0.5)
+                        continue
+                else:
+                    frame = fetch_frame(source)
+                    if frame is None:
+                        time.sleep(1.0)
+                        continue
+                # 低 fps evaluate (跨 frame 用 cache)
+                now = time.time()
+                if (now - last_eval) >= eval_interval_sec:
+                    try:
+                        result = evaluate_occupancy(source)
+                        cached_slots = result.get("slots", []) or []
+                        cached_cars = _yolo_cars(frame, conf=0.12) if show_vehicles else []
+                    except Exception as e:
+                        print(f"[parking stream] eval err: {e}", flush=True)
+                    last_eval = now
+                # render overlay (cheap)
+                frame = render_overlay(frame, cached_slots, cached_cars)
+                ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                if ok:
+                    yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n'
+                           + buf.tobytes() + b'\r\n')
+                time.sleep(0.04)   # ~25 fps cap
+        finally:
+            if cap is not None:
+                try: cap.release()
+                except Exception: pass
+
+    return StreamingResponse(gen(), media_type='multipart/x-mixed-replace; boundary=frame')
+
+
 @router.get("/snapshot/raw")
 def get_snapshot_raw(source: str = Query(..., description="source key")):
     """回 raw frame (沒 overlay) — 供 ROI 編輯器當底圖"""
-    import numpy as np
     frame = fetch_frame(source)
     if frame is None:
         ph = np.zeros((360, 640, 3), dtype=np.uint8)
