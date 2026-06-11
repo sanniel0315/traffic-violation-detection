@@ -156,6 +156,50 @@ def get_occupancy(source: str = Query(..., description="source key e.g. twipcam:
     return evaluate_occupancy(source)
 
 
+@router.get("/vlm/status")
+def vlm_status():
+    """查 VLM 載入狀態 (loading / loaded / error)"""
+    try:
+        from services.parking_vlm import get_load_state
+        return get_load_state()
+    except Exception as e:
+        return {"loaded": False, "error": str(e)}
+
+
+@router.post("/vlm/load")
+def vlm_load():
+    """手動觸發載入 VLM model (背景跑,~5-30s 載完)"""
+    try:
+        from services.parking_vlm import trigger_load
+        return trigger_load()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/vlm/query")
+def vlm_query(source: str = Query(...),
+               slot_id: str = Query(..., description="slot label/id (例 P3)"),
+               prompt: Optional[str] = Query(None, description="自訂 prompt (空用預設)")):
+    """對指定 slot crop ROI 後丟 VLM 仲裁"""
+    from services.parking_vlm import query_slot, crop_slot_from_frame
+    # 找 slot polygon
+    meta = get_source_meta(source) or {}
+    slots = meta.get("slots") or []
+    target = None
+    for s in slots:
+        if str(s.get("id")) == slot_id or str(s.get("label")) == slot_id:
+            target = s; break
+    if not target:
+        raise HTTPException(status_code=404, detail=f"slot {slot_id} 不存在")
+    frame = fetch_frame(source)
+    if frame is None:
+        raise HTTPException(status_code=503, detail="frame unavailable")
+    crop = crop_slot_from_frame(frame, target.get("polygon") or [])
+    if crop is None:
+        raise HTTPException(status_code=503, detail="crop fail")
+    return query_slot(crop, prompt=prompt)
+
+
 @router.post("/auto/reset")
 def auto_reset(source: str = Query(...)):
     """重置累積位置 (auto + PKLot 都清)"""
