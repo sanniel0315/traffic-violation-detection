@@ -65,8 +65,10 @@ def _ensure_loaded() -> bool:
         try:
             t0 = time.time()
             from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+            # Jetson torch 版本舊 (< 2.5),不支援 SDPA 的 enable_gqa,強制 eager attention
             _MODEL = Qwen2VLForConditionalGeneration.from_pretrained(
                 MODEL_ID, torch_dtype="auto", device_map="auto",
+                attn_implementation="eager",
             )
             _PROCESSOR = AutoProcessor.from_pretrained(MODEL_ID)
             _LOAD_STATE["loaded"] = True
@@ -179,14 +181,14 @@ def crop_slot_from_frame(frame: np.ndarray, polygon: List[List[int]],
     """從 frame 把 slot polygon 對應的 bbox 區域 crop 出來 (加 padding)"""
     if frame is None or not polygon:
         return None
-    xs = [p[0] for p in polygon]; ys = [p[1] for p in polygon]
+    xs = [float(p[0]) for p in polygon]; ys = [float(p[1]) for p in polygon]
     x1, y1 = min(xs), min(ys)
     x2, y2 = max(xs), max(ys)
     w = x2 - x1; h = y2 - y1
-    dx = int(w * padding); dy = int(h * padding)
+    dx = w * padding; dy = h * padding
     H, W = frame.shape[:2]
-    cx1 = max(0, x1 - dx); cy1 = max(0, y1 - dy)
-    cx2 = min(W, x2 + dx); cy2 = min(H, y2 + dy)
+    cx1 = int(max(0, x1 - dx)); cy1 = int(max(0, y1 - dy))
+    cx2 = int(min(W, x2 + dx)); cy2 = int(min(H, y2 + dy))
     if cx2 <= cx1 or cy2 <= cy1:
         return None
     return frame[cy1:cy2, cx1:cx2].copy()
