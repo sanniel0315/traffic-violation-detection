@@ -590,6 +590,7 @@ def _eval_auto_mode(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
         "mode": "auto",
     }
     record_to_history(result)
+    result["io_trigger"] = maybe_trigger_io(result, meta)
     return result
 
 
@@ -623,10 +624,13 @@ def evaluate_occupancy(source_key: str) -> Dict:
                     result = evaluate_pklot(source_key, frame, meta)
                     if result.get("total", 0) > 0:
                         record_to_history(result)
+                        result["io_trigger"] = maybe_trigger_io(result, meta)
                         return result
             except Exception as e:
                 print(f"[parking] pklot fallback: {e}", flush=True)
-        return _eval_auto_mode(source_key, frame, meta)
+        auto_result = _eval_auto_mode(source_key, frame, meta)
+        auto_result["io_trigger"] = maybe_trigger_io(auto_result, meta)
+        return auto_result
 
     h, w = frame.shape[:2]
     # 跑 yolo
@@ -696,4 +700,5 @@ def evaluate_occupancy(source_key: str) -> Dict:
         "mode": "roi",
     }
     record_to_history(result)
+    result["io_trigger"] = maybe_trigger_io(result, meta)
     return result
