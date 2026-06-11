@@ -123,7 +123,7 @@ def get_source_meta_route(source: str = Query(...)):
         "stream_url": meta.get("stream_url", ""),
         "parking_area_mask": meta.get("parking_area_mask", []),
         "exclusion_mask": meta.get("exclusion_mask", []),
-        "slot_count": len(meta.get("slots", [])) if isinstance(meta.get("slots"), list) else 0,
+        "slot_count": len(load_slots(source) or []),
     }
 
 
@@ -182,15 +182,14 @@ def vlm_query(source: str = Query(...),
                prompt: Optional[str] = Query(None, description="自訂 prompt (空用預設)")):
     """對指定 slot crop ROI 後丟 VLM 仲裁"""
     from services.parking_vlm import query_slot, crop_slot_from_frame
-    # 找 slot polygon
-    meta = get_source_meta(source) or {}
-    slots = meta.get("slots") or []
+    # 找 slot polygon — get_source_meta 會 pop slots,改用 load_slots
+    slots = load_slots(source) or []
     target = None
     for s in slots:
         if str(s.get("id")) == slot_id or str(s.get("label")) == slot_id:
             target = s; break
     if not target:
-        raise HTTPException(status_code=404, detail=f"slot {slot_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"slot {slot_id} 不存在 (source 有 {len(slots)} 格)")
     frame = fetch_frame(source)
     if frame is None:
         raise HTTPException(status_code=503, detail="frame unavailable")
