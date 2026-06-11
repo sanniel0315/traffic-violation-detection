@@ -440,31 +440,20 @@ def get_snapshot(source: str = Query(..., description="source key")):
         label = str(slot.get("label", slot.get("id", "")))
 
         if not slot.get("occupied"):
-            # 空車位: 畫綠色框 + 號碼,讓 user 看哪些位是空的
-            fill_color = (60, 180, 80)        # 綠 (BGR)
+            # 空車位: 畫綠色框 + 號碼 (空格少所以顯示)
+            fill_color = (60, 180, 80)
             stroke_color = (80, 220, 100)
             slot_overlay = frame.copy()
             cv2.fillPoly(slot_overlay, [pts], fill_color)
             cv2.addWeighted(slot_overlay, 0.40, frame, 0.60, 0, frame)
             cv2.polylines(frame, [pts], True, stroke_color, 2)
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            cv2.rectangle(frame, (cx - tw // 2 - 3, cy - th // 2 - 3),
-                          (cx + tw // 2 + 3, cy + th // 2 + 3),
-                          stroke_color, -1)
-            cv2.putText(frame, label, (cx - tw // 2, cy + th // 2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
-        else:
-            # 有車的車位: 不畫框,只在車中心標號碼 (避免遮住車身)
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-            # 黑底白字 + 細外框,清楚浮在車身上
             cv2.rectangle(frame, (cx - tw // 2 - 4, cy - th // 2 - 4),
                           (cx + tw // 2 + 4, cy + th // 2 + 4),
-                          (0, 0, 0), -1)
-            cv2.rectangle(frame, (cx - tw // 2 - 4, cy - th // 2 - 4),
-                          (cx + tw // 2 + 4, cy + th // 2 + 4),
-                          (255, 255, 255), 1)
+                          stroke_color, -1)
             cv2.putText(frame, label, (cx - tw // 2, cy + th // 2 + 1),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2)
+        # 有車的車位:不畫框也不畫號碼 (避免畫面太擠),已用 YOLO 青框標示車輛
 
     # HUD 文字移除 — 影像保持乾淨,統計顯示在 UI 旁邊
     ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
