@@ -10447,8 +10447,9 @@ const app=createApp({
             return {d, dArea, count: pts.length, points: pts};
         });
         const openParkingEditor=()=>{
-            const url = `/web/parking_editor.html?source=${encodeURIComponent(parkingSource.value)}`;
-            window.open(url, 'parking_editor', 'width=1320,height=900');
+            // 加 t timestamp + _blank target 避免 popup reuse 載入 cached 舊版
+            const url = `/web/parking_editor.html?source=${encodeURIComponent(parkingSource.value)}&_t=${Date.now()}`;
+            window.open(url, '_blank', 'width=1320,height=900,noopener=no');
         };
         let _parkingTimer = null;
         const startParkingLive=()=>{
