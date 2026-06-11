@@ -1,0 +1,192 @@
+"""
+VLM 整合 — Qwen2-VL-2B-Instruct 本地 deploy (Jetson Orin).
+
+用途:
+- PKLot/YOLO 不一致時 VLM 仲裁 (auto trigger)
+- user 手動 query 「為什麼這個位置看不到車?」
+- 處理複雜場景 (跨線違停 / 雜物佔用 / 光影遮蔽)
+
+對 ROI crop 後問模型:
+"以下圖片是停車場其中一個車位的區域,請判斷:
+ 1. 該車位狀態 (有車 / 空 / 無法判定)
+ 2. 若空,為什麼? (純空 / 被腳踏車 / 雜物 / 光線太暗)
+ 3. 若有車,車輛類型?"
+
+回傳結構化 dict + raw response.
+"""
+from __future__ import annotations
+
+import os
+import threading
+import time
+from typing import Dict, Optional, Tuple, List
+
+import cv2
+import numpy as np
+
+_MODEL = None
+_PROCESSOR = None
+_LOAD_LOCK = threading.Lock()
+_LOAD_STATE = {"loading": False, "loaded": False, "error": ""}
+
+MODEL_ID = "Qwen/Qwen2-VL-2B-Instruct"
+DEFAULT_PROMPT_ZH = (
+    "這張圖是停車場中一個車位的局部畫面.請用以下格式回答 (只回 3 行不要加其他文字):\n"
+    "狀態: 有車 / 空 / 無法判定\n"
+    "原因: (如果空,寫純空地 / 雜物 / 光線太暗 / 腳踏車佔用 / 其他;有車寫 -)\n"
+    "信心: 0-100 整數"
+)
+
+
+def is_loaded() -> bool:
+    return _LOAD_STATE.get("loaded", False)
+
+
+def get_load_state() -> Dict:
+    return dict(_LOAD_STATE)
+
+
+def _ensure_loaded() -> bool:
+    """背景 load model (idempotent).Return True 表示 ready,False 表示 loading 中或失敗"""
+    global _MODEL, _PROCESSOR
+    if _LOAD_STATE.get("loaded"):
+        return True
+    if _LOAD_STATE.get("loading"):
+        return False
+    with _LOAD_LOCK:
+        if _LOAD_STATE.get("loaded"):
+            return True
+        if _LOAD_STATE.get("loading"):
+            return False
+        _LOAD_STATE["loading"] = True
+    # 跑 in background thread (不卡 web request)
+    def _bg():
+        global _MODEL, _PROCESSOR
+        try:
+            t0 = time.time()
+            from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+            _MODEL = Qwen2VLForConditionalGeneration.from_pretrained(
+                MODEL_ID, torch_dtype="auto", device_map="auto",
+            )
+            _PROCESSOR = AutoProcessor.from_pretrained(MODEL_ID)
+            _LOAD_STATE["loaded"] = True
+            _LOAD_STATE["loading"] = False
+            print(f"[vlm] Qwen2-VL-2B loaded in {time.time()-t0:.1f}s", flush=True)
+        except Exception as e:
+            _LOAD_STATE["error"] = str(e)
+            _LOAD_STATE["loading"] = False
+            print(f"[vlm] load err: {e}", flush=True)
+    threading.Thread(target=_bg, daemon=True, name="vlm_load").start()
+    return False
+
+
+def trigger_load() -> Dict:
+    """手動觸發 load (UI 點按鈕用)"""
+    _ensure_loaded()
+    return get_load_state()
+
+
+def query_slot(crop_bgr: np.ndarray, prompt: Optional[str] = None,
+               max_new_tokens: int = 80) -> Dict:
+    """對單一 slot 的 crop image query VLM,return 結構化結果."""
+    if not _ensure_loaded():
+        return {"ok": False, "error": "VLM 載入中或未載入", "state": get_load_state()}
+    if _MODEL is None or _PROCESSOR is None:
+        return {"ok": False, "error": "model 未初始化"}
+    try:
+        from qwen_vl_utils import process_vision_info
+        # BGR → RGB → PIL
+        from PIL import Image
+        if crop_bgr is None or crop_bgr.size == 0:
+            return {"ok": False, "error": "crop is empty"}
+        rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(rgb)
+
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "image", "image": pil_img},
+                {"type": "text", "text": prompt or DEFAULT_PROMPT_ZH},
+            ],
+        }]
+        text = _PROCESSOR.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        image_inputs, video_inputs = process_vision_info(messages)
+        inputs = _PROCESSOR(
+            text=[text], images=image_inputs, videos=video_inputs,
+            padding=True, return_tensors="pt",
+        ).to(_MODEL.device)
+
+        t0 = time.time()
+        import torch
+        with torch.no_grad():
+            generated_ids = _MODEL.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
+        # trim input
+        generated_ids_trimmed = [
+            out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)
+        ]
+        output_text = _PROCESSOR.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False,
+        )[0]
+        dt = time.time() - t0
+
+        parsed = _parse_response(output_text)
+        return {
+            "ok": True,
+            "raw": output_text,
+            "latency_sec": round(dt, 2),
+            **parsed,
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"ok": False, "error": str(e)}
+
+
+def _parse_response(text: str) -> Dict:
+    """parse 「狀態: / 原因: / 信心:」三行格式"""
+    out = {"status": None, "reason": None, "confidence": None}
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line.startswith("狀態:") or line.startswith("狀態：") or line.lower().startswith("status:"):
+            v = line.split(":", 1)[-1].split("：", 1)[-1].strip()
+            out["status"] = v
+        elif line.startswith("原因:") or line.startswith("原因：") or line.lower().startswith("reason:"):
+            v = line.split(":", 1)[-1].split("：", 1)[-1].strip()
+            out["reason"] = v
+        elif line.startswith("信心:") or line.startswith("信心：") or line.lower().startswith("confidence:"):
+            v = line.split(":", 1)[-1].split("：", 1)[-1].strip()
+            # 取數字
+            import re
+            m = re.search(r"\d+", v)
+            if m:
+                try:
+                    out["confidence"] = int(m.group()) / 100.0
+                except Exception:
+                    pass
+    # derive boolean occupied
+    s = (out["status"] or "").lower()
+    if "有車" in s or "occupied" in s:
+        out["occupied"] = True
+    elif "空" in s or "empty" in s:
+        out["occupied"] = False
+    else:
+        out["occupied"] = None
+    return out
+
+
+def crop_slot_from_frame(frame: np.ndarray, polygon: List[List[int]],
+                          padding: float = 0.10) -> Optional[np.ndarray]:
+    """從 frame 把 slot polygon 對應的 bbox 區域 crop 出來 (加 padding)"""
+    if frame is None or not polygon:
+        return None
+    xs = [p[0] for p in polygon]; ys = [p[1] for p in polygon]
+    x1, y1 = min(xs), min(ys)
+    x2, y2 = max(xs), max(ys)
+    w = x2 - x1; h = y2 - y1
+    dx = int(w * padding); dy = int(h * padding)
+    H, W = frame.shape[:2]
+    cx1 = max(0, x1 - dx); cy1 = max(0, y1 - dy)
+    cx2 = min(W, x2 + dx); cy2 = min(H, y2 + dy)
+    if cx2 <= cx1 or cy2 <= cy1:
+        return None
+    return frame[cy1:cy2, cx1:cx2].copy()
