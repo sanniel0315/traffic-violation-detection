@@ -44,6 +44,15 @@ class MaskSaveBody(BaseModel):
     parking_area_mask: List[List[float]]   # polygon [[x,y], ...] or [] to clear
 
 
+class IOTriggerBody(BaseModel):
+    source: str
+    enabled: bool = True
+    module_id: str                          # io_tcp module id (例 site_106)
+    do_ch: int = 0
+    threshold_rate: float = 95.0            # 佔用率 >= 此值觸發
+    pulse_ms: int = 1000
+
+
 router = APIRouter(prefix="/api/parking", tags=["parking"])
 
 
@@ -344,6 +353,41 @@ def slots_auto_status(source: str = Query(...)):
 def slots_auto_stop(source: str = Query(...)):
     """停止背景 session 並回 merged slots polygon list"""
     return auto_session_stop_and_get(source)
+
+
+@router.post("/io_trigger/save")
+def save_io_trigger(body: IOTriggerBody):
+    """寫入 source 的 io_trigger 設定 (高佔用率自動觸發 io_tcp DO pulse).
+    enabled=false 或 module_id 空 → 清除."""
+    existing: dict = {}
+    if os.path.exists(_CONFIG_PATH):
+        try:
+            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = {}
+    else:
+        from services.parking_occupancy import _DEFAULT_CONFIG
+        existing = json.loads(json.dumps(_DEFAULT_CONFIG))
+
+    entry = existing.get(body.source) or {}
+    if body.enabled and body.module_id:
+        entry["io_trigger"] = {
+            "enabled": True,
+            "module_id": body.module_id,
+            "do_ch": int(body.do_ch),
+            "threshold_rate": float(body.threshold_rate),
+            "pulse_ms": int(body.pulse_ms),
+        }
+    else:
+        entry.pop("io_trigger", None)
+    existing[body.source] = entry
+
+    os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+    with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(existing, f, ensure_ascii=False, indent=2)
+    return {"ok": True, "source": body.source,
+            "io_trigger": entry.get("io_trigger") or None}
 
 
 @router.post("/mask/save")
