@@ -314,9 +314,89 @@ def get_snapshot_raw(source: str = Query(..., description="source key")):
     return Response(content=buf.tobytes(), media_type="image/jpeg")
 
 
+def _hough_lines_to_slots(frame: np.ndarray) -> list:
+    """Hough lines 找白色車格線 → 推 parking slot polygon.
+    流程:
+    1. 灰階 + adaptive threshold 找白色線條
+    2. HoughLinesP 抓線段
+    3. 依角度分群 (水平 / 垂直)
+    4. 相鄰平行線配對成矩形車格"""
+    h, w = frame.shape[:2]
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    # 增強白線對比 (CLAHE)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray = clahe.apply(gray)
+    # adaptive threshold 找白色 (背景柏油暗,線條亮)
+    binary = cv2.adaptiveThreshold(gray, 255,
+                                    cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                    cv2.THRESH_BINARY, 25, -10)
+    # 膨脹一下接斷線
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    binary = cv2.dilate(binary, kernel, iterations=1)
+    # Hough 找線段
+    lines = cv2.HoughLinesP(binary, rho=1, theta=np.pi / 180,
+                             threshold=30, minLineLength=20, maxLineGap=8)
+    if lines is None:
+        return []
+
+    # 分群: 水平 (angle 接近 0 / 180) vs 垂直 (接近 90)
+    horizontal, vertical = [], []
+    for line in lines:
+        x1, y1, x2, y2 = [int(v) for v in line[0]]
+        angle = abs(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+        if angle < 25 or angle > 155:
+            horizontal.append((min(x1, x2), max(x1, x2), (y1 + y2) // 2))
+        elif 65 < angle < 115:
+            vertical.append((min(y1, y2), max(y1, y2), (x1 + x2) // 2))
+
+    # 相鄰垂直線配對成車格 (簡化:每對相鄰垂直線 + 上下邊 → 矩形)
+    vertical.sort(key=lambda v: v[2])  # 按 x 排
+    slots = []
+    for i in range(len(vertical) - 1):
+        v1 = vertical[i]
+        for j in range(i + 1, min(i + 4, len(vertical))):
+            v2 = vertical[j]
+            x1, x2 = v1[2], v2[2]
+            width = x2 - x1
+            if width < 20 or width > 80:  # 車格寬度範圍 px
+                continue
+            # 取兩條線 y 重疊區域
+            y_top = max(v1[0], v2[0])
+            y_bot = min(v1[1], v2[1])
+            height = y_bot - y_top
+            if height < 25 or height > 120:
+                continue
+            # ratio check (車格通常高 > 寬,俯角拍攝)
+            if height / width < 0.6:
+                continue
+            slots.append({
+                "polygon": [[int(x1), int(y_top)], [int(x2), int(y_top)],
+                            [int(x2), int(y_bot)], [int(x1), int(y_bot)]],
+                "_w": int(width), "_h": int(height),
+            })
+
+    # 去重 (IoU > 0.4)
+    def _iou(a, b):
+        ax1, ay1 = a["polygon"][0]; ax2, ay2 = a["polygon"][2]
+        bx1, by1 = b["polygon"][0]; bx2, by2 = b["polygon"][2]
+        ix1 = max(ax1, bx1); iy1 = max(ay1, by1)
+        ix2 = min(ax2, bx2); iy2 = min(ay2, by2)
+        iw = max(0, ix2 - ix1); ih = max(0, iy2 - iy1)
+        inter = iw * ih
+        ar = (ax2 - ax1) * (ay2 - ay1)
+        br = (bx2 - bx1) * (by2 - by1)
+        return inter / max(1, ar + br - inter)
+    kept = []
+    for s in slots:
+        if any(_iou(s, k) > 0.4 for k in kept):
+            continue
+        kept.append(s)
+    return kept
+
+
 @router.post("/slots/auto")
 def auto_detect_slots(source: str = Query(..., description="source key"),
-                      mode: str = Query("pklot", description="pklot | yolo"),
+                      mode: str = Query("pklot", description="pklot | yolo | hough"),
                       expand: float = Query(0.0, ge=0.0, le=0.5),
                       conf: float = Query(0.08, ge=0.05, le=0.9),
                       frames: int = Query(5, ge=1, le=20),
@@ -326,6 +406,25 @@ def auto_detect_slots(source: str = Query(..., description="source key"),
     mode=pklot (預設): 用 PKLot model 找所有 parking slot (空+有車) — 對「車位位置」最準
     mode=yolo: 用 YOLO car detect 找車輛 bbox 當車位 — 只能找到有車的位置.
     回 slots list 後 user 在編輯器可調整 / 刪除 / 儲存."""
+    if mode.lower() == "hough":
+        # OpenCV Hough lines 找白色車格線,跳過 model domain shift
+        frame = fetch_frame(source)
+        if frame is None:
+            raise HTTPException(status_code=503, detail="frame unavailable")
+        hough_slots = _hough_lines_to_slots(frame)
+        h_img, w_img = frame.shape[:2]
+        slots_out = []
+        for idx, s in enumerate(hough_slots):
+            lbl = f"P{idx + 1}"
+            slots_out.append({"id": lbl, "label": lbl, "polygon": s["polygon"]})
+        return {
+            "source": source, "mode": "hough",
+            "frame_w": w_img, "frame_h": h_img,
+            "detected_slots": len(slots_out),
+            "slots": slots_out,
+            "note": f"Hough lines 找到 {len(slots_out)} 個白線車格,在編輯器內修正後儲存",
+        }
+
     if mode.lower() == "pklot":
         # 直接拉一張 frame 跑 sliced PKLot,結果就是所有車位 polygon
         try:
