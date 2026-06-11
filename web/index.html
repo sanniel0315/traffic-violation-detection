@@ -10338,6 +10338,8 @@ const app=createApp({
         const parkingShowAdd=ref(false);
         const parkingAddForm=ref({key:'', name:'', image_url:'', stream_url:''});
         const parkingSnapshotUrl=computed(()=> `/api/parking/snapshot?source=${encodeURIComponent(parkingSource.value)}&t=${_parkingTick.value}`);
+        const parkingRawSnapshotUrl=computed(()=> `/api/parking/snapshot/raw?source=${encodeURIComponent(parkingSource.value)}&t=${_parkingTick.value}`);
+        const parkingShowVerify=ref(false);
         const loadParkingSources=async()=>{
             try {
                 const r = await fetch('/api/parking/sources');

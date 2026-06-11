@@ -418,6 +418,18 @@ def get_snapshot(source: str = Query(..., description="source key")):
     cv2.rectangle(overlay, (0, 0), (frame.shape[1], frame.shape[0]), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.18, frame, 0.82, 0, frame)
 
+    # 先畫車輛 bbox (青色細框) — 讓 user 看 YOLO 偵測到的車
+    try:
+        from services.parking_pklot_model import _yolo_car_centers
+        car_centers = _yolo_car_centers(frame, conf=0.12)
+        for c in car_centers:
+            cx, cy, x1, y1, x2, y2 = c
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (210, 210, 30), 1)
+            # 小圓點 marker 在 bbox 中心 (區別 PKLot 號碼)
+            cv2.circle(frame, (cx, cy), 3, (210, 210, 30), -1)
+    except Exception as e:
+        print(f"[parking] snapshot yolo render err: {e}", flush=True)
+
     for slot in result.get("slots") or []:
         poly = slot.get("polygon") or []
         if len(poly) < 3:
