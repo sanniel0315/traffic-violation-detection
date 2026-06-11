@@ -33,10 +33,10 @@ _PKLOT_AVAILABLE: Optional[bool] = None
 # per-source: [[x1,y1,x2,y2, n_seen, n_occupied, last_seen_ts], ...]
 _PKLOT_POSITIONS: Dict[str, List] = {}
 _PKLOT_POS_LOCK = threading.Lock()
-_PKLOT_MIN_SEEN = 3        # 跨 3 frame 都見才算有效車位 (過濾偶發誤判)
-_PKLOT_TTL_SEC = 1800.0    # 30 分鐘沒見過自動刪
-_PKLOT_MERGE_IOU = 0.55    # IoU > 0.55 視為同位置累積
-_PKLOT_OCC_RATIO = 0.4     # n_occupied / n_seen > 0.4 → 視為 occupied
+_PKLOT_MIN_SEEN = 3        # 跨 3 frame 都見才算有效
+_PKLOT_TTL_SEC = 1800.0
+_PKLOT_MERGE_IOU = 0.35    # 略漂移 (IoU 0.35-0.55) 視為同位置累積
+_PKLOT_OCC_RATIO = 0.5
 
 
 def is_available() -> bool:
@@ -141,7 +141,7 @@ def detect_slots(frame: np.ndarray, conf: float = 0.05,
     all_dets.sort(key=lambda d: d.get("conf", 0.0), reverse=True)
     kept = []
     for d in all_dets:
-        if any(_iou(d, k) > 0.4 for k in kept):
+        if any(_iou(d, k) > 0.35 for k in kept):    # NMS 中等
             continue
         kept.append(d)
     return kept
@@ -215,7 +215,7 @@ def evaluate_pklot(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
     import time as _t
     now = _t.time()
     h_img, w_img = frame.shape[:2]
-    pklot_dets = detect_slots(frame, conf=0.05)
+    pklot_dets = detect_slots(frame, conf=0.12)   # 平衡 conf
     car_centers = _yolo_car_centers(frame, conf=0.12)
     car_bboxes = [(c[2], c[3], c[4], c[5]) for c in car_centers]
     area_mask = meta.get("parking_area_mask") or []
@@ -253,7 +253,7 @@ def evaluate_pklot(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
         # 規則 2: YOLO 沒看到車 + PKLot 自己也說 occupied → 嚴重誤判,過濾
         # 規則 3: 通過 = YOLO 有車 (高信度有車位) OR PKLot conf >= 0.18 且 PKLot 說 empty (model 對空車位確信)
         if not yolo_occ:
-            if det["conf"] < 0.18:
+            if det["conf"] < 0.20:
                 continue
             if pklot_occ:
                 continue
