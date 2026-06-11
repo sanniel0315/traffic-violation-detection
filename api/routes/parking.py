@@ -96,6 +96,20 @@ def twipcam_search(q: str = Query("", description="關鍵字 (名稱/id 模糊�
     return {"total_in_list": len(data), "matched": len(out), "items": out}
 
 
+@router.get("/source_meta")
+def get_source_meta_route(source: str = Query(...)):
+    """回 source meta (name/image_url/stream_url/parking_area_mask/slots count) — 供編輯器讀取"""
+    meta = get_source_meta(source) or {}
+    return {
+        "source": source,
+        "name": meta.get("name", ""),
+        "image_url": meta.get("image_url", ""),
+        "stream_url": meta.get("stream_url", ""),
+        "parking_area_mask": meta.get("parking_area_mask", []),
+        "slot_count": len(meta.get("slots", [])) if isinstance(meta.get("slots"), list) else 0,
+    }
+
+
 @router.get("/sources")
 def list_sources():
     """已配置 source 列表 (key/name/slot 數)"""

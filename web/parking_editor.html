@@ -49,6 +49,11 @@
       <el-button size="small" @click="cancelCurrent" :disabled="!dragging">取消拖拉</el-button>
       <el-button size="small" plain @click="loadExistingSlots">重新載入</el-button>
       <el-button size="small" type="danger" plain @click="clearAllSlots" :disabled="!slots.length || sessionRunning">清空全部</el-button>
+      <el-divider direction="vertical"/>
+      <el-button size="small" type="warning" plain v-if="!maskMode" @click="startMaskMode">畫停車場區域</el-button>
+      <el-button size="small" type="success" v-else @click="finishMask" :disabled="maskDraft.length < 3">完成區域 ({{ maskDraft.length }})</el-button>
+      <el-button size="small" type="danger" plain v-if="maskMode" @click="cancelMask">取消</el-button>
+      <el-button size="small" type="danger" plain v-if="maskPolygon.length && !maskMode" @click="clearMask">清除區域</el-button>
     </div>
     <div v-if="sessionRunning || sessionStatus.frames_processed" style="margin:8px 0;padding:10px 14px;background:#fff8e1;border-left:3px solid #d97706;border-radius:4px;font-size:13px;font-family:monospace;color:#1f2937">
       累積偵測:
@@ -117,6 +122,10 @@ const app = createApp({
     const sessionRunning = ref(false);
     const sessionStatus = ref({frames_processed: 0, merged_slots: 0, total_detections: 0});
     let _sessionPollTimer = null;
+    // 停車場區域 mask state
+    const maskMode = ref(false);       // 畫 mask 中
+    const maskPolygon = ref([]);       // 已存的 mask polygon (image px)
+    const maskDraft = ref([]);          // 畫中的 vertices (image px)
     let imgW = 1, imgH = 1, scaleX = 1, scaleY = 1;
 
     const reloadImage = () => { _rawTick.value = Date.now(); };
@@ -142,6 +151,47 @@ const app = createApp({
       if (!cv) return;
       const ctx = cv.getContext('2d');
       ctx.clearRect(0, 0, cv.width, cv.height);
+      // 已存 mask polygon — 半透藍 + 黃虛線邊
+      if (maskPolygon.value.length >= 3) {
+        ctx.fillStyle = 'rgba(59,130,246,0.10)';
+        ctx.strokeStyle = '#f59e0b';
+        ctx.setLineDash([6, 5]);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        maskPolygon.value.forEach((p, i) => {
+          const x = p[0] / scaleX, y = p[1] / scaleY;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      // 畫中的 mask draft — 紅實線 + 頂點
+      if (maskMode.value && maskDraft.value.length > 0) {
+        ctx.strokeStyle = '#dc2626';
+        ctx.fillStyle = 'rgba(220,38,38,0.16)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        maskDraft.value.forEach((p, i) => {
+          const x = p[0] / scaleX, y = p[1] / scaleY;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        if (maskDraft.value.length >= 3) {
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.stroke();
+        // 頂點圓
+        ctx.fillStyle = '#dc2626';
+        for (const p of maskDraft.value) {
+          ctx.beginPath();
+          ctx.arc(p[0] / scaleX, p[1] / scaleY, 4, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      }
       // 已存 slots — 半透綠 + 4 個紅色 handle 頂點 (可拖拉調整)
       for (let si = 0; si < slots.value.length; si++) {
         const s = slots.value[si];
@@ -238,15 +288,28 @@ const app = createApp({
     };
 
     const onMouseDown = (e) => {
-      if (e.button !== 0) return;
-      // 先檢查是否點在 handle 上 → 進入頂點編輯模式
+      if (e.button !== 0) {
+        // 右鍵 — mask mode 取消上一點
+        if (e.button === 2 && maskMode.value && maskDraft.value.length) {
+          maskDraft.value = maskDraft.value.slice(0, -1);
+          redraw();
+        }
+        return;
+      }
+      // mask mode: 加 vertex
+      if (maskMode.value) {
+        maskDraft.value = [...maskDraft.value, _toImagePx(e)];
+        redraw();
+        return;
+      }
+      // 頂點編輯模式
       const hit = _hitHandle(e);
       if (hit) {
         editingPoint.value = hit;
         redraw();
         return;
       }
-      // 否則進入矩形拖拉模式
+      // 矩形拖拉模式
       dragStart.value = _toImagePx(e);
       dragEnd.value = dragStart.value.slice();
       dragging.value = true;
@@ -424,9 +487,78 @@ const app = createApp({
         slots.value = (d.slots || []).map(s => ({
           id: s.id, label: s.label, polygon: s.polygon,
         }));
-        redraw();
       } catch (e) {
         ElementPlus.ElMessage.error('載入失敗: ' + e.message);
+      }
+      // 抓 source meta 拿既有 mask
+      try {
+        const r2 = await fetch('/api/parking/sources');
+        const d2 = await r2.json();
+        const src = (d2.sources || []).find(s => s.key === sourceKey.value);
+        // sources endpoint 沒回 mask;改用直接讀 config 內 mask
+        // 簡化: 不額外 endpoint,從 sessionStorage 暫存,或下次 evaluate 帶回 mask 用 (這裡 keep empty)
+      } catch (e) {}
+      // 直接從 evaluate result 抓 (若 backend 有回 mask)
+      try {
+        const r3 = await fetch(`/api/parking/source_meta?source=${encodeURIComponent(sourceKey.value)}`);
+        if (r3.ok) {
+          const meta = await r3.json();
+          maskPolygon.value = meta.parking_area_mask || [];
+        }
+      } catch (e) {}
+      redraw();
+    };
+
+    // Mask 模式 methods
+    const startMaskMode = () => {
+      maskMode.value = true;
+      maskDraft.value = [];
+      redraw();
+    };
+    const cancelMask = () => {
+      maskMode.value = false;
+      maskDraft.value = [];
+      redraw();
+    };
+    const finishMask = async () => {
+      if (maskDraft.value.length < 3) {
+        ElementPlus.ElMessage.warning('至少 3 點');
+        return;
+      }
+      try {
+        const r = await fetch('/api/parking/mask/save', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source: sourceKey.value,
+            parking_area_mask: maskDraft.value,
+          }),
+        });
+        const d = await r.json();
+        if (r.ok && d.ok) {
+          maskPolygon.value = maskDraft.value.slice();
+          maskDraft.value = [];
+          maskMode.value = false;
+          ElementPlus.ElMessage.success(`已設定停車場區域 (${d.mask_points} 點)`);
+          redraw();
+        } else {
+          ElementPlus.ElMessage.error(d.detail || '儲存失敗');
+        }
+      } catch (e) {
+        ElementPlus.ElMessage.error('錯誤: ' + e.message);
+      }
+    };
+    const clearMask = async () => {
+      if (!confirm('確定清除停車場區域?')) return;
+      try {
+        await fetch('/api/parking/mask/save', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source: sourceKey.value, parking_area_mask: [] }),
+        });
+        maskPolygon.value = [];
+        ElementPlus.ElMessage.success('已清除');
+        redraw();
+      } catch (e) {
+        ElementPlus.ElMessage.error('錯誤: ' + e.message);
       }
     };
 
@@ -471,11 +603,13 @@ const app = createApp({
       currentSlotId, currentSlotLabel,
       dragging, dragStart, dragEnd,
       saving, saveMsg, autoDetecting, sessionRunning, sessionStatus,
+      maskMode, maskPolygon, maskDraft,
       reloadImage, onImgLoad,
       onMouseDown, onMouseMove, onMouseUp,
       cancelCurrent, removeSlot, loadExistingSlots,
       autoDetectSlots, clearAllSlots,
       startSession, stopSessionAndImport,
+      startMaskMode, cancelMask, finishMask, clearMask,
       saveSlots, closeWin,
     };
   },
