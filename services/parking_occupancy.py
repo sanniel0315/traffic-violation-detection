@@ -557,11 +557,28 @@ def _eval_auto_mode(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
         # TTL GC
         positions[:] = [p for p in positions if (now - p[5]) <= _AUTO_POS_TTL_SEC]
 
+        # Mask filter (inclusion + exclusion) — 同 PKLot mode 邏輯
+        area_mask = meta.get("parking_area_mask") or []
+        exclusion_mask = meta.get("exclusion_mask") or []
+        try:
+            from services.parking_pklot_model import _point_in_poly
+        except Exception:
+            _point_in_poly = None
+
         # 算佔用: 對每 position 看是否有 current detection match,
         # 車位 polygon 用車身大小 (不外擴)
         slot_results = []
-        for idx, p in enumerate(positions):
+        idx = 0
+        for p in positions:
             x1, y1, x2, y2, _cnt, last = p
+            cx = (x1 + x2) / 2.0
+            cy = (y1 + y2) / 2.0
+            # mask 過濾
+            if _point_in_poly:
+                if area_mask and not _point_in_poly(cx, cy, area_mask):
+                    continue
+                if exclusion_mask and _point_in_poly(cx, cy, exclusion_mask):
+                    continue
             poly = [[max(0,x1), max(0,y1)],
                     [min(w_img-1,x2), max(0,y1)],
                     [min(w_img-1,x2), min(h_img-1,y2)],
@@ -571,7 +588,8 @@ def _eval_auto_mode(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
                 if _iou([x1,y1,x2,y2], cb) > _AUTO_POS_OCC_IOU:
                     occ = True
                     break
-            lbl = f"P{idx+1}"
+            idx += 1
+            lbl = f"P{idx}"
             slot_results.append({
                 "id": lbl, "label": lbl,
                 "occupied": occ, "conf": round(min(1.0, _cnt/5.0), 3),
@@ -613,11 +631,10 @@ def evaluate_occupancy(source_key: str) -> Dict:
                 "error": "frame unavailable", "total": 0, "occupied": 0,
                 "available": 0, "occupancy_rate": 0.0, "slots": [], "mode": "auto"}
 
-    # 沒標 slot → 優先用 PKLot pretrained model (直接識「空/有車車位」),
-    # PKLot weights 不在則 fallback zero-config auto mode (yolo car detection)
+    # 沒標 slot → 預設用 YOLO 純車輛偵測推車位 (user: 「車輛停的地方就是車位」)
+    # PKLot 改為 opt-in (env PARKING_USE_PKLOT=1 才用)
     if not slots_cfg:
-        # PKLot model 開關 (預設 ON,有 weights 就用)
-        if os.getenv("PARKING_DISABLE_PKLOT", "0") != "1":
+        if os.getenv("PARKING_USE_PKLOT", "0") == "1":
             try:
                 from services.parking_pklot_model import is_available as pklot_avail, evaluate_pklot
                 if pklot_avail():
@@ -627,7 +644,7 @@ def evaluate_occupancy(source_key: str) -> Dict:
                         result["io_trigger"] = maybe_trigger_io(result, meta)
                         return result
             except Exception as e:
-                print(f"[parking] pklot fallback: {e}", flush=True)
+                print(f"[parking] pklot opt-in fail: {e}", flush=True)
         auto_result = _eval_auto_mode(source_key, frame, meta)
         auto_result["io_trigger"] = maybe_trigger_io(auto_result, meta)
         return auto_result

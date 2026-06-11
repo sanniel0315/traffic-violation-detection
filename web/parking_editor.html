@@ -160,7 +160,7 @@ const app = createApp({
       if (!cv) return;
       const ctx = cv.getContext('2d');
       ctx.clearRect(0, 0, cv.width, cv.height);
-      // 已存 mask polygon — 半透藍 + 黃虛線邊
+      // 已存 mask polygon — 半透藍 + 黃虛線邊 + 黃頂點 handle
       if (maskPolygon.value.length >= 3) {
         ctx.fillStyle = 'rgba(59,130,246,0.10)';
         ctx.strokeStyle = '#f59e0b';
@@ -176,8 +176,20 @@ const app = createApp({
         ctx.fill();
         ctx.stroke();
         ctx.setLineDash([]);
+        // 頂點 handle (黃)
+        for (let pi = 0; pi < maskPolygon.value.length; pi++) {
+          const p = maskPolygon.value[pi];
+          const isEd = editingPoint.value && editingPoint.value.type === 'mask' && editingPoint.value.pointIdx === pi;
+          ctx.beginPath();
+          ctx.arc(p[0] / scaleX, p[1] / scaleY, isEd ? 7 : 5, 0, 2 * Math.PI);
+          ctx.fillStyle = '#f59e0b';
+          ctx.fill();
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
       }
-      // 已存 exclusion polygon — 紅半透 + 紅虛線邊 (不偵測區)
+      // 已存 exclusion polygon — 紅半透 + 紅虛線邊 + 紅頂點 handle
       if (exPolygon.value.length >= 3) {
         ctx.fillStyle = 'rgba(220,38,38,0.18)';
         ctx.strokeStyle = '#dc2626';
@@ -193,6 +205,18 @@ const app = createApp({
         ctx.fill();
         ctx.stroke();
         ctx.setLineDash([]);
+        // 頂點 handle (紅)
+        for (let pi = 0; pi < exPolygon.value.length; pi++) {
+          const p = exPolygon.value[pi];
+          const isEd = editingPoint.value && editingPoint.value.type === 'ex' && editingPoint.value.pointIdx === pi;
+          ctx.beginPath();
+          ctx.arc(p[0] / scaleX, p[1] / scaleY, isEd ? 7 : 5, 0, 2 * Math.PI);
+          ctx.fillStyle = '#dc2626';
+          ctx.fill();
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
       }
       // 畫中的 exclusion draft — 橘紅實線 + 頂點
       if (exMode.value && exDraft.value.length > 0) {
@@ -313,22 +337,37 @@ const app = createApp({
       ];
     };
 
-    // hit-test 滑鼠是否在某 slot 的某 vertex 上,return {slotIdx, pointIdx} 或 null
+    // hit-test 任一 polygon 頂點 (slot / mask / exclusion)
+    // return {type:'slot'|'mask'|'ex', slotIdx?, pointIdx} 或 null
     const _hitHandle = (e) => {
       const cv = canvas.value;
       const r = cv.getBoundingClientRect();
       const mx = e.clientX - r.left;
       const my = e.clientY - r.top;
-      for (let si = slots.value.length - 1; si >= 0; si--) {
-        const poly = slots.value[si].polygon || [];
+      const HIT2 = HANDLE_HIT_PX * HANDLE_HIT_PX;
+      const test = (poly) => {
         for (let pi = 0; pi < poly.length; pi++) {
           const hx = poly[pi][0] / scaleX;
           const hy = poly[pi][1] / scaleY;
           const dx = mx - hx, dy = my - hy;
-          if (dx * dx + dy * dy <= HANDLE_HIT_PX * HANDLE_HIT_PX) {
-            return { slotIdx: si, pointIdx: pi };
-          }
+          if (dx * dx + dy * dy <= HIT2) return pi;
         }
+        return -1;
+      };
+      // slots 頂點
+      for (let si = slots.value.length - 1; si >= 0; si--) {
+        const pi = test(slots.value[si].polygon || []);
+        if (pi >= 0) return { type: 'slot', slotIdx: si, pointIdx: pi };
+      }
+      // mask 頂點
+      if (maskPolygon.value.length) {
+        const pi = test(maskPolygon.value);
+        if (pi >= 0) return { type: 'mask', pointIdx: pi };
+      }
+      // exclusion 頂點
+      if (exPolygon.value.length) {
+        const pi = test(exPolygon.value);
+        if (pi >= 0) return { type: 'ex', pointIdx: pi };
       }
       return null;
     };
@@ -374,11 +413,17 @@ const app = createApp({
       // 頂點編輯中 → 更新該點座標
       if (editingPoint.value) {
         const [px, py] = _toImagePx(e);
-        const { slotIdx, pointIdx } = editingPoint.value;
-        if (slots.value[slotIdx] && slots.value[slotIdx].polygon[pointIdx]) {
-          slots.value[slotIdx].polygon[pointIdx] = [px, py];
-          redraw();
+        const ep = editingPoint.value;
+        if (ep.type === 'slot') {
+          if (slots.value[ep.slotIdx] && slots.value[ep.slotIdx].polygon[ep.pointIdx]) {
+            slots.value[ep.slotIdx].polygon[ep.pointIdx] = [px, py];
+          }
+        } else if (ep.type === 'mask' && maskPolygon.value[ep.pointIdx]) {
+          maskPolygon.value[ep.pointIdx] = [px, py];
+        } else if (ep.type === 'ex' && exPolygon.value[ep.pointIdx]) {
+          exPolygon.value[ep.pointIdx] = [px, py];
         }
+        redraw();
         return;
       }
       // hover handle 改 cursor
@@ -393,10 +438,22 @@ const app = createApp({
     };
 
     const onMouseUp = (e) => {
-      // 結束頂點編輯
+      // 結束頂點編輯,mask/ex 自動 save
       if (editingPoint.value) {
+        const ep = editingPoint.value;
         editingPoint.value = null;
         redraw();
+        if (ep.type === 'mask') {
+          fetch('/api/parking/mask/save', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source: sourceKey.value, parking_area_mask: maskPolygon.value }),
+          });
+        } else if (ep.type === 'ex') {
+          fetch('/api/parking/exclusion_mask/save', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source: sourceKey.value, exclusion_mask: exPolygon.value }),
+          });
+        }
         return;
       }
       if (!dragging.value) return;

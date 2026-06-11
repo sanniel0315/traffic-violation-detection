@@ -10402,8 +10402,8 @@ const app=createApp({
         const parkingShowAdd=ref(false);
         const parkingAddForm=ref({key:'', name:'', image_url:'', stream_url:''});
         const parkingShowBoxes=ref(true);
-        const parkingShowVehicles=ref(true);
-        const parkingUseStream=ref(true);     // MJPEG 串流 (預設) vs polling snapshot
+        const parkingShowVehicles=ref(false);   // default 不畫 YOLO 青框 (user 不要重複標註)
+        const parkingUseStream=ref(true);
         // stream 持續更新不用 tick;polling snapshot 才用 tick 強迫重抓
         const parkingSnapshotUrl=computed(()=> {
             const base = `/api/parking/${parkingUseStream.value?'stream':'snapshot'}?source=${encodeURIComponent(parkingSource.value)}&show_boxes=${parkingShowBoxes.value}&show_vehicles=${parkingShowVehicles.value}`;

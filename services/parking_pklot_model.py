@@ -33,10 +33,10 @@ _PKLOT_AVAILABLE: Optional[bool] = None
 # per-source: [[x1,y1,x2,y2, n_seen, n_occupied, last_seen_ts], ...]
 _PKLOT_POSITIONS: Dict[str, List] = {}
 _PKLOT_POS_LOCK = threading.Lock()
-_PKLOT_MIN_SEEN = 3        # 跨 3 frame 都見才算有效
+_PKLOT_MIN_SEEN = 2        # 放寬:2 frame 即算有效 (前 3 frame 太嚴)
 _PKLOT_TTL_SEC = 1800.0
-_PKLOT_MERGE_IOU = 0.35    # 略漂移 (IoU 0.35-0.55) 視為同位置累積
-_PKLOT_OCC_RATIO = 0.5
+_PKLOT_MERGE_IOU = 0.3     # 寬鬆累積:位置略漂移就視為同位置 (吸收 model 抖動)
+_PKLOT_OCC_RATIO = 0.4
 
 
 def is_available() -> bool:
