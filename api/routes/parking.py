@@ -141,9 +141,14 @@ def get_occupancy(source: str = Query(..., description="source key e.g. twipcam:
 
 @router.post("/auto/reset")
 def auto_reset(source: str = Query(...)):
-    """重置 auto mode 累積位置 (例如停車場攝影機角度變了想重來)"""
+    """重置累積位置 (auto + PKLot 都清)"""
     n = reset_auto_positions(source)
-    return {"source": source, "cleared": n}
+    try:
+        from services.parking_pklot_model import reset_pklot_positions
+        n_pklot = reset_pklot_positions(source)
+    except Exception:
+        n_pklot = 0
+    return {"source": source, "cleared_auto": n, "cleared_pklot": n_pklot}
 
 
 @router.get("/history")
@@ -402,7 +407,9 @@ def save_slots(body: SlotsSaveBody):
 
 
 @router.get("/snapshot")
-def get_snapshot(source: str = Query(..., description="source key")):
+def get_snapshot(source: str = Query(..., description="source key"),
+                  show_boxes: bool = Query(True, description="畫車位 polygon (空車位 + 號碼)"),
+                  show_vehicles: bool = Query(True, description="畫車輛 YOLO bbox (青框)")):
     """回 frame + slot polygon overlay (綠=空 / 紅=佔用) 的 JPEG"""
     result = evaluate_occupancy(source)
     frame = fetch_frame(source)
@@ -418,17 +425,22 @@ def get_snapshot(source: str = Query(..., description="source key")):
     cv2.rectangle(overlay, (0, 0), (frame.shape[1], frame.shape[0]), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.18, frame, 0.82, 0, frame)
 
-    # 先畫車輛 bbox (青色細框) — 讓 user 看 YOLO 偵測到的車
-    try:
-        from services.parking_pklot_model import _yolo_car_centers
-        car_centers = _yolo_car_centers(frame, conf=0.12)
-        for c in car_centers:
-            cx, cy, x1, y1, x2, y2 = c
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (210, 210, 30), 1)
-            # 小圓點 marker 在 bbox 中心 (區別 PKLot 號碼)
-            cv2.circle(frame, (cx, cy), 3, (210, 210, 30), -1)
-    except Exception as e:
-        print(f"[parking] snapshot yolo render err: {e}", flush=True)
+    # 車輛 bbox (青框) — 可 toggle
+    if show_vehicles:
+        try:
+            from services.parking_pklot_model import _yolo_car_centers
+            car_centers = _yolo_car_centers(frame, conf=0.12)
+            for c in car_centers:
+                cx, cy, x1, y1, x2, y2 = c
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (210, 210, 30), 1)
+                cv2.circle(frame, (cx, cy), 3, (210, 210, 30), -1)
+        except Exception as e:
+            print(f"[parking] snapshot yolo render err: {e}", flush=True)
+
+    if not show_boxes:
+        # 不畫車位 ROI,直接 encode 回傳
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return Response(content=buf.tobytes(), media_type="image/jpeg")
 
     for slot in result.get("slots") or []:
         poly = slot.get("polygon") or []
