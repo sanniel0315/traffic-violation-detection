@@ -31,9 +31,11 @@ _LOAD_STATE = {"loading": False, "loaded": False, "error": ""}
 
 MODEL_ID = "Qwen/Qwen2-VL-2B-Instruct"
 DEFAULT_PROMPT_ZH = (
-    "這張圖是停車場中一個車位的局部畫面.請用以下格式回答 (只回 3 行不要加其他文字):\n"
+    "這張圖是停車場畫面,目標車位已用紅色粗框標出.請只判斷紅框內的車位狀態,"
+    "周圍其他車輛/車位不要管.\n"
+    "請用以下格式回答 (只回 3 行不要加其他文字):\n"
     "狀態: 有車 / 空 / 無法判定\n"
-    "原因: (如果空,寫純空地 / 雜物 / 光線太暗 / 腳踏車佔用 / 其他;有車寫 -)\n"
+    "原因: (空寫 純空地/雜物/腳踏車佔用/光線太暗;有車寫 -)\n"
     "信心: 0-100 整數"
 )
 
@@ -177,8 +179,13 @@ def _parse_response(text: str) -> Dict:
 
 
 def crop_slot_from_frame(frame: np.ndarray, polygon: List[List[int]],
-                          padding: float = 0.10) -> Optional[np.ndarray]:
-    """從 frame 把 slot polygon 對應的 bbox 區域 crop 出來 (加 padding)"""
+                          padding: float = 1.0,
+                          highlight: bool = True) -> Optional[np.ndarray]:
+    """從 frame 把 slot 區域 crop 出來,並用紅色粗框標出 target polygon.
+
+    padding=1.0 表示往外擴 1 倍 polygon 尺寸 — VLM 才有足夠 context (周圍其他車位)
+    可以對比.highlight=True 在 crop 上畫紅框讓 VLM 知道要看哪一格.
+    """
     if frame is None or not polygon:
         return None
     xs = [float(p[0]) for p in polygon]; ys = [float(p[1]) for p in polygon]
@@ -191,4 +198,10 @@ def crop_slot_from_frame(frame: np.ndarray, polygon: List[List[int]],
     cx2 = int(min(W, x2 + dx)); cy2 = int(min(H, y2 + dy))
     if cx2 <= cx1 or cy2 <= cy1:
         return None
-    return frame[cy1:cy2, cx1:cx2].copy()
+    crop = frame[cy1:cy2, cx1:cx2].copy()
+    if highlight:
+        # 把 polygon 座標轉成 crop 內相對座標,畫紅色粗框
+        pts = np.array([[int(float(p[0]) - cx1), int(float(p[1]) - cy1)] for p in polygon],
+                       dtype=np.int32)
+        cv2.polylines(crop, [pts], isClosed=True, color=(0, 0, 255), thickness=3)
+    return crop
