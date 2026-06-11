@@ -59,6 +59,10 @@
       <el-button size="small" type="success" v-if="exMode" @click="finishEx" :disabled="exDraft.length < 3">完成不偵測 ({{ exDraft.length }})</el-button>
       <el-button size="small" type="danger" plain v-if="exMode" @click="cancelEx">取消</el-button>
       <el-button size="small" type="danger" plain v-if="exPolygon.length && !exMode && !maskMode" @click="clearEx">清除不偵測區</el-button>
+      <el-divider direction="vertical"/>
+      <el-button size="small" type="primary" plain v-if="!gridMode && !maskMode && !exMode" @click="startGridMode">Grid 透視 (4 點)</el-button>
+      <span v-if="gridMode" style="font-size:12px;color:#dc2626;font-weight:600">點 4 角:{{ gridCorners.length }}/4 {{ ['(近左)','(近右)','(遠右)','(遠左)'][gridCorners.length] || '' }}</span>
+      <el-button size="small" type="danger" plain v-if="gridMode" @click="cancelGrid">取消 Grid</el-button>
     </div>
     <div v-if="sessionRunning || sessionStatus.frames_processed" style="margin:8px 0;padding:10px 14px;background:#fff8e1;border-left:3px solid #d97706;border-radius:4px;font-size:13px;font-family:monospace;color:#1f2937">
       累積偵測:
@@ -135,6 +139,9 @@ const app = createApp({
     const exMode = ref(false);
     const exPolygon = ref([]);
     const exDraft = ref([]);
+    // Grid 透視推算 state
+    const gridMode = ref(false);
+    const gridCorners = ref([]);   // 4 個角 (近左 / 近右 / 遠右 / 遠左)
     let imgW = 1, imgH = 1, scaleX = 1, scaleY = 1;
 
     const reloadImage = () => { _rawTick.value = Date.now(); };
@@ -236,6 +243,38 @@ const app = createApp({
           ctx.beginPath();
           ctx.arc(p[0] / scaleX, p[1] / scaleY, 4, 0, 2 * Math.PI);
           ctx.fill();
+        }
+      }
+      // Grid 透視模式 — 已點的 4 角用藍十字 + 連線
+      if (gridMode.value && gridCorners.value.length > 0) {
+        ctx.strokeStyle = '#0b5ea8';
+        ctx.fillStyle = 'rgba(11,94,168,0.18)';
+        ctx.lineWidth = 2;
+        // 連線
+        if (gridCorners.value.length >= 2) {
+          ctx.beginPath();
+          gridCorners.value.forEach((p, i) => {
+            const x = p[0] / scaleX, y = p[1] / scaleY;
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          });
+          if (gridCorners.value.length >= 4) { ctx.closePath(); ctx.fill(); }
+          ctx.stroke();
+        }
+        // 十字 marker
+        for (let i = 0; i < gridCorners.value.length; i++) {
+          const p = gridCorners.value[i];
+          const x = p[0] / scaleX, y = p[1] / scaleY;
+          ctx.strokeStyle = '#0b5ea8';
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(x - 8, y); ctx.lineTo(x + 8, y); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(x, y - 8); ctx.lineTo(x, y + 8); ctx.stroke();
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 11px monospace';
+          const labels = ['近左', '近右', '遠右', '遠左'];
+          ctx.strokeStyle = '#0b5ea8';
+          ctx.lineWidth = 3;
+          ctx.strokeText(labels[i], x + 10, y - 4);
+          ctx.fillText(labels[i], x + 10, y - 4);
         }
       }
       // 畫中的 mask draft — 紅實線 + 頂點
@@ -380,6 +419,28 @@ const app = createApp({
           } else if (exMode.value && exDraft.value.length) {
             exDraft.value = exDraft.value.slice(0, -1); redraw();
           }
+        }
+        return;
+      }
+      // Grid 模式: 收集 4 角
+      if (gridMode.value) {
+        gridCorners.value = [...gridCorners.value, _toImagePx(e)];
+        redraw();
+        if (gridCorners.value.length === 4) {
+          // 4 角收齊 → 提示 rows x cols
+          setTimeout(() => {
+            const rowsInput = prompt('輸入車格 列數 (rows, 例 4):', '4');
+            if (!rowsInput) { cancelGrid(); return; }
+            const colsInput = prompt('輸入車格 行數 (cols, 例 20):', '20');
+            if (!colsInput) { cancelGrid(); return; }
+            const rows = parseInt(rowsInput, 10);
+            const cols = parseInt(colsInput, 10);
+            if (!rows || !cols || rows < 1 || cols < 1) {
+              ElementPlus.ElMessage.warning('rows/cols 必須是正整數');
+              cancelGrid(); return;
+            }
+            applyGrid(rows, cols);
+          }, 100);
         }
         return;
       }
@@ -673,6 +734,56 @@ const app = createApp({
         ElementPlus.ElMessage.error('錯誤: ' + e.message);
       }
     };
+    // Grid 透視推算 methods
+    const startGridMode = () => {
+      gridMode.value = true;
+      gridCorners.value = [];
+      redraw();
+      ElementPlus.ElMessage.info('依序點 4 角:近左 → 近右 → 遠右 → 遠左');
+    };
+    const cancelGrid = () => {
+      gridMode.value = false;
+      gridCorners.value = [];
+      redraw();
+    };
+    const applyGrid = (rows, cols) => {
+      // gridCorners = [TL, TR, BR, BL] (但 user 點順序: 近左 近右 遠右 遠左)
+      // user 視角:近=下,遠=上 → 近左=BL, 近右=BR, 遠右=TR, 遠左=TL
+      const [BL, BR, TR, TL] = gridCorners.value;
+      // bilinear interpolation: (u,v) ∈ [0,1] × [0,1]
+      // u=0 左, u=1 右; v=0 遠 (上), v=1 近 (下)
+      const interp = (u, v) => {
+        const top_x = TL[0] + u * (TR[0] - TL[0]);
+        const top_y = TL[1] + u * (TR[1] - TL[1]);
+        const bot_x = BL[0] + u * (BR[0] - BL[0]);
+        const bot_y = BL[1] + u * (BR[1] - BL[1]);
+        return [Math.round(top_x + v * (bot_x - top_x)),
+                Math.round(top_y + v * (bot_y - top_y))];
+      };
+      const newSlots = [];
+      const baseN = slots.value.length;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const u0 = c / cols, u1 = (c + 1) / cols;
+          const v0 = r / rows, v1 = (r + 1) / rows;
+          const polygon = [
+            interp(u0, v0),  // 左上 (遠左)
+            interp(u1, v0),  // 右上 (遠右)
+            interp(u1, v1),  // 右下 (近右)
+            interp(u0, v1),  // 左下 (近左)
+          ];
+          const idx = baseN + newSlots.length + 1;
+          const lbl = `P${idx}`;
+          newSlots.push({ id: lbl, label: lbl, polygon });
+        }
+      }
+      slots.value = [...slots.value, ...newSlots];
+      gridMode.value = false;
+      gridCorners.value = [];
+      ElementPlus.ElMessage.success(`生成 ${rows} × ${cols} = ${newSlots.length} 格 (記得儲存)`);
+      redraw();
+    };
+
     // Exclusion mask methods
     const startExMode = () => { exMode.value = true; exDraft.value = []; redraw(); };
     const cancelEx = () => { exMode.value = false; exDraft.value = []; redraw(); };
@@ -758,6 +869,7 @@ const app = createApp({
       saving, saveMsg, autoDetecting, sessionRunning, sessionStatus,
       maskMode, maskPolygon, maskDraft,
       exMode, exPolygon, exDraft,
+      gridMode, gridCorners,
       reloadImage, onImgLoad,
       onMouseDown, onMouseMove, onMouseUp,
       cancelCurrent, removeSlot, loadExistingSlots,
@@ -765,6 +877,7 @@ const app = createApp({
       startSession, stopSessionAndImport,
       startMaskMode, cancelMask, finishMask, clearMask,
       startExMode, cancelEx, finishEx, clearEx,
+      startGridMode, cancelGrid, applyGrid,
       saveSlots, closeWin,
     };
   },
