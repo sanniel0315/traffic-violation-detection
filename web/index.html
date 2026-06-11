@@ -6029,14 +6029,10 @@
                                         {{ parkingData?.occupancy_rate || 0 }}<span style="font-size:22px">%</span>
                                     </div>
                                 </div>
-                                <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">
+                                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
                                     <div style="background:var(--gov-bg);border-radius:6px;padding:12px;text-align:center">
                                         <div style="font-size:10px;color:var(--gov-muted)">總車位</div>
                                         <div style="font-size:22px;font-weight:700;font-family:var(--font-mono)">{{ parkingData?.total || 0 }}</div>
-                                    </div>
-                                    <div style="background:var(--gov-bg);border-radius:6px;padding:12px;text-align:center">
-                                        <div style="font-size:10px;color:var(--gov-muted)">車輛 (YOLO)</div>
-                                        <div style="font-size:22px;font-weight:700;color:#22d3ee;font-family:var(--font-mono)">{{ parkingData?.detected_vehicles || 0 }}</div>
                                     </div>
                                     <div style="background:var(--gov-bg);border-radius:6px;padding:12px;text-align:center">
                                         <div style="font-size:10px;color:var(--gov-muted)">已佔用</div>
