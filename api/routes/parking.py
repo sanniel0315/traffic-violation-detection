@@ -316,15 +316,44 @@ def get_snapshot_raw(source: str = Query(..., description="source key")):
 
 @router.post("/slots/auto")
 def auto_detect_slots(source: str = Query(..., description="source key"),
-                      expand: float = Query(0.08, ge=0.0, le=0.5,
-                                            description="bbox 外擴比例"),
-                      conf: float = Query(0.15, ge=0.05, le=0.9,
-                                          description="YOLO conf threshold"),
-                      frames: int = Query(5, ge=1, le=20,
-                                          description="抓即時影像 frame 數累積"),
-                      interval_sec: float = Query(10.0, ge=1.0, le=120.0,
-                                                  description="frame 間隔秒 (TwiPcam 通常 30-60 秒才會更新一次,間隔太短拿到相同 frame)"),
+                      mode: str = Query("pklot", description="pklot | yolo"),
+                      expand: float = Query(0.0, ge=0.0, le=0.5),
+                      conf: float = Query(0.08, ge=0.05, le=0.9),
+                      frames: int = Query(5, ge=1, le=20),
+                      interval_sec: float = Query(10.0, ge=1.0, le=120.0),
                       merge_overlap: bool = Query(True)):
+    """一鍵偵測車位 polygon — 給 user 用 ROI 編輯器當基底.
+    mode=pklot (預設): 用 PKLot model 找所有 parking slot (空+有車) — 對「車位位置」最準
+    mode=yolo: 用 YOLO car detect 找車輛 bbox 當車位 — 只能找到有車的位置.
+    回 slots list 後 user 在編輯器可調整 / 刪除 / 儲存."""
+    if mode.lower() == "pklot":
+        # 直接拉一張 frame 跑 sliced PKLot,結果就是所有車位 polygon
+        try:
+            from services.parking_pklot_model import is_available, detect_slots
+            if is_available():
+                frame = fetch_frame(source)
+                if frame is None:
+                    raise HTTPException(status_code=503, detail="frame unavailable")
+                h_img, w_img = frame.shape[:2]
+                dets = detect_slots(frame, conf=conf)
+                slots_out = []
+                for idx, d in enumerate(dets):
+                    x1, y1, x2, y2 = d["x1"], d["y1"], d["x2"], d["y2"]
+                    lbl = f"P{idx + 1}"
+                    slots_out.append({
+                        "id": lbl, "label": lbl,
+                        "polygon": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
+                    })
+                return {
+                    "source": source, "mode": "pklot",
+                    "frame_w": w_img, "frame_h": h_img,
+                    "detected_slots": len(slots_out),
+                    "slots": slots_out,
+                    "note": f"PKLot 找到 {len(slots_out)} 個車位 polygon — 在編輯器內刪除誤判 / 拖拉調整 / 儲存,儲存後 evaluate 會走 ROI mode 對每格跑 YOLO,空車位偵測最準",
+                }
+        except Exception as e:
+            print(f"[parking] pklot auto detect fall back yolo: {e}", flush=True)
+    # mode='yolo' 或 PKLot 失敗 → 沿用 YOLO car detect 流程
     """多 frame 累積自動偵測車位 — 抓即時影像 N 張,每張間隔 K 秒,
     YOLO detect 全部車輛 bbox 累積後合併 (IoU > 0.5 視為同位置).
     停車場滿時車輛位置變化 → 多 frame 涵蓋更多車位."""

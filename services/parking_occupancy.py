@@ -631,10 +631,11 @@ def evaluate_occupancy(source_key: str) -> Dict:
                 "error": "frame unavailable", "total": 0, "occupied": 0,
                 "available": 0, "occupancy_rate": 0.0, "slots": [], "mode": "auto"}
 
-    # 沒標 slot → 預設用 YOLO 純車輛偵測推車位 (user: 「車輛停的地方就是車位」)
-    # PKLot 改為 opt-in (env PARKING_USE_PKLOT=1 才用)
+    # 沒標 slot → mode 由 meta.detection_mode 控制 (預設 pklot,直接識空/有車車位)
+    # mode='auto' 走 YOLO 累積推車位 / mode='pklot' 走 PKLot 二分類
     if not slots_cfg:
-        if os.getenv("PARKING_USE_PKLOT", "0") == "1":
+        mode = (meta.get("detection_mode") or os.getenv("PARKING_MODE", "pklot")).lower()
+        if mode == "pklot":
             try:
                 from services.parking_pklot_model import is_available as pklot_avail, evaluate_pklot
                 if pklot_avail():
@@ -644,7 +645,8 @@ def evaluate_occupancy(source_key: str) -> Dict:
                         result["io_trigger"] = maybe_trigger_io(result, meta)
                         return result
             except Exception as e:
-                print(f"[parking] pklot opt-in fail: {e}", flush=True)
+                print(f"[parking] pklot fail: {e}", flush=True)
+        # mode='auto' 或 PKLot 失敗 fallback
         auto_result = _eval_auto_mode(source_key, frame, meta)
         auto_result["io_trigger"] = maybe_trigger_io(auto_result, meta)
         return auto_result
