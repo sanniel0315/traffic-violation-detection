@@ -46,6 +46,11 @@ class MaskSaveBody(BaseModel):
     parking_area_mask: List[List[float]]   # polygon [[x,y], ...] or [] to clear
 
 
+class ExclusionMaskBody(BaseModel):
+    source: str
+    exclusion_mask: List[List[float]]      # 不偵測區 polygon or [] to clear
+
+
 class IOTriggerBody(BaseModel):
     source: str
     enabled: bool = True
@@ -117,6 +122,7 @@ def get_source_meta_route(source: str = Query(...)):
         "image_url": meta.get("image_url", ""),
         "stream_url": meta.get("stream_url", ""),
         "parking_area_mask": meta.get("parking_area_mask", []),
+        "exclusion_mask": meta.get("exclusion_mask", []),
         "slot_count": len(meta.get("slots", [])) if isinstance(meta.get("slots"), list) else 0,
     }
 
@@ -487,6 +493,35 @@ def save_io_trigger(body: IOTriggerBody):
         json.dump(existing, f, ensure_ascii=False, indent=2)
     return {"ok": True, "source": body.source,
             "io_trigger": entry.get("io_trigger") or None}
+
+
+@router.post("/exclusion_mask/save")
+def save_exclusion_mask(body: ExclusionMaskBody):
+    """不偵測區 polygon — 在裡面的 slot detection 過濾掉.
+    polygon=[] 清除."""
+    existing: dict = {}
+    if os.path.exists(_CONFIG_PATH):
+        try:
+            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = {}
+    else:
+        from services.parking_occupancy import _DEFAULT_CONFIG
+        existing = json.loads(json.dumps(_DEFAULT_CONFIG))
+
+    entry = existing.get(body.source) or {}
+    if body.exclusion_mask:
+        entry["exclusion_mask"] = body.exclusion_mask
+    else:
+        entry.pop("exclusion_mask", None)
+    existing[body.source] = entry
+
+    os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+    with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(existing, f, ensure_ascii=False, indent=2)
+    return {"ok": True, "source": body.source,
+            "exclusion_points": len(body.exclusion_mask)}
 
 
 @router.post("/mask/save")

@@ -219,18 +219,21 @@ def evaluate_pklot(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
     car_centers = _yolo_car_centers(frame, conf=0.12)
     car_bboxes = [(c[2], c[3], c[4], c[5]) for c in car_centers]
     area_mask = meta.get("parking_area_mask") or []
+    exclusion_mask = meta.get("exclusion_mask") or []
 
     # 當下這 frame 通過嚴格雙確認的 candidate slots
-    candidates = []  # [(bbox, final_occupied)]
+    candidates = []
     for idx, det in enumerate(pklot_dets):
         x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
         slot_bbox = (x1, y1, x2, y2)
-        # mask 過濾
-        if area_mask:
-            cx = (x1 + x2) / 2.0
-            cy = (y1 + y2) / 2.0
-            if not _point_in_poly(cx, cy, area_mask):
-                continue
+        cx = (x1 + x2) / 2.0
+        cy = (y1 + y2) / 2.0
+        # Inclusion (停車場區域): slot center 不在裡面跳過
+        if area_mask and not _point_in_poly(cx, cy, area_mask):
+            continue
+        # Exclusion (不偵測區): slot center 在裡面跳過
+        if exclusion_mask and _point_in_poly(cx, cy, exclusion_mask):
+            continue
         # 雙確認: YOLO 任一 car bbox 跟 slot IoU > 0.3 → occupied
         yolo_occ = False
         for cb in car_bboxes:
