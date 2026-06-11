@@ -50,10 +50,15 @@
       <el-button size="small" plain @click="loadExistingSlots">重新載入</el-button>
       <el-button size="small" type="danger" plain @click="clearAllSlots" :disabled="!slots.length || sessionRunning">清空全部</el-button>
       <el-divider direction="vertical"/>
-      <el-button size="small" type="warning" plain v-if="!maskMode" @click="startMaskMode">畫停車場區域</el-button>
-      <el-button size="small" type="success" v-else @click="finishMask" :disabled="maskDraft.length < 3">完成區域 ({{ maskDraft.length }})</el-button>
+      <el-button size="small" type="warning" plain v-if="!maskMode && !exMode" @click="startMaskMode">畫停車場區域</el-button>
+      <el-button size="small" type="success" v-if="maskMode" @click="finishMask" :disabled="maskDraft.length < 3">完成區域 ({{ maskDraft.length }})</el-button>
       <el-button size="small" type="danger" plain v-if="maskMode" @click="cancelMask">取消</el-button>
-      <el-button size="small" type="danger" plain v-if="maskPolygon.length && !maskMode" @click="clearMask">清除區域</el-button>
+      <el-button size="small" type="danger" plain v-if="maskPolygon.length && !maskMode && !exMode" @click="clearMask">清除區域</el-button>
+      <el-divider direction="vertical"/>
+      <el-button size="small" type="danger" plain v-if="!exMode && !maskMode" @click="startExMode">畫不偵測區</el-button>
+      <el-button size="small" type="success" v-if="exMode" @click="finishEx" :disabled="exDraft.length < 3">完成不偵測 ({{ exDraft.length }})</el-button>
+      <el-button size="small" type="danger" plain v-if="exMode" @click="cancelEx">取消</el-button>
+      <el-button size="small" type="danger" plain v-if="exPolygon.length && !exMode && !maskMode" @click="clearEx">清除不偵測區</el-button>
     </div>
     <div v-if="sessionRunning || sessionStatus.frames_processed" style="margin:8px 0;padding:10px 14px;background:#fff8e1;border-left:3px solid #d97706;border-radius:4px;font-size:13px;font-family:monospace;color:#1f2937">
       累積偵測:
@@ -122,10 +127,14 @@ const app = createApp({
     const sessionRunning = ref(false);
     const sessionStatus = ref({frames_processed: 0, merged_slots: 0, total_detections: 0});
     let _sessionPollTimer = null;
-    // 停車場區域 mask state
-    const maskMode = ref(false);       // 畫 mask 中
-    const maskPolygon = ref([]);       // 已存的 mask polygon (image px)
-    const maskDraft = ref([]);          // 畫中的 vertices (image px)
+    // 停車場區域 mask state (inclusion)
+    const maskMode = ref(false);
+    const maskPolygon = ref([]);
+    const maskDraft = ref([]);
+    // 不偵測區 exclusion state
+    const exMode = ref(false);
+    const exPolygon = ref([]);
+    const exDraft = ref([]);
     let imgW = 1, imgH = 1, scaleX = 1, scaleY = 1;
 
     const reloadImage = () => { _rawTick.value = Date.now(); };
@@ -167,6 +176,43 @@ const app = createApp({
         ctx.fill();
         ctx.stroke();
         ctx.setLineDash([]);
+      }
+      // 已存 exclusion polygon — 紅半透 + 紅虛線邊 (不偵測區)
+      if (exPolygon.value.length >= 3) {
+        ctx.fillStyle = 'rgba(220,38,38,0.18)';
+        ctx.strokeStyle = '#dc2626';
+        ctx.setLineDash([8, 4]);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        exPolygon.value.forEach((p, i) => {
+          const x = p[0] / scaleX, y = p[1] / scaleY;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      // 畫中的 exclusion draft — 橘紅實線 + 頂點
+      if (exMode.value && exDraft.value.length > 0) {
+        ctx.strokeStyle = '#ea580c';
+        ctx.fillStyle = 'rgba(234,88,12,0.22)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        exDraft.value.forEach((p, i) => {
+          const x = p[0] / scaleX, y = p[1] / scaleY;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        if (exDraft.value.length >= 3) { ctx.closePath(); ctx.fill(); }
+        ctx.stroke();
+        ctx.fillStyle = '#ea580c';
+        for (const p of exDraft.value) {
+          ctx.beginPath();
+          ctx.arc(p[0] / scaleX, p[1] / scaleY, 4, 0, 2 * Math.PI);
+          ctx.fill();
+        }
       }
       // 畫中的 mask draft — 紅實線 + 頂點
       if (maskMode.value && maskDraft.value.length > 0) {
@@ -289,11 +335,19 @@ const app = createApp({
 
     const onMouseDown = (e) => {
       if (e.button !== 0) {
-        // 右鍵 — mask mode 取消上一點
-        if (e.button === 2 && maskMode.value && maskDraft.value.length) {
-          maskDraft.value = maskDraft.value.slice(0, -1);
-          redraw();
+        if (e.button === 2) {
+          if (maskMode.value && maskDraft.value.length) {
+            maskDraft.value = maskDraft.value.slice(0, -1); redraw();
+          } else if (exMode.value && exDraft.value.length) {
+            exDraft.value = exDraft.value.slice(0, -1); redraw();
+          }
         }
+        return;
+      }
+      // exclusion mode: 加 vertex
+      if (exMode.value) {
+        exDraft.value = [...exDraft.value, _toImagePx(e)];
+        redraw();
         return;
       }
       // mask mode: 加 vertex
@@ -504,6 +558,7 @@ const app = createApp({
         if (r3.ok) {
           const meta = await r3.json();
           maskPolygon.value = meta.parking_area_mask || [];
+          exPolygon.value = meta.exclusion_mask || [];
         }
       } catch (e) {}
       redraw();
@@ -561,6 +616,47 @@ const app = createApp({
         ElementPlus.ElMessage.error('錯誤: ' + e.message);
       }
     };
+    // Exclusion mask methods
+    const startExMode = () => { exMode.value = true; exDraft.value = []; redraw(); };
+    const cancelEx = () => { exMode.value = false; exDraft.value = []; redraw(); };
+    const finishEx = async () => {
+      if (exDraft.value.length < 3) {
+        ElementPlus.ElMessage.warning('至少 3 點');
+        return;
+      }
+      try {
+        const r = await fetch('/api/parking/exclusion_mask/save', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source: sourceKey.value, exclusion_mask: exDraft.value }),
+        });
+        const d = await r.json();
+        if (r.ok && d.ok) {
+          exPolygon.value = exDraft.value.slice();
+          exDraft.value = [];
+          exMode.value = false;
+          ElementPlus.ElMessage.success(`已設定不偵測區 (${d.exclusion_points} 點)`);
+          redraw();
+        } else {
+          ElementPlus.ElMessage.error(d.detail || '儲存失敗');
+        }
+      } catch (e) {
+        ElementPlus.ElMessage.error('錯誤: ' + e.message);
+      }
+    };
+    const clearEx = async () => {
+      if (!confirm('確定清除不偵測區?')) return;
+      try {
+        await fetch('/api/parking/exclusion_mask/save', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source: sourceKey.value, exclusion_mask: [] }),
+        });
+        exPolygon.value = [];
+        ElementPlus.ElMessage.success('已清除');
+        redraw();
+      } catch (e) {
+        ElementPlus.ElMessage.error('錯誤: ' + e.message);
+      }
+    };
 
     const saveSlots = async () => {
       saving.value = true;
@@ -604,12 +700,14 @@ const app = createApp({
       dragging, dragStart, dragEnd,
       saving, saveMsg, autoDetecting, sessionRunning, sessionStatus,
       maskMode, maskPolygon, maskDraft,
+      exMode, exPolygon, exDraft,
       reloadImage, onImgLoad,
       onMouseDown, onMouseMove, onMouseUp,
       cancelCurrent, removeSlot, loadExistingSlots,
       autoDetectSlots, clearAllSlots,
       startSession, stopSessionAndImport,
       startMaskMode, cancelMask, finishMask, clearMask,
+      startExMode, cancelEx, finishEx, clearEx,
       saveSlots, closeWin,
     };
   },
