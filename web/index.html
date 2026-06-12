@@ -6158,8 +6158,17 @@
                             <line x1="0" y1="40" x2="1200" y2="40" stroke="var(--gov-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
                             <line x1="0" y1="60" x2="1200" y2="60" stroke="var(--gov-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
                             <path :d="parkingTrendPath.dArea" fill="url(#parking-trend-grad)" stroke="none"/>
+                            <path v-if="parkingTrendPath.baselineD" :d="parkingTrendPath.baselineD" stroke="var(--gov-muted)" stroke-width="1.2" fill="none" stroke-dasharray="6 4" opacity="0.75"/>
                             <path :d="parkingTrendPath.d" stroke="var(--gov-primary)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                            <circle v-for="(a,i) in parkingTrendPath.anomalies" :key="i" :cx="a.x" :cy="a.y" r="4" fill="var(--gov-fault)" stroke="#fff" stroke-width="1.5">
+                                <title>異常: {{ a.rate }}% (預期 {{ a.expected }}%) @ {{ a.ts?.slice(11,16) }}</title>
+                            </circle>
                         </svg>
+                        <div v-if="parkingTrendPath.count >= 2" style="display:flex;gap:14px;font-size:11px;color:var(--gov-muted);margin-top:2px">
+                            <span><svg viewBox="0 0 20 4" style="width:20px;height:4px;display:inline-block;vertical-align:middle"><line x1="0" y1="2" x2="20" y2="2" stroke="var(--gov-primary)" stroke-width="2"/></svg> 實際</span>
+                            <span><svg viewBox="0 0 20 4" style="width:20px;height:4px;display:inline-block;vertical-align:middle"><line x1="0" y1="2" x2="20" y2="2" stroke="var(--gov-muted)" stroke-width="1.2" stroke-dasharray="3 2"/></svg> 分時 baseline</span>
+                            <span v-if="parkingTrendPath.anomalies.length"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--gov-fault);vertical-align:middle"></span> 異常 {{ parkingTrendPath.anomalies.length }} 點 (偏離 baseline 1.5σ)</span>
+                        </div>
                         <div v-else style="text-align:center;padding:24px;color:var(--gov-muted);font-size:12px">尚無歷史資料 (每 5 分鐘自動記錄一筆,啟動偵測一段時間後可見)</div>
                         <div v-if="parkingTrendPath.count >= 2" style="display:flex;justify-content:space-between;font-size:11px;color:var(--gov-muted);font-family:var(--font-mono);margin-top:4px">
                             <span>{{ parkingTrendPath.points[0]?.ts?.slice(11,16) || '' }}</span>
@@ -10499,7 +10508,7 @@ const app=createApp({
         // 24h trend SVG path (samples → polyline,timestamp 等距投影 0~1200,rate → 0~100 y軸反轉)
         const parkingTrendPath=computed(()=>{
             const samples = parkingHistory.value?.samples || [];
-            if (!samples.length) return {d:'', dArea:'', count:0, points:[]};
+            if (!samples.length) return {d:'', dArea:'', count:0, points:[], baselineD:'', anomalies:[]};
             const W = 1200, H = 80;
             const minT = new Date(samples[0].ts).getTime();
             const maxT = new Date(samples[samples.length-1].ts).getTime();
@@ -10507,12 +10516,42 @@ const app=createApp({
             const pts = samples.map(s=>{
                 const t = new Date(s.ts).getTime();
                 const x = (t - minT) / span * W;
-                const y = H - (Number(s.occupancy_rate)||0) / 100 * (H - 6) - 3;
-                return {x, y, ts: s.ts, rate: s.occupancy_rate};
+                const rate = Number(s.occupancy_rate)||0;
+                const y = H - rate / 100 * (H - 6) - 3;
+                const hr = new Date(s.ts).getHours();
+                return {x, y, ts: s.ts, rate, hr};
             });
             const d = pts.map((p,i)=>`${i===0?'M':'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
             const dArea = d + ` L ${pts[pts.length-1].x.toFixed(1)} ${H} L ${pts[0].x.toFixed(1)} ${H} Z`;
-            return {d, dArea, count: pts.length, points: pts};
+            // 分時段 baseline: 每小時 (0-23) 取所有樣本的 mean rate
+            const hourBuckets = {};
+            for (const p of pts) {
+                if (!hourBuckets[p.hr]) hourBuckets[p.hr] = [];
+                hourBuckets[p.hr].push(p.rate);
+            }
+            const hourMean = {}; const hourStd = {};
+            for (const hr in hourBuckets) {
+                const arr = hourBuckets[hr];
+                const m = arr.reduce((a,b)=>a+b,0)/arr.length;
+                const v = arr.reduce((a,b)=>a+(b-m)*(b-m),0)/arr.length;
+                hourMean[hr] = m; hourStd[hr] = Math.sqrt(v);
+            }
+            // baseline path 用 sample 時間軸 (跟 d 同 x 座標) 連起 hour mean
+            const baselineD = pts.map((p,i)=>{
+                const m = hourMean[p.hr] || 0;
+                const y = H - m / 100 * (H - 6) - 3;
+                return `${i===0?'M':'L'} ${p.x.toFixed(1)} ${y.toFixed(1)}`;
+            }).join(' ');
+            // anomalies: 偏離 hour mean > 1.5σ (且 σ > 5) 標紅
+            const anomalies = [];
+            for (const p of pts) {
+                const m = hourMean[p.hr] || 0;
+                const sd = hourStd[p.hr] || 0;
+                if (sd > 5 && Math.abs(p.rate - m) > 1.5 * sd) {
+                    anomalies.push({x: p.x, y: p.y, rate: p.rate, expected: Math.round(m), ts: p.ts});
+                }
+            }
+            return {d, dArea, count: pts.length, points: pts, baselineD, anomalies};
         });
         const openParkingEditor=()=>{
             // 加 t timestamp + _blank target 避免 popup reuse 載入 cached 舊版
