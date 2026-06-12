@@ -199,6 +199,17 @@ def vlm_query(source: str = Query(...),
     return query_slot(crop, prompt=prompt)
 
 
+@router.get("/vlm/verdicts")
+def vlm_verdicts(source: str = Query(...)):
+    """取該 source 所有 VLM 仲裁 cache (背景 hook 寫入,TTL 5 分鐘).
+    返回 {slot_id: {status, reason, confidence, occupied, latency_sec, ts}}"""
+    try:
+        from services.parking_vlm_hook import list_verdicts
+        return {"source": source, "verdicts": list_verdicts(source)}
+    except Exception as e:
+        return {"source": source, "verdicts": {}, "error": str(e)}
+
+
 @router.post("/auto/reset")
 def auto_reset(source: str = Query(...)):
     """重置累積位置 (auto + PKLot 都清)"""
