@@ -493,6 +493,9 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
     plate_disk = None
     plate_url = None
     plate_number = v.license_plate or None
+    # plate_is_inferred=True 代表車牌是「同攝影機附近時間 LPR fallback 抓」的推測值
+    # (走優先 3 才會 True),UI 必須顯示 (推測) tag 提示 user 不一定是違規車本身.
+    plate_is_inferred = False
     # 優先 1: violation_plate.png (detector 嚴格綁定)
     _vp = _SNAPSHOT_CACHE_DIR / f"{violation_id}_violation_plate.png"
     if _vp.exists() and _vp.stat().st_size > 512:
@@ -505,9 +508,11 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
             plate_url = f"/api/lpr/stream/snapshot/{plate_disk.name}"
         elif not v.license_plate:
             # 優先 3: violation 完全沒車牌 → plate_number text fallback (純資訊用)
+            # ⚠ 不嚴格 — LPR ±2 分鐘抓最近一筆可能是別車,標 inferred=True 給 UI
             nearest = _find_nearest_lpr_plate(v, db)
             if nearest:
                 plate_number = nearest.get("plate")
+                plate_is_inferred = True
 
     # 至少 1 張時間軸 frame 就拼 composite (缺的格子留深灰底，避免 frigate 末端 seek 失敗整個拿不到)
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效
@@ -529,6 +534,7 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
         "composite": composite_url,
         "plate_url": plate_url,
         "plate_number": plate_number,
+        "plate_is_inferred": plate_is_inferred,
         "violation_id": violation_id,
         "available": list(result.keys()),
         "violation_time": v.created_at.isoformat() if v.created_at else None,

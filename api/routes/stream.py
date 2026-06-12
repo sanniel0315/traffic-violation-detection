@@ -966,36 +966,6 @@ def _nearest_track_id(center: tuple, class_name: str, tracks: dict, max_dist: fl
     return best_id
 
 
-def _latest_lpr_plate(camera_id: int, max_age_sec: int = 20):
-    """讀取近期 LPR 結果，作為違規事件車牌來源。"""
-    db = None
-    try:
-        from api.models import SessionLocal, LPRRecord
-        db = SessionLocal()
-        cutoff = datetime.utcnow() - timedelta(seconds=max(1, int(max_age_sec)))
-        row = (
-            db.query(LPRRecord)
-            .filter(LPRRecord.camera_id == int(camera_id))
-            .filter(LPRRecord.created_at >= cutoff)
-            .filter(LPRRecord.plate_number.isnot(None))
-            .filter(LPRRecord.plate_number != "")
-            .order_by(LPRRecord.created_at.desc(), LPRRecord.id.desc())
-            .first()
-        )
-        if not row:
-            return None
-        return {
-            "plate": str(row.plate_number or "").strip(),
-            "confidence": float(row.confidence or 0.0),
-            "created_at": row.created_at.isoformat() if row.created_at else "",
-        }
-    except Exception:
-        return None
-    finally:
-        if db is not None:
-            db.close()
-
-
 def _get_unicode_font(size: int = 16):
     cached = _unicode_font_cache.get(size)
     if cached is not None:
