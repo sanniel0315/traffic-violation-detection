@@ -678,15 +678,23 @@ def evaluate_occupancy(source_key: str) -> Dict:
         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
         vehicles.append({"bbox": (x1, y1, x2, y2), "cx": cx, "cy": cy, "cls": cls})
 
-    # 對每 slot 判定
+    # 對每 slot 判定 + VLM 仲裁 hook (borderline conf 0.3~0.6 排入背景 queue)
+    try:
+        from services.parking_vlm_hook import enqueue as vlm_enqueue, get_verdict as vlm_get_verdict, start_worker as vlm_start_worker
+        vlm_start_worker()  # idempotent
+    except Exception:
+        vlm_enqueue = None
+        vlm_get_verdict = None
     slot_results = []
     for slot in slots_cfg:
         poly = slot.get("polygon") or []
+        sid = str(slot["id"])
         if len(poly) < 3:
             slot_results.append({"id": slot["id"], "label": slot.get("label", str(slot["id"])),
                                  "occupied": False, "conf": 0.0, "polygon": poly})
             continue
         best_conf = 0.0
+        max_iou_low = 0.0  # 追蹤「不到 0.15 但 > 0」的 overlap,作 borderline 訊號
         for v in vehicles:
             # 1. center-in-polygon
             if _point_in_polygon(v["cx"], v["cy"], poly):
@@ -696,12 +704,28 @@ def evaluate_occupancy(source_key: str) -> Dict:
             iou = _bbox_iou_with_polygon(v["bbox"], poly)
             if iou > 0.15:
                 best_conf = max(best_conf, min(1.0, iou * 4))
+            elif iou > 0:
+                max_iou_low = max(max_iou_low, iou)
+        # borderline → 排入 VLM 背景仲裁:
+        # 情況 A: conf 0.30-0.60 真實 borderline
+        # 情況 B: conf < 0.30 但有 vehicle overlap > 0.03 — 車邊緣壓到/部份 occ
+        if vlm_enqueue and (
+            (0.30 <= best_conf < 0.60) or
+            (best_conf < 0.30 and max_iou_low > 0.03)
+        ):
+            try:
+                vlm_enqueue(source_key, sid, poly)
+            except Exception:
+                pass
+        # 取 cache 結果 (若有,附在 slot 給 UI 看,但不覆寫 occupied 判定 — VLM 2B 信心不夠)
+        vlm_verdict = vlm_get_verdict(source_key, sid) if vlm_get_verdict else None
         slot_results.append({
             "id": slot["id"],
             "label": slot.get("label", str(slot["id"])),
             "occupied": best_conf >= 0.5,
             "conf": round(best_conf, 3),
             "polygon": poly,
+            "vlm_verdict": vlm_verdict,
         })
 
     occupied = sum(1 for s in slot_results if s["occupied"])
