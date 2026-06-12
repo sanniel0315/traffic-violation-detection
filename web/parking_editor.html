@@ -60,6 +60,11 @@
       <el-button size="small" type="danger" plain v-if="exMode" @click="cancelEx">取消</el-button>
       <el-button size="small" type="danger" plain v-if="exPolygon.length && !exMode && !maskMode" @click="clearEx">清除不偵測區</el-button>
       <el-divider direction="vertical"/>
+      <el-select v-model="gridPreset" size="small" style="width:140px" v-if="!maskMode && !exMode">
+        <el-option value="standard" label="直排"/>
+        <el-option value="double-row" label="雙排背靠背"/>
+        <el-option value="angled" label="斜停 30°"/>
+      </el-select>
       <el-button size="small" type="primary" plain v-if="!gridMode && !maskMode && !exMode" @click="startGridMode">Grid 透視 (4 點)</el-button>
       <span v-if="gridMode" style="font-size:12px;color:#dc2626;font-weight:600">點 4 角:{{ gridCorners.length }}/4 {{ ['(近左)','(近右)','(遠右)','(遠左)'][gridCorners.length] || '' }}</span>
       <el-button size="small" type="danger" plain v-if="gridMode" @click="cancelGrid">取消 Grid</el-button>
@@ -142,6 +147,7 @@ const app = createApp({
     // Grid 透視推算 state
     const gridMode = ref(false);
     const gridCorners = ref([]);   // 4 個角 (近左 / 近右 / 遠右 / 遠左)
+    const gridPreset = ref('standard');  // standard / double-row / angled
     let imgW = 1, imgH = 1, scaleX = 1, scaleY = 1;
 
     const reloadImage = () => { _rawTick.value = Date.now(); };
@@ -439,7 +445,7 @@ const app = createApp({
               ElementPlus.ElMessage.warning('rows/cols 必須是正整數');
               cancelGrid(); return;
             }
-            applyGrid(rows, cols);
+            applyGrid(rows, cols, gridPreset.value);
           }, 100);
         }
         return;
@@ -777,7 +783,7 @@ const app = createApp({
       return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1]];
     };
 
-    const applyGrid = (rows, cols) => {
+    const applyGrid = (rows, cols, preset = 'standard') => {
       // user 點順序: 近左 近右 遠右 遠左 → BL, BR, TR, TL
       const [BL, BR, TR, TL] = gridCorners.value;
       // unit square (u=0 左 u=1 右, v=0 遠 v=1 近) → 像素
@@ -799,15 +805,27 @@ const app = createApp({
       });
       const newSlots = [];
       const baseN = slots.value.length;
-      for (let r = 0; r < rows; r++) {
+      // preset = 'double-row' 強制 rows=2, 中間 30% gap
+      const actualRows = preset === 'double-row' ? 2 : rows;
+      const rowBands = [];
+      if (preset === 'double-row') {
+        rowBands.push([0.00, 0.35]);
+        rowBands.push([0.65, 1.00]);
+      } else {
+        for (let r = 0; r < rows; r++) rowBands.push([r/rows, (r+1)/rows]);
+      }
+      // angled: 每格 polygon 上邊比下邊向右 shift 0.5 個 cell 寬
+      const angleShift = preset === 'angled' ? 0.5 / cols : 0;
+      for (let r = 0; r < actualRows; r++) {
+        const [v0, v1] = rowBands[r];
         for (let c = 0; c < cols; c++) {
           const u0 = c / cols, u1 = (c + 1) / cols;
-          const v0 = r / rows, v1 = (r + 1) / rows;
+          // angled 模式: 上 2 點往右 shift,下 2 點往左 shift (平行四邊形)
           const polygon = [
-            interp(u0, v0),  // 左上 (遠左)
-            interp(u1, v0),  // 右上 (遠右)
-            interp(u1, v1),  // 右下 (近右)
-            interp(u0, v1),  // 左下 (近左)
+            interp(u0 + angleShift, v0),  // 左上
+            interp(u1 + angleShift, v0),  // 右上
+            interp(u1 - angleShift, v1),  // 右下
+            interp(u0 - angleShift, v1),  // 左下
           ];
           const idx = baseN + newSlots.length + 1;
           const lbl = `P${idx}`;
@@ -817,7 +835,8 @@ const app = createApp({
       slots.value = [...slots.value, ...newSlots];
       gridMode.value = false;
       gridCorners.value = [];
-      ElementPlus.ElMessage.success(`生成 ${rows} × ${cols} = ${newSlots.length} 格 (記得儲存)`);
+      const presetLabel = {standard:'直排', 'double-row':'雙排背靠背', angled:'斜停 30°'}[preset] || preset;
+      ElementPlus.ElMessage.success(`生成 ${presetLabel} ${actualRows} × ${cols} = ${newSlots.length} 格 (記得儲存)`);
       redraw();
     };
 
@@ -906,7 +925,7 @@ const app = createApp({
       saving, saveMsg, autoDetecting, sessionRunning, sessionStatus,
       maskMode, maskPolygon, maskDraft,
       exMode, exPolygon, exDraft,
-      gridMode, gridCorners,
+      gridMode, gridCorners, gridPreset,
       reloadImage, onImgLoad,
       onMouseDown, onMouseMove, onMouseUp,
       cancelCurrent, removeSlot, loadExistingSlots,
