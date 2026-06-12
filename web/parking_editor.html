@@ -746,20 +746,57 @@ const app = createApp({
       gridCorners.value = [];
       redraw();
     };
+    // 4-point homography (perspective transform): unit square (u,v)∈[0,1]² → 像素四邊形
+    // 解 H 3×3 (h22=1, 8 個未知數),Gauss elimination 8×8
+    const _solveHomography = (srcPts, dstPts) => {
+      const A = [], b = [];
+      for (let i = 0; i < 4; i++) {
+        const [u, v] = srcPts[i]; const [x, y] = dstPts[i];
+        A.push([u, v, 1, 0, 0, 0, -u*x, -v*x]); b.push(x);
+        A.push([0, 0, 0, u, v, 1, -u*y, -v*y]); b.push(y);
+      }
+      const n = 8;
+      for (let i = 0; i < n; i++) {
+        let mx = i;
+        for (let k = i+1; k < n; k++) if (Math.abs(A[k][i]) > Math.abs(A[mx][i])) mx = k;
+        [A[i], A[mx]] = [A[mx], A[i]]; [b[i], b[mx]] = [b[mx], b[i]];
+        const pv = A[i][i];
+        if (Math.abs(pv) < 1e-12) return null;
+        for (let k = i+1; k < n; k++) {
+          const f = A[k][i] / pv;
+          for (let j = i; j < n; j++) A[k][j] -= f * A[i][j];
+          b[k] -= f * b[i];
+        }
+      }
+      const h = new Array(n);
+      for (let i = n-1; i >= 0; i--) {
+        let s = b[i];
+        for (let j = i+1; j < n; j++) s -= A[i][j] * h[j];
+        h[i] = s / A[i][i];
+      }
+      return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1]];
+    };
+
     const applyGrid = (rows, cols) => {
-      // gridCorners = [TL, TR, BR, BL] (但 user 點順序: 近左 近右 遠右 遠左)
-      // user 視角:近=下,遠=上 → 近左=BL, 近右=BR, 遠右=TR, 遠左=TL
+      // user 點順序: 近左 近右 遠右 遠左 → BL, BR, TR, TL
       const [BL, BR, TR, TL] = gridCorners.value;
-      // bilinear interpolation: (u,v) ∈ [0,1] × [0,1]
-      // u=0 左, u=1 右; v=0 遠 (上), v=1 近 (下)
-      const interp = (u, v) => {
+      // unit square (u=0 左 u=1 右, v=0 遠 v=1 近) → 像素
+      const src = [[0,0],[1,0],[1,1],[0,1]];   // TL TR BR BL in (u,v)
+      const dst = [TL, TR, BR, BL];
+      const H = _solveHomography(src, dst);
+      const interp = H ? ((u, v) => {
+        const w = H[2][0]*u + H[2][1]*v + 1;
+        return [Math.round((H[0][0]*u + H[0][1]*v + H[0][2]) / w),
+                Math.round((H[1][0]*u + H[1][1]*v + H[1][2]) / w)];
+      }) : ((u, v) => {
+        // fallback: bilinear (H 解不出來時 e.g. 4 點共線)
         const top_x = TL[0] + u * (TR[0] - TL[0]);
         const top_y = TL[1] + u * (TR[1] - TL[1]);
         const bot_x = BL[0] + u * (BR[0] - BL[0]);
         const bot_y = BL[1] + u * (BR[1] - BL[1]);
         return [Math.round(top_x + v * (bot_x - top_x)),
                 Math.round(top_y + v * (bot_y - top_y))];
-      };
+      });
       const newSlots = [];
       const baseN = slots.value.length;
       for (let r = 0; r < rows; r++) {
