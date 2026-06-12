@@ -8619,7 +8619,7 @@
                         <div class="config-item"><span>超速</span><el-switch v-model="previewCamera.detection_config.speeding" @change="saveConfig"/></div>
                         <div class="config-item"><span>違規停車</span><el-switch v-model="previewCamera.detection_config.illegal_parking" @change="saveConfig"/></div>
                         <div class="config-item"><span>逆向行駛 <el-tag size="small" type="info" effect="plain" style="margin-left:6px">開發中</el-tag></span><el-switch v-model="previewCamera.detection_config.wrong_way" disabled/></div>
-                        <div class="config-item"><span>未戴安全帽 <el-tag size="small" type="info" effect="plain" style="margin-left:6px">開發中</el-tag></span><el-switch v-model="previewCamera.detection_config.no_helmet" disabled/></div>
+                        <div class="config-item"><span>未戴安全帽 <el-tag size="small" type="warning" effect="plain" style="margin-left:6px">需 helmet model</el-tag></span><el-switch v-model="previewCamera.detection_config.no_helmet" @change="saveConfig"/></div>
                         <div class="config-item" v-if="previewCamera.detection_config.speeding"><span>速限</span><el-input-number v-model="previewCamera.detection_config.speed_limit" :min="20" :max="120" size="small" @change="saveConfig"/></div>
                     </template>
                     <template v-if="page==='traffic_flow_settings' || page==='speed_detection'">

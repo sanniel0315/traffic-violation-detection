@@ -57,6 +57,7 @@ _PEDESTRIAN_YIELD_EVALUATORS: Dict[int, "object"] = {}
 
 # 逆向行駛 evaluator (per camera 一個 instance,跨 frame 累積 dominant flow)
 _WRONG_WAY_EVALUATORS: Dict[int, "object"] = {}
+_NO_HELMET_EVALUATORS: Dict[int, "object"] = {}
 
 # 視覺 track snapshot (per camera, BEV world coord) — 給 sensor_fusion router 拉。
 # 每 frame post-process 結尾覆寫,sensor_fusion API 即時讀。
@@ -2465,6 +2466,49 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             print(f"⚠️ wrong_way emit cam{camera_id}: {_ex_ww}", flush=True)
             except Exception as _ex_wweval:
                 print(f"⚠️ wrong_way evaluator cam{camera_id}: {_ex_wweval}", flush=True)
+
+            # ---- 機車未戴安全帽 evaluator (§31) ----
+            # helmet detector model 不在時 evaluator.feed() 自己 return [],不需 check
+            # 條件: vehicle_class=motorcycle + bbox 夠大 (≥80px) + 連續 4 frame no helmet
+            try:
+                if vehicles and any(str(v.get('class_name','')).lower() == 'motorcycle' for v in vehicles):
+                    _nhev = _NO_HELMET_EVALUATORS.get(camera_id)
+                    if _nhev is None:
+                        from detection.no_helmet import NoHelmetEvaluator
+                        _nhev = NoHelmetEvaluator(camera_id)
+                        _NO_HELMET_EVALUATORS[camera_id] = _nhev
+                    _nh_now = time.time()
+                    _nh_triggers = _nhev.feed(vehicles, tracks, frame, _nh_now)
+                    for _trig in _nh_triggers:
+                        try:
+                            _emit_violation_for_vehicle(
+                                camera_id=camera_id,
+                                location=location,
+                                frame=frame,
+                                vehicle_bbox=_trig.vehicle_bbox,
+                                vehicle_class=_trig.vehicle_class or "motorcycle",
+                                vehicle_conf=None,
+                                violation_type=_nhev.VIOLATION_TYPE,
+                                violation_name=_nhev.VIOLATION_NAME,
+                                fine_amount=0,
+                                points=0,
+                                output_dir=output_dir,
+                                trigger_ts=_nh_now,
+                                extra_fields={
+                                    "flow_roi_hit": True,
+                                    "speed_roi_hit": False,
+                                },
+                            )
+                            print(
+                                f"⚠️ NO_HELMET: track={_trig.vehicle_track_id} "
+                                f"wo_conf={_trig.without_helmet_conf:.2f} "
+                                f"cam{camera_id}",
+                                flush=True,
+                            )
+                        except Exception as _ex_nh:
+                            print(f"⚠️ no_helmet emit cam{camera_id}: {_ex_nh}", flush=True)
+            except Exception as _ex_nheval:
+                print(f"⚠️ no_helmet evaluator cam{camera_id}: {_ex_nheval}", flush=True)
 
             # 視覺 track snapshot — 給 sensor_fusion router 拉。寫 module-level dict。
             # 優先用 world coord (走過 calibration 的攝影機),沒設 calibration 用
