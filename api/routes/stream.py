@@ -2242,84 +2242,14 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     _speed_kmh = float(_raw_speed)
                     _overspeed_kmh = max(0.0, _speed_kmh - _speed_limit_kmh)
                     _bbox = _v.get('bbox', {}) or {}
-                    # plate-vehicle association: 對該違規 vehicle bbox 即時跑 plate
-                    # detection + OCR，嚴格綁定觸發車輛 (不再用 _latest_lpr_plate ±20s
-                    # 抓最近 LPR 結果可能是前車)。crop 暫存待 POST 拿 vid 後寫盤。
-                    _plate = ""
-                    _violation_plate_crop = None  # numpy array (BGR)，POST 後 save 用
-                    if _bbox:
-                        try:
-                            _bx1 = max(0, int(_bbox.get('x1', 0)))
-                            _by1 = max(0, int(_bbox.get('y1', 0)))
-                            _bx2 = int(_bbox.get('x2', 0))
-                            _by2 = int(_bbox.get('y2', 0))
-                            _veh_crop = frame[_by1:_by2, _bx1:_bx2]
-                            if _veh_crop is not None and _veh_crop.size > 0:
-                                # 用跟 LPR 同樣 pipeline 抓 plate (真 YOLO plate detector
-                                # + expand + tighten)，而非 sliding-window heuristic
-                                from api.routes.lpr_stream import (
-                                    get_plate_detector as _vpgd,
-                                    get_recognizer as _vpr,
-                                    _PLATE_DETECT_CONF as _vpconf,
-                                    _expand_plate_bbox as _vpex,
-                                    _tighten_plate_crop_with_bbox as _vptight,
-                                    _rank_plate_candidates as _vprank,
-                                    _propose_plate_bboxes as _vpfb,
-                                    _recognize_plate_on_crop as _vpo,
-                                )
-                                _det = _vpgd()
-                                _rec = _vpr()
-                                _vh, _vw = _veh_crop.shape[:2]
-                                _detections = _det.detect(_veh_crop, conf=_vpconf)
-                                if not _detections:
-                                    _detections = _vpfb(_veh_crop)  # fallback heuristic
-                                _ranked = _vprank(_detections, _vw, _vh)
-                                for _r in _ranked:
-                                    _rb = _r.get('bbox') or []
-                                    if len(_rb) != 4:
-                                        continue
-                                    _ex1, _ey1, _ex2, _ey2 = _vpex(
-                                        [int(x) for x in _rb], _vw, _vh
-                                    )
-                                    _pc = _det.crop(_veh_crop, [_ex1, _ey1, _ex2, _ey2])
-                                    if _pc is None or getattr(_pc, 'size', 0) == 0:
-                                        continue
-                                    # tighten 收緊邊界供 OCR (準確率高)
-                                    # save 用「更寬鬆」pad (上下 55%, 左右 30%) 重 crop 一次,
-                                    # 因為 detector plate bbox 常常只抓「字寬度」漏掉上下框框,
-                                    # 25% pad 救不回 — user 報「車牌裁切一半」就是這個 (5df9f45 沒解徹底)
-                                    _es1, _et1, _es2, _et2 = _vpex(
-                                        [int(x) for x in _rb], _vw, _vh,
-                                        pad_x_ratio=0.30, pad_y_ratio=0.55,
-                                    )
-                                    _pc_for_save = _det.crop(_veh_crop, [_es1, _et1, _es2, _et2])
-                                    if _pc_for_save is None or getattr(_pc_for_save, 'size', 0) == 0:
-                                        _pc_for_save = _pc.copy()  # fallback 用小 pad 版
-                                    _pc_tight, _ = _vptight(_pc)
-                                    if _pc_tight is not None and getattr(_pc_tight, 'size', 0) > 0:
-                                        _pc_for_ocr = _pc_tight
-                                    else:
-                                        _pc_for_ocr = _pc
-                                    _res = _vpo(_pc_for_ocr, _rec)
-                                    _pn = (_res or {}).get('plate_number')
-                                    _conf = float((_res or {}).get('confidence') or 0.0)
-                                    # 「務實高準確性」策略 (跟 _associate_plate_for_vehicle 對齊):
-                                    # >= 0.85 寫 plate_number,0.5-0.85 留 crop 但 plate 設空,
-                                    # < 0.5 完全放棄。避免低信心錯誤 plate 污染 DB。
-                                    if _pn and _conf >= PLATE_HIGH_CONFIDENCE_THRESHOLD:
-                                        _plate = str(_pn).strip()
-                                        _violation_plate_crop = _pc_for_save
-                                        break
-                                    elif _conf >= PLATE_KEEP_CROP_THRESHOLD:
-                                        # 中信心: 留 crop 給人工 review,但 _plate 保持空
-                                        if _violation_plate_crop is None:
-                                            _violation_plate_crop = _pc_for_save
-                                        break
-                        except Exception as _ex_lpv:
-                            print(f"⚠️ plate-vehicle association err cam{camera_id}: {_ex_lpv}", flush=True)
-                    # 嚴格 plate detection 沒抓到 → license_plate = None
-                    # (寧可沒車牌也不要 fallback _latest_lpr_plate ±20s 抓前車誤標。
-                    # user 之前抱怨 Honda 配 Hyundai / AZ-1122 對不上正是這個)
+                    # plate-vehicle association: 對該違規 vehicle bbox 嚴格綁定 plate
+                    # (用 _associate_plate_for_vehicle helper 共用 3 階信心策略,
+                    # 跟其他違規 emitter 走同一條 path,避免 inline drift)
+                    _plate, _violation_plate_crop, _ = _associate_plate_for_vehicle(
+                        frame, _bbox, camera_id
+                    )
+                    # 嚴格: plate detection 沒抓到 → license_plate = None
+                    # 寧可沒車牌也不要 fallback 抓前車誤標
                     _annotated = frame.copy()
                     if _bbox:
                         cv2.rectangle(_annotated, (int(_bbox.get('x1', 0)), int(_bbox.get('y1', 0))),
