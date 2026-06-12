@@ -147,19 +147,21 @@ def query_slot(crop_bgr: np.ndarray, prompt: Optional[str] = None,
 
 
 def _parse_response(text: str) -> Dict:
-    """parse 「狀態: / 原因: / 信心:」三行格式"""
+    """parse 「狀態: / 原因: / 信心:」三行格式.
+    Qwen2VL 2B 在低解析度小 crop 偶爾吐 \\ufffd broken byte,parse 時清掉.
+    """
+    def _clean(v: str) -> str:
+        # 去 U+FFFD replacement char (model output 不完整 UTF-8)
+        return (v or "").replace("�", "").strip()
     out = {"status": None, "reason": None, "confidence": None}
     for line in (text or "").splitlines():
         line = line.strip()
         if line.startswith("狀態:") or line.startswith("狀態：") or line.lower().startswith("status:"):
-            v = line.split(":", 1)[-1].split("：", 1)[-1].strip()
-            out["status"] = v
+            out["status"] = _clean(line.split(":", 1)[-1].split("：", 1)[-1])
         elif line.startswith("原因:") or line.startswith("原因：") or line.lower().startswith("reason:"):
-            v = line.split(":", 1)[-1].split("：", 1)[-1].strip()
-            out["reason"] = v
+            out["reason"] = _clean(line.split(":", 1)[-1].split("：", 1)[-1])
         elif line.startswith("信心:") or line.startswith("信心：") or line.lower().startswith("confidence:"):
-            v = line.split(":", 1)[-1].split("：", 1)[-1].strip()
-            # 取數字
+            v = _clean(line.split(":", 1)[-1].split("：", 1)[-1])
             import re
             m = re.search(r"\d+", v)
             if m:
@@ -167,6 +169,9 @@ def _parse_response(text: str) -> Dict:
                     out["confidence"] = int(m.group()) / 100.0
                 except Exception:
                     pass
+    # 空字串視為 None
+    if not out["status"]: out["status"] = None
+    if not out["reason"]: out["reason"] = None
     # derive boolean occupied
     s = (out["status"] or "").lower()
     if "有車" in s or "occupied" in s:
@@ -175,6 +180,11 @@ def _parse_response(text: str) -> Dict:
         out["occupied"] = False
     else:
         out["occupied"] = None
+    # 低信心 + 矛盾標記: 邏輯不自洽 (e.g. status=有車 + reason=無法判定 + confidence<5%)
+    # → 標 unreliable=True 給 UI 顯示「VLM 對小目標信心不足」而非誤導文字
+    conf = out["confidence"] or 0
+    reason_says_unknown = bool(out["reason"]) and ("無法判定" in out["reason"] or "其他" in out["reason"])
+    out["unreliable"] = (conf < 0.05) or (out["occupied"] is True and reason_says_unknown)
     return out
 
 

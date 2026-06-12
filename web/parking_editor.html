@@ -60,7 +60,12 @@
       <el-button size="small" type="danger" plain v-if="exMode" @click="cancelEx">取消</el-button>
       <el-button size="small" type="danger" plain v-if="exPolygon.length && !exMode && !maskMode" @click="clearEx">清除不偵測區</el-button>
       <el-divider direction="vertical"/>
-      <el-select v-model="gridPreset" size="small" style="width:140px" v-if="!maskMode && !exMode">
+      <el-button size="small" type="info" plain v-if="!measureMode && !maskMode && !exMode && !gridMode" @click="measureMode=true; measureLast=null">測量大小</el-button>
+      <el-button size="small" type="danger" plain v-if="measureMode" @click="measureMode=false; measureLast=null; dragging=false; dragStart=null; dragEnd=null; redraw()">退出測量</el-button>
+      <span v-if="measureMode && measureLast" style="font-size:12px;color:#0b5ea8;font-weight:600;font-family:monospace">最後測量: {{ measureLast.w }} × {{ measureLast.h }} px ({{ (measureLast.w*measureLast.h).toLocaleString() }} px²)</span>
+      <span v-else-if="measureMode" style="font-size:12px;color:#dc2626;font-weight:600">在影像上拖框 →</span>
+      <el-divider direction="vertical" v-if="!measureMode"/>
+      <el-select v-model="gridPreset" size="small" style="width:140px" v-if="!maskMode && !exMode && !measureMode">
         <el-option value="standard" label="直排"/>
         <el-option value="double-row" label="雙排背靠背"/>
         <el-option value="angled" label="斜停 30°"/>
@@ -148,6 +153,9 @@ const app = createApp({
     const gridMode = ref(false);
     const gridCorners = ref([]);   // 4 個角 (近左 / 近右 / 遠右 / 遠左)
     const gridPreset = ref('standard');  // standard / double-row / angled
+    // 測量模式 — 拖框純量 W×H px,不存 slot
+    const measureMode = ref(false);
+    const measureLast = ref(null);   // {w, h}
     let imgW = 1, imgH = 1, scaleX = 1, scaleY = 1;
 
     const reloadImage = () => { _rawTick.value = Date.now(); };
@@ -351,7 +359,7 @@ const app = createApp({
         ctx.fillStyle = '#fff';
         ctx.fillText(txt, cx - tw / 2, cy + 3);
       }
-      // 當前拖拉中矩形 — 紅色
+      // 當前拖拉中矩形 — 測量模式藍 / slot 模式紅
       if (dragging.value && dragStart.value && dragEnd.value) {
         const x1 = dragStart.value[0] / scaleX;
         const y1 = dragStart.value[1] / scaleY;
@@ -361,15 +369,19 @@ const app = createApp({
         const top = Math.min(y1, y2);
         const w = Math.abs(x2 - x1);
         const h = Math.abs(y2 - y1);
-        ctx.strokeStyle = '#dc2626';
-        ctx.fillStyle = 'rgba(220,38,38,0.28)';
+        const isMeasure = measureMode.value;
+        ctx.strokeStyle = isMeasure ? '#0b5ea8' : '#dc2626';
+        ctx.fillStyle = isMeasure ? 'rgba(11,94,168,0.20)' : 'rgba(220,38,38,0.28)';
         ctx.lineWidth = 2;
         ctx.fillRect(left, top, w, h);
         ctx.strokeRect(left, top, w, h);
         // 尺寸 label
-        ctx.fillStyle = '#dc2626';
-        ctx.font = 'bold 11px monospace';
-        ctx.fillText(`${Math.round(w * scaleX)} × ${Math.round(h * scaleY)} px`, left + 4, top - 4);
+        ctx.fillStyle = isMeasure ? '#0b5ea8' : '#dc2626';
+        ctx.font = 'bold 13px monospace';
+        const wPx = Math.round(w * scaleX);
+        const hPx = Math.round(h * scaleY);
+        const txt = isMeasure ? `${wPx} × ${hPx} px (${(wPx*hPx).toLocaleString()} px²)` : `${wPx} × ${hPx} px`;
+        ctx.fillText(txt, left + 4, top - 4);
       }
     };
 
@@ -462,6 +474,14 @@ const app = createApp({
         redraw();
         return;
       }
+      // 測量模式: 純拉框量 W×H,不建 slot
+      if (measureMode.value) {
+        dragStart.value = _toImagePx(e);
+        dragEnd.value = dragStart.value.slice();
+        dragging.value = true;
+        redraw();
+        return;
+      }
       // 頂點編輯模式
       const hit = _hitHandle(e);
       if (hit) {
@@ -530,6 +550,13 @@ const app = createApp({
       const y1 = Math.min(dragStart.value[1], dragEnd.value[1]);
       const x2 = Math.max(dragStart.value[0], dragEnd.value[0]);
       const y2 = Math.max(dragStart.value[1], dragEnd.value[1]);
+      // 測量模式: 只記下 W×H,不建 slot
+      if (measureMode.value) {
+        measureLast.value = { w: Math.round(x2 - x1), h: Math.round(y2 - y1) };
+        dragStart.value = null; dragEnd.value = null;
+        redraw();
+        return;
+      }
       const w = x2 - x1, h = y2 - y1;
       // 太小的框忽略 (誤點)
       if (w < 8 || h < 8) {
@@ -926,6 +953,7 @@ const app = createApp({
       maskMode, maskPolygon, maskDraft,
       exMode, exPolygon, exDraft,
       gridMode, gridCorners, gridPreset,
+      measureMode, measureLast,
       reloadImage, onImgLoad,
       onMouseDown, onMouseMove, onMouseUp,
       cancelCurrent, removeSlot, loadExistingSlots,
