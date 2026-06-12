@@ -6089,6 +6089,11 @@
                                 </div>
                                 <div v-if="vlmResult" style="font-size:12px;font-family:var(--font-mono);background:#fff;border:1px solid var(--gov-border);border-radius:4px;padding:8px">
                                     <span v-if="!vlmResult.ok" style="color:var(--gov-fault)">錯誤: {{ vlmResult.error }}</span>
+                                    <template v-else-if="vlmResult.unreliable">
+                                        <span style="padding:2px 8px;border-radius:3px;background:#f59e0b;color:#fff;margin-right:8px">信心不足</span>
+                                        <span style="color:var(--gov-muted)">VLM 對此格 (640×480 / ~80px) 判讀不穩定,僅供參考</span>
+                                        <span v-if="vlmResult.latency_sec" style="color:var(--gov-muted);margin-left:8px">({{ vlmResult.latency_sec }}s)</span>
+                                    </template>
                                     <template v-else>
                                         <span :style="{padding:'2px 8px',borderRadius:'3px',background:vlmResult.occupied===true?'var(--gov-fault)':vlmResult.occupied===false?'var(--gov-ok)':'var(--gov-muted)',color:'#fff',marginRight:'8px'}">{{ vlmResult.status || '?' }}</span>
                                         <span v-if="vlmResult.reason" style="color:var(--gov-muted)">原因: {{ vlmResult.reason }}</span>
