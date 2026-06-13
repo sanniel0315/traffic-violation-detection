@@ -28,6 +28,9 @@ _MODEL = None
 _PROCESSOR = None
 _LOAD_LOCK = threading.Lock()
 _LOAD_STATE = {"loading": False, "loaded": False, "error": ""}
+# 全域推論鎖 — VLM (torch) generate 與其他 GPU op 併發在 Jetson 上易 native SEGV,
+# 所有 VLM 推論 (query_slot / chat) 必須序列化
+_INFER_LOCK = threading.Lock()
 
 MODEL_ID = "Qwen/Qwen2-VL-2B-Instruct"
 DEFAULT_PROMPT_ZH = (
@@ -122,8 +125,9 @@ def query_slot(crop_bgr: np.ndarray, prompt: Optional[str] = None,
 
         t0 = time.time()
         import torch
-        with torch.no_grad():
-            generated_ids = _MODEL.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
+        with _INFER_LOCK:
+            with torch.no_grad():
+                generated_ids = _MODEL.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
         # trim input
         generated_ids_trimmed = [
             out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)
@@ -140,6 +144,74 @@ def query_slot(crop_bgr: np.ndarray, prompt: Optional[str] = None,
             "latency_sec": round(dt, 2),
             **parsed,
         }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"ok": False, "error": str(e)}
+
+
+CHAT_SYSTEM_ZH = (
+    "你是交通監控影像助理。根據使用者提供的攝影機畫面,用繁體中文簡潔回答問題"
+    "(車輛數量、車種、車牌是否清楚、有無機車、壅塞或異常等)。"
+    "看不清楚或畫面沒有的資訊就直接說不確定,不要編造。"
+)
+
+
+def chat(image_bgr: "np.ndarray", question: str,
+         history: Optional[List[Dict]] = None,
+         max_new_tokens: int = 256) -> Dict:
+    """通用視覺問答助理 — 一張當下畫面 + 問題 (+ 多輪文字 history) → 自由文字回答.
+    history: [{"role": "user"/"assistant", "text": "..."}] (不含本次 question).
+    回答 grounded 在傳入的 image (每次都帶當下快照,確保針對最新畫面)."""
+    if not _ensure_loaded():
+        return {"ok": False, "error": "VLM 載入中或未載入", "state": get_load_state()}
+    if _MODEL is None or _PROCESSOR is None:
+        return {"ok": False, "error": "model 未初始化"}
+    q = (question or "").strip()
+    if not q:
+        return {"ok": False, "error": "問題為空"}
+    try:
+        from qwen_vl_utils import process_vision_info
+        from PIL import Image
+        if image_bgr is None or image_bgr.size == 0:
+            return {"ok": False, "error": "畫面抓取失敗 (來源無影像)"}
+        rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(rgb)
+
+        messages = [{"role": "system", "content": [{"type": "text", "text": CHAT_SYSTEM_ZH}]}]
+        # 多輪: 先放純文字 history (最多保留最近 8 則,避免 2B context 爆)
+        for h in (history or [])[-8:]:
+            role = h.get("role")
+            txt = (h.get("text") or "").strip()
+            if role in ("user", "assistant") and txt:
+                messages.append({"role": role, "content": [{"type": "text", "text": txt}]})
+        # 本次 user turn: 帶當下畫面 + 問題
+        messages.append({"role": "user", "content": [
+            {"type": "image", "image": pil_img},
+            {"type": "text", "text": q},
+        ]})
+
+        text = _PROCESSOR.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        image_inputs, video_inputs = process_vision_info(messages)
+        inputs = _PROCESSOR(
+            text=[text], images=image_inputs, videos=video_inputs,
+            padding=True, return_tensors="pt",
+        ).to(_MODEL.device)
+
+        t0 = time.time()
+        import torch
+        with _INFER_LOCK:
+            with torch.no_grad():
+                generated_ids = _MODEL.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
+        generated_ids_trimmed = [
+            out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)
+        ]
+        answer = _PROCESSOR.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False,
+        )[0]
+        # 清掉低解析度偶發的 broken byte
+        answer = answer.replace("�", "").strip()
+        return {"ok": True, "answer": answer, "latency_sec": round(time.time() - t0, 2)}
     except Exception as e:
         import traceback
         traceback.print_exc()
