@@ -213,14 +213,45 @@ class VlmChatBody(BaseModel):
     history: Optional[List[dict]] = None   # [{"role":"user"/"assistant","text":...}] 不含本次
 
 
+def _vehicle_count_hint(frame) -> Optional[str]:
+    """用已載入的 YOLO singleton 數此 frame 的車 → 給 VLM 當數量 ground truth.
+    (2B 在 640x480 數不準,數量問題改以 YOLO 為準)"""
+    try:
+        from api.routes.lpr_stream import get_yolo, _yolo_lock
+        yolo = get_yolo()
+        with _yolo_lock:
+            dets = yolo.detect(frame) or []
+        cars = trucks = motos = 0
+        for d in dets:
+            cn = str(d.get("class_name") or "").lower()
+            if cn in ("car", "non_truck"):
+                cars += 1
+            elif cn in ("truck", "heavy_truck", "light_truck", "bus"):
+                trucks += 1
+            elif cn == "motorcycle":
+                motos += 1
+        total = cars + trucks + motos
+        if total == 0:
+            return "YOLO 在此畫面未偵測到車輛"
+        parts = []
+        if cars: parts.append(f"汽車 {cars}")
+        if trucks: parts.append(f"大型車 {trucks}")
+        if motos: parts.append(f"機車 {motos}")
+        return f"YOLO 偵測到共 {total} 台車輛 ({', '.join(parts)})"
+    except Exception as e:
+        print(f"[vlm_chat] yolo hint err: {e}", flush=True)
+        return None
+
+
 @router.post("/vlm/chat")
 def vlm_chat(body: VlmChatBody):
-    """通用視覺助理 — 抓指定來源當下畫面,VLM 多輪問答 (任一攝影機)."""
+    """通用視覺助理 — 抓指定來源當下畫面,先用 YOLO 數車當 ground truth,再 VLM 多輪問答."""
     from services.parking_vlm import chat as vlm_chat_fn
     frame = fetch_frame(body.source, bypass_cache=True)
     if frame is None:
         raise HTTPException(status_code=503, detail="畫面抓取失敗 (來源無影像)")
-    return vlm_chat_fn(frame, body.question, history=body.history)
+    hint = _vehicle_count_hint(frame)
+    return vlm_chat_fn(frame, body.question, history=body.history, detection_hint=hint)
 
 
 @router.get("/vlm/verdicts")

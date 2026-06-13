@@ -151,17 +151,23 @@ def query_slot(crop_bgr: np.ndarray, prompt: Optional[str] = None,
 
 
 CHAT_SYSTEM_ZH = (
-    "你是交通監控影像助理。根據使用者提供的攝影機畫面,用繁體中文簡潔回答問題"
-    "(車輛數量、車種、車牌是否清楚、有無機車、壅塞或異常等)。"
-    "看不清楚或畫面沒有的資訊就直接說不確定,不要編造。"
+    "你是交通監控影像助理。根據攝影機畫面,用繁體中文簡潔、具體地回答,不要含糊。\n"
+    "- 數量問題: 若訊息開頭有 [系統偵測] 數據,那是 YOLO 偵測結果(比目測準),直接以它為準回答。\n"
+    "  沒有系統數據時也要給目測估計(例「約 5-8 台」),不要只回「無法確定」。\n"
+    "- 車種 / 有無機車 / 壅塞 / 異常 等: 描述你實際看到的。\n"
+    "- 只有該資訊在畫面上真的看不到時,才說看不清楚並簡短說明原因(太遠/太暗/被遮),"
+    "不要編造畫面沒有的東西。"
 )
 
 
 def chat(image_bgr: "np.ndarray", question: str,
          history: Optional[List[Dict]] = None,
+         detection_hint: Optional[str] = None,
          max_new_tokens: int = 256) -> Dict:
     """通用視覺問答助理 — 一張當下畫面 + 問題 (+ 多輪文字 history) → 自由文字回答.
     history: [{"role": "user"/"assistant", "text": "..."}] (不含本次 question).
+    detection_hint: YOLO 偵測 ground truth (例「YOLO 偵測到共 6 台 (汽車 5, 機車 1)」),
+        會以 [系統偵測] 前綴注入本次問題,讓數量類問題有準確依據.
     回答 grounded 在傳入的 image (每次都帶當下快照,確保針對最新畫面)."""
     if not _ensure_loaded():
         return {"ok": False, "error": "VLM 載入中或未載入", "state": get_load_state()}
@@ -185,10 +191,13 @@ def chat(image_bgr: "np.ndarray", question: str,
             txt = (h.get("text") or "").strip()
             if role in ("user", "assistant") and txt:
                 messages.append({"role": role, "content": [{"type": "text", "text": txt}]})
-        # 本次 user turn: 帶當下畫面 + 問題
+        # 本次 user turn: 帶當下畫面 + 問題 (+ YOLO 偵測 ground truth)
+        user_text = q
+        if detection_hint:
+            user_text = f"[系統偵測] {detection_hint}\n\n問題: {q}"
         messages.append({"role": "user", "content": [
             {"type": "image", "image": pil_img},
-            {"type": "text", "text": q},
+            {"type": "text", "text": user_text},
         ]})
 
         text = _PROCESSOR.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
