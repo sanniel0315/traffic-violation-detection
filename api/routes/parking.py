@@ -51,6 +51,12 @@ class ExclusionMaskBody(BaseModel):
     exclusion_mask: List[List[float]]      # 不偵測區 polygon or [] to clear
 
 
+class CountingLineBody(BaseModel):
+    source: str
+    line: List[List[float]]                # 2 點 [[x1,y1],[x2,y2]] 或 [] to clear
+    enter_normal: Optional[str] = "right"   # 'right' or 'left' — 哪邊算 enter
+
+
 class IOTriggerBody(BaseModel):
     source: str
     enabled: bool = True
@@ -123,6 +129,8 @@ def get_source_meta_route(source: str = Query(...)):
         "stream_url": meta.get("stream_url", ""),
         "parking_area_mask": meta.get("parking_area_mask", []),
         "exclusion_mask": meta.get("exclusion_mask", []),
+        "counting_line": meta.get("counting_line", []),
+        "counting_enter_normal": meta.get("counting_enter_normal", "right"),
         "slot_count": len(load_slots(source) or []),
     }
 
@@ -208,6 +216,67 @@ def vlm_verdicts(source: str = Query(...)):
         return {"source": source, "verdicts": list_verdicts(source)}
     except Exception as e:
         return {"source": source, "verdicts": {}, "error": str(e)}
+
+
+@router.post("/counting_line/save")
+def save_counting_line(body: CountingLineBody):
+    """寫入 source 的車輛 counting line config (entry/exit 共用一條,方向判進出)."""
+    existing: dict = {}
+    if os.path.exists(_CONFIG_PATH):
+        try:
+            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = {}
+    entry = existing.get(body.source) or {}
+    if body.line and len(body.line) == 2:
+        entry["counting_line"] = body.line
+        entry["counting_enter_normal"] = body.enter_normal or "right"
+    else:
+        entry.pop("counting_line", None)
+        entry.pop("counting_enter_normal", None)
+    existing[body.source] = entry
+    os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+    with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(existing, f, ensure_ascii=False, indent=2)
+    return {"ok": True, "source": body.source,
+            "line_points": len(body.line),
+            "enter_normal": body.enter_normal or "right"}
+
+
+@router.get("/counting/status")
+def counting_status(source: str = Query(...)):
+    """回 counting 即時狀態 + 24h 歷史 + 配合 occupancy 比對."""
+    from services.parking_counter import get_status, history
+    st = get_status(source)
+    # 取最新 occupancy (供 UI 三者比對)
+    try:
+        from services.parking_occupancy import evaluate_occupancy
+        occ = evaluate_occupancy(source)
+        detected_vehicles = int(occ.get("detected_vehicles") or 0)
+        slot_occupied = int(occ.get("occupied") or 0)
+        slot_total = int(occ.get("total") or 0)
+    except Exception:
+        detected_vehicles = None
+        slot_occupied = None
+        slot_total = None
+    return {
+        **st,
+        "detected_vehicles": detected_vehicles,
+        "slot_occupied": slot_occupied,
+        "slot_total": slot_total,
+        "history_24h": history(source, hours=24),
+    }
+
+
+@router.post("/counting/reset")
+def counting_reset(source: str = Query(...),
+                    full: bool = Query(False, description="True 連 in_lot 一起清")):
+    """重設 counting (today only / full)"""
+    from services.parking_counter import reset_today, reset_all
+    if full:
+        return reset_all(source)
+    return reset_today(source)
 
 
 @router.post("/auto/reset")
