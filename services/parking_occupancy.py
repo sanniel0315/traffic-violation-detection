@@ -793,12 +793,15 @@ def evaluate_occupancy(source_key: str) -> Dict:
 
     vehicles_in_area = sum(1 for v in vehicles if _veh_in_area(v["cx"], v["cy"]))
     has_area_mask = bool(area_mask)
-    # 主差距 (隨時可用); 無 area mask 時 vehicles_in_area=整幀會超估,降低可信度但仍標示
-    area_gap = abs(vehicles_in_area - occupied)
+    # area 基準只在 mask 真的涵蓋到車時可信: vehicles_in_area=0 但有佔用 = mask 沒畫對,
+    # 不是真背離 (避免假升級),標 suspect 提示去 editor 重畫區域
+    area_mask_suspect = bool(has_area_mask and vehicles_in_area == 0 and occupied > 0)
+    area_reliable = bool(has_area_mask and vehicles_in_area > 0)
+    area_gap = abs(vehicles_in_area - occupied) if area_reliable else None
     calibrated = bool(counting_line) and in_lot_now is not None and in_lot_now > 0
     count_gap = abs(occupied - in_lot_now) if calibrated else None
     escalated = bool(
-        (has_area_mask and area_gap >= CROSS_GAP_ESCALATE) or
+        (area_reliable and area_gap >= CROSS_GAP_ESCALATE) or
         (count_gap is not None and count_gap >= CROSS_GAP_ESCALATE)
     )
     if escalated and vlm_enqueue:
@@ -817,6 +820,8 @@ def evaluate_occupancy(source_key: str) -> Dict:
         "detected_vehicles": len(vehicles),
         "area_gap": area_gap,
         "has_area_mask": has_area_mask,
+        "area_reliable": area_reliable,
+        "area_mask_suspect": area_mask_suspect,
         "in_lot": in_lot_now,
         "count_gap": count_gap,
         "calibrated": calibrated,
