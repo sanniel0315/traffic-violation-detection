@@ -6229,7 +6229,6 @@
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use href="#i-cpu"/></svg></div>
                                 <h1 class="ds-section-title">AI <b>視覺助理</b></h1>
-                                <div style="font-size:12px;color:var(--gov-muted);margin-top:4px">選一個攝影機/來源,用自然語言問畫面內容 (Qwen2-VL-2B 本地推論)</div>
                             </div>
                             <div class="ds-page-hero-meta" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
                                 <el-select v-model="assistantSource" size="small" style="width:300px" filterable placeholder="選來源" @change="reloadAssistantSnap">
@@ -6250,7 +6249,7 @@
                                     <img v-if="assistantSnapUrl" :src="assistantSnapUrl" style="width:100%;display:block"/>
                                     <div v-else style="color:var(--gov-muted);font-size:12px;text-align:center;padding:60px">請先選來源</div>
                                 </div>
-                                <div style="font-size:11px;color:var(--gov-muted);margin-top:6px">每次送出問題會抓最新一張畫面交給模型。2B 模型回答約 5-7 秒,且與偵測共用 GPU 已序列化。</div>
+                                <div style="font-size:11px;color:var(--gov-muted);margin-top:6px">送出時會抓當下畫面,回答需數秒。</div>
                             </div>
                             <!-- 右: 多輪對話 -->
                             <div style="display:flex;flex-direction:column;height:540px">
