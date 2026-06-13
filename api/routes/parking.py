@@ -276,7 +276,8 @@ def counting_status(source: str = Query(...)):
                       .order_by(ParkingSample.created_at.asc())
                       .all())
             occ_hist = [{"ts": r.created_at.isoformat() if r.created_at else None,
-                         "occupied": r.occupied, "rate": r.occupancy_rate}
+                         "occupied": r.occupied, "rate": r.occupancy_rate,
+                         "vehicles_in_area": getattr(r, "vehicles_in_area", None)}
                         for r in rows]
         finally:
             db.close()
