@@ -299,13 +299,17 @@ def counting_status(source: str = Query(...)):
 
     # 交叉校正 (從快取值算,供 UI 顯示;不在此觸發 escalation)
     in_lot = st.get("in_lot")
+    # area 基準只在 mask 真的涵蓋到車時可信: vehicles_in_area=0 但有佔用 = mask 沒畫對
+    area_mask_suspect = bool(has_area and vehicles_in_area == 0
+                             and slot_occupied is not None and slot_occupied > 0)
+    area_reliable = bool(has_area and vehicles_in_area is not None and vehicles_in_area > 0)
     area_gap = (abs(vehicles_in_area - slot_occupied)
-                if (vehicles_in_area is not None and slot_occupied is not None) else None)
+                if (area_reliable and slot_occupied is not None) else None)
     calibrated = has_counting_line and isinstance(in_lot, int) and in_lot > 0
     count_gap = (abs(slot_occupied - in_lot)
                  if (calibrated and slot_occupied is not None) else None)
     thr = 5
-    escalated = bool((has_area and area_gap is not None and area_gap >= thr) or
+    escalated = bool((area_reliable and area_gap is not None and area_gap >= thr) or
                      (count_gap is not None and count_gap >= thr))
     cross_validation = {
         "slot_occupied": slot_occupied,
@@ -313,6 +317,8 @@ def counting_status(source: str = Query(...)):
         "detected_vehicles": detected_vehicles,
         "area_gap": area_gap,
         "has_area_mask": has_area,
+        "area_reliable": area_reliable,
+        "area_mask_suspect": area_mask_suspect,
         "in_lot": in_lot,
         "count_gap": count_gap,
         "calibrated": calibrated,
