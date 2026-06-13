@@ -2758,7 +2758,10 @@ class LPRStreamTask:
             # 拉倒整個 traffic-api。改成從 stream.py _shared_frames 取 frame —
             # detection worker 已透過 frigate latest.jpg fallback 拿到 1080p frame
             # 並寫進 shared_frames，LPR 共用即可，完全繞過 cap.read 風險。
-            _SHARED_FRAME_LPR_CAMS = {6}
+            # cam_2 (台62基隆段隧道口) 同走 go2rtc relay (上游 111.70.34.183),今日上游不穩
+            # → cap.read 對 go2rtc output 同樣 native SEGV (全天 169 次,啟動約 57s 後崩);
+            #   frigate cam_2 latest.jpg 實測 200/155KB 可用,比照 cam_6 改 shared_frames。
+            _SHARED_FRAME_LPR_CAMS = {2, 6}
             use_shared = self.camera_id in _SHARED_FRAME_LPR_CAMS
             cap = None
 
