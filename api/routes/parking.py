@@ -207,6 +207,22 @@ def vlm_query(source: str = Query(...),
     return query_slot(crop, prompt=prompt)
 
 
+class VlmChatBody(BaseModel):
+    source: str                       # 任一來源 (twipcam:... / cam:N),fetch_frame 解析
+    question: str
+    history: Optional[List[dict]] = None   # [{"role":"user"/"assistant","text":...}] 不含本次
+
+
+@router.post("/vlm/chat")
+def vlm_chat(body: VlmChatBody):
+    """通用視覺助理 — 抓指定來源當下畫面,VLM 多輪問答 (任一攝影機)."""
+    from services.parking_vlm import chat as vlm_chat_fn
+    frame = fetch_frame(body.source, bypass_cache=True)
+    if frame is None:
+        raise HTTPException(status_code=503, detail="畫面抓取失敗 (來源無影像)")
+    return vlm_chat_fn(frame, body.question, history=body.history)
+
+
 @router.get("/vlm/verdicts")
 def vlm_verdicts(source: str = Query(...)):
     """取該 source 所有 VLM 仲裁 cache (背景 hook 寫入,TTL 5 分鐘).
