@@ -45,6 +45,9 @@ _HISTORY_LAST_AT: Dict[str, float] = {}
 _HISTORY_THROTTLE_SEC = 300.0
 _HISTORY_LOCK = threading.Lock()
 
+# Phase 3 交叉校正: |車位偵測 - 進出累計| >= 此值 → 升級 VLM 仲裁範圍
+CROSS_GAP_ESCALATE = 5
+
 # 自動偵測 background session (per-source)
 _AUTO_SESSIONS: Dict[str, Dict] = {}
 _AUTO_LOCK = threading.Lock()
@@ -745,6 +748,7 @@ def evaluate_occupancy(source_key: str) -> Dict:
     # counting hook: 用 YOLO 偵測到的 vehicles 餵 counter (line cross 判 enter/exit)
     counting_line = meta.get("counting_line") or None
     enter_normal = meta.get("counting_enter_normal") or "right"
+    in_lot_now = None
     if counting_line and vehicles:
         try:
             from services.parking_counter import feed as counter_feed
@@ -753,8 +757,41 @@ def evaluate_occupancy(source_key: str) -> Dict:
                 "x2": v["bbox"][2], "y2": v["bbox"][3]}} for v in vehicles]
             cnt = counter_feed(source_key, vehicles_for_counter, counting_line, enter_normal)
             result["counting"] = cnt.get("status")
+            in_lot_now = int((cnt.get("status") or {}).get("in_lot") or 0)
         except Exception as e:
             print(f"[parking] counter err: {e}", flush=True)
+    elif counting_line:
+        # 本 frame 沒 vehicles 也讀目前累積 state (供交叉校正)
+        try:
+            from services.parking_counter import get_status as _counter_status
+            in_lot_now = int(_counter_status(source_key).get("in_lot") or 0)
+        except Exception:
+            in_lot_now = None
+
+    # Phase 3 交叉校正: 車位偵測(occupied) vs 進出累計(in_lot) 兩個「停放車數」估計
+    # 差距大 → 偵測可疑 → 升級: 把 conf 落在更寬 band 的格全補排 VLM 背景仲裁
+    # 註: detected_vehicles 是整幀 YOLO 原始數(含路過/相鄰),會超估,只當參考不入校正
+    calibrated = bool(counting_line) and in_lot_now is not None and in_lot_now > 0
+    cross_gap = abs(occupied - in_lot_now) if calibrated else None
+    escalated = bool(cross_gap is not None and cross_gap >= CROSS_GAP_ESCALATE)
+    if escalated and vlm_enqueue:
+        for s in slot_results:
+            poly_s = s.get("polygon")
+            conf_s = s.get("conf", 0.0)
+            if poly_s and len(poly_s) >= 3 and 0.15 <= conf_s <= 0.85:
+                try:
+                    vlm_enqueue(source_key, str(s["id"]), poly_s)
+                except Exception:
+                    pass
+    result["cross_validation"] = {
+        "slot_occupied": occupied,
+        "in_lot": in_lot_now,
+        "detected_vehicles": len(vehicles),
+        "gap": cross_gap,
+        "calibrated": calibrated,
+        "escalated": escalated,
+        "escalate_threshold": CROSS_GAP_ESCALATE,
+    }
     record_to_history(result)
     result["io_trigger"] = maybe_trigger_io(result, meta)
     return result
