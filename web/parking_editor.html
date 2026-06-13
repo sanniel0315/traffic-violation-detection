@@ -79,6 +79,10 @@
       <el-button size="small" type="primary" plain v-if="!gridMode && !maskMode && !exMode" @click="startGridMode">Grid 透視 (4 點)</el-button>
       <span v-if="gridMode" style="font-size:12px;color:#dc2626;font-weight:600">點 4 角:{{ gridCorners.length }}/4 {{ ['(近左)','(近右)','(遠右)','(遠左)'][gridCorners.length] || '' }}</span>
       <el-button size="small" type="danger" plain v-if="gridMode" @click="cancelGrid">取消 Grid</el-button>
+      <el-divider direction="vertical" v-if="!gridMode && !maskMode && !exMode && !measureMode && !lineMode"/>
+      <el-button size="small" type="warning" plain v-if="!rowAdjustMode && !gridMode && !maskMode && !exMode && !measureMode && !lineMode && slots.length" @click="startRowAdjust">整排調整</el-button>
+      <el-button size="small" type="danger" plain v-if="rowAdjustMode" @click="exitRowAdjust">退出整排</el-button>
+      <span v-if="rowAdjustMode" style="font-size:12px;color:#d97706;font-weight:600">點一格選同排,拖曳或方向鍵微調 (已選 {{ rowSelection.length }} 格,Shift=5px)</span>
     </div>
     <div v-if="sessionRunning || sessionStatus.frames_processed" style="margin:8px 0;padding:10px 14px;background:#fff8e1;border-left:3px solid #d97706;border-radius:4px;font-size:13px;font-family:monospace;color:#1f2937">
       累積偵測:
@@ -168,6 +172,10 @@ const app = createApp({
     const countingLine = ref([]);         // 已儲存的 line (0 or 2 點)
     const enterNormal = ref('right');     // 'right' or 'left'
     const enterNormalLabel = computed(() => enterNormal.value === 'right' ? '右側為入場' : '左側為入場');
+    // 整排調整模式 — 點一格選同排,整排拖曳 / 方向鍵微調 (補系統性整排偏移)
+    const rowAdjustMode = ref(false);
+    const rowSelection = ref([]);   // 被選同排的 slot index list
+    let _rowDragLast = null;        // 上次拖曳的 image px [x,y]
     let imgW = 1, imgH = 1, scaleX = 1, scaleY = 1;
 
     const reloadImage = () => { _rawTick.value = Date.now(); };
@@ -331,9 +339,10 @@ const app = createApp({
       for (let si = 0; si < slots.value.length; si++) {
         const s = slots.value[si];
         if (!s.polygon || s.polygon.length < 3) continue;
-        ctx.fillStyle = 'rgba(31,157,85,0.32)';
-        ctx.strokeStyle = '#1f9d55';
-        ctx.lineWidth = 2;
+        const _rowSel = rowAdjustMode.value && rowSelection.value.includes(si);
+        ctx.fillStyle = _rowSel ? 'rgba(217,119,6,0.34)' : 'rgba(31,157,85,0.32)';
+        ctx.strokeStyle = _rowSel ? '#d97706' : '#1f9d55';
+        ctx.lineWidth = _rowSel ? 3 : 2;
         ctx.beginPath();
         s.polygon.forEach((p, i) => {
           const x = p[0] / scaleX;
@@ -559,6 +568,16 @@ const app = createApp({
         redraw();
         return;
       }
+      // 整排調整: 點一格選同排,開始拖曳整排
+      if (rowAdjustMode.value) {
+        const [px, py] = _toImagePx(e);
+        const idx = _slotAtImagePx(px, py);
+        _selectRow(idx);
+        _rowDragLast = idx >= 0 ? [px, py] : null;
+        dragging.value = idx >= 0;
+        redraw();
+        return;
+      }
       // 頂點編輯模式
       const hit = _hitHandle(e);
       if (hit) {
@@ -590,6 +609,18 @@ const app = createApp({
         redraw();
         return;
       }
+      // 整排調整拖曳中 → 平移整排
+      if (rowAdjustMode.value) {
+        const cv2 = canvas.value;
+        if (cv2) cv2.style.cursor = 'move';
+        if (dragging.value && _rowDragLast) {
+          const [px, py] = _toImagePx(e);
+          _translateRow(px - _rowDragLast[0], py - _rowDragLast[1]);
+          _rowDragLast = [px, py];
+          redraw();
+        }
+        return;
+      }
       // hover handle 改 cursor
       const cv = canvas.value;
       if (cv) {
@@ -602,6 +633,13 @@ const app = createApp({
     };
 
     const onMouseUp = (e) => {
+      // 整排調整: 結束拖曳 (保留選取供方向鍵微調)
+      if (rowAdjustMode.value) {
+        dragging.value = false;
+        _rowDragLast = null;
+        redraw();
+        return;
+      }
       // 結束頂點編輯,mask/ex 自動 save
       if (editingPoint.value) {
         const ep = editingPoint.value;
@@ -675,8 +713,69 @@ const app = createApp({
       redraw();
     };
 
+    // ── 整排調整 helpers ──
+    const _slotCenterY = (s) => s.polygon.reduce((a, p) => a + p[1], 0) / s.polygon.length;
+    const _slotHeight = (s) => {
+      const ys = s.polygon.map(p => p[1]);
+      return Math.max(...ys) - Math.min(...ys);
+    };
+    const _slotAtImagePx = (px, py) => {
+      // 命中 polygon bbox 的最小面積那格 (重疊時取最貼近的)
+      let best = -1, bestArea = 1e18;
+      for (let i = 0; i < slots.value.length; i++) {
+        const s = slots.value[i];
+        if (!s.polygon || s.polygon.length < 3) continue;
+        const xs = s.polygon.map(p => p[0]), ys = s.polygon.map(p => p[1]);
+        const minx = Math.min(...xs), maxx = Math.max(...xs);
+        const miny = Math.min(...ys), maxy = Math.max(...ys);
+        if (px >= minx && px <= maxx && py >= miny && py <= maxy) {
+          const area = (maxx - minx) * (maxy - miny);
+          if (area < bestArea) { bestArea = area; best = i; }
+        }
+      }
+      return best;
+    };
+    const _selectRow = (clickIdx) => {
+      if (clickIdx < 0) { rowSelection.value = []; return; }
+      const cy0 = _slotCenterY(slots.value[clickIdx]);
+      const heights = slots.value.map(_slotHeight).filter(h => h > 0).sort((a, b) => a - b);
+      const medH = heights.length ? heights[Math.floor(heights.length / 2)] : 40;
+      const tol = medH * 0.6;   // 同排判定: center-y 距離在半格高內
+      const sel = [];
+      for (let i = 0; i < slots.value.length; i++) {
+        if (Math.abs(_slotCenterY(slots.value[i]) - cy0) <= tol) sel.push(i);
+      }
+      rowSelection.value = sel;
+    };
+    const _translateRow = (dx, dy) => {
+      for (const i of rowSelection.value) {
+        const s = slots.value[i];
+        if (!s || !s.polygon) continue;
+        s.polygon = s.polygon.map(p => [p[0] + dx, p[1] + dy]);
+      }
+    };
+    const startRowAdjust = () => { rowAdjustMode.value = true; rowSelection.value = []; _rowDragLast = null; redraw(); };
+    const exitRowAdjust = () => { rowAdjustMode.value = false; rowSelection.value = []; _rowDragLast = null; redraw(); };
+
     const onKeydown = (e) => {
-      if (e.key === 'Escape') cancelCurrent();
+      if (e.key === 'Escape') {
+        if (rowAdjustMode.value) { exitRowAdjust(); return; }
+        cancelCurrent();
+        return;
+      }
+      // 整排調整: 方向鍵微調整排 (Shift = 5px)
+      if (rowAdjustMode.value && rowSelection.value.length) {
+        const step = e.shiftKey ? 5 : 1;
+        let dx = 0, dy = 0;
+        if (e.key === 'ArrowLeft') dx = -step;
+        else if (e.key === 'ArrowRight') dx = step;
+        else if (e.key === 'ArrowUp') dy = -step;
+        else if (e.key === 'ArrowDown') dy = step;
+        else return;
+        e.preventDefault();
+        _translateRow(dx, dy);
+        redraw();
+      }
     };
 
     const autoDetectSlots = async () => {
@@ -1058,6 +1157,7 @@ const app = createApp({
       gridMode, gridCorners, gridPreset,
       measureMode, measureLast,
       lineMode, lineDraft, countingLine, enterNormal, enterNormalLabel,
+      rowAdjustMode, rowSelection, startRowAdjust, exitRowAdjust,
       startLineMode, cancelLineMode, toggleEnterNormal, clearCountingLine,
       reloadImage, onImgLoad,
       onMouseDown, onMouseMove, onMouseUp,
