@@ -271,8 +271,10 @@ def fetch_frame(source_key: str, bypass_cache: bool = False) -> Optional[np.ndar
     frame = None
     meta = get_source_meta(source_key)
     # 優先 stream_url (RTSP / MJPEG / HLS — cv2.VideoCapture 直拉)
+    # 但 twipcam: 本質是 HTTP 快照源,cv2.VideoCapture 對其 stream_url(如不穩的 gov CCTV)
+    # 會 native SEGV 拉垮整個 process,且下方 HTTP 快照路徑可靠 → twipcam 跳過 VideoCapture
     stream_url = meta.get("stream_url", "") if meta else ""
-    if stream_url:
+    if stream_url and not source_key.startswith("twipcam:"):
         try:
             cap = cv2.VideoCapture(stream_url)
             try:
