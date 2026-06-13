@@ -249,23 +249,47 @@ def counting_status(source: str = Query(...)):
     """回 counting 即時狀態 + 24h 歷史 + 配合 occupancy 比對."""
     from services.parking_counter import get_status, history
     st = get_status(source)
-    # 取最新 occupancy (供 UI 三者比對)
+    # 取最新 occupancy (供 UI 三者比對 + 交叉校正)
+    cross_validation = None
     try:
         from services.parking_occupancy import evaluate_occupancy
         occ = evaluate_occupancy(source)
         detected_vehicles = int(occ.get("detected_vehicles") or 0)
         slot_occupied = int(occ.get("occupied") or 0)
         slot_total = int(occ.get("total") or 0)
+        cross_validation = occ.get("cross_validation")
     except Exception:
         detected_vehicles = None
         slot_occupied = None
         slot_total = None
+    # occupancy 歷史 (供雙軸趨勢疊 in_lot vs 車位偵測)
+    occ_hist = []
+    try:
+        from datetime import datetime, timedelta
+        from api.models import SessionLocal, ParkingSample
+        start = datetime.utcnow() - timedelta(hours=24)
+        db = SessionLocal()
+        try:
+            rows = (db.query(ParkingSample)
+                      .filter(ParkingSample.source == source,
+                              ParkingSample.created_at >= start)
+                      .order_by(ParkingSample.created_at.asc())
+                      .all())
+            occ_hist = [{"ts": r.created_at.isoformat() if r.created_at else None,
+                         "occupied": r.occupied, "rate": r.occupancy_rate}
+                        for r in rows]
+        finally:
+            db.close()
+    except Exception:
+        occ_hist = []
     return {
         **st,
         "detected_vehicles": detected_vehicles,
         "slot_occupied": slot_occupied,
         "slot_total": slot_total,
+        "cross_validation": cross_validation,
         "history_24h": history(source, hours=24),
+        "occupancy_history_24h": occ_hist,
     }
 
 
