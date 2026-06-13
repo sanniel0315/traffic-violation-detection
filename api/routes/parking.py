@@ -246,30 +246,43 @@ def save_counting_line(body: CountingLineBody):
 
 @router.get("/counting/status")
 def counting_status(source: str = Query(...)):
-    """回 counting 即時狀態 + 24h 歷史 + 配合 occupancy 比對."""
+    """回 counting 即時狀態 + 24h 歷史 + 交叉校正.
+    註: 不重跑 evaluate_occupancy (那會再抓一張 frame → cv2.imdecode 偶發 SEGV
+    拉垮整個 traffic-api,且 /occupancy poll 已跑過一次)。改讀最近一筆 ParkingSample
+    + counter state + meta mask 做交叉校正,detection-free。escalation enqueue 仍在
+    /occupancy 的 evaluate_occupancy 內觸發。"""
+    from datetime import datetime, timedelta
     from services.parking_counter import get_status, history
     st = get_status(source)
-    # 取最新 occupancy (供 UI 三者比對 + 交叉校正)
-    cross_validation = None
+
+    # meta: 區域 mask (判 has_area) + 計數線 (判 calibrated) — get_source_meta 不含 slots,安全
+    has_area = False
+    has_counting_line = False
     try:
-        from services.parking_occupancy import evaluate_occupancy
-        occ = evaluate_occupancy(source)
-        detected_vehicles = int(occ.get("detected_vehicles") or 0)
-        slot_occupied = int(occ.get("occupied") or 0)
-        slot_total = int(occ.get("total") or 0)
-        cross_validation = occ.get("cross_validation")
+        from services.parking_occupancy import get_source_meta
+        meta = get_source_meta(source)
+        has_area = bool(meta.get("parking_area_mask"))
+        has_counting_line = bool(meta.get("counting_line"))
     except Exception:
-        detected_vehicles = None
-        slot_occupied = None
-        slot_total = None
-    # occupancy 歷史 (供雙軸趨勢疊 in_lot vs 車位偵測)
+        pass
+
+    # 最近一筆 occupancy + 24h 歷史 (DB only,不碰 fetch_frame)
+    slot_occupied = slot_total = detected_vehicles = vehicles_in_area = None
     occ_hist = []
     try:
-        from datetime import datetime, timedelta
         from api.models import SessionLocal, ParkingSample
-        start = datetime.utcnow() - timedelta(hours=24)
         db = SessionLocal()
         try:
+            last = (db.query(ParkingSample)
+                      .filter(ParkingSample.source == source)
+                      .order_by(ParkingSample.created_at.desc())
+                      .first())
+            if last:
+                slot_occupied = last.occupied
+                slot_total = last.total
+                detected_vehicles = last.detected_vehicles
+                vehicles_in_area = getattr(last, "vehicles_in_area", None)
+            start = datetime.utcnow() - timedelta(hours=24)
             rows = (db.query(ParkingSample)
                       .filter(ParkingSample.source == source,
                               ParkingSample.created_at >= start)
@@ -282,7 +295,30 @@ def counting_status(source: str = Query(...)):
         finally:
             db.close()
     except Exception:
-        occ_hist = []
+        pass
+
+    # 交叉校正 (從快取值算,供 UI 顯示;不在此觸發 escalation)
+    in_lot = st.get("in_lot")
+    area_gap = (abs(vehicles_in_area - slot_occupied)
+                if (vehicles_in_area is not None and slot_occupied is not None) else None)
+    calibrated = has_counting_line and isinstance(in_lot, int) and in_lot > 0
+    count_gap = (abs(slot_occupied - in_lot)
+                 if (calibrated and slot_occupied is not None) else None)
+    thr = 5
+    escalated = bool((has_area and area_gap is not None and area_gap >= thr) or
+                     (count_gap is not None and count_gap >= thr))
+    cross_validation = {
+        "slot_occupied": slot_occupied,
+        "vehicles_in_area": vehicles_in_area,
+        "detected_vehicles": detected_vehicles,
+        "area_gap": area_gap,
+        "has_area_mask": has_area,
+        "in_lot": in_lot,
+        "count_gap": count_gap,
+        "calibrated": calibrated,
+        "escalated": escalated,
+        "escalate_threshold": thr,
+    }
     return {
         **st,
         "detected_vehicles": detected_vehicles,

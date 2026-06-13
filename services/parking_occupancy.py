@@ -302,8 +302,15 @@ def fetch_frame(source_key: str, bypass_cache: bool = False) -> Optional[np.ndar
                 fetch_url = url
                 headers = {}
             r = _req.get(fetch_url, timeout=8, headers=headers)
-            if r.status_code == 200 and len(r.content) > 5000:
-                frame = cv2.imdecode(np.frombuffer(r.content, dtype=np.uint8), cv2.IMREAD_COLOR)
+            content = r.content
+            # 驗 JPEG 完整性再 decode: 殘缺/截斷的 buffer 餵 cv2.imdecode 會 native SEGV
+            # 拉垮整個 traffic-api (try/except 攔不到 SIGSEGV),只能 decode 前擋
+            valid_jpeg = (len(content) > 5000 and content[:2] == b"\xff\xd8"
+                          and b"\xff\xd9" in content[-16:])
+            if r.status_code == 200 and valid_jpeg:
+                frame = cv2.imdecode(np.frombuffer(content, dtype=np.uint8), cv2.IMREAD_COLOR)
+            elif r.status_code == 200:
+                print(f"[parking] twipcam JPEG 不完整 (len={len(content)}),跳過 decode 避免 SEGV", flush=True)
         except Exception as e:
             print(f"[parking] twipcam fetch err: {e}", flush=True)
     elif source_key.startswith("cam:"):
