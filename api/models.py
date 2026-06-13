@@ -171,6 +171,7 @@ class ParkingSample(Base):
     available = Column(Integer, default=0)
     occupancy_rate = Column(Float, default=0.0)
     detected_vehicles = Column(Integer, default=0)
+    vehicles_in_area = Column(Integer, default=0)      # YOLO 中心落在停車場區域內的車數 (交叉校正用)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
@@ -322,6 +323,7 @@ def init_db():
     _migrate_traffic_event_columns()
     _migrate_camera_columns()
     _migrate_report_indexes()
+    _migrate_parking_columns()
     db = SessionLocal()
     try:
         if db.query(User).count() == 0:
@@ -371,6 +373,18 @@ def _migrate_traffic_event_columns():
             col_names = {str(c[1]) for c in cols}
             if "occupancy" not in col_names:
                 conn.execute(text("ALTER TABLE traffic_events ADD COLUMN occupancy FLOAT"))
+    except Exception:
+        pass
+
+
+def _migrate_parking_columns():
+    """為既有 parking_samples 表補上 vehicles_in_area 欄位 (交叉校正趨勢用)。"""
+    try:
+        with engine.begin() as conn:
+            cols = conn.execute(text("PRAGMA table_info(parking_samples)")).fetchall()
+            col_names = {str(c[1]) for c in cols}
+            if "vehicles_in_area" not in col_names:
+                conn.execute(text("ALTER TABLE parking_samples ADD COLUMN vehicles_in_area INTEGER DEFAULT 0"))
     except Exception:
         pass
 

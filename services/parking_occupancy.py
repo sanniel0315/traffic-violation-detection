@@ -217,6 +217,7 @@ def record_to_history(result: Dict) -> bool:
                 available=int(result.get("available") or 0),
                 occupancy_rate=float(result.get("occupancy_rate") or 0.0),
                 detected_vehicles=int(result.get("detected_vehicles") or 0),
+                vehicles_in_area=int(result.get("vehicles_in_area") or 0),
             )
             db.add(row)
             db.commit()
@@ -768,12 +769,31 @@ def evaluate_occupancy(source_key: str) -> Dict:
         except Exception:
             in_lot_now = None
 
-    # Phase 3 交叉校正: 車位偵測(occupied) vs 進出累計(in_lot) 兩個「停放車數」估計
-    # 差距大 → 偵測可疑 → 升級: 把 conf 落在更寬 band 的格全補排 VLM 背景仲裁
-    # 註: detected_vehicles 是整幀 YOLO 原始數(含路過/相鄰),會超估,只當參考不入校正
+    # Phase 3 交叉校正 — 兩個獨立「場內停放車數」估計差距大 → 偵測可疑 → 升級 VLM 仲裁
+    # 主基準: vehicles_in_area (YOLO 看到、中心落在停車場區域內的車) vs slot_occupied
+    #   兩者都不需計數線,靜態畫好停車場區域 mask 即可隨時比對 (車流計數不一定有/不一定抓得到進出)
+    # 次基準: in_lot (進出累計) — 只有計數線校準後才納入
+    # 註: detected_vehicles 是整幀 YOLO 原始(含路過/相鄰),會超估,只當參考不入校正
+    area_mask = meta.get("parking_area_mask") or []
+    exclusion_mask = meta.get("exclusion_mask") or []
+
+    def _veh_in_area(cx: float, cy: float) -> bool:
+        if area_mask and not _point_in_polygon(cx, cy, area_mask):
+            return False
+        if exclusion_mask and _point_in_polygon(cx, cy, exclusion_mask):
+            return False
+        return True
+
+    vehicles_in_area = sum(1 for v in vehicles if _veh_in_area(v["cx"], v["cy"]))
+    has_area_mask = bool(area_mask)
+    # 主差距 (隨時可用); 無 area mask 時 vehicles_in_area=整幀會超估,降低可信度但仍標示
+    area_gap = abs(vehicles_in_area - occupied)
     calibrated = bool(counting_line) and in_lot_now is not None and in_lot_now > 0
-    cross_gap = abs(occupied - in_lot_now) if calibrated else None
-    escalated = bool(cross_gap is not None and cross_gap >= CROSS_GAP_ESCALATE)
+    count_gap = abs(occupied - in_lot_now) if calibrated else None
+    escalated = bool(
+        (has_area_mask and area_gap >= CROSS_GAP_ESCALATE) or
+        (count_gap is not None and count_gap >= CROSS_GAP_ESCALATE)
+    )
     if escalated and vlm_enqueue:
         for s in slot_results:
             poly_s = s.get("polygon")
@@ -783,11 +803,15 @@ def evaluate_occupancy(source_key: str) -> Dict:
                     vlm_enqueue(source_key, str(s["id"]), poly_s)
                 except Exception:
                     pass
+    result["vehicles_in_area"] = vehicles_in_area
     result["cross_validation"] = {
         "slot_occupied": occupied,
-        "in_lot": in_lot_now,
+        "vehicles_in_area": vehicles_in_area,
         "detected_vehicles": len(vehicles),
-        "gap": cross_gap,
+        "area_gap": area_gap,
+        "has_area_mask": has_area_mask,
+        "in_lot": in_lot_now,
+        "count_gap": count_gap,
         "calibrated": calibrated,
         "escalated": escalated,
         "escalate_threshold": CROSS_GAP_ESCALATE,
