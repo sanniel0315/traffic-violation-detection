@@ -60,7 +60,13 @@
       <el-button size="small" type="danger" plain v-if="exMode" @click="cancelEx">取消</el-button>
       <el-button size="small" type="danger" plain v-if="exPolygon.length && !exMode && !maskMode" @click="clearEx">清除不偵測區</el-button>
       <el-divider direction="vertical"/>
-      <el-button size="small" type="info" plain v-if="!measureMode && !maskMode && !exMode && !gridMode" @click="measureMode=true; measureLast=null">測量大小</el-button>
+      <el-button size="small" type="primary" plain v-if="!lineMode && !measureMode && !maskMode && !exMode && !gridMode" @click="startLineMode">畫計數線</el-button>
+      <el-button size="small" type="danger" plain v-if="lineMode" @click="cancelLineMode">取消計數線</el-button>
+      <span v-if="lineMode" style="font-size:12px;color:#dc2626;font-weight:600">點 2 個端點: {{ lineDraft.length }}/2</span>
+      <el-button size="small" type="warning" plain v-if="countingLine.length===2 && !lineMode" @click="toggleEnterNormal">翻轉進場方向 (目前: {{ enterNormalLabel }})</el-button>
+      <el-button size="small" type="danger" plain v-if="countingLine.length===2 && !lineMode" @click="clearCountingLine">清除計數線</el-button>
+      <el-divider direction="vertical" v-if="countingLine.length===2 || lineMode"/>
+      <el-button size="small" type="info" plain v-if="!measureMode && !maskMode && !exMode && !gridMode && !lineMode" @click="measureMode=true; measureLast=null">測量大小</el-button>
       <el-button size="small" type="danger" plain v-if="measureMode" @click="measureMode=false; measureLast=null; dragging=false; dragStart=null; dragEnd=null; redraw()">退出測量</el-button>
       <span v-if="measureMode && measureLast" style="font-size:12px;color:#0b5ea8;font-weight:600;font-family:monospace">最後測量: {{ measureLast.w }} × {{ measureLast.h }} px ({{ (measureLast.w*measureLast.h).toLocaleString() }} px²)</span>
       <span v-else-if="measureMode" style="font-size:12px;color:#dc2626;font-weight:600">在影像上拖框 →</span>
@@ -156,6 +162,12 @@ const app = createApp({
     // 測量模式 — 拖框純量 W×H px,不存 slot
     const measureMode = ref(false);
     const measureLast = ref(null);   // {w, h}
+    // 計數線 (entry/exit 共用一條 line + 方向)
+    const lineMode = ref(false);          // 畫線中
+    const lineDraft = ref([]);            // 收集中的點 (1-2 個)
+    const countingLine = ref([]);         // 已儲存的 line (0 or 2 點)
+    const enterNormal = ref('right');     // 'right' or 'left'
+    const enterNormalLabel = computed(() => enterNormal.value === 'right' ? '右側為入場' : '左側為入場');
     let imgW = 1, imgH = 1, scaleX = 1, scaleY = 1;
 
     const reloadImage = () => { _rawTick.value = Date.now(); };
@@ -359,6 +371,58 @@ const app = createApp({
         ctx.fillStyle = '#fff';
         ctx.fillText(txt, cx - tw / 2, cy + 3);
       }
+      // 計數線 — 紫粗線 + 法線箭頭 (指向 enter 側) + 端點圓
+      const drawLineWithArrow = (pts, color, label) => {
+        if (!pts || pts.length !== 2) return;
+        const [p1, p2] = pts;
+        const x1 = p1[0] / scaleX, y1 = p1[1] / scaleY;
+        const x2 = p2[0] / scaleX, y2 = p2[1] / scaleY;
+        ctx.strokeStyle = color; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        // 端點圓
+        ctx.fillStyle = color;
+        for (const [cx, cy] of [[x1,y1],[x2,y2]]) {
+          ctx.beginPath(); ctx.arc(cx, cy, 6, 0, Math.PI*2); ctx.fill();
+        }
+        // 中點 + 法線箭頭
+        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+        const dx = x2 - x1, dy = y2 - y1;
+        const len = Math.sqrt(dx*dx + dy*dy) || 1;
+        // normal = perpendicular,sign: right=clockwise 90°
+        const sign = enterNormal.value === 'right' ? 1 : -1;
+        const nx = -dy / len * sign;
+        const ny = dx / len * sign;
+        const arrowLen = 32;
+        const ax = mx + nx * arrowLen, ay = my + ny * arrowLen;
+        ctx.strokeStyle = color; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(ax, ay); ctx.stroke();
+        // arrow head
+        const ah = 8;
+        const angle = Math.atan2(ay-my, ax-mx);
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax - ah*Math.cos(angle - Math.PI/6), ay - ah*Math.sin(angle - Math.PI/6));
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax - ah*Math.cos(angle + Math.PI/6), ay - ah*Math.sin(angle + Math.PI/6));
+        ctx.stroke();
+        // label
+        ctx.fillStyle = color; ctx.font = 'bold 12px monospace';
+        ctx.fillText(label, ax + 6, ay + 4);
+      };
+      if (countingLine.value && countingLine.value.length === 2 && !lineMode.value) {
+        drawLineWithArrow(countingLine.value, '#7c3aed', '入');
+      }
+      if (lineMode.value && lineDraft.value.length > 0) {
+        ctx.fillStyle = '#7c3aed';
+        for (const p of lineDraft.value) {
+          const x = p[0] / scaleX, y = p[1] / scaleY;
+          ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI*2); ctx.fill();
+        }
+        if (lineDraft.value.length === 1) {
+          ctx.fillStyle = '#7c3aed'; ctx.font = 'bold 12px monospace';
+          ctx.fillText('再點 1 個端點', lineDraft.value[0][0]/scaleX + 10, lineDraft.value[0][1]/scaleY - 8);
+        }
+      }
       // 當前拖拉中矩形 — 測量模式藍 / slot 模式紅
       if (dragging.value && dragStart.value && dragEnd.value) {
         const x1 = dragStart.value[0] / scaleX;
@@ -471,6 +535,19 @@ const app = createApp({
       // mask mode: 加 vertex
       if (maskMode.value) {
         maskDraft.value = [...maskDraft.value, _toImagePx(e)];
+        redraw();
+        return;
+      }
+      // 計數線模式: 收 2 點 → 自動 save
+      if (lineMode.value) {
+        const pt = _toImagePx(e);
+        lineDraft.value = [...lineDraft.value, pt];
+        if (lineDraft.value.length === 2) {
+          countingLine.value = [...lineDraft.value];
+          lineMode.value = false;
+          lineDraft.value = [];
+          saveCountingLine();
+        }
         redraw();
         return;
       }
@@ -710,8 +787,34 @@ const app = createApp({
           const meta = await r3.json();
           maskPolygon.value = meta.parking_area_mask || [];
           exPolygon.value = meta.exclusion_mask || [];
+          countingLine.value = meta.counting_line || [];
+          enterNormal.value = meta.counting_enter_normal || 'right';
         }
       } catch (e) {}
+      redraw();
+    };
+
+    // 計數線 methods
+    const startLineMode = () => { lineMode.value = true; lineDraft.value = []; redraw(); };
+    const cancelLineMode = () => { lineMode.value = false; lineDraft.value = []; redraw(); };
+    const saveCountingLine = async () => {
+      try {
+        const r = await fetch('/api/parking/counting_line/save', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({source: sourceKey.value, line: countingLine.value,
+                                 enter_normal: enterNormal.value}),
+        });
+        if (r.ok) ElementPlus.ElMessage.success('計數線已儲存');
+      } catch (e) { ElementPlus.ElMessage.error('儲存失敗: ' + e.message); }
+    };
+    const toggleEnterNormal = () => {
+      enterNormal.value = enterNormal.value === 'right' ? 'left' : 'right';
+      saveCountingLine();
+      redraw();
+    };
+    const clearCountingLine = async () => {
+      countingLine.value = [];
+      await saveCountingLine();
       redraw();
     };
 
@@ -954,6 +1057,8 @@ const app = createApp({
       exMode, exPolygon, exDraft,
       gridMode, gridCorners, gridPreset,
       measureMode, measureLast,
+      lineMode, lineDraft, countingLine, enterNormal, enterNormalLabel,
+      startLineMode, cancelLineMode, toggleEnterNormal, clearCountingLine,
       reloadImage, onImgLoad,
       onMouseDown, onMouseMove, onMouseUp,
       cancelCurrent, removeSlot, loadExistingSlots,

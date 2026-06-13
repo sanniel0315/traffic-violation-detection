@@ -174,6 +174,20 @@ class ParkingSample(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class ParkingCountSample(Base):
+    """停車場車輛 counting 歷史 — counter 5 分鐘 throttle 寫入 cumulative state"""
+    __tablename__ = "parking_count_samples"
+    __table_args__ = (
+        Index("ix_parking_count_samples_source_ts", "source", "created_at"),
+    )
+    id = Column(Integer, primary_key=True, index=True)
+    source = Column(String(80), index=True)
+    enter_today = Column(Integer, default=0)
+    exit_today = Column(Integer, default=0)
+    in_lot = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class TrafficReportAgg(Base):
     __tablename__ = "traffic_report_aggs"
     __table_args__ = (

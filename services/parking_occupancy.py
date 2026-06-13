@@ -742,6 +742,19 @@ def evaluate_occupancy(source_key: str) -> Dict:
         "slots": slot_results,
         "mode": "roi",
     }
+    # counting hook: 用 YOLO 偵測到的 vehicles 餵 counter (line cross 判 enter/exit)
+    counting_line = meta.get("counting_line") or None
+    enter_normal = meta.get("counting_enter_normal") or "right"
+    if counting_line and vehicles:
+        try:
+            from services.parking_counter import feed as counter_feed
+            vehicles_for_counter = [{"bbox": {
+                "x1": v["bbox"][0], "y1": v["bbox"][1],
+                "x2": v["bbox"][2], "y2": v["bbox"][3]}} for v in vehicles]
+            cnt = counter_feed(source_key, vehicles_for_counter, counting_line, enter_normal)
+            result["counting"] = cnt.get("status")
+        except Exception as e:
+            print(f"[parking] counter err: {e}", flush=True)
     record_to_history(result)
     result["io_trigger"] = maybe_trigger_io(result, meta)
     return result
