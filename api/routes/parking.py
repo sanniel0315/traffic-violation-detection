@@ -213,17 +213,43 @@ class VlmChatBody(BaseModel):
     history: Optional[List[dict]] = None   # [{"role":"user"/"assistant","text":...}] 不含本次
 
 
-def _vehicle_count_hint(frame) -> Optional[str]:
+def _vehicle_count_hint(frame, source: str) -> Optional[str]:
     """用已載入的 YOLO singleton 數此 frame 的車 → 給 VLM 當數量 ground truth.
-    (2B 在 640x480 數不準,數量問題改以 YOLO 為準)"""
+    精準版: 若 source 有停車場區域 mask,只算「中心落在區域內、不在排除區」的車
+    (過濾路過/相鄰,= 停車場頁交叉校正的 vehicles_in_area);沒 mask 則算整幀."""
     try:
         from api.routes.lpr_stream import get_yolo, _yolo_lock
         yolo = get_yolo()
         with _yolo_lock:
             dets = yolo.detect(frame) or []
+        # 取區域 mask 過濾 (get_source_meta 不含 slots,安全)
+        area_mask = exclusion_mask = None
+        _pip = None
+        try:
+            from services.parking_occupancy import get_source_meta, _point_in_polygon as _pip
+            meta = get_source_meta(source) or {}
+            area_mask = meta.get("parking_area_mask") or None
+            exclusion_mask = meta.get("exclusion_mask") or None
+        except Exception:
+            _pip = None
+
+        def _in_area(cx, cy):
+            if not _pip:
+                return True
+            if area_mask and not _pip(cx, cy, area_mask):
+                return False
+            if exclusion_mask and _pip(cx, cy, exclusion_mask):
+                return False
+            return True
+
         cars = trucks = motos = 0
         for d in dets:
             cn = str(d.get("class_name") or "").lower()
+            bb = d.get("bbox", {}) or {}
+            cx = (int(bb.get("x1", 0)) + int(bb.get("x2", 0))) // 2
+            cy = (int(bb.get("y1", 0)) + int(bb.get("y2", 0))) // 2
+            if not _in_area(cx, cy):
+                continue
             if cn in ("car", "non_truck"):
                 cars += 1
             elif cn in ("truck", "heavy_truck", "light_truck", "bus"):
@@ -231,13 +257,14 @@ def _vehicle_count_hint(frame) -> Optional[str]:
             elif cn == "motorcycle":
                 motos += 1
         total = cars + trucks + motos
+        scope = "停車場區域內" if area_mask else "畫面中"
         if total == 0:
-            return "YOLO 在此畫面未偵測到車輛"
+            return f"YOLO 在{scope}未偵測到車輛"
         parts = []
         if cars: parts.append(f"汽車 {cars}")
         if trucks: parts.append(f"大型車 {trucks}")
         if motos: parts.append(f"機車 {motos}")
-        return f"YOLO 偵測到共 {total} 台車輛 ({', '.join(parts)})"
+        return f"YOLO 在{scope}偵測到共 {total} 台車輛 ({', '.join(parts)})"
     except Exception as e:
         print(f"[vlm_chat] yolo hint err: {e}", flush=True)
         return None
@@ -245,12 +272,12 @@ def _vehicle_count_hint(frame) -> Optional[str]:
 
 @router.post("/vlm/chat")
 def vlm_chat(body: VlmChatBody):
-    """通用視覺助理 — 抓指定來源當下畫面,先用 YOLO 數車當 ground truth,再 VLM 多輪問答."""
+    """通用視覺助理 — 抓指定來源當下畫面,先用 YOLO 數車(區域內精準)當 ground truth,再 VLM 多輪問答."""
     from services.parking_vlm import chat as vlm_chat_fn
     frame = fetch_frame(body.source, bypass_cache=True)
     if frame is None:
         raise HTTPException(status_code=503, detail="畫面抓取失敗 (來源無影像)")
-    hint = _vehicle_count_hint(frame)
+    hint = _vehicle_count_hint(frame, body.source)
     return vlm_chat_fn(frame, body.question, history=body.history, detection_hint=hint)
 
 
