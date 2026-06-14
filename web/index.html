@@ -5980,7 +5980,7 @@
                         <div v-if="(parkingData?.total || 0) === 0" style="padding:18px;background:#fff8e1;border-left:4px solid #d97706;border-radius:6px;margin-bottom:14px;font-size:14px;color:#92400e">
                             <strong>尚未標車位 ROI —</strong> 偵測沒車子是因為「車位」還沒定義.點上方<strong>「編輯車位」</strong>,在編輯器內按<strong>「自動偵測車位」</strong>(單張) 或 <strong>「背景累積偵測」</strong>(累積多 frame,涵蓋率更高).標完儲存後再啟動偵測.
                         </div>
-                        <div style="display:grid;grid-template-columns:minmax(0,560px) 320px;gap:14px;align-items:start;justify-content:start">
+                        <div style="display:grid;grid-template-columns:minmax(0,520px) 300px 1fr;gap:14px;align-items:start">
                             <div style="background:#020812;border-radius:6px;overflow:hidden;position:relative;cursor:crosshair"
                                  @mousedown="pmDown" @mousemove="pmMove" @mouseup="pmUp" @mouseleave="pmUp">
                                 <img ref="parkingImgEl" :src="parkingSnapshotUrl" style="width:100%;display:block" draggable="false"/>
@@ -6020,15 +6020,22 @@
                                         <div style="text-align:center"><div style="font-size:10px;color:#92400e">在場</div><div style="font-size:20px;font-weight:700;color:var(--gov-primary);font-family:var(--font-mono)">{{ parkingCounting.in_lot }}</div></div>
                                     </div>
                                 </div>
-                                <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-sans);letter-spacing:0.1em;margin-top:6px">車位狀態</div>
-                                <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;max-height:240px;overflow-y:auto">
+                                <div v-if="parkingData?.error" style="font-size:11px;color:var(--gov-fault);font-style:italic;margin-top:6px">{{ parkingData.error }}</div>
+                            </div>
+                            <!-- 第三欄: 車位狀態網格 (填滿右側,變寬好讀) -->
+                            <div>
+                                <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-sans);letter-spacing:0.1em;margin-bottom:6px">車位狀態 ({{ parkingData?.occupied || 0 }} 佔用 / {{ parkingData?.total || 0 }} 格)</div>
+                                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(46px,1fr));gap:5px;max-height:430px;overflow-y:auto">
                                     <div v-for="s in (parkingData?.slots || [])" :key="`pdkt-${s.id}`"
                                          :title="`${s.label} · conf ${s.conf}`"
-                                         :style="{padding:'8px 4px',borderRadius:'4px',textAlign:'center',fontSize:'11px',fontFamily:'var(--font-mono)',fontWeight:700,background:s.occupied?'var(--gov-fault)':'var(--gov-ok)',color:'#fff'}">
+                                         :style="{padding:'9px 4px',borderRadius:'4px',textAlign:'center',fontSize:'12px',fontFamily:'var(--font-mono)',fontWeight:700,background:s.occupied?'var(--gov-fault)':'var(--gov-ok)',color:'#fff'}">
                                         {{ s.label }}
                                     </div>
                                 </div>
-                                <div v-if="parkingData?.error" style="font-size:11px;color:var(--gov-fault);font-style:italic;margin-top:6px">{{ parkingData.error }}</div>
+                                <div style="display:flex;gap:14px;margin-top:8px;font-size:11px;color:var(--gov-muted)">
+                                    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--gov-fault);vertical-align:middle"></span> 佔用</span>
+                                    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--gov-ok);vertical-align:middle"></span> 空位</span>
+                                </div>
                             </div>
                         </div>
                     </div>
