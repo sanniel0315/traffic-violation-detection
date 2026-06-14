@@ -306,17 +306,20 @@ def _vehicle_analysis(frame, source: str) -> dict:
     except Exception as e:
         print(f"[vlm_chat] annotate err: {e}", flush=True)
     scope = "停車場區域內" if area_mask else "畫面中"
+    # 車種分類 (YOLO,給「有沒有機車/大型車」類問題用)
+    parts = []
+    if cars: parts.append(f"汽車 {cars} 台")
+    if trucks: parts.append(f"大型車(貨車/巴士) {trucks} 台")
+    if motos: parts.append(f"機車 {motos} 台")
+    types = "、".join(parts) if parts else "未明顯偵測到車輛"
     if slot_total:
         out["hint"] = (f"停車場目前佔用 {slot_occ} 個車位 / 共 {slot_total} 格 (空位 {slot_total - slot_occ});"
-                       f"此為車位偵測結果,是最準確的停放車數,數量問題以此為準")
+                       f"此為車位偵測結果,是最準確的停放車數,『有幾台車/還有幾個空位』以此為準。"
+                       f"另 YOLO 在{scope}辨識到的車種: {types} (供『有沒有機車/大型車』類問題參考)")
     elif total == 0:
         out["hint"] = f"YOLO 在{scope}未偵測到車輛"
     else:
-        parts = []
-        if cars: parts.append(f"汽車 {cars}")
-        if trucks: parts.append(f"大型車 {trucks}")
-        if motos: parts.append(f"機車 {motos}")
-        out["hint"] = f"YOLO 在{scope}偵測到共 {total} 台車輛 ({', '.join(parts)})"
+        out["hint"] = f"YOLO 在{scope}偵測到共 {total} 台車輛 ({types})"
     return out
 
 
