@@ -10701,7 +10701,7 @@ const app=createApp({
                         data:{labels:ch.map(s=>_tpeHM(s.ts)),datasets:[
                             {label:'車位偵測',data:ch.map(s=>Number(s.occupied)||0),borderColor:'#0b5ea8',
                                 backgroundColor:'transparent',tension:0.3,pointRadius:2,pointHoverRadius:4,borderWidth:2},
-                            {label:'場內車輛 (YOLO)',data:ch.map(s=>s.vehicles_in_area==null?null:Number(s.vehicles_in_area)),
+                            {label:'場內車輛',data:ch.map(s=>s.vehicles_in_area==null?null:Number(s.vehicles_in_area)),
                                 borderColor:'#7c3aed',backgroundColor:'transparent',borderDash:[6,4],tension:0.3,
                                 pointRadius:2,pointHoverRadius:4,borderWidth:2,spanGaps:true}]},
                         options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
