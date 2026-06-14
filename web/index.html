@@ -10732,13 +10732,16 @@ const app=createApp({
             nextTick(()=>{
                 _mkDashChart('analyticsTrendChart',{type:'line',
                     data:{labels,datasets:series.map(s=>{const t=String(s.type||'').toUpperCase();const c=_TREND_COLORS[t]||'#94a3b8';
-                        return{label:_TREND_ZH[t]||s.name||s.type,data:s.data||[],borderColor:c,backgroundColor:'transparent',
-                            tension:0.3,pointRadius:0,pointHoverRadius:4,borderWidth:2,fill:false};})},
+                        return{label:_TREND_ZH[t]||s.name||s.type,data:s.data||[],borderColor:c,backgroundColor:c+'22',
+                            fill:true,tension:0.4,borderWidth:2.5,pointRadius:0,pointHoverRadius:5,
+                            pointHoverBackgroundColor:c,pointHoverBorderColor:'#fff',pointHoverBorderWidth:2,pointBackgroundColor:c};})},
                     options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
-                        plugins:{legend:{position:'top',labels:{boxWidth:12,padding:10,font:{size:11}}},
-                            tooltip:{backgroundColor:'#084d8a',padding:9}},
-                        scales:{x:{grid:{display:false},ticks:{maxTicksLimit:10,autoSkip:true,maxRotation:0}},
-                            y:{min:0,grid:{color:'#eef2f6'},border:{display:false},ticks:{precision:0}}}}});
+                        layout:{padding:{top:4,right:8,left:4,bottom:0}},
+                        plugins:{legend:{position:'top',align:'end',labels:{usePointStyle:true,pointStyle:'circle',boxWidth:8,boxHeight:8,padding:16,font:{size:12,weight:'600'}}},
+                            tooltip:{backgroundColor:'#0f2742',padding:11,cornerRadius:8,titleFont:{size:12},bodyFont:{size:12},usePointStyle:true,boxPadding:5,
+                                callbacks:{label:(c)=>`  ${c.dataset.label}: ${c.parsed.y} 件`}}},
+                        scales:{x:{grid:{display:false},border:{color:'#e2e8f0'},ticks:{maxTicksLimit:8,autoSkip:true,maxRotation:0,color:'#94a3b8',font:{size:11}}},
+                            y:{beginAtZero:true,grace:'6%',grid:{color:'#f1f5f9'},border:{display:false},ticks:{precision:0,color:'#94a3b8',font:{size:11},maxTicksLimit:6}}}}});
             });
         };
         watch([analyticsTrend,page],()=>{ if(page.value==='analytics_insights') renderAnalyticsTrend(); });
