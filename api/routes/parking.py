@@ -219,7 +219,8 @@ def _vehicle_analysis(frame, source: str) -> dict:
     - hint: 數量 ground truth 字串 (區域內精準,= vehicles_in_area)
     - annotated: 把每台車的實例框標出來的影像 base64 (區域內綠框/區域外灰框),
       讓 VLM 回答可視化驗證。(註: 偵測框標註;真正像素分割需另部署 yolo-seg)"""
-    out = {"hint": None, "annotated": None}
+    out = {"hint": None, "annotated": None, "slot_occ": None, "slot_total": None,
+           "cars": 0, "trucks": 0, "motos": 0, "total": 0, "has_area": False}
     try:
         from api.routes.lpr_stream import get_yolo, _yolo_lock
         yolo = get_yolo()
@@ -306,6 +307,8 @@ def _vehicle_analysis(frame, source: str) -> dict:
     except Exception as e:
         print(f"[vlm_chat] annotate err: {e}", flush=True)
     scope = "停車場區域內" if area_mask else "畫面中"
+    out.update({"slot_occ": slot_occ, "slot_total": slot_total, "cars": cars,
+                "trucks": trucks, "motos": motos, "total": total, "has_area": bool(area_mask)})
     # 車種分類 (YOLO,給「有沒有機車/大型車」類問題用)
     parts = []
     if cars: parts.append(f"汽車 {cars} 台")
@@ -323,14 +326,54 @@ def _vehicle_analysis(frame, source: str) -> dict:
     return out
 
 
+def _answer_from_data(question: str, va: dict) -> Optional[str]:
+    """常見事實問題直接用偵測數據精準作答 (不經 2B VLM,避免亂答/鸚鵡學舌)。
+    回 None 表示非事實題,交給 VLM。"""
+    q = question or ""
+    occ, tot = va.get("slot_occ"), va.get("slot_total")
+    cars, trucks, motos, total = va.get("cars", 0), va.get("trucks", 0), va.get("motos", 0), va.get("total", 0)
+    free = (tot - occ) if (occ is not None and tot) else None
+
+    def has(*kw):
+        return any(k in q for k in kw)
+
+    if has("空位", "空格", "空車位", "還有位", "還有空", "幾個空", "可停", "剩幾", "剩下"):
+        if tot:
+            return f"目前還有 {free} 個空位（共 {tot} 格，已佔用 {occ}）。"
+    if has("佔用率", "占用率", "多滿", "滿不滿", "繁忙", "使用率"):
+        if tot:
+            return f"目前佔用率約 {round(occ / tot * 100)}%（{occ} / {tot} 格）。"
+    if has("機車", "摩托", "重機"):
+        return f"目前畫面區域內偵測到 {motos} 台機車。" if motos else "目前畫面區域內沒有偵測到明顯的機車。"
+    if has("大型車", "貨車", "卡車", "巴士", "公車"):
+        return f"目前偵測到 {trucks} 台大型車（貨車／巴士）。" if trucks else "目前畫面中沒有偵測到明顯的大型車。"
+    if has("車種", "什麼車", "哪些車", "車型"):
+        seg = []
+        if cars: seg.append(f"汽車 {cars} 台")
+        if trucks: seg.append(f"大型車 {trucks} 台")
+        if motos: seg.append(f"機車 {motos} 台")
+        return ("目前偵測到的車種：" + "、".join(seg) + "。") if seg else None
+    if has("幾台", "幾輛", "多少台", "多少輛", "多少車", "車數", "幾部", "有幾"):
+        if tot:
+            return f"目前停車場停放 {occ} 台車（共 {tot} 個車位，空位 {free}）。"
+        if total:
+            return f"目前畫面中偵測到約 {total} 台車輛。"
+    return None
+
+
 @router.post("/vlm/chat")
 def vlm_chat(body: VlmChatBody):
-    """通用視覺助理 — 抓當下畫面,YOLO 數車(區域內精準)當 ground truth + 實例標註,再 VLM 多輪問答."""
+    """通用視覺助理 — 抓當下畫面,YOLO + 車位偵測。常見事實題用數據直接精準作答,
+    開放/描述題才交給 VLM,避免 2B 亂答。一律附實例標註圖。"""
     from services.parking_vlm import chat as vlm_chat_fn
     frame = fetch_frame(body.source, bypass_cache=True)
     if frame is None:
         raise HTTPException(status_code=503, detail="畫面抓取失敗 (來源無影像)")
     va = _vehicle_analysis(frame, body.source)
+    # 常見事實題 → 直接用偵測數據精準回答 (不經 VLM)
+    direct = _answer_from_data(body.question, va)
+    if direct is not None:
+        return {"ok": True, "answer": direct, "annotated_image": va.get("annotated"), "source": "detection"}
     res = vlm_chat_fn(frame, body.question, history=body.history, detection_hint=va.get("hint"))
     if isinstance(res, dict):
         res["annotated_image"] = va.get("annotated")   # 實例標註影像 (base64)
