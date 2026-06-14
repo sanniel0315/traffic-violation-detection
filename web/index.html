@@ -6011,11 +6011,11 @@
                                     </div>
                                 </div>
                                 <!-- 車輛 counting (counting line 已設才顯示) -->
-                                <div v-if="parkingCounting && (parkingCounting.enter_today != null)" style="background:linear-gradient(135deg,#fef3c7 0%,#fef9c3 100%);border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:18px">
-                                    <span style="font-size:10px;color:#92400e;font-family:var(--font-sans);letter-spacing:0.14em">車輛 COUNTING (今日)</span>
-                                    <span style="font-size:12px;color:#92400e">入場 <strong style="font-size:18px;color:var(--gov-ok);font-family:var(--font-mono)">{{ parkingCounting.enter_today }}</strong></span>
-                                    <span style="font-size:12px;color:#92400e">出場 <strong style="font-size:18px;color:var(--gov-fault);font-family:var(--font-mono)">{{ parkingCounting.exit_today }}</strong></span>
-                                    <span style="font-size:12px;color:#92400e">在場 <strong style="font-size:18px;color:var(--gov-primary);font-family:var(--font-mono)">{{ parkingCounting.in_lot }}</strong></span>
+                                <div v-if="parkingCounting && (parkingCounting.enter_today != null)" style="background:var(--gov-bg);border:1px solid var(--gov-border);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+                                    <span style="font-size:10px;color:var(--gov-muted);font-family:var(--font-sans);letter-spacing:0.14em">車輛進出 (今日)</span>
+                                    <span style="font-size:12px;color:var(--gov-text-secondary)">入場 <strong style="font-size:18px;color:var(--gov-ok);font-family:var(--font-mono)">{{ parkingCounting.enter_today }}</strong></span>
+                                    <span style="font-size:12px;color:var(--gov-text-secondary)">出場 <strong style="font-size:18px;color:var(--gov-fault);font-family:var(--font-mono)">{{ parkingCounting.exit_today }}</strong></span>
+                                    <span style="font-size:12px;color:var(--gov-text-secondary)">在場 <strong style="font-size:18px;color:var(--gov-primary);font-family:var(--font-mono)">{{ parkingCounting.in_lot }}</strong></span>
                                 </div>
                                 <div v-if="parkingData?.error" style="font-size:11px;color:var(--gov-fault);font-style:italic">{{ parkingData.error }}</div>
                                 <!-- 車位狀態 (auto-fit: 少→撐滿, 多→換行,皆不留空) -->
