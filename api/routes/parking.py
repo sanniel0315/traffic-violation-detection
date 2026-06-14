@@ -274,22 +274,31 @@ def _vehicle_analysis(frame, source: str) -> dict:
         color = (60, 200, 60) if inside else (150, 150, 150)   # BGR: 區域內綠/區域外灰
         cv2.rectangle(img, (x1, y1), (x2, y2), color, 2 if inside else 1)
     total = cars + trucks + motos
-    # 車位佔用 (per-slot,比 raw YOLO 數準): 車位多邊形 + 車輛中心命中 (同生產 ROI 判定)
+    # 車位佔用數量: 用生產最近一筆 ParkingSample (PKLot+YOLO 雙確認+時間累積,= 面板顯示值,
+    # 比 chat 單幀 center-only 重算準),當 VLM 主數量。同時在當下 frame 畫出佔用車位紅框 (視覺)
     slot_occ = slot_total = None
     try:
+        from api.models import SessionLocal, ParkingSample
+        db = SessionLocal()
+        try:
+            last = (db.query(ParkingSample).filter(ParkingSample.source == source)
+                      .order_by(ParkingSample.created_at.desc()).first())
+            if last and last.total:
+                slot_occ, slot_total = int(last.occupied or 0), int(last.total or 0)
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[vlm_chat] slot sample err: {e}", flush=True)
+    # 當下 frame 佔用車位紅框 (視覺標註,中心命中)
+    try:
         from services.parking_occupancy import load_slots
-        slots = load_slots(source) or []
-        if slots and _pip:
-            occ = 0
-            for s in slots:
+        if _pip:
+            for s in (load_slots(source) or []):
                 poly = s.get("polygon") or []
                 if len(poly) >= 3 and any(_pip(cx, cy, poly) for cx, cy in centers):
-                    occ += 1
-                    pts = np.array(poly, dtype=np.int32)
-                    cv2.polylines(img, [pts], True, (0, 0, 235), 2)   # 佔用車位紅框
-            slot_occ, slot_total = occ, len(slots)
-    except Exception as e:
-        print(f"[vlm_chat] slot occ err: {e}", flush=True)
+                    cv2.polylines(img, [np.array(poly, dtype=np.int32)], True, (0, 0, 235), 2)
+    except Exception:
+        pass
     try:
         ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
         if ok:
