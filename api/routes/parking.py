@@ -251,6 +251,7 @@ def _vehicle_analysis(frame, source: str) -> dict:
     VEH = {"car", "truck", "bus", "heavy_truck", "light_truck", "non_truck", "motorcycle"}
     img = frame.copy()
     cars = trucks = motos = 0
+    centers = []
     for d in dets:
         cn = str(d.get("class_name") or "").lower()
         if cn not in VEH:
@@ -261,6 +262,7 @@ def _vehicle_analysis(frame, source: str) -> dict:
         if x2 <= x1 or y2 <= y1:
             continue
         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+        centers.append((cx, cy))
         inside = _in_area(cx, cy)
         if inside:
             if cn in ("car", "non_truck"):
@@ -272,6 +274,22 @@ def _vehicle_analysis(frame, source: str) -> dict:
         color = (60, 200, 60) if inside else (150, 150, 150)   # BGR: 區域內綠/區域外灰
         cv2.rectangle(img, (x1, y1), (x2, y2), color, 2 if inside else 1)
     total = cars + trucks + motos
+    # 車位佔用 (per-slot,比 raw YOLO 數準): 車位多邊形 + 車輛中心命中 (同生產 ROI 判定)
+    slot_occ = slot_total = None
+    try:
+        from services.parking_occupancy import load_slots
+        slots = load_slots(source) or []
+        if slots and _pip:
+            occ = 0
+            for s in slots:
+                poly = s.get("polygon") or []
+                if len(poly) >= 3 and any(_pip(cx, cy, poly) for cx, cy in centers):
+                    occ += 1
+                    pts = np.array(poly, dtype=np.int32)
+                    cv2.polylines(img, [pts], True, (0, 0, 235), 2)   # 佔用車位紅框
+            slot_occ, slot_total = occ, len(slots)
+    except Exception as e:
+        print(f"[vlm_chat] slot occ err: {e}", flush=True)
     try:
         ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
         if ok:
@@ -279,7 +297,10 @@ def _vehicle_analysis(frame, source: str) -> dict:
     except Exception as e:
         print(f"[vlm_chat] annotate err: {e}", flush=True)
     scope = "停車場區域內" if area_mask else "畫面中"
-    if total == 0:
+    if slot_total:
+        out["hint"] = (f"停車場目前佔用 {slot_occ} 個車位 / 共 {slot_total} 格 (空位 {slot_total - slot_occ});"
+                       f"此為車位偵測結果,是最準確的停放車數,數量問題以此為準")
+    elif total == 0:
         out["hint"] = f"YOLO 在{scope}未偵測到車輛"
     else:
         parts = []

@@ -5980,7 +5980,7 @@
                         <div v-if="(parkingData?.total || 0) === 0" style="padding:18px;background:#fff8e1;border-left:4px solid #d97706;border-radius:6px;margin-bottom:14px;font-size:14px;color:#92400e">
                             <strong>尚未標車位 ROI —</strong> 偵測沒車子是因為「車位」還沒定義.點上方<strong>「編輯車位」</strong>,在編輯器內按<strong>「自動偵測車位」</strong>(單張) 或 <strong>「背景累積偵測」</strong>(累積多 frame,涵蓋率更高).標完儲存後再啟動偵測.
                         </div>
-                        <div style="display:grid;grid-template-columns:minmax(0,520px) 300px 1fr;gap:14px;align-items:start">
+                        <div style="display:grid;grid-template-columns:minmax(0,480px) 1fr;gap:14px;align-items:start">
                             <div style="background:#020812;border-radius:6px;overflow:hidden;position:relative;cursor:crosshair"
                                  @mousedown="pmDown" @mousemove="pmMove" @mouseup="pmUp" @mouseleave="pmUp">
                                 <img ref="parkingImgEl" :src="parkingSnapshotUrl" style="width:100%;display:block" draggable="false"/>
@@ -5989,52 +5989,51 @@
                                 <div v-if="!parkingLiveRunning" style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,0.7);color:#fbbf24;padding:4px 8px;border-radius:4px;font-size:11px;font-family:var(--font-mono)">PAUSED</div>
                                 <div style="position:absolute;left:8px;bottom:8px;background:rgba(2,8,18,0.65);color:#cbd5e1;font-size:10px;padding:2px 7px;border-radius:4px;pointer-events:none">拖框量 px</div>
                             </div>
-                            <div style="display:flex;flex-direction:column;gap:10px">
-                                <div style="background:var(--gov-bg);border-radius:8px;padding:18px;text-align:center">
-                                    <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-sans);letter-spacing:0.14em">佔用率</div>
-                                    <div style="font-size:54px;font-weight:800;line-height:1.05;margin-top:6px;font-family:var(--font-mono)"
-                                         :style="{color: (parkingData?.occupancy_rate||0) >= 80 ? 'var(--gov-fault)' : (parkingData?.occupancy_rate||0) >= 50 ? 'var(--gov-warn)' : 'var(--gov-ok)'}">
-                                        {{ parkingData?.occupancy_rate || 0 }}<span style="font-size:22px">%</span>
+                            <!-- 右側 1fr 區: 統計列 (橫向填滿) + 車位狀態 (auto-fit 填滿,車位多少都不留空) -->
+                            <div style="display:flex;flex-direction:column;gap:12px">
+                                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+                                    <div style="background:var(--gov-bg);border-radius:8px;padding:14px 8px;text-align:center;display:flex;flex-direction:column;justify-content:center">
+                                        <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-sans);letter-spacing:0.1em">佔用率</div>
+                                        <div style="font-size:34px;font-weight:800;line-height:1.1;margin-top:4px;font-family:var(--font-mono)"
+                                             :style="{color: (parkingData?.occupancy_rate||0) >= 80 ? 'var(--gov-fault)' : (parkingData?.occupancy_rate||0) >= 50 ? 'var(--gov-warn)' : 'var(--gov-ok)'}">{{ parkingData?.occupancy_rate || 0 }}<span style="font-size:16px">%</span></div>
                                     </div>
-                                </div>
-                                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
-                                    <div style="background:var(--gov-bg);border-radius:6px;padding:12px;text-align:center">
+                                    <div style="background:var(--gov-bg);border-radius:8px;padding:14px 8px;text-align:center;display:flex;flex-direction:column;justify-content:center">
                                         <div style="font-size:10px;color:var(--gov-muted)">總車位</div>
-                                        <div style="font-size:22px;font-weight:700;font-family:var(--font-mono)">{{ parkingData?.total || 0 }}</div>
+                                        <div style="font-size:28px;font-weight:700;font-family:var(--font-mono)">{{ parkingData?.total || 0 }}</div>
                                     </div>
-                                    <div style="background:var(--gov-bg);border-radius:6px;padding:12px;text-align:center">
+                                    <div style="background:var(--gov-bg);border-radius:8px;padding:14px 8px;text-align:center;display:flex;flex-direction:column;justify-content:center">
                                         <div style="font-size:10px;color:var(--gov-muted)">已佔用</div>
-                                        <div style="font-size:22px;font-weight:700;color:var(--gov-fault);font-family:var(--font-mono)">{{ parkingData?.occupied || 0 }}</div>
+                                        <div style="font-size:28px;font-weight:700;color:var(--gov-fault);font-family:var(--font-mono)">{{ parkingData?.occupied || 0 }}</div>
                                     </div>
-                                    <div style="background:var(--gov-bg);border-radius:6px;padding:12px;text-align:center">
+                                    <div style="background:var(--gov-bg);border-radius:8px;padding:14px 8px;text-align:center;display:flex;flex-direction:column;justify-content:center">
                                         <div style="font-size:10px;color:var(--gov-muted)">可用</div>
-                                        <div style="font-size:22px;font-weight:700;color:var(--gov-ok);font-family:var(--font-mono)">{{ parkingData?.available || 0 }}</div>
+                                        <div style="font-size:28px;font-weight:700;color:var(--gov-ok);font-family:var(--font-mono)">{{ parkingData?.available || 0 }}</div>
                                     </div>
                                 </div>
-                                <!-- 車輛 counting + 比對 (counting line 已設才顯示) -->
-                                <div v-if="parkingCounting && (parkingCounting.enter_today != null)" style="background:linear-gradient(135deg,#fef3c7 0%,#fef9c3 100%);border:1px solid #f59e0b;border-radius:6px;padding:10px;margin-top:6px">
-                                    <div style="font-size:10px;color:#92400e;font-family:var(--font-sans);letter-spacing:0.14em;margin-bottom:6px">車輛 COUNTING (今日)</div>
-                                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px">
-                                        <div style="text-align:center"><div style="font-size:10px;color:#92400e">入場</div><div style="font-size:20px;font-weight:700;color:var(--gov-ok);font-family:var(--font-mono)">{{ parkingCounting.enter_today }}</div></div>
-                                        <div style="text-align:center"><div style="font-size:10px;color:#92400e">出場</div><div style="font-size:20px;font-weight:700;color:var(--gov-fault);font-family:var(--font-mono)">{{ parkingCounting.exit_today }}</div></div>
-                                        <div style="text-align:center"><div style="font-size:10px;color:#92400e">在場</div><div style="font-size:20px;font-weight:700;color:var(--gov-primary);font-family:var(--font-mono)">{{ parkingCounting.in_lot }}</div></div>
-                                    </div>
+                                <!-- 車輛 counting (counting line 已設才顯示) -->
+                                <div v-if="parkingCounting && (parkingCounting.enter_today != null)" style="background:linear-gradient(135deg,#fef3c7 0%,#fef9c3 100%);border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:18px">
+                                    <span style="font-size:10px;color:#92400e;font-family:var(--font-sans);letter-spacing:0.14em">車輛 COUNTING (今日)</span>
+                                    <span style="font-size:12px;color:#92400e">入場 <strong style="font-size:18px;color:var(--gov-ok);font-family:var(--font-mono)">{{ parkingCounting.enter_today }}</strong></span>
+                                    <span style="font-size:12px;color:#92400e">出場 <strong style="font-size:18px;color:var(--gov-fault);font-family:var(--font-mono)">{{ parkingCounting.exit_today }}</strong></span>
+                                    <span style="font-size:12px;color:#92400e">在場 <strong style="font-size:18px;color:var(--gov-primary);font-family:var(--font-mono)">{{ parkingCounting.in_lot }}</strong></span>
                                 </div>
-                                <div v-if="parkingData?.error" style="font-size:11px;color:var(--gov-fault);font-style:italic;margin-top:6px">{{ parkingData.error }}</div>
-                            </div>
-                            <!-- 第三欄: 車位狀態網格 (填滿右側,變寬好讀) -->
-                            <div>
-                                <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-sans);letter-spacing:0.1em;margin-bottom:6px">車位狀態 ({{ parkingData?.occupied || 0 }} 佔用 / {{ parkingData?.total || 0 }} 格)</div>
-                                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(46px,1fr));gap:5px;max-height:430px;overflow-y:auto">
-                                    <div v-for="s in (parkingData?.slots || [])" :key="`pdkt-${s.id}`"
-                                         :title="`${s.label} · conf ${s.conf}`"
-                                         :style="{padding:'9px 4px',borderRadius:'4px',textAlign:'center',fontSize:'12px',fontFamily:'var(--font-mono)',fontWeight:700,background:s.occupied?'var(--gov-fault)':'var(--gov-ok)',color:'#fff'}">
-                                        {{ s.label }}
+                                <div v-if="parkingData?.error" style="font-size:11px;color:var(--gov-fault);font-style:italic">{{ parkingData.error }}</div>
+                                <!-- 車位狀態 (auto-fit: 少→撐滿, 多→換行,皆不留空) -->
+                                <div>
+                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                                        <span style="font-size:11px;color:var(--gov-muted);font-family:var(--font-sans);letter-spacing:0.1em">車位狀態</span>
+                                        <span style="font-size:11px;color:var(--gov-muted)">
+                                            <span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--gov-fault);vertical-align:middle"></span> 佔用 {{ parkingData?.occupied || 0 }}
+                                            <span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--gov-ok);vertical-align:middle;margin-left:8px"></span> 空 {{ parkingData?.available || 0 }}
+                                        </span>
                                     </div>
-                                </div>
-                                <div style="display:flex;gap:14px;margin-top:8px;font-size:11px;color:var(--gov-muted)">
-                                    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--gov-fault);vertical-align:middle"></span> 佔用</span>
-                                    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--gov-ok);vertical-align:middle"></span> 空位</span>
+                                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(48px,1fr));gap:5px;max-height:300px;overflow-y:auto">
+                                        <div v-for="s in (parkingData?.slots || [])" :key="`pdkt-${s.id}`"
+                                             :title="`${s.label} · conf ${s.conf}`"
+                                             :style="{padding:'10px 4px',borderRadius:'4px',textAlign:'center',fontSize:'12px',fontFamily:'var(--font-mono)',fontWeight:700,background:s.occupied?'var(--gov-fault)':'var(--gov-ok)',color:'#fff'}">
+                                            {{ s.label }}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -9497,13 +9496,12 @@
     <div v-if="isAuthenticated" class="ai-fab" :class="{pulse: !assistantOpen}" @click="toggleAssistant">
         <svg style="width:26px;height:26px;fill:var(--gov-primary)"><use href="#i-cpu"/></svg>
     </div>
-    <div v-if="isAuthenticated && assistantOpen"
-         style="position:fixed;bottom:92px;right:24px;width:380px;max-width:calc(100vw - 32px);height:560px;max-height:calc(100vh - 120px);background:#fff;border:1px solid var(--gov-border);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.25);z-index:4000;display:flex;flex-direction:column;overflow:hidden">
-        <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--gov-primary);color:#fff">
+    <div v-if="isAuthenticated && assistantOpen" :style="assistantPanelStyle">
+        <div @mousedown="assistantDragStart" style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--gov-primary);color:#fff;cursor:move;user-select:none">
             <svg style="width:18px;height:18px;fill:#fff"><use href="#i-cpu"/></svg>
-            <span style="font-weight:700;font-size:14px;flex:1">AI 視覺助理</span>
+            <span style="font-weight:700;font-size:14px;flex:1">AI 視覺助理 <span style="font-size:10px;opacity:0.7;font-weight:400">(可拖曳)</span></span>
             <el-tag size="small" :type="vlmStatus.loaded ? 'success' : vlmStatus.loading ? 'warning' : 'info'">{{ vlmStatus.loaded ? '已載入' : vlmStatus.loading ? '載入中' : '未載入' }}</el-tag>
-            <span @click="assistantOpen=false" style="cursor:pointer;font-size:20px;line-height:1;padding:0 4px">×</span>
+            <span @click="assistantOpen=false" @mousedown.stop style="cursor:pointer;font-size:20px;line-height:1;padding:0 4px">×</span>
         </div>
         <div style="display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--gov-border)">
             <el-select v-model="assistantSource" size="small" filterable placeholder="選來源" style="flex:1" @change="reloadAssistantSnap">
@@ -9520,7 +9518,7 @@
                 選來源後問畫面內容,例:<br>「現在有幾台車?」「有沒有機車?」
             </div>
             <div v-for="(m,i) in assistantMessages" :key="i" :style="{display:'flex',justifyContent: m.role==='user' ? 'flex-end' : 'flex-start',marginBottom:'8px'}">
-                <div :style="{maxWidth:'85%',padding:'7px 10px',borderRadius:'10px',fontSize:'13px',lineHeight:'1.5',whiteSpace:'pre-wrap',wordBreak:'break-word',background: m.role==='user' ? 'var(--gov-primary)' : '#fff',color: m.role==='user' ? '#fff' : 'var(--gov-text)',border: m.role==='user' ? 'none' : '1px solid var(--gov-border)'}">{{ m.text }}<img v-if="m.img" :src="m.img" style="display:block;width:100%;border-radius:6px;margin-top:6px"/><span v-if="m.latency" style="display:block;font-size:10px;opacity:0.6;margin-top:3px">{{ m.latency }}s · 綠框=區域內 灰框=區域外</span></div>
+                <div :style="{maxWidth:'85%',padding:'7px 10px',borderRadius:'10px',fontSize:'13px',lineHeight:'1.5',whiteSpace:'pre-wrap',wordBreak:'break-word',background: m.role==='user' ? 'var(--gov-primary)' : '#fff',color: m.role==='user' ? '#fff' : 'var(--gov-text)',border: m.role==='user' ? 'none' : '1px solid var(--gov-border)'}">{{ m.text }}<img v-if="m.img" :src="m.img" @click="assistantZoomImg=m.img" style="display:block;width:100%;border-radius:6px;margin-top:6px;cursor:zoom-in" title="點擊放大真實大小"/><span v-if="m.latency" style="display:block;font-size:10px;opacity:0.6;margin-top:3px">{{ m.latency }}s · 紅框=佔用車位 綠框=偵測車輛</span></div>
             </div>
             <div v-if="assistantLoading" style="color:var(--gov-muted);font-size:12px;font-style:italic;padding:4px">思考中…</div>
         </div>
@@ -9528,6 +9526,10 @@
             <el-input v-model="assistantInput" type="textarea" :rows="2" resize="none" placeholder="問畫面…(Enter 送出)" :disabled="assistantLoading" @keydown.enter.exact.prevent="sendAssistant" style="flex:1"/>
             <el-button type="primary" size="small" :loading="assistantLoading" :disabled="!vlmStatus.loaded || !assistantSource" @click="sendAssistant">送出</el-button>
         </div>
+    </div>
+    <!-- 助理標註圖 放大檢視 (真實大小) -->
+    <div v-if="assistantZoomImg" @click="assistantZoomImg=null" style="position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:5000;display:flex;align-items:center;justify-content:center;overflow:auto;padding:20px;cursor:zoom-out">
+        <img :src="assistantZoomImg" style="display:block"/>
     </div>
 </div>
 
@@ -10521,12 +10523,36 @@ const app=createApp({
         };
         // ── AI 視覺助理 (VLM 多輪問答,任一攝影機) ──
         const assistantOpen = ref(false);
+        const assistantZoomImg = ref(null);   // 點標註圖放大真實大小
+        const assistantPos = ref(null);       // 拖曳後位置 {left, top};null=預設右下
+        const assistantPanelStyle = computed(()=>{
+            const s = {position:'fixed',width:'380px',maxWidth:'calc(100vw - 32px)',height:'560px',
+                maxHeight:'calc(100vh - 120px)',background:'#fff',border:'1px solid var(--gov-border)',
+                borderRadius:'12px',boxShadow:'0 8px 32px rgba(0,0,0,0.25)',zIndex:4000,
+                display:'flex',flexDirection:'column',overflow:'hidden'};
+            if(assistantPos.value){ s.left=assistantPos.value.left+'px'; s.top=assistantPos.value.top+'px'; }
+            else { s.right='24px'; s.bottom='92px'; }
+            return s;
+        });
+        const assistantDragStart = (e)=>{
+            const panel = e.currentTarget.parentElement;
+            const r = panel.getBoundingClientRect();
+            const dx = e.clientX - r.left, dy = e.clientY - r.top, w = r.width, h = r.height;
+            const move = (ev)=>{
+                let left = Math.max(0, Math.min(ev.clientX - dx, window.innerWidth - w));
+                let top  = Math.max(0, Math.min(ev.clientY - dy, window.innerHeight - h));
+                assistantPos.value = {left, top};
+            };
+            const up = ()=>{ window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+            window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+            e.preventDefault();
+        };
         const toggleAssistant = ()=>{
             assistantOpen.value = !assistantOpen.value;
             if(assistantOpen.value){
                 loadVlmStatus();
-                if(!(parkingSources.value||[]).length) loadParkingSources();
-                if(!(cameras.value||[]).length) loadCameras();
+                loadParkingSources();   // 來源含停車場 + 所有攝影機,每次開啟刷新
+                loadCameras();
             }
         };
         const assistantSource = ref('');
@@ -10696,6 +10722,7 @@ const app=createApp({
         watch([parkingHistory,parkingCounting,page],()=>{ if(page.value==='parking_detection') renderParkingCharts(); });
         // 30 天違規趨勢 — Chart.js 多線折線 (取代醜的緞帶圖)
         const _TREND_COLORS={SPEEDING:'#d97706',RED_LIGHT:'#c43a31',ILLEGAL_PARKING:'#0b5ea8',RED_LINE_STOP:'#ef4444',RED_LINE_PARKING:'#dc2626',YELLOW_LINE_PARKING:'#f59e0b',SIDEWALK:'#7c3aed',SIDEWALK_PARKING:'#8b5cf6',BUS_STOP_STOP:'#0ea5e9',BUS_STOP_PARKING:'#0284c7',CROSSWALK_STOP:'#409eff',WRONG_WAY:'#b91c1c',OTHER:'#94a3b8'};
+        const _TREND_ZH={SPEEDING:'超速',RED_LIGHT:'闖紅燈',ILLEGAL_PARKING:'違規停車',RED_LINE_STOP:'紅線臨停',RED_LINE_PARKING:'紅線停車',YELLOW_LINE_PARKING:'黃線停車',SIDEWALK:'行駛人行道',SIDEWALK_PARKING:'人行道停車',BUS_STOP_STOP:'公車格臨停',BUS_STOP_PARKING:'公車格停車',CROSSWALK_STOP:'行穿線臨停',WRONG_WAY:'逆向',OTHER:'其他'};
         const renderAnalyticsTrend=()=>{
             if(typeof Chart==='undefined'||page.value!=='analytics_insights')return;
             const tr=analyticsTrend.value||{};
@@ -10704,8 +10731,8 @@ const app=createApp({
             if(!labels.length||!series.length)return;
             nextTick(()=>{
                 _mkDashChart('analyticsTrendChart',{type:'line',
-                    data:{labels,datasets:series.map(s=>{const c=_TREND_COLORS[String(s.type||'').toUpperCase()]||'#94a3b8';
-                        return{label:s.name||s.type,data:s.data||[],borderColor:c,backgroundColor:'transparent',
+                    data:{labels,datasets:series.map(s=>{const t=String(s.type||'').toUpperCase();const c=_TREND_COLORS[t]||'#94a3b8';
+                        return{label:_TREND_ZH[t]||s.name||s.type,data:s.data||[],borderColor:c,backgroundColor:'transparent',
                             tension:0.3,pointRadius:0,pointHoverRadius:4,borderWidth:2,fill:false};})},
                     options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
                         plugins:{legend:{position:'top',labels:{boxWidth:12,padding:10,font:{size:11}}},
@@ -18102,7 +18129,7 @@ const app=createApp({
             if(lprVisualTimer)clearInterval(lprVisualTimer);
         });
         
-        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,radarCameraId,radarTracks,radarStats,radarDotColor,radarClassZh,radarInsights,loadRadarTracks,visionEyeUrl,onVisionEyeError,trackHistory,parkingSources,parkingSource,parkingData,parkingSnapshotUrl,parkingRawSnapshotUrl,parkingImgEl,pmRect,pmLabel,pmDown,pmMove,pmUp,parkingShowVerify,parkingShowBoxes,parkingShowVehicles,parkingUseStream,vlmStatus,vlmResult,vlmQuerying,loadVlmStatus,triggerVlmLoad,askVlm,assistantOpen,toggleAssistant,assistantSource,assistantMessages,assistantInput,assistantLoading,assistantSnapUrl,assistantSources,reloadAssistantSnap,sendAssistant,loadParkingSources,loadParkingOccupancy,openParkingEditor,downloadParkingSnapshot,parkingLiveRunning,parkingIntervalMs,parkingShowAdd,parkingAddForm,startParkingLive,stopParkingLive,addParkingSource,twipcamQuery,twipcamResults,twipcamSearching,searchTwipcam,pickTwipcam,parkingHistory,loadParkingHistory,parkingTrendPath,parkingCounting,parkingCountingMismatch,parkingCrossValidation,parkingCrossCalibrated,parkingCrossEscalated,parkingCrossHasArea,parkingCrossSuspect,parkingCrossTrend,loadParkingCounting,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
+        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,radarCameraId,radarTracks,radarStats,radarDotColor,radarClassZh,radarInsights,loadRadarTracks,visionEyeUrl,onVisionEyeError,trackHistory,parkingSources,parkingSource,parkingData,parkingSnapshotUrl,parkingRawSnapshotUrl,parkingImgEl,pmRect,pmLabel,pmDown,pmMove,pmUp,parkingShowVerify,parkingShowBoxes,parkingShowVehicles,parkingUseStream,vlmStatus,vlmResult,vlmQuerying,loadVlmStatus,triggerVlmLoad,askVlm,assistantOpen,toggleAssistant,assistantZoomImg,assistantPanelStyle,assistantDragStart,assistantSource,assistantMessages,assistantInput,assistantLoading,assistantSnapUrl,assistantSources,reloadAssistantSnap,sendAssistant,loadParkingSources,loadParkingOccupancy,openParkingEditor,downloadParkingSnapshot,parkingLiveRunning,parkingIntervalMs,parkingShowAdd,parkingAddForm,startParkingLive,stopParkingLive,addParkingSource,twipcamQuery,twipcamResults,twipcamSearching,searchTwipcam,pickTwipcam,parkingHistory,loadParkingHistory,parkingTrendPath,parkingCounting,parkingCountingMismatch,parkingCrossValidation,parkingCrossCalibrated,parkingCrossEscalated,parkingCrossHasArea,parkingCrossSuspect,parkingCrossTrend,loadParkingCounting,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,previewParkingZones,previewParkingZoneCount,parkingSubKindOptions,applyParkingSubKindToZone,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedPlateIsInferred,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
