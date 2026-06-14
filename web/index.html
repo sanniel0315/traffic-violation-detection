@@ -9540,7 +9540,7 @@
                 選來源後問畫面內容,例:<br>「現在有幾台車?」「有沒有機車?」
             </div>
             <div v-for="(m,i) in assistantMessages" :key="i" :style="{display:'flex',justifyContent: m.role==='user' ? 'flex-end' : 'flex-start',marginBottom:'8px'}">
-                <div :style="{maxWidth:'85%',padding:'7px 10px',borderRadius:'10px',fontSize:'13px',lineHeight:'1.5',whiteSpace:'pre-wrap',wordBreak:'break-word',background: m.role==='user' ? 'var(--gov-primary)' : '#fff',color: m.role==='user' ? '#fff' : 'var(--gov-text)',border: m.role==='user' ? 'none' : '1px solid var(--gov-border)'}">{{ m.text }}<span v-if="m.latency" style="display:block;font-size:10px;opacity:0.6;margin-top:3px">{{ m.latency }}s</span></div>
+                <div :style="{maxWidth:'85%',padding:'7px 10px',borderRadius:'10px',fontSize:'13px',lineHeight:'1.5',whiteSpace:'pre-wrap',wordBreak:'break-word',background: m.role==='user' ? 'var(--gov-primary)' : '#fff',color: m.role==='user' ? '#fff' : 'var(--gov-text)',border: m.role==='user' ? 'none' : '1px solid var(--gov-border)'}">{{ m.text }}<img v-if="m.img" :src="m.img" style="display:block;width:100%;border-radius:6px;margin-top:6px"/><span v-if="m.latency" style="display:block;font-size:10px;opacity:0.6;margin-top:3px">{{ m.latency }}s · 綠框=區域內 灰框=區域外</span></div>
             </div>
             <div v-if="assistantLoading" style="color:var(--gov-muted);font-size:12px;font-style:italic;padding:4px">思考中…</div>
         </div>
@@ -10581,7 +10581,7 @@ const app=createApp({
                 });
                 const d = await r.json().catch(()=>({}));
                 if(r.ok && d.ok){
-                    assistantMessages.value.push({role:'assistant', text: d.answer || '(無回應)', latency: d.latency_sec});
+                    assistantMessages.value.push({role:'assistant', text: d.answer || '(無回應)', latency: d.latency_sec, img: d.annotated_image || null});
                 } else {
                     assistantMessages.value.push({role:'assistant', text: '⚠ ' + ((d && (d.detail || d.error)) || `查詢失敗 (HTTP ${r.status})`)});
                 }
