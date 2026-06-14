@@ -4289,16 +4289,17 @@
         .ai-fab {
             position: fixed; bottom: 24px; right: 24px;
             width: 56px; height: 56px; border-radius: 50%;
-            background: var(--gov-primary);
-            box-shadow: 0 4px 16px rgba(0,0,0,0.30);
+            background: #ffffff;
+            border: 1px solid #d4e0ec;
+            box-shadow: 0 4px 16px rgba(15,23,42,0.18);
             display: flex; align-items: center; justify-content: center;
             cursor: pointer; z-index: 4000;
-            transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+            transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
         }
         .ai-fab:hover {
             transform: scale(1.1) translateY(-2px);
-            box-shadow: 0 8px 24px rgba(0,0,0,0.42);
-            filter: brightness(1.08);
+            box-shadow: 0 8px 24px rgba(15,23,42,0.28);
+            background: #eaf2fb;
         }
         .ai-fab:active { transform: scale(0.95); }
         .ai-fab svg { transition: transform .18s ease; }
@@ -6017,15 +6018,6 @@
                                         <div style="text-align:center"><div style="font-size:10px;color:#92400e">入場</div><div style="font-size:20px;font-weight:700;color:var(--gov-ok);font-family:var(--font-mono)">{{ parkingCounting.enter_today }}</div></div>
                                         <div style="text-align:center"><div style="font-size:10px;color:#92400e">出場</div><div style="font-size:20px;font-weight:700;color:var(--gov-fault);font-family:var(--font-mono)">{{ parkingCounting.exit_today }}</div></div>
                                         <div style="text-align:center"><div style="font-size:10px;color:#92400e">在場</div><div style="font-size:20px;font-weight:700;color:var(--gov-primary);font-family:var(--font-mono)">{{ parkingCounting.in_lot }}</div></div>
-                                    </div>
-                                    <div v-if="parkingCounting.slot_total" style="font-size:11px;color:#92400e;border-top:1px dashed #f59e0b;padding-top:6px">
-                                        <div>交叉校正: 車位偵測 <strong>{{ parkingCounting.slot_occupied }}</strong> ↔ 場內車輛 <strong>{{ parkingCrossValidation?.vehicles_in_area }}</strong>
-                                            <span v-if="parkingCrossSuspect" style="color:var(--gov-fault);font-weight:600">區域 mask 可能沒涵蓋車位 (場內 0),到 editor 重畫</span>
-                                            <span v-else-if="parkingCountingMismatch" style="color:var(--gov-fault);font-weight:600">⚠ 差距 {{ parkingCountingMismatch }} 台</span>
-                                            <span v-else-if="parkingCrossHasArea" style="color:var(--gov-ok);font-weight:600">一致</span>
-                                            <span v-else style="color:var(--gov-muted)">(未畫停車場區域,場內車數=整幀會超估;到 editor 畫區域更準)</span>
-                                        </div>
-                                        <div v-if="parkingCrossCalibrated" style="font-size:10px;color:#a16207;margin-top:2px">進出累計 in_lot {{ parkingCounting.in_lot }}</div>
                                     </div>
                                 </div>
                                 <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-sans);letter-spacing:0.1em;margin-top:6px">車位狀態</div>
@@ -9496,7 +9488,7 @@
 
     <!-- AI 視覺助理 — 浮動按鈕 + 對話視窗 (全頁可用) -->
     <div v-if="isAuthenticated" class="ai-fab" :class="{pulse: !assistantOpen}" @click="toggleAssistant">
-        <svg style="width:26px;height:26px;fill:#fff"><use href="#i-cpu"/></svg>
+        <svg style="width:26px;height:26px;fill:var(--gov-primary)"><use href="#i-cpu"/></svg>
     </div>
     <div v-if="isAuthenticated && assistantOpen"
          style="position:fixed;bottom:92px;right:24px;width:380px;max-width:calc(100vw - 32px);height:560px;max-height:calc(100vh - 120px);background:#fff;border:1px solid var(--gov-border);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.25);z-index:4000;display:flex;flex-direction:column;overflow:hidden">
