@@ -4285,6 +4285,42 @@
         .content :where(.ds-kpi-value, .stats-kpi .value) {
             margin-bottom: 8px;
         }
+        /* AI 視覺助理 浮動按鈕 — hover 互動 */
+        .ai-fab {
+            position: fixed; bottom: 24px; right: 24px;
+            width: 56px; height: 56px; border-radius: 50%;
+            background: var(--gov-primary);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.30);
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; z-index: 4000;
+            transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+        }
+        .ai-fab:hover {
+            transform: scale(1.1) translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.42);
+            filter: brightness(1.08);
+        }
+        .ai-fab:active { transform: scale(0.95); }
+        .ai-fab svg { transition: transform .18s ease; }
+        .ai-fab:hover svg { transform: scale(1.14) rotate(-6deg); }
+        /* hover 滑出標籤 */
+        .ai-fab::after {
+            content: "AI 視覺助理";
+            position: absolute; right: 70px;
+            background: rgba(15,23,42,0.88); color: #fff;
+            font-size: 12px; font-weight: 600; padding: 6px 11px; border-radius: 7px;
+            white-space: nowrap; pointer-events: none;
+            opacity: 0; transform: translateX(10px);
+            transition: opacity .18s ease, transform .18s ease;
+        }
+        .ai-fab:hover::after { opacity: 1; transform: translateX(0); }
+        @keyframes ai-fab-pulse {
+            0% { box-shadow: 0 4px 16px rgba(0,0,0,0.30), 0 0 0 0 rgba(37,99,235,0.45); }
+            70% { box-shadow: 0 4px 16px rgba(0,0,0,0.30), 0 0 0 12px rgba(37,99,235,0); }
+            100% { box-shadow: 0 4px 16px rgba(0,0,0,0.30), 0 0 0 0 rgba(37,99,235,0); }
+        }
+        .ai-fab.pulse { animation: ai-fab-pulse 2.4s ease-out infinite; }
+        .ai-fab:hover.pulse { animation: none; }
     </style>
 </head>
 <body>
@@ -9511,8 +9547,7 @@
     </el-dialog>
 
     <!-- AI 視覺助理 — 浮動按鈕 + 對話視窗 (全頁可用) -->
-    <div v-if="isAuthenticated" @click="toggleAssistant" :title="assistantOpen ? '收合' : 'AI 視覺助理'"
-         :style="{position:'fixed',bottom:'24px',right:'24px',width:'56px',height:'56px',borderRadius:'50%',background:'var(--gov-primary)',boxShadow:'0 4px 16px rgba(0,0,0,0.3)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',zIndex:4000}">
+    <div v-if="isAuthenticated" class="ai-fab" :class="{pulse: !assistantOpen}" @click="toggleAssistant">
         <svg style="width:26px;height:26px;fill:#fff"><use href="#i-cpu"/></svg>
     </div>
     <div v-if="isAuthenticated && assistantOpen"
