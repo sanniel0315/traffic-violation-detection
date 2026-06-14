@@ -5741,27 +5741,10 @@
                                     <div class="ds-section-num ds-section-num--text">30 天趨勢</div>
                                     <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">30 天違規 趨勢 (依類型分線)</div>
                                 </div>
-                                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                                    <span v-for="p in trendPathData.paths" :key="`leg-${p.type}`"
-                                          style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--gov-text-secondary)">
-                                        <span :style="{display:'inline-block',width:'10px',height:'10px',borderRadius:'2px',background:p.color}"></span>
-                                        {{ p.name }} <span style="color:var(--gov-muted);font-family:var(--font-mono);font-size:11px">{{ p.total }}</span>
-                                    </span>
-                                </div>
+                                <el-button size="small" plain @click="loadAnalytics"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>重新整理</el-button>
                             </div>
-                            <svg v-if="trendPathData.paths.length" viewBox="0 0 1200 200" preserveAspectRatio="none" style="width:100%;height:200px">
-                                <!-- 中央 baseline (緞帶圖以中線堆疊) -->
-                                <line x1="0" y1="100" x2="1200" y2="100" stroke="var(--gov-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
-                                <!-- 緞帶: 每個 series 一個 stacked smooth ribbon -->
-                                <path v-for="p in trendPathData.paths" :key="`rib-${p.type}`"
-                                      :d="p.dRibbon" :fill="p.color" opacity="0.78" stroke="rgba(255,255,255,0.4)" stroke-width="0.5"/>
-                            </svg>
+                            <div v-if="(analyticsTrend.series||[]).length" style="height:300px;position:relative"><canvas id="analyticsTrendChart"></canvas></div>
                             <div v-else style="text-align:center;padding:32px;color:var(--gov-muted);font-size:13px">載入中…</div>
-                            <div v-if="trendPathData.labels && trendPathData.labels.length" style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--gov-muted);font-family:var(--font-mono)">
-                                <span>{{ trendPathData.labels[0]?.slice(5) }}</span>
-                                <span>{{ trendPathData.labels[Math.floor(trendPathData.labels.length/2)]?.slice(5) }}</span>
-                                <span>{{ trendPathData.labels[trendPathData.labels.length-1]?.slice(5) }}</span>
-                            </div>
                         </div>
                         <!-- 7. 雷達式 BEV 視圖 (12/12 full width) — 無雷達硬體,從 YOLO 視覺反推 -->
                         <div class="ds-card hoverable" style="grid-column:span 12;padding:16px 18px">
@@ -6041,10 +6024,7 @@
                                             <span v-else-if="parkingCrossHasArea" style="color:var(--gov-ok);font-weight:600">一致</span>
                                             <span v-else style="color:var(--gov-muted)">(未畫停車場區域,場內車數=整幀會超估;到 editor 畫區域更準)</span>
                                         </div>
-                                        <div v-if="parkingCrossCalibrated" style="font-size:10px;color:#a16207;margin-top:2px">進出累計 in_lot {{ parkingCounting.in_lot }} (次要校正,需計數線)</div>
-                                        <div style="font-size:10px;color:#a16207;margin-top:2px">YOLO 整幀原始 {{ parkingCounting.detected_vehicles }} 台 (含路過/相鄰,僅參考)
-                                            <span v-if="parkingCrossEscalated" style="color:var(--gov-fault);font-weight:600;margin-left:4px">· 差距大,已升級 VLM 仲裁</span>
-                                        </div>
+                                        <div v-if="parkingCrossCalibrated" style="font-size:10px;color:#a16207;margin-top:2px">進出累計 in_lot {{ parkingCounting.in_lot }}</div>
                                     </div>
                                 </div>
                                 <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-sans);letter-spacing:0.1em;margin-top:6px">車位狀態</div>
@@ -10714,6 +10694,27 @@ const app=createApp({
             });
         };
         watch([parkingHistory,parkingCounting,page],()=>{ if(page.value==='parking_detection') renderParkingCharts(); });
+        // 30 天違規趨勢 — Chart.js 多線折線 (取代醜的緞帶圖)
+        const _TREND_COLORS={SPEEDING:'#d97706',RED_LIGHT:'#c43a31',ILLEGAL_PARKING:'#0b5ea8',RED_LINE_STOP:'#ef4444',RED_LINE_PARKING:'#dc2626',YELLOW_LINE_PARKING:'#f59e0b',SIDEWALK:'#7c3aed',SIDEWALK_PARKING:'#8b5cf6',BUS_STOP_STOP:'#0ea5e9',BUS_STOP_PARKING:'#0284c7',CROSSWALK_STOP:'#409eff',WRONG_WAY:'#b91c1c',OTHER:'#94a3b8'};
+        const renderAnalyticsTrend=()=>{
+            if(typeof Chart==='undefined'||page.value!=='analytics_insights')return;
+            const tr=analyticsTrend.value||{};
+            const labels=(tr.labels||[]).map(d=>String(d).slice(5));   // MM-DD
+            const series=tr.series||[];
+            if(!labels.length||!series.length)return;
+            nextTick(()=>{
+                _mkDashChart('analyticsTrendChart',{type:'line',
+                    data:{labels,datasets:series.map(s=>{const c=_TREND_COLORS[String(s.type||'').toUpperCase()]||'#94a3b8';
+                        return{label:s.name||s.type,data:s.data||[],borderColor:c,backgroundColor:'transparent',
+                            tension:0.3,pointRadius:0,pointHoverRadius:4,borderWidth:2,fill:false};})},
+                    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+                        plugins:{legend:{position:'top',labels:{boxWidth:12,padding:10,font:{size:11}}},
+                            tooltip:{backgroundColor:'#084d8a',padding:9}},
+                        scales:{x:{grid:{display:false},ticks:{maxTicksLimit:10,autoSkip:true,maxRotation:0}},
+                            y:{min:0,grid:{color:'#eef2f6'},border:{display:false},ticks:{precision:0}}}}});
+            });
+        };
+        watch([analyticsTrend,page],()=>{ if(page.value==='analytics_insights') renderAnalyticsTrend(); });
         // 24h trend SVG path (samples → polyline,timestamp 等距投影 0~1200,rate → 0~100 y軸反轉)
         const parkingTrendPath=computed(()=>{
             const samples = parkingHistory.value?.samples || [];
