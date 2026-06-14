@@ -5997,7 +5997,7 @@
                         </div>
                         <div style="display:grid;grid-template-columns:1fr 320px;gap:14px;align-items:stretch">
                             <div style="background:#020812;border-radius:6px;overflow:hidden;position:relative">
-                                <img :src="parkingSnapshotUrl" style="width:100%;display:block"/>
+                                <img :src="parkingSnapshotUrl" style="width:100%;max-width:960px;display:block;margin:0 auto"/>
                                 <div v-if="!parkingLiveRunning" style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,0.7);color:#fbbf24;padding:4px 8px;border-radius:4px;font-size:11px;font-family:var(--font-mono)">PAUSED</div>
                             </div>
                             <div style="display:flex;flex-direction:column;gap:10px">
