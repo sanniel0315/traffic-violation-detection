@@ -6156,49 +6156,12 @@
                             </div>
                             <el-button size="small" plain @click="loadParkingHistory"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>重新整理</el-button>
                         </div>
-                        <svg v-if="parkingTrendPath.count >= 2" viewBox="0 0 1200 80" preserveAspectRatio="none" style="width:100%;height:80px;display:block">
-                            <defs>
-                                <linearGradient id="parking-trend-grad" x1="0" x2="0" y1="0" y2="1">
-                                    <stop offset="0%" stop-color="var(--gov-primary)" stop-opacity="0.32"/>
-                                    <stop offset="100%" stop-color="var(--gov-primary)" stop-opacity="0"/>
-                                </linearGradient>
-                            </defs>
-                            <line x1="0" y1="20" x2="1200" y2="20" stroke="var(--gov-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
-                            <line x1="0" y1="40" x2="1200" y2="40" stroke="var(--gov-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
-                            <line x1="0" y1="60" x2="1200" y2="60" stroke="var(--gov-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
-                            <path :d="parkingTrendPath.dArea" fill="url(#parking-trend-grad)" stroke="none"/>
-                            <path v-if="parkingTrendPath.baselineD" :d="parkingTrendPath.baselineD" stroke="var(--gov-muted)" stroke-width="1.2" fill="none" stroke-dasharray="6 4" opacity="0.75"/>
-                            <path :d="parkingTrendPath.d" stroke="var(--gov-primary)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-                            <circle v-for="(a,i) in parkingTrendPath.anomalies" :key="i" :cx="a.x" :cy="a.y" r="4" fill="var(--gov-fault)" stroke="#fff" stroke-width="1.5">
-                                <title>異常: {{ a.rate }}% (預期 {{ a.expected }}%) @ {{ a.ts?.slice(11,16) }}</title>
-                            </circle>
-                        </svg>
-                        <div v-if="parkingTrendPath.count >= 2" style="display:flex;gap:14px;font-size:11px;color:var(--gov-muted);margin-top:2px">
-                            <span><svg viewBox="0 0 20 4" style="width:20px;height:4px;display:inline-block;vertical-align:middle"><line x1="0" y1="2" x2="20" y2="2" stroke="var(--gov-primary)" stroke-width="2"/></svg> 實際</span>
-                            <span><svg viewBox="0 0 20 4" style="width:20px;height:4px;display:inline-block;vertical-align:middle"><line x1="0" y1="2" x2="20" y2="2" stroke="var(--gov-muted)" stroke-width="1.2" stroke-dasharray="3 2"/></svg> 分時 baseline</span>
-                            <span v-if="parkingTrendPath.anomalies.length"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--gov-fault);vertical-align:middle"></span> 異常 {{ parkingTrendPath.anomalies.length }} 點 (偏離 baseline 1.5σ)</span>
-                        </div>
+                        <div v-if="parkingTrendPath.count >= 2" style="height:210px;position:relative"><canvas id="parkChartOccupancy"></canvas></div>
                         <div v-else style="text-align:center;padding:24px;color:var(--gov-muted);font-size:12px">尚無歷史資料 (每 5 分鐘自動記錄一筆,啟動偵測一段時間後可見)</div>
-                        <div v-if="parkingTrendPath.count >= 2" style="display:flex;justify-content:space-between;font-size:11px;color:var(--gov-muted);font-family:var(--font-mono);margin-top:4px">
-                            <span>{{ parkingTrendPath.points[0]?.ts?.slice(11,16) || '' }}</span>
-                            <span>{{ parkingTrendPath.points[Math.floor(parkingTrendPath.count/2)]?.ts?.slice(11,16) || '' }}</span>
-                            <span>{{ parkingTrendPath.points[parkingTrendPath.count-1]?.ts?.slice(11,16) || '' }} (最新)</span>
-                        </div>
-                        <!-- Phase 3 交叉校正趨勢: 車位偵測 vs 進出累計 (同為停放車數,應重合;背離=偵測或計數需檢查) -->
-                        <div style="border-top:1px solid var(--gov-border);margin-top:12px;padding-top:10px">
-                            <div style="font-size:13px;font-weight:700;color:var(--gov-text);margin-bottom:4px">交叉校正趨勢 (停放車數: 車位偵測 vs 場內車輛)</div>
-                            <svg v-if="parkingCrossTrend.ready" viewBox="0 0 1200 80" preserveAspectRatio="none" style="width:100%;height:80px;display:block">
-                                <line x1="0" y1="20" x2="1200" y2="20" stroke="var(--gov-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
-                                <line x1="0" y1="40" x2="1200" y2="40" stroke="var(--gov-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
-                                <line x1="0" y1="60" x2="1200" y2="60" stroke="var(--gov-border)" stroke-width="0.5" stroke-dasharray="4 4"/>
-                                <path v-if="parkingCrossTrend.occD" :d="parkingCrossTrend.occD" stroke="var(--gov-primary)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-                                <path v-if="parkingCrossTrend.areaD" :d="parkingCrossTrend.areaD" stroke="#7c3aed" stroke-width="2" fill="none" stroke-dasharray="6 4" stroke-linecap="round" stroke-linejoin="round"/>
-                            </svg>
-                            <div v-if="parkingCrossTrend.ready" style="display:flex;gap:14px;font-size:11px;color:var(--gov-muted);margin-top:2px">
-                                <span><svg viewBox="0 0 20 4" style="width:20px;height:4px;display:inline-block;vertical-align:middle"><line x1="0" y1="2" x2="20" y2="2" stroke="var(--gov-primary)" stroke-width="2"/></svg> 車位偵測 ({{ parkingCrossTrend.occN }} 筆)</span>
-                                <span><svg viewBox="0 0 20 4" style="width:20px;height:4px;display:inline-block;vertical-align:middle"><line x1="0" y1="2" x2="20" y2="2" stroke="#7c3aed" stroke-width="2" stroke-dasharray="3 2"/></svg> 場內車輛 ({{ parkingCrossTrend.areaN }} 筆)</span>
-                                <span>軸上限 {{ parkingCrossTrend.maxV }} 台</span>
-                            </div>
+                        <!-- 交叉校正趨勢: 車位偵測 vs 場內車輛 (同為停放車數,應重合;背離=偵測或幾何需檢查) -->
+                        <div style="border-top:1px solid var(--gov-border);margin-top:14px;padding-top:12px">
+                            <div style="font-size:13px;font-weight:700;color:var(--gov-text);margin-bottom:6px">交叉校正趨勢 (停放車數: 車位偵測 vs 場內車輛)</div>
+                            <div v-if="parkingCrossTrend.ready" style="height:210px;position:relative"><canvas id="parkChartCross"></canvas></div>
                             <div v-else style="text-align:center;padding:16px;color:var(--gov-muted);font-size:12px">需累積車位歷史 (兩條線應重合,背離代表車位幾何沒貼好或偵測需檢查)</div>
                         </div>
                     </div>
@@ -10642,6 +10605,7 @@ const app=createApp({
                 parkingData.value = await r.json();
             } catch(e) {}
             loadParkingCounting();
+            loadParkingHistory();   // 佔用率趨勢圖資料 (update('none') 防閃爍,可每次刷)
         };
         const parkingHistory=ref({samples:[], count:0});
         const parkingCounting=ref(null);  // {enter_today, exit_today, in_lot, slot_occupied, detected_vehicles, slot_total}
@@ -10698,6 +10662,58 @@ const app=createApp({
                 parkingHistory.value = await r.json();
             } catch(e) {}
         };
+        // ── 趨勢圖 (Chart.js) — 時間一律台北 (UTC+8);DB 存 naive UTC,補 Z 再轉 ──
+        const _tpeHM=(ts)=>{ if(!ts) return ''; try{ return new Date(String(ts).endsWith('Z')?ts:ts+'Z').toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Taipei'}); }catch(_){ return ''; } };
+        const _tpeFull=(ts)=>{ if(!ts) return ''; try{ return new Date(String(ts).endsWith('Z')?ts:ts+'Z').toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Taipei'}); }catch(_){ return ''; } };
+        const _parkCharts={};
+        const _mkParkChart=(id,cfg)=>{
+            const el=document.getElementById(id); if(!el||typeof Chart==='undefined') return;
+            const ex=_parkCharts[id];
+            if(ex && ex.canvas===el){ ex.data=cfg.data; ex.options=cfg.options; ex.update('none'); return; }
+            if(ex){ try{ex.destroy();}catch(_){} }
+            _parkCharts[id]=new Chart(el,cfg);
+        };
+        const renderParkingCharts=()=>{
+            if(typeof Chart==='undefined' || page.value!=='parking_detection') return;
+            nextTick(()=>{
+                const tip={backgroundColor:'#084d8a',padding:9};
+                // 1) 24h 佔用率%
+                const sm=(parkingHistory.value?.samples||[]).filter(s=>s.ts);
+                if(sm.length>=2){
+                    _mkParkChart('parkChartOccupancy',{type:'line',
+                        data:{labels:sm.map(s=>_tpeHM(s.ts)),datasets:[{label:'佔用率',
+                            data:sm.map(s=>Number(s.occupancy_rate)||0),borderColor:'#0b5ea8',
+                            backgroundColor:'rgba(11,94,168,0.12)',fill:true,tension:0.3,pointRadius:2,
+                            pointHoverRadius:4,borderWidth:2}]},
+                        options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+                            plugins:{legend:{display:false},tooltip:{...tip,callbacks:{
+                                title:(it)=>_tpeFull(sm[it[0].dataIndex]?.ts),
+                                label:(c)=>`佔用率 ${c.parsed.y}%　(${sm[c.dataIndex]?.occupied||0}/${sm[c.dataIndex]?.total||0} 格)`}}},
+                            scales:{x:{grid:{display:false},ticks:{maxTicksLimit:8,autoSkip:true,maxRotation:0}},
+                                y:{min:0,max:100,grid:{color:'#eef2f6'},border:{display:false},ticks:{stepSize:25,callback:(v)=>v+'%'}}}}});
+                }
+                // 2) 交叉校正: 車位偵測 vs 場內車輛 (車數)
+                const ch=(parkingCounting.value?.occupancy_history_24h||[]).filter(s=>s.ts);
+                if(ch.length>=2){
+                    const slotTotal=Number(parkingCounting.value?.slot_total)||0;
+                    const maxV=Math.max(slotTotal,...ch.map(s=>Math.max(Number(s.occupied)||0,Number(s.vehicles_in_area)||0)),1);
+                    _mkParkChart('parkChartCross',{type:'line',
+                        data:{labels:ch.map(s=>_tpeHM(s.ts)),datasets:[
+                            {label:'車位偵測',data:ch.map(s=>Number(s.occupied)||0),borderColor:'#0b5ea8',
+                                backgroundColor:'transparent',tension:0.3,pointRadius:2,pointHoverRadius:4,borderWidth:2},
+                            {label:'場內車輛 (YOLO)',data:ch.map(s=>s.vehicles_in_area==null?null:Number(s.vehicles_in_area)),
+                                borderColor:'#7c3aed',backgroundColor:'transparent',borderDash:[6,4],tension:0.3,
+                                pointRadius:2,pointHoverRadius:4,borderWidth:2,spanGaps:true}]},
+                        options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+                            plugins:{legend:{position:'top',labels:{boxWidth:14,padding:12,font:{size:12}}},
+                                tooltip:{...tip,callbacks:{title:(it)=>_tpeFull(ch[it[0].dataIndex]?.ts),label:(c)=>`${c.dataset.label}: ${c.parsed.y} 台`}}},
+                            scales:{x:{grid:{display:false},ticks:{maxTicksLimit:8,autoSkip:true,maxRotation:0}},
+                                y:{min:0,suggestedMax:maxV,grid:{color:'#eef2f6'},border:{display:false},
+                                    ticks:{precision:0,stepSize:Math.max(1,Math.ceil(maxV/5)),callback:(v)=>v+' 台'}}}}});
+                }
+            });
+        };
+        watch([parkingHistory,parkingCounting,page],()=>{ if(page.value==='parking_detection') renderParkingCharts(); });
         // 24h trend SVG path (samples → polyline,timestamp 等距投影 0~1200,rate → 0~100 y軸反轉)
         const parkingTrendPath=computed(()=>{
             const samples = parkingHistory.value?.samples || [];
