@@ -93,24 +93,29 @@
       <span v-else style="color:#1f9d55;margin-left:10px">已停止</span>
     </div>
 
-    <div class="canvas-wrap">
-      <img ref="img" :src="rawImgUrl" @load="onImgLoad" crossorigin="anonymous"/>
-      <canvas ref="canvas"
-              @mousedown="onMouseDown"
-              @mousemove="onMouseMove"
-              @mouseup="onMouseUp"
-              @mouseleave="onMouseUp"
-              @contextmenu.prevent></canvas>
-    </div>
+    <!-- 影像左 + 車位清單(CRUD)右,並排;清單一直看得到 -->
+    <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+      <div class="canvas-wrap" style="flex:1 1 520px;max-width:760px">
+        <img ref="img" :src="rawImgUrl" @load="onImgLoad" crossorigin="anonymous"/>
+        <canvas ref="canvas"
+                @mousedown="onMouseDown"
+                @mousemove="onMouseMove"
+                @mouseup="onMouseUp"
+                @mouseleave="onMouseUp"
+                @contextmenu.prevent></canvas>
+      </div>
 
-    <div class="slot-list">
-      <h3 style="margin:14px 0 8px;color:#0b5ea8">已標 {{ slots.length }} 格</h3>
-      <div v-if="!slots.length" style="color:#9ca3af;font-size:13px;padding:10px">尚無車位,在影像上點擊開始</div>
-      <div v-for="(s, idx) in slots" :key="s.id + idx" class="slot-row">
-        <span class="slot-id">{{ s.id }}</span>
-        <el-input v-model="s.label" size="small" style="width:120px"/>
-        <span class="slot-poly">{{ s.polygon.map(p => `(${p[0]},${p[1]})`).join(' ') }}</span>
-        <el-button size="small" type="danger" plain @click="removeSlot(idx)">刪除</el-button>
+      <div class="slot-list" style="flex:1 1 300px;min-width:280px;max-width:440px;max-height:640px;overflow-y:auto;margin-top:0;border:1px solid #d7dee8;border-radius:8px;padding:10px 12px;background:#fafbfc">
+        <h3 style="margin:0 0 8px;color:#0b5ea8;position:sticky;top:0;background:#fafbfc;padding-bottom:6px">
+          車位清單 ({{ slots.length }} 格)
+          <span style="font-size:11px;color:#9ca3af;font-weight:400">改 label / 刪除</span>
+        </h3>
+        <div v-if="!slots.length" style="color:#9ca3af;font-size:13px;padding:10px">尚無車位,在影像上拖框 / Grid 透視 / 自動偵測新增</div>
+        <div v-for="(s, idx) in slots" :key="s.id + idx" class="slot-row" style="flex-wrap:wrap">
+          <span class="slot-id" style="min-width:48px">{{ s.id }}</span>
+          <el-input v-model="s.label" size="small" style="width:110px"/>
+          <el-button size="small" type="danger" plain @click="removeSlot(idx)" style="margin-left:auto">刪除</el-button>
+        </div>
       </div>
     </div>
 
