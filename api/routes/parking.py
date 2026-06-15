@@ -1072,6 +1072,12 @@ def save_slots(body: SlotsSaveBody):
     os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
     with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(existing, f, ensure_ascii=False, indent=2)
+    # 車位重存 → 清該 source 的遲滯狀態,避免舊位置殘留
+    try:
+        from services.parking_slot_state import reset as _slot_state_reset
+        _slot_state_reset(body.source)
+    except Exception:
+        pass
     return {"ok": True, "source": body.source, "saved": len(body.slots)}
 
 
