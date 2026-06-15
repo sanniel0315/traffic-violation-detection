@@ -732,10 +732,18 @@ def evaluate_occupancy(source_key: str) -> Dict:
                 pass
         # 取 cache 結果 (若有,附在 slot 給 UI 看,但不覆寫 occupied 判定 — VLM 2B 信心不夠)
         vlm_verdict = vlm_get_verdict(source_key, sid) if vlm_get_verdict else None
+        # P1 時間遲滯: 單幀漏抓不翻成空位 (有車→空需連續多幀),提升空位判定準確性
+        raw_occ = best_conf >= 0.5
+        try:
+            from services.parking_slot_state import smooth as _slot_smooth
+            occ_stable = _slot_smooth(source_key, sid, raw_occ)
+        except Exception:
+            occ_stable = raw_occ
         slot_results.append({
             "id": slot["id"],
             "label": slot.get("label", str(slot["id"])),
-            "occupied": best_conf >= 0.5,
+            "occupied": occ_stable,
+            "raw_occupied": raw_occ,
             "conf": round(best_conf, 3),
             "polygon": poly,
             "vlm_verdict": vlm_verdict,
