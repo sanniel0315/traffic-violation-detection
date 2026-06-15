@@ -665,11 +665,21 @@ def evaluate_occupancy(source_key: str) -> Dict:
         return auto_result
 
     h, w = frame.shape[:2]
-    # 跑 yolo
+    # P2: 啟動 PKLot 背景 hook (補 YOLO 漏抓) + 取共用 GPU 鎖 (與 PKLot worker 序列化防 SEGV)
+    _pk_occ = None
+    try:
+        from services.parking_pklot_hook import (mark_active as _pk_active,
+            start_worker as _pk_start, is_occupied_signal as _pk_occ, INFER_LOCK as _GPU_LOCK)
+        _pk_active(source_key); _pk_start()
+    except Exception:
+        import threading as _t
+        _GPU_LOCK = _t.Lock()
+    # 跑 yolo (與 PKLot worker 共用 GPU 鎖)
     try:
         from detection.vehicle_detector import VehicleDetector
         yolo_local_roi = VehicleDetector(conf_threshold=0.12)
-        detections = _yolo_sliced_detect(yolo_local_roi, frame)
+        with _GPU_LOCK:
+            detections = _yolo_sliced_detect(yolo_local_roi, frame)
     except Exception as e:
         return {"source": source_key, "error": f"yolo detect err: {e}",
                 "total": len(slots_cfg), "occupied": 0, "available": 0,
@@ -732,8 +742,17 @@ def evaluate_occupancy(source_key: str) -> Dict:
                 pass
         # 取 cache 結果 (若有,附在 slot 給 UI 看,但不覆寫 occupied 判定 — VLM 2B 信心不夠)
         vlm_verdict = vlm_get_verdict(source_key, sid) if vlm_get_verdict else None
-        # P1 時間遲滯: 單幀漏抓不翻成空位 (有車→空需連續多幀),提升空位判定準確性
         raw_occ = best_conf >= 0.5
+        # P2: YOLO 沒抓到車,但 PKLot 逐格分類確認有車 → 補回 (修低解析/遮擋的假空位)
+        pklot_rescued = False
+        if not raw_occ and _pk_occ:
+            try:
+                if _pk_occ(source_key, sid):
+                    raw_occ = True
+                    pklot_rescued = True
+            except Exception:
+                pass
+        # P1 時間遲滯: 單幀漏抓不翻成空位 (有車→空需連續多幀),提升空位判定準確性
         try:
             from services.parking_slot_state import smooth as _slot_smooth
             occ_stable = _slot_smooth(source_key, sid, raw_occ)
@@ -744,6 +763,7 @@ def evaluate_occupancy(source_key: str) -> Dict:
             "label": slot.get("label", str(slot["id"])),
             "occupied": occ_stable,
             "raw_occupied": raw_occ,
+            "pklot_rescued": pklot_rescued,
             "conf": round(best_conf, 3),
             "polygon": poly,
             "vlm_verdict": vlm_verdict,
