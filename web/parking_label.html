@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>停車位 標註 / 評測</title>
+<script src="/web/lib/vue.global.prod.js"></script>
+<script src="/web/lib/element-plus.min.js"></script>
+<link rel="stylesheet" href="/web/lib/element-plus.css">
+<style>
+  body { font-family:"Noto Sans TC",system-ui,sans-serif; padding:20px; background:#eef2f6; margin:0; }
+  .container { max-width:1280px; margin:0 auto; background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.05); }
+  h2 { margin:0 0 6px; color:#0b5ea8; }
+  .hint { background:#eaf2fb; border-left:3px solid #0b5ea8; padding:8px 12px; font-size:13px; color:#1f2937; border-radius:4px; margin:10px 0; }
+  .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+  .wrap { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
+  .canvas-wrap { position:relative; display:block; max-width:760px; border:1px solid #c5dbf0; border-radius:6px; overflow:hidden; background:#000; }
+  .canvas-wrap img { display:block; width:100%; }
+  .canvas-wrap canvas { position:absolute; top:0; left:0; cursor:pointer; }
+  .panel { flex:1 1 300px; min-width:280px; max-width:420px; }
+  .metric { background:#f6f9fd; border:1px solid #d7dee8; border-radius:8px; padding:12px 14px; margin-top:10px; }
+  .big { font-size:30px; font-weight:800; font-family:"IBM Plex Mono",monospace; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="container">
+    <h2>停車位 標註 / 評測 — {{ sourceName || sourceKey }}</h2>
+    <div class="hint">
+      畫面已用<strong>目前偵測結果</strong>預填 (紅=有車 / 綠=空)。<strong>點格子切換</strong>成真實狀態,
+      改完按「<strong>儲存標註</strong>」→ 會算準確率 + 把每格裁切存成 fine-tune 訓練圖。
+    </div>
+    <div class="toolbar">
+      <span>來源:</span>
+      <el-input v-model="sourceKey" size="small" style="width:240px"/>
+      <el-button size="small" plain @click="load">載入</el-button>
+      <el-button size="small" type="primary" @click="save" :loading="saving" :disabled="!slots.length">儲存標註 ({{ slots.length }} 格)</el-button>
+      <el-button size="small" plain @click="loadMetrics">看準確率</el-button>
+      <span style="margin-left:auto;font-size:12px;color:#5b6778">{{ msg }}</span>
+    </div>
+    <div class="wrap">
+      <div class="canvas-wrap">
+        <img ref="img" :src="rawUrl" @load="onImgLoad" crossorigin="anonymous"/>
+        <canvas ref="canvas" @click="onClick"></canvas>
+      </div>
+      <div class="panel">
+        <div class="metric">
+          <div style="font-size:12px;color:#5b6778;letter-spacing:0.1em">本次標註</div>
+          <div style="display:flex;gap:18px;margin-top:6px">
+            <div><div style="font-size:11px;color:#9ca3af">有車</div><div class="big" style="color:#dc2626">{{ countOcc }}</div></div>
+            <div><div style="font-size:11px;color:#9ca3af">空</div><div class="big" style="color:#16a34a">{{ slots.length - countOcc }}</div></div>
+          </div>
+        </div>
+        <div class="metric" v-if="metrics && !metrics.error">
+          <div style="font-size:12px;color:#5b6778;letter-spacing:0.1em">準確率 (vs 最近標註, {{ metrics.n }} 格)</div>
+          <div style="margin-top:8px;font-size:14px">
+            <div>空位 precision: <strong :style="{color: precColor(metrics['空位precision'])}">{{ fmt(metrics['空位precision']) }}</strong> <span style="font-size:11px;color:#9ca3af">(說空就真的空)</span></div>
+            <div>佔用 recall: <strong>{{ fmt(metrics['佔用recall']) }}</strong> <span style="font-size:11px;color:#9ca3af">(有車抓到的比例)</span></div>
+            <div>accuracy: <strong>{{ fmt(metrics.accuracy) }}</strong></div>
+          </div>
+          <div style="margin-top:6px;font-size:12px;color:#5b6778;font-family:monospace">
+            對:有車{{ metrics.confusion['tp_有車對'] }} 空{{ metrics.confusion['tn_空對'] }} ·
+            錯:誤判有車{{ metrics.confusion['fp_誤判有車'] }} <span style="color:#dc2626">漏車當空{{ metrics.confusion['fn_漏車當空'] }}</span>
+          </div>
+        </div>
+        <div class="metric" v-else-if="metrics && metrics.error" style="color:#9ca3af;font-size:13px">{{ metrics.error }}</div>
+        <div class="metric">
+          <div style="font-size:12px;color:#5b6778;letter-spacing:0.1em">已累積訓練裁切 (fine-tune 資料)</div>
+          <div style="margin-top:6px;font-size:14px;font-family:monospace">有車 {{ ds.occupied || 0 }} 張 · 空 {{ ds.empty || 0 }} 張</div>
+          <div style="font-size:11px;color:#9ca3af;margin-top:4px">存於 data/parking_train/{occupied,empty}/,夠量後可 yolo classify train fine-tune</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const { createApp, ref, computed, onMounted } = Vue;
+createApp({
+  setup() {
+    const params = new URLSearchParams(location.search);
+    const sourceKey = ref(params.get('source') || 'twipcam:tpe-005013');
+    const sourceName = ref('');
+    const img = ref(null), canvas = ref(null);
+    const slots = ref([]);     // [{id,label,polygon,occ(bool)}]
+    const saving = ref(false), msg = ref('');
+    const metrics = ref(null), ds = ref({});
+    let imgW = 1, imgH = 1, scaleX = 1, scaleY = 1;
+    const _tick = ref(Date.now());
+    const rawUrl = computed(() => `/api/parking/snapshot/raw?source=${encodeURIComponent(sourceKey.value)}&t=${_tick.value}`);
+    const countOcc = computed(() => slots.value.filter(s => s.occ).length);
+
+    const fmt = (v) => v == null ? '—' : (v * 100).toFixed(0) + '%';
+    const pct = (v) => v == null ? 0 : v * 100;
+    const precColor = (v) => (v != null && v >= 0.95) ? '#16a34a' : '#dc2626';
+
+    const onImgLoad = () => {
+      const el = img.value; if (!el) return;
+      imgW = el.naturalWidth; imgH = el.naturalHeight;
+      const cv = canvas.value;
+      cv.width = el.clientWidth; cv.height = el.clientHeight;
+      scaleX = imgW / el.clientWidth; scaleY = imgH / el.clientHeight;
+      redraw();
+    };
+    const redraw = () => {
+      const cv = canvas.value; if (!cv) return;
+      const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
+      for (const s of slots.value) {
+        const poly = s.polygon || []; if (poly.length < 3) continue;
+        ctx.beginPath();
+        poly.forEach((p, i) => { const x = p[0] / scaleX, y = p[1] / scaleY; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+        ctx.closePath();
+        ctx.fillStyle = s.occ ? 'rgba(220,38,38,0.42)' : 'rgba(22,163,74,0.42)';
+        ctx.strokeStyle = s.occ ? '#dc2626' : '#16a34a';
+        ctx.lineWidth = 2; ctx.fill(); ctx.stroke();
+        const cx = poly.reduce((a, p) => a + p[0], 0) / poly.length / scaleX;
+        const cy = poly.reduce((a, p) => a + p[1], 0) / poly.length / scaleY;
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
+        ctx.fillText(s.label || s.id, cx, cy + 3);
+      }
+    };
+    const _inPoly = (px, py, poly) => {
+      let c = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+        if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) c = !c;
+      }
+      return c;
+    };
+    const onClick = (e) => {
+      const cv = canvas.value, r = cv.getBoundingClientRect();
+      const px = (e.clientX - r.left) * scaleX, py = (e.clientY - r.top) * scaleY;
+      for (const s of slots.value) {
+        if ((s.polygon || []).length >= 3 && _inPoly(px, py, s.polygon)) { s.occ = !s.occ; redraw(); break; }
+      }
+    };
+    const load = async () => {
+      msg.value = '載入中…';
+      try {
+        const r = await fetch(`/api/parking/occupancy?source=${encodeURIComponent(sourceKey.value)}`);
+        const d = await r.json();
+        sourceName.value = d.source_name || '';
+        slots.value = (d.slots || []).map(s => ({ id: s.id, label: s.label, polygon: s.polygon || [], occ: !!s.occupied }));
+        _tick.value = Date.now();
+        msg.value = `載入 ${slots.value.length} 格 (已用偵測預填)`;
+        setTimeout(onImgLoad, 60); redraw();
+        loadDsCount();
+      } catch (e) { msg.value = '載入失敗: ' + e; }
+    };
+    const save = async () => {
+      saving.value = true; msg.value = '';
+      try {
+        const labels = {}; slots.value.forEach(s => labels[s.id] = s.occ ? 'o' : 'e');
+        const r = await fetch('/api/parking/label/save', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source: sourceKey.value, labels }),
+        });
+        const d = await r.json();
+        if (r.ok && d.ok) {
+          msg.value = `已存標註 + 裁切 (有車 ${d.occupied} / 空 ${d.empty})`;
+          ElementPlus.ElMessage.success('已儲存,裁切已存入訓練資料夾');
+          loadMetrics(); loadDsCount();
+        } else { ElementPlus.ElMessage.error(d.detail || '存檔失敗'); }
+      } catch (e) { ElementPlus.ElMessage.error('錯誤: ' + e); }
+      finally { saving.value = false; }
+    };
+    const loadMetrics = async () => {
+      try { metrics.value = await (await fetch(`/api/parking/label/metrics?source=${encodeURIComponent(sourceKey.value)}`)).json(); } catch (e) {}
+    };
+    const loadDsCount = async () => {
+      try { ds.value = await (await fetch('/api/parking/label/dataset_count')).json(); } catch (e) {}
+    };
+    onMounted(() => { load(); });
+    return { sourceKey, sourceName, img, canvas, slots, saving, msg, metrics, ds, rawUrl, countOcc, onImgLoad, onClick, load, save, loadMetrics, fmt, pct, precColor };
+  },
+}).use(ElementPlus).mount('#app');
+</script>
+</body>
+</html>
