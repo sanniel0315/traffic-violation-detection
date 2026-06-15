@@ -1081,6 +1081,97 @@ def save_slots(body: SlotsSaveBody):
     return {"ok": True, "source": body.source, "saved": len(body.slots)}
 
 
+# ───── 標註 / 評測 (P3): 收集本地真值 → 量準確率 + 匯出 fine-tune 訓練裁切 ─────
+class LabelBody(BaseModel):
+    source: str
+    labels: dict   # {slot_id: "o"(有車) | "e"(空)}
+
+
+@router.post("/label/save")
+def label_save(body: LabelBody):
+    """存人工標註: 抓當下原圖,每格 crop 存到 data/parking_train/{occupied,empty}/ (fine-tune 用),
+    並存一筆 label 紀錄供評測比對。"""
+    frame = fetch_frame(body.source, bypass_cache=True)
+    if frame is None:
+        raise HTTPException(status_code=503, detail="畫面抓取失敗")
+    slots = {str(s["id"]): s for s in (load_slots(body.source) or [])}
+    ts = int(time.time())
+    base = os.path.join("data", "parking_train")
+    rec = {"source": body.source, "ts": ts, "labels": {}}
+    n_e = n_o = 0
+    H, W = frame.shape[:2]
+    for sid, lab in (body.labels or {}).items():
+        s = slots.get(str(sid))
+        if not s:
+            continue
+        poly = s.get("polygon") or []
+        if len(poly) < 3:
+            continue
+        xs = [p[0] for p in poly]; ys = [p[1] for p in poly]
+        x1, y1 = max(0, int(min(xs))), max(0, int(min(ys)))
+        x2, y2 = min(W, int(max(xs))), min(H, int(max(ys)))
+        if x2 <= x1 or y2 <= y1:
+            continue
+        cls = "occupied" if str(lab).lower().startswith("o") else "empty"
+        d = os.path.join(base, cls)
+        os.makedirs(d, exist_ok=True)
+        fn = f"{body.source.replace(':', '_')}_{sid}_{ts}.jpg"
+        try:
+            cv2.imwrite(os.path.join(d, fn), frame[y1:y2, x1:x2])
+        except Exception:
+            continue
+        rec["labels"][str(sid)] = cls
+        n_o += (cls == "occupied"); n_e += (cls == "empty")
+    ldir = os.path.join("data", "parking_labels")
+    os.makedirs(ldir, exist_ok=True)
+    with open(os.path.join(ldir, f"{body.source.replace(':', '_')}_{ts}.json"), "w", encoding="utf-8") as f:
+        json.dump(rec, f, ensure_ascii=False)
+    return {"ok": True, "ts": ts, "occupied": n_o, "empty": n_e, "train_dir": base}
+
+
+@router.get("/label/metrics")
+def label_metrics(source: str = Query(...)):
+    """用最近一筆人工標註 vs 當前偵測,算空位 precision / 佔用 recall / accuracy。"""
+    ldir = os.path.join("data", "parking_labels")
+    prefix = source.replace(":", "_") + "_"
+    files = sorted([f for f in os.listdir(ldir) if f.startswith(prefix)]) if os.path.isdir(ldir) else []
+    if not files:
+        return {"source": source, "error": "尚無標註,先在標註頁存一筆"}
+    with open(os.path.join(ldir, files[-1]), encoding="utf-8") as f:
+        rec = json.load(f)
+    gt = rec.get("labels", {})
+    res = evaluate_occupancy(source)
+    pred = {str(s["id"]): ("occupied" if s.get("occupied") else "empty") for s in res.get("slots", [])}
+    tp = tn = fp = fn = 0
+    for sid, g in gt.items():
+        p = pred.get(str(sid))
+        if p is None:
+            continue
+        if g == "occupied" and p == "occupied": tp += 1
+        elif g == "empty" and p == "empty": tn += 1
+        elif g == "empty" and p == "occupied": fp += 1
+        elif g == "occupied" and p == "empty": fn += 1
+    n = tp + tn + fp + fn
+    return {
+        "source": source, "labeled_ts": rec.get("ts"), "n": n,
+        "confusion": {"tp_有車對": tp, "tn_空對": tn, "fp_誤判有車": fp, "fn_漏車當空": fn},
+        "空位precision": round(tn / (tn + fn), 3) if (tn + fn) else None,
+        "佔用recall": round(tp / (tp + fn), 3) if (tp + fn) else None,
+        "accuracy": round((tp + tn) / n, 3) if n else None,
+    }
+
+
+@router.get("/label/dataset_count")
+def label_dataset_count():
+    """已累積的訓練裁切張數 (給 fine-tune 看資料量)。"""
+    base = os.path.join("data", "parking_train")
+    out = {}
+    for cls in ("occupied", "empty"):
+        d = os.path.join(base, cls)
+        out[cls] = len([f for f in os.listdir(d) if f.endswith(".jpg")]) if os.path.isdir(d) else 0
+    return out
+
+
 @router.get("/snapshot")
 def get_snapshot(source: str = Query(..., description="source key"),
                   show_boxes: bool = Query(True, description="畫車位 polygon (空車位 + 號碼)"),
