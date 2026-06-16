@@ -6582,8 +6582,9 @@
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>趨勢</span>
                                     <select v-model="statsTrendMode" class="stats-native-select" style="width:130px">
-                                        <option value="count">事件數</option>
-                                        <option value="speed">平均車速</option>
+                                        <option value="flow">流量</option>
+                                        <option value="speed">車速</option>
+                                        <option value="count">事件</option>
                                     </select>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
@@ -6667,11 +6668,11 @@
                         </div>
                     </div>
                     <div class="card">
-                        <div class="card-header"><span>流量趨勢</span></div>
+                        <div class="card-header"><span>{{ statsTrendMode==='flow'?'車流量趨勢':(statsTrendMode==='speed'?'車速趨勢':'事件趨勢') }}</span></div>
                         <div class="card-body">
                             <div class="trend-header">
                                 <span class="trend-legend-dot"></span>
-                                <span style="font-size:13px">{{ statsTrendBucketLabel }} {{ statsTrendMode==='speed'?'平均車速(km/h)':'事件數' }}</span>
+                                <span style="font-size:13px">{{ statsTrendBucketLabel }} {{ statsTrendMode==='flow'?'平均車流量(輛)':(statsTrendMode==='speed'?'平均車速(km/h)':'事件數') }}</span>
                                 <el-tag size="small" type="info">資料點 {{ hourlyChartData.length }}</el-tag>
                                 <el-tag size="small" type="success">最新 {{ statsTrendSummary.lastText }}</el-tag>
                                 <el-tag size="small" type="warning">平均 {{ statsTrendSummary.avgText }}</el-tag>
@@ -6696,7 +6697,7 @@
                                     >
                                         <div class="trend-tooltip">
                                             <div>{{ item.label }}</div>
-                                            <div>{{ statsTrendMode==='speed' ? `速度 ${item.avgSpeed==null?'-':item.avgSpeed.toFixed(1)} km/h` : `事件 ${item.count}` }}</div>
+                                            <div>{{ statsTrendMode==='flow' ? `流量 ${item.count} 輛` : (statsTrendMode==='speed' ? `速度 ${item.avgSpeed==null?'-':item.avgSpeed.toFixed(1)} km/h` : `事件 ${item.count}`) }}</div>
                                         </div>
                                         <div class="trend-bar-track">
                                             <div
@@ -11298,6 +11299,9 @@ const app=createApp({
         const trendActiveValue=computed(()=>{
             const item=trendActiveItem.value;
             if(!item)return '-';
+            if(statsTrendMode.value==='flow'){
+                return `車流量 ${Number(item.count||0)} 輛`;
+            }
             if(statsTrendMode.value==='speed'){
                 return `平均速度 ${item.avgSpeed==null?'-':item.avgSpeed.toFixed(1)} km/h`;
             }
@@ -14460,7 +14464,38 @@ const app=createApp({
             if(isLprRunning(cameraId))n+=1;
             return n;
         };
+        // 流量趨勢: 用 congestion samples 的 vehicle_count (車流量) — 與事件趨勢不同資料源
+        const rebuildFlowTrend=(showMessage=false)=>{
+            const buckets={};
+            const trendBucketMode=resolveTrendBucketMode();
+            const p2=(n)=>String(n).padStart(2,'0');
+            (statsCongestionSamples.value||[]).filter(s=>s.is_overall!==false).forEach(s=>{
+                const raw=s.created_at; if(!raw)return;
+                let iso=String(raw);  // 後端 isoformat 帶 +00:00 offset;若是 naive 才補 Z
+                if(!/[zZ]$/.test(iso) && !/[+-]\d{2}:?\d{2}$/.test(iso)) iso+='Z';
+                const tsMs=Date.parse(iso); if(Number.isNaN(tsMs))return;
+                const kd=new Date(tsMs); const md=`${p2(kd.getMonth()+1)}/${p2(kd.getDate())}`; let label='';
+                if(trendBucketMode==='1d'){ kd.setHours(0,0,0,0); label=md; }
+                else if(trendBucketMode==='1h'){ kd.setMinutes(0,0,0); label=`${md} ${p2(kd.getHours())}:00`; }
+                else if(trendBucketMode==='1m'){ kd.setSeconds(0,0); label=`${md} ${p2(kd.getHours())}:${p2(kd.getMinutes())}`; }
+                else if(trendBucketMode==='5m'){ kd.setSeconds(0,0); kd.setMinutes(Math.floor(kd.getMinutes()/5)*5); label=`${md} ${p2(kd.getHours())}:${p2(kd.getMinutes())}`; }
+                else if(trendBucketMode==='10m'){ kd.setSeconds(0,0); kd.setMinutes(Math.floor(kd.getMinutes()/10)*10); label=`${md} ${p2(kd.getHours())}:${p2(kd.getMinutes())}`; }
+                else { kd.setMilliseconds(0); if(trendBucketMode==='30s')kd.setSeconds(kd.getSeconds()<30?0:30); label=`${md} ${p2(kd.getHours())}:${p2(kd.getMinutes())}:${p2(kd.getSeconds())}`; }
+                const key=String(kd.getTime());
+                if(!buckets[key])buckets[key]={label,ts:kd.getTime(),count:0,avgSpeed:null,flowSum:0,flowCount:0,avgFlow:0,barHeightPct:0};
+                buckets[key].flowSum+=Number(s.vehicle_count||0); buckets[key].flowCount+=1;
+            });
+            const rows=Object.values(buckets).sort((a,b)=>a.ts-b.ts).slice(-trendMaxPoints.value)
+                .map(it=>({...it, avgFlow: it.flowCount?it.flowSum/it.flowCount:0}));
+            const vals=rows.map(r=>Number(r.avgFlow||0)); const maxVal=Math.max(...vals,0);
+            const denom=maxVal<=0?0:Math.max(maxVal*1.1,5);
+            hourlyChartData.value=rows.map(r=>{ const val=Number(r.avgFlow||0);
+                const pct=denom<=0?0:Math.max(2,Math.min(100,(val/denom)*100));
+                return {...r, count:Math.round(val), barHeightPct:Number(pct.toFixed(2))}; });
+            if(showMessage){ if(!rows.length)ElementPlus.ElMessage.warning("此時段無車流量資料 (需先跑壅塞偵測累積樣本)"); else ElementPlus.ElMessage.success("分析完成"); }
+        };
         const rebuildStatsTrend=(showMessage=false)=>{
+            if(statsTrendMode.value==='flow'){ rebuildFlowTrend(showMessage); return; }
             const buckets={};
             const list=statsFilteredEvents.value;
             const trendBucketMode = resolveTrendBucketMode();
