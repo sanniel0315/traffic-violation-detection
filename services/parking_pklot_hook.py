@@ -64,11 +64,18 @@ def _loop() -> None:
 
 
 def _process() -> None:
+    # 優先用本地 fine-tune 的逐格分類器 (泛化好);沒有才退回原 PKLot detector
+    try:
+        from services.parking_slot_classifier import is_available as cls_avail
+        use_cls = cls_avail()
+    except Exception:
+        use_cls = False
     try:
         from services.parking_pklot_model import is_available, detect_slots
     except Exception:
-        return
-    if not is_available():
+        is_available = lambda: False
+        detect_slots = None
+    if not use_cls and not is_available():
         return
     now = time.time()
     with _LOCK:
@@ -86,6 +93,22 @@ def _process() -> None:
             frame = fetch_frame(source)
             if frame is None:
                 continue
+            # 路線 A: 本地逐格分類器 (每格 crop → 分類)
+            if use_cls:
+                from services.parking_slot_classifier import crop_polygon, classify_crop
+                with INFER_LOCK:
+                    for s in slots:
+                        poly = s.get("polygon") or []
+                        sid = str(s["id"])
+                        if len(poly) < 3:
+                            continue
+                        crop = crop_polygon(frame, poly)
+                        occ, conf = classify_crop(crop)
+                        if occ is not None:
+                            with _LOCK:
+                                _VERDICTS[(source, sid)] = {"occupied": bool(occ), "conf": float(conf), "ts": now}
+                continue
+            # 路線 B: 原 PKLot 整幀偵測 + match
             with INFER_LOCK:
                 dets = detect_slots(frame) or []
             # 每格找覆蓋它的 PKLot 偵測 (中心在格內優先,否則 IoU>0.2),取 conf 最高
