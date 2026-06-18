@@ -5915,10 +5915,10 @@
                                 <el-select v-model="parkingSource" size="small" style="width:260px" @change="loadParkingOccupancy">
                                     <el-option v-for="s in parkingSources" :key="s.key" :label="`${s.name} (${s.slot_count} 格)`" :value="s.key"/>
                                 </el-select>
-                                <el-button size="small" plain @click="parkingShowAdd=!parkingShowAdd">+ 新增來源</el-button>
-                                <el-button size="small" type="primary" plain @click="openParkingEditor">編輯車位</el-button>
+                                <el-button v-if="hasPerm('parking_edit')" size="small" plain @click="parkingShowAdd=!parkingShowAdd">+ 新增來源</el-button>
+                                <el-button v-if="hasPerm('parking_edit')" size="small" type="primary" plain @click="openParkingEditor">畫車格 / 標註</el-button>
                                 <el-button size="small" plain @click="downloadParkingSnapshot">下載原圖</el-button>
-                                <el-button size="small" plain @click="openParkingLabel">標註/評測</el-button>
+                                <el-button v-if="hasPerm('parking_edit')" size="small" plain @click="openParkingLabel">佔用校正</el-button>
                                 <el-button size="small" type="success" v-if="!parkingLiveRunning" @click="startParkingLive">啟動偵測</el-button>
                                 <el-button size="small" type="danger" v-else @click="stopParkingLive">停止偵測</el-button>
                             </div>
@@ -9802,6 +9802,7 @@ const app=createApp({
             {key:'analysis_congestion',label:'壅塞檢測'},
             {key:'analysis_parking',label:'停車違規設定'},
             {key:'analysis_parking_detection',label:'停車場車位偵測'},
+            {key:'parking_edit',label:'車格標註 / 編輯'},
             {key:'analysis_insights',label:'分析功能'},
             {key:'cameras',label:'攝影機管理'},
             {key:'frigate',label:'NVR 設定'},
@@ -9814,7 +9815,7 @@ const app=createApp({
             admin:permissionCatalog.map(p=>p.key),
             ops:[
                 'map','statistics','violations','reports','repeat','monitor',
-                'analysis_traffic','analysis_speed','analysis_congestion','analysis_parking','analysis_parking_detection','analysis_insights',
+                'analysis_traffic','analysis_speed','analysis_congestion','analysis_parking','analysis_parking_detection','analysis_insights','parking_edit',
                 'cameras','frigate','lpr','logs','hwmonitor'
             ],
             viewer:[
@@ -9845,6 +9846,7 @@ const app=createApp({
         const isViewer=computed(()=>userRole.value==='viewer');
         const hasPerm=(key)=>{
             if(!key)return true;
+            if(userRole.value==='admin')return true;
             const list=permissionMatrix[userRole.value]||[];
             return Array.isArray(list)&&list.includes(key);
         };
