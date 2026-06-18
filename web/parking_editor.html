@@ -44,6 +44,7 @@
       <span>label:</span>
       <el-input v-model="currentSlotLabel" size="small" style="width:120px"/>
       <el-button size="small" type="success" :loading="autoDetecting" @click="autoDetectSlots" v-if="!sessionRunning">自動偵測車位 (單張)</el-button>
+      <el-button size="small" :type="samMode ? 'danger' : 'primary'" :loading="samBusy" @click="toggleSamMode" v-if="!sessionRunning">{{ samMode ? 'SAM 點選中 (點離開關閉)' : 'SAM 點選車格' }}</el-button>
       <el-button size="small" type="primary" @click="startSession" v-if="!sessionRunning">背景累積偵測</el-button>
       <el-button size="small" type="danger" @click="stopSessionAndImport" v-if="sessionRunning">停止累積並匯入</el-button>
       <el-button size="small" @click="cancelCurrent" :disabled="!dragging">取消拖拉</el-button>
@@ -153,6 +154,9 @@ const app = createApp({
     const saving = ref(false);
     const saveMsg = ref('');
     const autoDetecting = ref(false);
+    // SAM 點選模式 (Phase B) — 點一下車格,MobileSAM 自動框
+    const samMode = ref(false);
+    const samBusy = ref(false);
     const sessionRunning = ref(false);
     const sessionStatus = ref({frames_processed: 0, merged_slots: 0, total_detections: 0});
     let _sessionPollTimer = null;
@@ -518,6 +522,12 @@ const app = createApp({
         }
         return;
       }
+      // SAM 點選模式: 點一下 → MobileSAM 自動框該車格
+      if (samMode.value) {
+        const pt = _toImagePx(e);
+        samClick(pt[0], pt[1]);
+        return;
+      }
       // Grid 模式: 收集 4 角
       if (gridMode.value) {
         gridCorners.value = [...gridCorners.value, _toImagePx(e)];
@@ -808,6 +818,37 @@ const app = createApp({
         ElementPlus.ElMessage.error('錯誤: ' + e.message);
       } finally {
         autoDetecting.value = false;
+      }
+    };
+
+    // ── SAM 點選車格 (Phase B) ──
+    const toggleSamMode = () => {
+      samMode.value = !samMode.value;
+      // 進 SAM 模式時關閉其他繪圖模式,避免衝突
+      if (samMode.value) {
+        maskMode.value = false; exMode.value = false; gridMode.value = false;
+        measureMode.value = false; lineMode.value = false; rowAdjustMode.value = false;
+        ElementPlus.ElMessage.info('在車格上點一下,MobileSAM 自動框出該格 (再按按鈕關閉)');
+      }
+      redraw();
+    };
+    const samClick = async (px, py) => {
+      if (samBusy.value) return;
+      samBusy.value = true;
+      try {
+        const r = await fetch(`/api/parking/slots/sam_point?source=${encodeURIComponent(sourceKey.value)}&x=${px}&y=${py}`, { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) { ElementPlus.ElMessage.error(d.detail || 'SAM 失敗'); return; }
+        if (!d.polygon) { ElementPlus.ElMessage.warning(d.note || '該點分不出車格,換位置點'); return; }
+        const baseN = slots.value.length;
+        const sid = `S${baseN + 1}`;
+        slots.value.push({ id: sid, label: sid, polygon: d.polygon });
+        ElementPlus.ElMessage.success(`SAM 新增 ${sid} (可拖頂點微調 / 刪除)`);
+        redraw();
+      } catch (e) {
+        ElementPlus.ElMessage.error('錯誤: ' + e.message);
+      } finally {
+        samBusy.value = false;
       }
     };
 
@@ -1157,6 +1198,7 @@ const app = createApp({
       currentSlotId, currentSlotLabel,
       dragging, dragStart, dragEnd,
       saving, saveMsg, autoDetecting, sessionRunning, sessionStatus,
+      samMode, samBusy, toggleSamMode,
       maskMode, maskPolygon, maskDraft,
       exMode, exPolygon, exDraft,
       gridMode, gridCorners, gridPreset,
