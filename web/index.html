@@ -4723,12 +4723,12 @@
                         <div class="ds-page-hero-row">
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use :href="'#'+currentPageIcon"/></svg></div>
-                                <h1 class="ds-section-title">違規件數<b>統計</b></h1>
+                                <h1 class="ds-section-title">{{ $t('dash_title_a') }}<b>{{ $t('dash_title_b') }}</b></h1>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>最後更新 <b>{{ currentTimeHHmm }}</b></span>
-                                <el-switch v-model="dashboardAutoRefresh" size="small" inline-prompt active-text="自動" inactive-text="手動"/>
-                                <el-button size="small" plain @click="load"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
+                                <el-switch v-model="dashboardAutoRefresh" size="small" inline-prompt :active-text="$t('common_auto')" :inactive-text="$t('common_manual')"/>
+                                <el-button size="small" plain @click="load"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>{{ $t('common_update') }}</el-button>
                             </div>
                         </div>
                     </div>
@@ -4736,19 +4736,19 @@
                     <!-- KPI Row: 3 焦點 (今日違規 / 待審核 / 攝影機線上) -->
                     <div class="ds-kpi-grid ds-kpi-3col">
                         <div class="ds-kpi-card" :class="{warn:(dashboard.today_violations||0)>50}">
-                            <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-alert"/></svg>今日違規</div>
+                            <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-alert"/></svg>{{ $t('dash_kpi_today') }}</div>
                             <div class="ds-kpi-value">{{ dashboard.today_violations || 0 }}</div>
                             <div class="ds-kpi-hint">{{ dashboardDeltaText || `截至 ${currentTimeHHmm} 累計` }}</div>
-                            <a class="ds-kpi-action" @click="page='violations'">查看明細 →</a>
+                            <a class="ds-kpi-action" @click="page='violations'">{{ $t('dash_view_detail') }}</a>
                         </div>
                         <div class="ds-kpi-card" :class="{warn:(dashboard.pending_review||0)>100}">
-                            <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-clipboard"/></svg>待審核</div>
+                            <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-clipboard"/></svg>{{ $t('dash_kpi_pending') }}</div>
                             <div class="ds-kpi-value">{{ dashboard.pending_review || 0 }}</div>
                             <div class="ds-kpi-hint">尚未開單{{ oldestPendingText }}</div>
-                            <a class="ds-kpi-action" v-if="canReviewTickets" @click="page='review';loadPendingViolations()">前往開單管理 →</a>
+                            <a class="ds-kpi-action" v-if="canReviewTickets" @click="page='review';loadPendingViolations()">{{ $t('dash_goto_review') }}</a>
                         </div>
                         <div class="ds-kpi-card" :class="{warn:(dashboard.offline_cameras||0)>0, ok:(dashboard.offline_cameras||0)===0}">
-                            <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-video"/></svg>攝影機線上</div>
+                            <div class="ds-kpi-label"><svg class="text-icon" style="margin-right:4px"><use href="#i-video"/></svg>{{ $t('dash_kpi_cameras') }}</div>
                             <div class="ds-kpi-value">{{ dashboard.online_cameras || 0 }}<span style="font-size:18px;color:var(--gov-muted)"> / {{ dashboard.total_cameras || 0 }}</span></div>
                             <div class="ds-kpi-hint">{{ dashboard.disabled_cameras || 0 }} 台停用 · {{ dashboard.offline_cameras || 0 }} 台離線</div>
                         </div>
@@ -5223,7 +5223,7 @@
                                     <el-input v-model="filters.plate" placeholder="車牌號碼" style="width:150px" size="small" clearable/>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
-                                    <span>點位</span>
+                                    <span>{{ $t('st_location') }}</span>
                                     <select v-model="filters.location" class="stats-native-select" style="width:150px">
                                         <option value="">全部點位</option>
                                         <option v-for="loc in locations" :key="loc" :value="loc">{{ loc }}</option>
@@ -5450,7 +5450,7 @@
                                     <el-input v-model="reviewPlate" placeholder="車牌號碼" style="width:150px" size="small" clearable/>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
-                                    <span>點位</span>
+                                    <span>{{ $t('st_location') }}</span>
                                     <select v-model="reviewLocation" class="stats-native-select" style="width:150px">
                                         <option value="">全部點位</option>
                                         <option v-for="loc in locations" :key="loc" :value="loc">{{ loc }}</option>
@@ -6474,7 +6474,7 @@
                                     <el-date-picker v-model="logsDateTo" type="datetime" placeholder="選擇日期時間" size="small" style="width:190px"/>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:6px">
-                                    <span>快捷</span>
+                                    <span>{{ $t('st_quick') }}</span>
                                     <el-button size="small" class="stats-quick-btn" :class="{active:logsQuickRange==='24h'}" @click="setLogsQuickRange('24h')">近24h</el-button>
                                     <el-button size="small" class="stats-quick-btn" :class="{active:logsQuickRange==='7d'}" @click="setLogsQuickRange('7d')">近7天</el-button>
                                     <el-button size="small" class="stats-quick-btn" :class="{active:logsQuickRange==='30d'}" @click="setLogsQuickRange('30d')">近30天</el-button>
@@ -6508,18 +6508,18 @@
                         <div class="ds-page-hero-row">
                             <div style="min-width:0;flex:1">
                                 <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use :href="'#'+currentPageIcon"/></svg></div>
-                                <h1 class="ds-section-title">統計<b>分析</b></h1>
+                                <h1 class="ds-section-title">{{ $t('st_title_a') }}<b>{{ $t('st_title_b') }}</b></h1>
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span v-if="statsSummary?.total_events!=null">事件 <b>{{ statsSummary.total_events }}</b></span>
                                 <span v-if="statsSummary?.avg_speed!=null">平均速率 <b>{{ Number(statsSummary.avg_speed).toFixed(1) }}</b></span>
                                 <span>更新 <b>{{ statsLastUpdated || '-' }}</b></span>
-                                <el-button size="small" plain :loading="statsLoading" @click="loadStats"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>重新查詢</el-button>
+                                <el-button size="small" plain :loading="statsLoading" @click="loadStats"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>{{ $t('common_refresh_query') }}</el-button>
                             </div>
                         </div>
                     </div>
                     <div class="card">
-                        <div class="card-header"><span><svg class="text-icon"><use href="#i-filter"/></svg>統計條件</span></div>
+                        <div class="card-header"><span><svg class="text-icon"><use href="#i-filter"/></svg>{{ $t('st_filter_card') }}</span></div>
                         <div class="card-body">
                             <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
                                 <div style="display:flex;align-items:center;gap:8px">
@@ -6527,7 +6527,7 @@
                                     <el-date-picker
                                         v-model="statsDateFrom"
                                         type="datetime"
-                                        placeholder="選擇日期時間"
+                                        :placeholder="$t('st_pick_datetime')"
                                         size="small"
                                         style="width:190px"/>
                                 </div>
@@ -6536,21 +6536,21 @@
                                     <el-date-picker
                                         v-model="statsDateTo"
                                         type="datetime"
-                                        placeholder="選擇日期時間"
+                                        :placeholder="$t('st_pick_datetime')"
                                         size="small"
                                         style="width:190px"/>
                                 </div>
-                                <el-input v-model="statsPlate" placeholder="車牌號碼" style="width:150px" size="small"/>
+                                <el-input v-model="statsPlate" :placeholder="$t('st_plate_ph')" style="width:150px" size="small"/>
                             </div>
                             <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">
                                 <div style="display:flex;align-items:center;gap:6px">
-                                    <span>快捷</span>
-                                    <el-button size="small" class="stats-quick-btn" :class="{active:statsQuickRange==='today'}" @click="setStatsQuickRange('today')">今日</el-button>
-                                    <el-button size="small" class="stats-quick-btn" :class="{active:statsQuickRange==='24h'}" @click="setStatsQuickRange('24h')">近24h</el-button>
-                                    <el-button size="small" class="stats-quick-btn" :class="{active:statsQuickRange==='7d'}" @click="setStatsQuickRange('7d')">近7天</el-button>
+                                    <span>{{ $t('st_quick') }}</span>
+                                    <el-button size="small" class="stats-quick-btn" :class="{active:statsQuickRange==='today'}" @click="setStatsQuickRange('today')">{{ $t('st_quick_today') }}</el-button>
+                                    <el-button size="small" class="stats-quick-btn" :class="{active:statsQuickRange==='24h'}" @click="setStatsQuickRange('24h')">{{ $t('st_quick_24h') }}</el-button>
+                                    <el-button size="small" class="stats-quick-btn" :class="{active:statsQuickRange==='7d'}" @click="setStatsQuickRange('7d')">{{ $t('st_quick_7d') }}</el-button>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
-                                    <span>時間刻度</span>
+                                    <span>{{ $t('st_timescale') }}</span>
                                     <select v-model="statsTimeScale" class="stats-native-select" style="width:120px">
                                         <option value="1h">近1小時</option>
                                         <option value="6h">近6小時</option>
@@ -6559,7 +6559,7 @@
                                     </select>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
-                                    <span>點位</span>
+                                    <span>{{ $t('st_location') }}</span>
                                     <select v-model="statsLocation" class="stats-native-select" style="width:150px">
                                         <option value="">全部</option>
                                         <option v-for="loc in statsLocationOptions" :key="`stats-loc-${loc}`" :value="loc">{{ loc }}</option>
@@ -6573,7 +6573,7 @@
                                     </select>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
-                                    <span>週期</span>
+                                    <span>{{ $t('st_period') }}</span>
                                     <select v-model="statsPeriod" class="stats-native-select" style="width:120px">
                                         <option value="1s">每秒</option>
                                         <option value="30s">每30秒</option>
@@ -6585,15 +6585,15 @@
                                     </select>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
-                                    <span>趨勢</span>
+                                    <span>{{ $t('st_trend') }}</span>
                                     <select v-model="statsTrendMode" class="stats-native-select" style="width:130px">
-                                        <option value="flow">流量</option>
-                                        <option value="speed">車速</option>
-                                        <option value="count">事件</option>
+                                        <option value="flow">{{ $t('st_trend_flow') }}</option>
+                                        <option value="speed">{{ $t('st_trend_speed') }}</option>
+                                        <option value="count">{{ $t('st_trend_count') }}</option>
                                     </select>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
-                                    <span>車道</span>
+                                    <span>{{ $t('st_lane') }}</span>
                                     <select v-model="statsLane" class="stats-native-select" style="width:110px">
                                         <option value="">全部</option>
                                         <option v-for="opt in statsLaneOptions" :key="`stats-lane-${opt.value}`" :value="opt.value">{{ opt.label }}</option>
@@ -7049,7 +7049,7 @@
                         <div class="card-body" style="padding:12px 12px 0 12px">
                             <div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
                                 <div style="display:flex;align-items:center;gap:8px">
-                                    <span>時間刻度</span>
+                                    <span>{{ $t('st_timescale') }}</span>
                                     <select v-model="vdTimeScale" class="stats-native-select" style="width:120px">
                                         <option value="1h">近1小時</option>
                                         <option value="6h">近6小時</option>
@@ -7066,7 +7066,7 @@
                                     </select>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:6px">
-                                    <span>快捷</span>
+                                    <span>{{ $t('st_quick') }}</span>
                                     <button type="button" class="vd-quick-btn" :class="{active:vdQuickRange==='today'}" @click="setVdQuickRange('today')">今日</button>
                                     <button type="button" class="vd-quick-btn" :class="{active:vdQuickRange==='24h'}" @click="setVdQuickRange('24h')">近24h</button>
                                     <button type="button" class="vd-quick-btn" :class="{active:vdQuickRange==='7d'}" @click="setVdQuickRange('7d')">近7天</button>
@@ -7090,7 +7090,7 @@
                                     <el-date-picker
                                         v-model="vdFilter.timeFrom"
                                         type="datetime"
-                                        placeholder="選擇日期時間"
+                                        :placeholder="$t('st_pick_datetime')"
                                         size="small"
                                         style="width:190px"/>
                                 </div>
@@ -7099,7 +7099,7 @@
                                     <el-date-picker
                                         v-model="vdFilter.timeTo"
                                         type="datetime"
-                                        placeholder="選擇日期時間"
+                                        :placeholder="$t('st_pick_datetime')"
                                         size="small"
                                         style="width:190px"/>
                                 </div>
@@ -18230,6 +18230,14 @@ const __I18N = {
     nav_analytics:'分析功能', nav_cameras:'攝影機管理', nav_nx:'Nx 串流',
     nav_frigate:'NVR 設定', nav_logs:'系統監控日誌', nav_mqtt:'MQTT',
     nav_hwmonitor:'硬體效能監測', nav_permission:'權限管理', nav_io:'燈號 I/O 控制',
+    common_update:'更新', common_refresh_query:'重新查詢', common_auto:'自動', common_manual:'手動',
+    dash_title_a:'違規件數', dash_title_b:'統計', dash_kpi_today:'今日違規', dash_kpi_pending:'待審核',
+    dash_kpi_cameras:'攝影機線上', dash_view_detail:'查看明細 →', dash_goto_review:'前往開單管理 →',
+    st_title_a:'統計', st_title_b:'分析', st_filter_card:'統計條件', st_from:'從', st_to:'到',
+    st_plate_ph:'車牌號碼', st_pick_datetime:'選擇日期時間', st_quick:'快捷',
+    st_quick_today:'今日', st_quick_24h:'近24h', st_quick_7d:'近7天',
+    st_timescale:'時間刻度', st_location:'點位', st_camera:'攝影機', st_period:'週期',
+    st_trend:'趨勢', st_trend_flow:'流量', st_trend_speed:'車速', st_trend_count:'事件', st_lane:'車道',
   },
   en: {
     brand_title:'Traffic Imaging',
@@ -18242,6 +18250,14 @@ const __I18N = {
     nav_analytics:'Analytics', nav_cameras:'Cameras', nav_nx:'Nx Stream',
     nav_frigate:'NVR Settings', nav_logs:'System Logs', nav_mqtt:'MQTT',
     nav_hwmonitor:'Hardware Monitor', nav_permission:'Permissions', nav_io:'I/O Control',
+    common_update:'Update', common_refresh_query:'Refresh', common_auto:'Auto', common_manual:'Manual',
+    dash_title_a:'Violation ', dash_title_b:'Stats', dash_kpi_today:"Today's Violations", dash_kpi_pending:'Pending Review',
+    dash_kpi_cameras:'Cameras Online', dash_view_detail:'View Details →', dash_goto_review:'Go to Review →',
+    st_title_a:'Statistical ', st_title_b:'Analysis', st_filter_card:'Filters', st_from:'From', st_to:'To',
+    st_plate_ph:'Plate No.', st_pick_datetime:'Pick date/time', st_quick:'Quick',
+    st_quick_today:'Today', st_quick_24h:'Last 24h', st_quick_7d:'Last 7d',
+    st_timescale:'Time Scale', st_location:'Location', st_camera:'Camera', st_period:'Period',
+    st_trend:'Trend', st_trend_flow:'Flow', st_trend_speed:'Speed', st_trend_count:'Events', st_lane:'Lane',
   },
 };
 const __lang = ref(localStorage.getItem('ui_lang') || 'zh');
