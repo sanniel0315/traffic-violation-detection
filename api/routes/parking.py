@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import shutil
 
 import cv2
 import numpy as np
@@ -65,6 +66,19 @@ class IOTriggerBody(BaseModel):
     do_ch: int = 0
     threshold_rate: float = 95.0            # 佔用率 >= 此值觸發
     pulse_ms: int = 1000
+
+
+class SlotCreateBody(BaseModel):
+    source: str
+    id: Optional[str] = None                 # None=自動配 P{n}
+    label: Optional[str] = None
+    polygon: List[List[float]]
+
+
+class SlotUpdateBody(BaseModel):
+    source: str
+    label: Optional[str] = None
+    polygon: Optional[List[List[float]]] = None
 
 
 router = APIRouter(prefix="/api/parking", tags=["parking"])
@@ -1096,6 +1110,7 @@ def save_slots(body: SlotsSaveBody):
     existing[body.source] = entry
 
     os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+    _backup_slot_config()
     with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(existing, f, ensure_ascii=False, indent=2)
     # 車位重存 → 清該 source 的遲滯狀態,避免舊位置殘留
@@ -1105,6 +1120,118 @@ def save_slots(body: SlotsSaveBody):
     except Exception:
         pass
     return {"ok": True, "source": body.source, "saved": len(body.slots)}
+
+
+# ───── per-slot CRUD (方案2): 單格新增/改/刪 + 還原備份 ─────
+def _read_slot_config() -> dict:
+    if os.path.exists(_CONFIG_PATH):
+        try:
+            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    from services.parking_occupancy import _DEFAULT_CONFIG
+    return json.loads(json.dumps(_DEFAULT_CONFIG))
+
+
+def _backup_slot_config() -> None:
+    try:
+        if os.path.exists(_CONFIG_PATH):
+            shutil.copy(_CONFIG_PATH, _CONFIG_PATH + ".bak")
+    except Exception:
+        pass
+
+
+def _write_slot_config(cfg: dict, source: str) -> None:
+    os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+    _backup_slot_config()
+    with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    try:
+        from services.parking_slot_state import reset as _r
+        _r(source)
+    except Exception:
+        pass
+
+
+def _next_slot_id(slots: list) -> str:
+    existing = {str(s.get("id")) for s in slots}
+    n = 1
+    while f"P{n}" in existing:
+        n += 1
+    return f"P{n}"
+
+
+@router.post("/slot")
+def create_slot(body: SlotCreateBody):
+    """新增單一車格 (CREATE)。id 留空自動配 P{n};id 重複回 409。"""
+    if len(body.polygon) < 3:
+        raise HTTPException(status_code=400, detail="polygon 至少 3 點")
+    cfg = _read_slot_config()
+    entry = cfg.get(body.source) or {}
+    slots = entry.get("slots") or []
+    sid = str(body.id) if body.id else _next_slot_id(slots)
+    if any(str(s.get("id")) == sid for s in slots):
+        raise HTTPException(status_code=409, detail=f"車格 id {sid} 已存在")
+    slots.append({"id": sid, "label": body.label or sid,
+                  "polygon": [[float(x), float(y)] for x, y in body.polygon]})
+    entry["slots"] = slots
+    cfg[body.source] = entry
+    _write_slot_config(cfg, body.source)
+    return {"ok": True, "id": sid, "total": len(slots)}
+
+
+@router.put("/slot/{slot_id}")
+def update_slot(slot_id: str, body: SlotUpdateBody):
+    """更新單一車格 label / polygon (UPDATE)。"""
+    cfg = _read_slot_config()
+    entry = cfg.get(body.source) or {}
+    slots = entry.get("slots") or []
+    target = next((s for s in slots if str(s.get("id")) == str(slot_id)), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"找不到車格 {slot_id}")
+    if body.label is not None:
+        target["label"] = body.label
+    if body.polygon is not None:
+        if len(body.polygon) < 3:
+            raise HTTPException(status_code=400, detail="polygon 至少 3 點")
+        target["polygon"] = [[float(x), float(y)] for x, y in body.polygon]
+    entry["slots"] = slots
+    cfg[body.source] = entry
+    _write_slot_config(cfg, body.source)
+    return {"ok": True, "id": slot_id}
+
+
+@router.delete("/slot/{slot_id}")
+def delete_slot(slot_id: str, source: str = Query(...)):
+    """刪除單一車格 (DELETE)。"""
+    cfg = _read_slot_config()
+    entry = cfg.get(source) or {}
+    slots = entry.get("slots") or []
+    new_slots = [s for s in slots if str(s.get("id")) != str(slot_id)]
+    if len(new_slots) == len(slots):
+        raise HTTPException(status_code=404, detail=f"找不到車格 {slot_id}")
+    entry["slots"] = new_slots
+    cfg[source] = entry
+    _write_slot_config(cfg, source)
+    return {"ok": True, "id": slot_id, "total": len(new_slots)}
+
+
+@router.post("/slots/restore")
+def restore_slots(source: str = Query(...)):
+    """還原上一版車格 (從 .bak 備份)。"""
+    bak = _CONFIG_PATH + ".bak"
+    if not os.path.exists(bak):
+        raise HTTPException(status_code=404, detail="無備份可還原")
+    shutil.copy(bak, _CONFIG_PATH)
+    try:
+        from services.parking_slot_state import reset as _r
+        _r(source)
+    except Exception:
+        pass
+    cfg = _read_slot_config()
+    n = len((cfg.get(source) or {}).get("slots") or [])
+    return {"ok": True, "source": source, "slots": n}
 
 
 # ───── 標註 / 評測 (P3): 收集本地真值 → 量準確率 + 匯出 fine-tune 訓練裁切 ─────
