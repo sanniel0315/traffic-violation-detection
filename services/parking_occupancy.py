@@ -296,13 +296,12 @@ def fetch_frame(source_key: str, bypass_cache: bool = False) -> Optional[np.ndar
         if not url.startswith("http"):
             url = meta.get("image_url", "")
         try:
-            if bypass_cache:
-                sep = "&" if "?" in url else "?"
-                fetch_url = f"{url}{sep}_t={int(now*1000)}"
-                headers = {"Cache-Control": "no-cache, no-store", "Pragma": "no-cache"}
-            else:
-                fetch_url = url
-                headers = {}
+            # 一律對 CDN 破快取: c01.twipcam.com 會回邊緣快取的同一張圖,不加 _t
+            # 會讓影像時間戳凍結 (偵測中卻看似不更新)。2 秒內仍由 _LATEST_FRAME_CACHE
+            # 擋住,不會狂打 twipcam。
+            sep = "&" if "?" in url else "?"
+            fetch_url = f"{url}{sep}_t={int(now*1000)}"
+            headers = {"Cache-Control": "no-cache, no-store", "Pragma": "no-cache"}
             r = _req.get(fetch_url, timeout=8, headers=headers)
             content = r.content
             # 驗 JPEG 完整性再 decode: 殘缺/截斷的 buffer 餵 cv2.imdecode 會 native SEGV
