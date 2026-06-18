@@ -10494,7 +10494,9 @@ const app=createApp({
             const r=pmRect.value;
             if(r && r.w<5 && r.h<5){ pmRect.value=null; pmLabel.value=''; }  // 視為點擊,清除
         };
-        const parkingUseStream=ref(true);
+        // twipcam 是快照型來源 + 串流每幀重跑偵測 (~4s/張) → MJPEG 串流看似凍結;
+        // 預設用快照輪詢 (依間隔刷新,對快照型攝影機才合理),串流模式留作 RTSP 來源選用
+        const parkingUseStream=ref(false);
         // stream 持續更新不用 tick;polling snapshot 才用 tick 強迫重抓
         const parkingSnapshotUrl=computed(()=> {
             const base = `/api/parking/${parkingUseStream.value?'stream':'snapshot'}?source=${encodeURIComponent(parkingSource.value)}&show_boxes=${parkingShowBoxes.value}&show_vehicles=${parkingShowVehicles.value}`;
