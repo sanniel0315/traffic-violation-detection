@@ -4621,7 +4621,7 @@
                     <!-- Wordmark -->
                     <div class="brand-text brand-text-v2">
                         <div class="brand-overline">AI · TRAFFIC IMAGING</div>
-                        <div class="brand-title">交通影像分析</div>
+                        <div class="brand-title">{{ $t('brand_title') }}</div>
                         <div class="brand-meta-row">
                             <span class="brand-meta-tag">ANALYTICS</span>
                             <span class="brand-meta-sep"></span>
@@ -4631,38 +4631,43 @@
                 </div>
             </div>
 
+            <!-- 中英語系切換 -->
+            <div class="lang-switch-row" style="padding:4px 12px 8px;display:flex;justify-content:flex-end">
+                <button class="lang-switch-btn" @click="$toggleLang()" :title="$lang.value==='zh'?'Switch to English':'切換為中文'" style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;cursor:pointer;border:1px solid rgba(255,255,255,0.35);background:rgba(255,255,255,0.08);color:#fff;border-radius:6px;padding:3px 12px;letter-spacing:0.04em">{{ $lang.value==='zh' ? 'EN' : '中文' }}</button>
+            </div>
+
             <!-- Phase 2: menu 區 wrapper (既有 menu-item 完全不動) -->
             <div class="sidebar-menu-area">
-            <div v-if="hasPerm('map')" class="menu-item" :class="{active:page==='map'}" @click="page='map'"><svg class="nav-icon"><use href="#i-map"/></svg><span>地圖儀錶板</span></div>
-            <div v-if="canViewDashboard" class="menu-item" :class="{active:page==='dashboard'}" @click="page='dashboard'"><svg class="nav-icon"><use href="#i-bar"/></svg><span>違規件數統計</span></div>
-            <div class="menu-item" @click="menuOpen.query=!menuOpen.query"><svg class="nav-icon"><use href="#i-search"/></svg><span>事件查詢統計</span><span class="arrow" :class="{open:menuOpen.query}">▶</span></div>
+            <div v-if="hasPerm('map')" class="menu-item" :class="{active:page==='map'}" @click="page='map'"><svg class="nav-icon"><use href="#i-map"/></svg><span>{{ $t('nav_map') }}</span></div>
+            <div v-if="canViewDashboard" class="menu-item" :class="{active:page==='dashboard'}" @click="page='dashboard'"><svg class="nav-icon"><use href="#i-bar"/></svg><span>{{ $t('nav_dashboard') }}</span></div>
+            <div class="menu-item" @click="menuOpen.query=!menuOpen.query"><svg class="nav-icon"><use href="#i-search"/></svg><span>{{ $t('nav_query_group') }}</span><span class="arrow" :class="{open:menuOpen.query}">▶</span></div>
             <div class="submenu" v-show="menuOpen.query">
-                <div v-if="hasPerm('statistics')" class="menu-item" :class="{active:page==='statistics'}" @click="page='statistics';loadStats()"><svg class="nav-icon"><use href="#i-pie"/></svg><span>統計分析</span></div>
-                <div v-if="hasPerm('reports')" class="menu-item" :class="{active:page==='vd_report'}" @click="page='vd_report'"><svg class="nav-icon"><use href="#i-road"/></svg><span>VD 車道報表</span></div>
-                <div v-if="hasPerm('violations')" class="menu-item" :class="{active:page==='violations'}" @click="page='violations'"><svg class="nav-icon"><use href="#i-filter"/></svg><span>複合條件查詢</span></div>
-                <div v-if="hasPerm('reports')" class="menu-item" :class="{active:page==='reports'}" @click="page='reports'"><svg class="nav-icon"><use href="#i-file"/></svg><span>一般報表</span></div>
-                <div v-if="hasPerm('repeat')" class="menu-item" :class="{active:page==='repeat'}" @click="page='repeat'"><svg class="nav-icon"><use href="#i-repeat"/></svg><span>車輛累犯查詢</span></div>
+                <div v-if="hasPerm('statistics')" class="menu-item" :class="{active:page==='statistics'}" @click="page='statistics';loadStats()"><svg class="nav-icon"><use href="#i-pie"/></svg><span>{{ $t('nav_statistics') }}</span></div>
+                <div v-if="hasPerm('reports')" class="menu-item" :class="{active:page==='vd_report'}" @click="page='vd_report'"><svg class="nav-icon"><use href="#i-road"/></svg><span>{{ $t('nav_vd_report') }}</span></div>
+                <div v-if="hasPerm('violations')" class="menu-item" :class="{active:page==='violations'}" @click="page='violations'"><svg class="nav-icon"><use href="#i-filter"/></svg><span>{{ $t('nav_violations') }}</span></div>
+                <div v-if="hasPerm('reports')" class="menu-item" :class="{active:page==='reports'}" @click="page='reports'"><svg class="nav-icon"><use href="#i-file"/></svg><span>{{ $t('nav_reports') }}</span></div>
+                <div v-if="hasPerm('repeat')" class="menu-item" :class="{active:page==='repeat'}" @click="page='repeat'"><svg class="nav-icon"><use href="#i-repeat"/></svg><span>{{ $t('nav_repeat') }}</span></div>
             </div>
-            <div v-if="canReviewTickets" class="menu-item" :class="{active:page==='review'}" @click="page='review';loadPendingViolations()"><svg class="nav-icon"><use href="#i-clipboard"/></svg><span>開單管理</span></div>
-            <div v-if="hasPerm('monitor')" class="menu-item" :class="{active:page==='monitor'}" @click="page='monitor';loadCameras()"><svg class="nav-icon"><use href="#i-monitor"/></svg><span>即時監控</span></div>
-            <div v-if="hasPerm('lpr')" class="menu-item" :class="{active:page==='lpr'}" @click="page='lpr';loadLprStatus();loadLprHistory()"><svg class="nav-icon"><use href="#i-scan"/></svg><span>車牌辨識</span></div>
-            <div v-if="canOpenAnalysisMenu" class="menu-item" :class="{active:isAnalysisPage}" @click="menuOpen.analysis=!menuOpen.analysis"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>分析</span><span class="arrow" :class="{open:menuOpen.analysis}">▶</span></div>
+            <div v-if="canReviewTickets" class="menu-item" :class="{active:page==='review'}" @click="page='review';loadPendingViolations()"><svg class="nav-icon"><use href="#i-clipboard"/></svg><span>{{ $t('nav_review') }}</span></div>
+            <div v-if="hasPerm('monitor')" class="menu-item" :class="{active:page==='monitor'}" @click="page='monitor';loadCameras()"><svg class="nav-icon"><use href="#i-monitor"/></svg><span>{{ $t('nav_monitor') }}</span></div>
+            <div v-if="hasPerm('lpr')" class="menu-item" :class="{active:page==='lpr'}" @click="page='lpr';loadLprStatus();loadLprHistory()"><svg class="nav-icon"><use href="#i-scan"/></svg><span>{{ $t('nav_lpr') }}</span></div>
+            <div v-if="canOpenAnalysisMenu" class="menu-item" :class="{active:isAnalysisPage}" @click="menuOpen.analysis=!menuOpen.analysis"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>{{ $t('nav_analysis_group') }}</span><span class="arrow" :class="{open:menuOpen.analysis}">▶</span></div>
             <div v-if="canOpenAnalysisMenu" class="submenu" v-show="menuOpen.analysis">
-                <div v-if="hasPerm('analysis_traffic')" class="menu-item" :class="{active:page==='traffic_flow_settings'}" @click="openAnalysisPage('traffic_flow_settings')"><svg class="nav-icon"><use href="#i-shuffle"/></svg><span>車流設定</span></div>
-                <div v-if="hasPerm('analysis_speed')" class="menu-item" :class="{active:page==='speed_detection'}" @click="openAnalysisPage('speed_detection')"><svg class="nav-icon"><use href="#i-gauge"/></svg><span>車速檢測</span></div>
-                <div v-if="hasPerm('analysis_congestion')" class="menu-item" :class="{active:page==='congestion_detection'}" @click="openAnalysisPage('congestion_detection')"><svg class="nav-icon"><use href="#i-alert"/></svg><span>壅塞檢測</span></div>
-                <div v-if="hasPerm('analysis_parking')" class="menu-item" :class="{active:page==='parking_violation_settings'}" @click="openAnalysisPage('parking_violation_settings')"><svg class="nav-icon"><use href="#i-target"/></svg><span>停車違規設定</span></div>
-                <div v-if="hasPerm('analysis_parking_detection')" class="menu-item" :class="{active:page==='parking_detection'}" @click="page='parking_detection';loadParkingSources();loadParkingOccupancy()"><svg class="nav-icon"><use href="#i-pin"/></svg><span>停車場車位偵測</span></div>
-                <div v-if="hasPerm('analysis_insights')" class="menu-item" :class="{active:page==='analytics_insights'}" @click="page='analytics_insights';loadAnalytics()"><svg class="nav-icon"><use href="#i-pie"/></svg><span>分析功能</span></div>
+                <div v-if="hasPerm('analysis_traffic')" class="menu-item" :class="{active:page==='traffic_flow_settings'}" @click="openAnalysisPage('traffic_flow_settings')"><svg class="nav-icon"><use href="#i-shuffle"/></svg><span>{{ $t('nav_traffic_flow') }}</span></div>
+                <div v-if="hasPerm('analysis_speed')" class="menu-item" :class="{active:page==='speed_detection'}" @click="openAnalysisPage('speed_detection')"><svg class="nav-icon"><use href="#i-gauge"/></svg><span>{{ $t('nav_speed') }}</span></div>
+                <div v-if="hasPerm('analysis_congestion')" class="menu-item" :class="{active:page==='congestion_detection'}" @click="openAnalysisPage('congestion_detection')"><svg class="nav-icon"><use href="#i-alert"/></svg><span>{{ $t('nav_congestion') }}</span></div>
+                <div v-if="hasPerm('analysis_parking')" class="menu-item" :class="{active:page==='parking_violation_settings'}" @click="openAnalysisPage('parking_violation_settings')"><svg class="nav-icon"><use href="#i-target"/></svg><span>{{ $t('nav_parking_violation') }}</span></div>
+                <div v-if="hasPerm('analysis_parking_detection')" class="menu-item" :class="{active:page==='parking_detection'}" @click="page='parking_detection';loadParkingSources();loadParkingOccupancy()"><svg class="nav-icon"><use href="#i-pin"/></svg><span>{{ $t('nav_parking_detection') }}</span></div>
+                <div v-if="hasPerm('analysis_insights')" class="menu-item" :class="{active:page==='analytics_insights'}" @click="page='analytics_insights';loadAnalytics()"><svg class="nav-icon"><use href="#i-pie"/></svg><span>{{ $t('nav_analytics') }}</span></div>
             </div>
-            <div v-if="canManageCameras" class="menu-item" :class="{active:page==='cameras'}" @click="page='cameras';loadCameras()"><svg class="nav-icon"><use href="#i-video"/></svg><span>攝影機管理</span></div>
-            <div v-if="canManageCameras" class="menu-item" :class="{active:page==='nx_viewer'}" @click="page='nx_viewer';loadNxSettings()"><svg class="nav-icon"><use href="#i-film"/></svg><span>Nx 串流</span></div>
-            <div v-if="canManageNvr" class="menu-item" :class="{active:page==='frigate'}" @click="page='frigate';loadNVRStatus()"><svg class="nav-icon"><use href="#i-server"/></svg><span>NVR 設定</span></div>
-            <div v-if="hasPerm('logs')" class="menu-item" :class="{active:page==='logs'}" @click="page='logs';loadSystemLogs()"><svg class="nav-icon"><use href="#i-list"/></svg><span>系統監控日誌</span></div>
+            <div v-if="canManageCameras" class="menu-item" :class="{active:page==='cameras'}" @click="page='cameras';loadCameras()"><svg class="nav-icon"><use href="#i-video"/></svg><span>{{ $t('nav_cameras') }}</span></div>
+            <div v-if="canManageCameras" class="menu-item" :class="{active:page==='nx_viewer'}" @click="page='nx_viewer';loadNxSettings()"><svg class="nav-icon"><use href="#i-film"/></svg><span>{{ $t('nav_nx') }}</span></div>
+            <div v-if="canManageNvr" class="menu-item" :class="{active:page==='frigate'}" @click="page='frigate';loadNVRStatus()"><svg class="nav-icon"><use href="#i-server"/></svg><span>{{ $t('nav_frigate') }}</span></div>
+            <div v-if="hasPerm('logs')" class="menu-item" :class="{active:page==='logs'}" @click="page='logs';loadSystemLogs()"><svg class="nav-icon"><use href="#i-list"/></svg><span>{{ $t('nav_logs') }}</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='mqtt'}" @click="page='mqtt';loadMqttStatus()"><svg class="nav-icon"><use href="#i-radio"/></svg><span>MQTT</span></div>
-            <div v-if="hasPerm('hwmonitor')" class="menu-item" :class="{active:page==='hwmonitor'}" @click="page='hwmonitor';loadHwStatus()"><svg class="nav-icon"><use href="#i-activity"/></svg><span>硬體效能監測</span></div>
-            <div v-if="isAdmin" class="menu-item" :class="{active:page==='permission_admin'}" @click="page='permission_admin'"><svg class="nav-icon"><use href="#i-lock"/></svg><span>權限管理</span></div>
-            <div v-if="isAdmin" class="menu-item" :class="{active:page==='io_panel'}" @click="page='io_panel'"><svg class="nav-icon"><use href="#i-zap"/></svg><span>燈號 I/O 控制</span></div>
+            <div v-if="hasPerm('hwmonitor')" class="menu-item" :class="{active:page==='hwmonitor'}" @click="page='hwmonitor';loadHwStatus()"><svg class="nav-icon"><use href="#i-activity"/></svg><span>{{ $t('nav_hwmonitor') }}</span></div>
+            <div v-if="isAdmin" class="menu-item" :class="{active:page==='permission_admin'}" @click="page='permission_admin'"><svg class="nav-icon"><use href="#i-lock"/></svg><span>{{ $t('nav_permission') }}</span></div>
+            <div v-if="isAdmin" class="menu-item" :class="{active:page==='io_panel'}" @click="page='io_panel'"><svg class="nav-icon"><use href="#i-zap"/></svg><span>{{ $t('nav_io') }}</span></div>
             </div><!-- /sidebar-menu-area -->
 
             <!-- sidebar 底部 status (動態 health 切換 online / fault) -->
@@ -18211,6 +18216,46 @@ const app=createApp({
 });
 window.__vueApp=app;
 app.component('NxCameraViewer', NxCameraViewer);
+
+// ── i18n 中英切換 (Phase 1: 導航 + 品牌;頁面內文後續分批擴充) ──
+const __I18N = {
+  zh: {
+    brand_title:'交通影像分析',
+    nav_map:'地圖儀錶板', nav_dashboard:'違規件數統計', nav_query_group:'事件查詢統計',
+    nav_statistics:'統計分析', nav_vd_report:'VD 車道報表', nav_violations:'複合條件查詢',
+    nav_reports:'一般報表', nav_repeat:'車輛累犯查詢', nav_review:'開單管理',
+    nav_monitor:'即時監控', nav_lpr:'車牌辨識', nav_analysis_group:'分析',
+    nav_traffic_flow:'車流設定', nav_speed:'車速檢測', nav_congestion:'壅塞檢測',
+    nav_parking_violation:'停車違規設定', nav_parking_detection:'停車場車位偵測',
+    nav_analytics:'分析功能', nav_cameras:'攝影機管理', nav_nx:'Nx 串流',
+    nav_frigate:'NVR 設定', nav_logs:'系統監控日誌', nav_mqtt:'MQTT',
+    nav_hwmonitor:'硬體效能監測', nav_permission:'權限管理', nav_io:'燈號 I/O 控制',
+  },
+  en: {
+    brand_title:'Traffic Imaging',
+    nav_map:'Map Dashboard', nav_dashboard:'Violation Stats', nav_query_group:'Query & Stats',
+    nav_statistics:'Statistics', nav_vd_report:'VD Lane Report', nav_violations:'Advanced Query',
+    nav_reports:'Reports', nav_repeat:'Repeat Offenders', nav_review:'Ticket Review',
+    nav_monitor:'Live Monitor', nav_lpr:'License Plate', nav_analysis_group:'Analysis',
+    nav_traffic_flow:'Traffic Flow', nav_speed:'Speed Detection', nav_congestion:'Congestion',
+    nav_parking_violation:'Parking Violation', nav_parking_detection:'Parking Occupancy',
+    nav_analytics:'Analytics', nav_cameras:'Cameras', nav_nx:'Nx Stream',
+    nav_frigate:'NVR Settings', nav_logs:'System Logs', nav_mqtt:'MQTT',
+    nav_hwmonitor:'Hardware Monitor', nav_permission:'Permissions', nav_io:'I/O Control',
+  },
+};
+const __lang = ref(localStorage.getItem('ui_lang') || 'zh');
+app.config.globalProperties.$lang = __lang;
+app.config.globalProperties.$t = (k) => {
+  const d = __I18N[__lang.value] || __I18N.zh;
+  return (k in d) ? d[k] : (__I18N.zh[k] != null ? __I18N.zh[k] : k);
+};
+app.config.globalProperties.$toggleLang = () => {
+  __lang.value = __lang.value === 'zh' ? 'en' : 'zh';
+  localStorage.setItem('ui_lang', __lang.value);
+  document.documentElement.lang = __lang.value === 'zh' ? 'zh-Hant' : 'en';
+};
+
 app.use(ElementPlus).mount('#app');
 </script>
 </body>
