@@ -49,6 +49,7 @@
       <el-button size="small" type="danger" @click="stopSessionAndImport" v-if="sessionRunning">停止累積並匯入</el-button>
       <el-button size="small" @click="cancelCurrent" :disabled="!dragging">取消拖拉</el-button>
       <el-button size="small" plain @click="loadExistingSlots">重新載入</el-button>
+      <el-button size="small" type="warning" plain @click="restoreSlots">還原上一版</el-button>
       <el-button size="small" type="danger" plain @click="clearAllSlots" :disabled="!slots.length || sessionRunning">清空全部</el-button>
       <el-divider direction="vertical"/>
       <el-button size="small" type="warning" plain v-if="!maskMode && !exMode" @click="startMaskMode">畫停車場區域</el-button>
@@ -723,9 +724,23 @@ const app = createApp({
       redraw();
     };
 
-    const removeSlot = (idx) => {
+    const removeSlot = async (idx) => {
+      const s = slots.value[idx];
       slots.value.splice(idx, 1);
       redraw();
+      // per-slot 即時刪除 (CRUD-D);新畫未存的格後端無→404 忽略
+      try {
+        await fetch(`/api/parking/slot/${encodeURIComponent(s.id)}?source=${encodeURIComponent(sourceKey.value)}`, { method: 'DELETE' });
+      } catch (e) {}
+    };
+    const restoreSlots = async () => {
+      if (!confirm('還原上一版車格 (回到最近一次儲存前的狀態)?')) return;
+      try {
+        const r = await fetch(`/api/parking/slots/restore?source=${encodeURIComponent(sourceKey.value)}`, { method: 'POST' });
+        const d = await r.json();
+        if (r.ok && d.ok) { ElementPlus.ElMessage.success(`已還原 (${d.slots} 格)`); loadExistingSlots(); }
+        else ElementPlus.ElMessage.error(d.detail || '還原失敗');
+      } catch (e) { ElementPlus.ElMessage.error('錯誤: ' + e); }
     };
 
     // ── 整排調整 helpers ──
@@ -1208,7 +1223,7 @@ const app = createApp({
       startLineMode, cancelLineMode, toggleEnterNormal, clearCountingLine,
       reloadImage, onImgLoad,
       onMouseDown, onMouseMove, onMouseUp,
-      cancelCurrent, removeSlot, loadExistingSlots,
+      cancelCurrent, removeSlot, restoreSlots, loadExistingSlots,
       autoDetectSlots, clearAllSlots,
       startSession, stopSessionAndImport,
       startMaskMode, cancelMask, finishMask, clearMask,
