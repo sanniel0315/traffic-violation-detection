@@ -18270,9 +18270,63 @@ app.config.globalProperties.$toggleLang = () => {
   __lang.value = __lang.value === 'zh' ? 'en' : 'zh';
   localStorage.setItem('ui_lang', __lang.value);
   document.documentElement.lang = __lang.value === 'zh' ? 'zh-Hant' : 'en';
+  __applyI18n();
 };
 
+// ── 執行期「依原文翻譯」全域翻譯器 (覆蓋未逐字包 $t 的頁面內文) ──
+let __i18nDict = null, __i18nObs = null, __i18nPending = false;
+async function __loadDict(){
+  if (__i18nDict) return __i18nDict;
+  try { __i18nDict = await (await fetch('/web/i18n_en.json', {cache:'force-cache'})).json(); }
+  catch(e){ __i18nDict = {}; }
+  return __i18nDict;
+}
+function __walkTranslate(root){
+  const d = __i18nDict; if (!d || !root) return;
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const nodes = []; while (w.nextNode()) nodes.push(w.currentNode);
+  for (const n of nodes){
+    const raw = n.nodeValue; if (!raw) continue;
+    const t = raw.trim(); if (!t) continue;
+    const en = d[t];
+    if (en != null && en !== t){ if (n.__zh == null) n.__zh = raw; n.nodeValue = raw.split(t).join(en); }
+  }
+  if (root.querySelectorAll) root.querySelectorAll('[placeholder],[title]').forEach(el=>{
+    ['placeholder','title'].forEach(a=>{
+      const v = el.getAttribute(a); if (!v) return;
+      const en = d[v.trim()];
+      if (en != null && en !== v.trim()){ const k='__zh_'+a; if (el[k]==null) el[k]=v; el.setAttribute(a, en); }
+    });
+  });
+}
+function __restoreZh(root){
+  if (!root) return;
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const nodes = []; while (w.nextNode()) nodes.push(w.currentNode);
+  for (const n of nodes){ if (n.__zh != null){ n.nodeValue = n.__zh; n.__zh = null; } }
+  if (root.querySelectorAll) root.querySelectorAll('[placeholder],[title]').forEach(el=>{
+    ['placeholder','title'].forEach(a=>{ const k='__zh_'+a; if (el[k]!=null){ el.setAttribute(a, el[k]); el[k]=null; } });
+  });
+}
+function __scheduleTranslate(){
+  if (__i18nPending) return; __i18nPending = true;
+  setTimeout(()=>{ __i18nPending=false; if (__lang.value==='en') __walkTranslate(document.getElementById('app')); }, 120);
+}
+async function __applyI18n(){
+  const appEl = document.getElementById('app'); if (!appEl) return;
+  if (__lang.value === 'en'){
+    await __loadDict();
+    __walkTranslate(appEl);
+    if (!__i18nObs){ __i18nObs = new MutationObserver(()=>__scheduleTranslate()); __i18nObs.observe(appEl, {childList:true, subtree:true, characterData:true}); }
+  } else {
+    if (__i18nObs){ __i18nObs.disconnect(); __i18nObs = null; }
+    __restoreZh(appEl);
+  }
+}
+
 app.use(ElementPlus).mount('#app');
+// 初次載入若記憶為英文,套用全站翻譯
+if (__lang.value === 'en') setTimeout(__applyI18n, 300);
 </script>
 </body>
 </html>
