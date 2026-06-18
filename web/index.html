@@ -5997,46 +5997,55 @@
                             </div>
                             <!-- 右側 1fr 區: 統計列 (橫向填滿) + 車位狀態 (auto-fit 填滿,車位多少都不留空) -->
                             <div style="display:flex;flex-direction:column;gap:12px">
-                                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
-                                    <div style="background:var(--gov-bg);border-radius:8px;padding:14px 8px;text-align:center;display:flex;flex-direction:column;justify-content:center">
-                                        <div style="font-size:11px;color:var(--gov-muted);font-family:var(--font-sans);letter-spacing:0.1em">佔用率</div>
-                                        <div style="font-size:34px;font-weight:800;line-height:1.1;margin-top:4px;font-family:var(--font-mono)"
-                                             :style="{color: (parkingData?.occupancy_rate||0) >= 80 ? 'var(--gov-fault)' : (parkingData?.occupancy_rate||0) >= 50 ? 'var(--gov-warn)' : 'var(--gov-ok)'}">{{ parkingData?.occupancy_rate || 0 }}<span style="font-size:16px">%</span></div>
+                                <!-- 佔用率 hero + 進度條 -->
+                                <div style="background:linear-gradient(135deg,var(--gov-surface) 0%,var(--gov-bg) 100%);border:1px solid var(--gov-border);border-radius:14px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,0.05)">
+                                    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                                        <div>
+                                            <div style="font-size:11px;color:var(--gov-muted);letter-spacing:0.14em;font-family:var(--font-sans)">佔用率 · OCCUPANCY</div>
+                                            <div style="font-size:48px;font-weight:800;line-height:1;margin-top:6px;font-family:var(--font-mono)"
+                                                 :style="{color: (parkingData?.occupancy_rate||0) >= 80 ? 'var(--gov-fault)' : (parkingData?.occupancy_rate||0) >= 50 ? 'var(--gov-warn)' : 'var(--gov-ok)'}">{{ parkingData?.occupancy_rate || 0 }}<span style="font-size:22px;font-weight:600">%</span></div>
+                                        </div>
+                                        <div style="text-align:right;font-family:var(--font-mono);line-height:1.5">
+                                            <div style="font-size:13px;color:var(--gov-text-secondary)"><b style="font-size:24px;color:var(--gov-fault)">{{ parkingData?.occupied || 0 }}</b> 佔用</div>
+                                            <div style="font-size:13px;color:var(--gov-text-secondary)"><b style="font-size:24px;color:var(--gov-ok)">{{ parkingData?.available || 0 }}</b> 空 · 共 {{ parkingData?.total || 0 }}</div>
+                                        </div>
                                     </div>
-                                    <div style="background:var(--gov-bg);border-radius:8px;padding:14px 8px;text-align:center;display:flex;flex-direction:column;justify-content:center">
-                                        <div style="font-size:10px;color:var(--gov-muted)">總車位</div>
-                                        <div style="font-size:28px;font-weight:700;font-family:var(--font-mono)">{{ parkingData?.total || 0 }}</div>
-                                    </div>
-                                    <div style="background:var(--gov-bg);border-radius:8px;padding:14px 8px;text-align:center;display:flex;flex-direction:column;justify-content:center">
-                                        <div style="font-size:10px;color:var(--gov-muted)">已佔用</div>
-                                        <div style="font-size:28px;font-weight:700;color:var(--gov-fault);font-family:var(--font-mono)">{{ parkingData?.occupied || 0 }}</div>
-                                    </div>
-                                    <div style="background:var(--gov-bg);border-radius:8px;padding:14px 8px;text-align:center;display:flex;flex-direction:column;justify-content:center">
-                                        <div style="font-size:10px;color:var(--gov-muted)">可用</div>
-                                        <div style="font-size:28px;font-weight:700;color:var(--gov-ok);font-family:var(--font-mono)">{{ parkingData?.available || 0 }}</div>
+                                    <div style="margin-top:14px;height:10px;border-radius:6px;background:var(--gov-ok);overflow:hidden">
+                                        <div :style="{height:'100%',width:(parkingData?.occupancy_rate||0)+'%',background:'var(--gov-fault)',transition:'width .4s ease'}"></div>
                                     </div>
                                 </div>
                                 <!-- 車輛 counting (counting line 已設才顯示) -->
-                                <div v-if="parkingCounting && (parkingCounting.enter_today != null)" style="background:var(--gov-bg);border:1px solid var(--gov-border);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:18px;flex-wrap:wrap">
-                                    <span style="font-size:10px;color:var(--gov-muted);font-family:var(--font-sans);letter-spacing:0.14em">車輛進出 (今日)</span>
-                                    <span style="font-size:12px;color:var(--gov-text-secondary)">入場 <strong style="font-size:18px;color:var(--gov-ok);font-family:var(--font-mono)">{{ parkingCounting.enter_today }}</strong></span>
-                                    <span style="font-size:12px;color:var(--gov-text-secondary)">出場 <strong style="font-size:18px;color:var(--gov-fault);font-family:var(--font-mono)">{{ parkingCounting.exit_today }}</strong></span>
-                                    <span style="font-size:12px;color:var(--gov-text-secondary)">在場 <strong style="font-size:18px;color:var(--gov-primary);font-family:var(--font-mono)">{{ parkingCounting.in_lot }}</strong></span>
+                                <div v-if="parkingCounting && (parkingCounting.enter_today != null)">
+                                    <div style="font-size:10px;color:var(--gov-muted);font-family:var(--font-sans);letter-spacing:0.14em;margin-bottom:6px">車輛進出 (今日)</div>
+                                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+                                        <div style="background:var(--gov-bg);border-radius:10px;padding:10px 6px;text-align:center">
+                                            <div style="font-size:10px;color:var(--gov-muted);letter-spacing:0.1em">入場</div>
+                                            <div style="font-size:22px;font-weight:700;color:var(--gov-ok);font-family:var(--font-mono)">{{ parkingCounting.enter_today }}</div>
+                                        </div>
+                                        <div style="background:var(--gov-bg);border-radius:10px;padding:10px 6px;text-align:center">
+                                            <div style="font-size:10px;color:var(--gov-muted);letter-spacing:0.1em">出場</div>
+                                            <div style="font-size:22px;font-weight:700;color:var(--gov-fault);font-family:var(--font-mono)">{{ parkingCounting.exit_today }}</div>
+                                        </div>
+                                        <div style="background:var(--gov-bg);border-radius:10px;padding:10px 6px;text-align:center">
+                                            <div style="font-size:10px;color:var(--gov-muted);letter-spacing:0.1em">在場</div>
+                                            <div style="font-size:22px;font-weight:700;color:var(--gov-primary);font-family:var(--font-mono)">{{ parkingCounting.in_lot }}</div>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div v-if="parkingData?.error" style="font-size:11px;color:var(--gov-fault);font-style:italic">{{ parkingData.error }}</div>
                                 <!-- 車位狀態 (auto-fit: 少→撐滿, 多→換行,皆不留空) -->
-                                <div>
-                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-                                        <span style="font-size:11px;color:var(--gov-muted);font-family:var(--font-sans);letter-spacing:0.1em">車位狀態</span>
-                                        <span style="font-size:11px;color:var(--gov-muted)">
-                                            <span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--gov-fault);vertical-align:middle"></span> 佔用 {{ parkingData?.occupied || 0 }}
-                                            <span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--gov-ok);vertical-align:middle;margin-left:8px"></span> 空 {{ parkingData?.available || 0 }}
+                                <div style="background:var(--gov-bg);border-radius:12px;padding:14px 16px">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                                        <span style="font-size:12px;font-weight:700;color:var(--gov-text);letter-spacing:0.05em">車位狀態</span>
+                                        <span style="font-size:11px;color:var(--gov-muted);font-family:var(--font-mono)">
+                                            <span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:var(--gov-fault);vertical-align:middle"></span> {{ parkingData?.occupied || 0 }}
+                                            <span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:var(--gov-ok);vertical-align:middle;margin-left:10px"></span> {{ parkingData?.available || 0 }}
                                         </span>
                                     </div>
-                                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(48px,1fr));gap:5px;max-height:300px;overflow-y:auto">
+                                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(52px,1fr));gap:6px;max-height:300px;overflow-y:auto">
                                         <div v-for="s in (parkingData?.slots || [])" :key="`pdkt-${s.id}`"
                                              :title="`${s.label} · conf ${s.conf}`"
-                                             :style="{padding:'10px 4px',borderRadius:'4px',textAlign:'center',fontSize:'12px',fontFamily:'var(--font-mono)',fontWeight:700,background:s.occupied?'var(--gov-fault)':'var(--gov-ok)',color:'#fff'}">
+                                             :style="{padding:'12px 4px',borderRadius:'8px',textAlign:'center',fontSize:'12px',fontFamily:'var(--font-mono)',fontWeight:700,color:'#fff',background:s.occupied?'linear-gradient(135deg,#f87171,#dc2626)':'linear-gradient(135deg,#4ade80,#16a34a)',boxShadow:'0 1px 2px rgba(0,0,0,0.12)'}">
                                             {{ s.label }}
                                         </div>
                                     </div>
