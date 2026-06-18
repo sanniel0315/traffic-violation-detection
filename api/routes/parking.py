@@ -928,6 +928,32 @@ def auto_detect_slots(source: str = Query(..., description="source key"),
     }
 
 
+@router.post("/slots/sam_point")
+def sam_point_slot(source: str = Query(..., description="source key"),
+                   x: float = Query(..., description="點擊 x (frame px)"),
+                   y: float = Query(..., description="點擊 y (frame px)")):
+    """MobileSAM 點選分割 — 編輯器點一下車格,自動回最小旋轉外接矩形 4 點 polygon (Phase B)。
+    懶載入,不影響即時偵測。需 models/mobile_sam.pt 存在。"""
+    frame = fetch_frame(source)
+    if frame is None:
+        raise HTTPException(status_code=503, detail="frame unavailable")
+    try:
+        from services.parking_sam import is_available, segment_point
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SAM 模組載入失敗: {e}")
+    if not is_available():
+        raise HTTPException(status_code=503, detail="MobileSAM 未就緒 (缺 models/mobile_sam.pt)")
+    try:
+        poly = segment_point(frame, x, y)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SAM 分割失敗: {e}")
+    h_img, w_img = frame.shape[:2]
+    if not poly:
+        return {"source": source, "frame_w": w_img, "frame_h": h_img,
+                "polygon": None, "note": "該點未分割出物件,換個位置點"}
+    return {"source": source, "frame_w": w_img, "frame_h": h_img, "polygon": poly}
+
+
 @router.post("/slots/auto_session/start")
 def slots_auto_start(source: str = Query(...),
                      conf: float = Query(0.15, ge=0.05, le=0.9),
