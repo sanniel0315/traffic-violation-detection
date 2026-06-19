@@ -36,13 +36,13 @@
 
     <div class="toolbar">
       <span>來源:</span>
-      <el-input v-model="sourceKey" size="small" style="width:240px" placeholder="twipcam:tpe-005013"/>
+      <el-input v-model="sourceKey" size="small" style="width:240px" placeholder="twipcam:tpe-005013"></el-input>
       <el-button size="small" plain @click="reloadImage">載入影像</el-button>
-      <el-divider direction="vertical"/>
+      <el-divider direction="vertical"></el-divider>
       <span>當前車位 id:</span>
-      <el-input v-model="currentSlotId" size="small" style="width:120px" placeholder="A1"/>
+      <el-input v-model="currentSlotId" size="small" style="width:120px" placeholder="A1"></el-input>
       <span>label:</span>
-      <el-input v-model="currentSlotLabel" size="small" style="width:120px"/>
+      <el-input v-model="currentSlotLabel" size="small" style="width:120px"></el-input>
       <el-button size="small" type="success" :loading="autoDetecting" @click="autoDetectSlots" v-if="!sessionRunning">自動偵測車位 (單張)</el-button>
       <el-button size="small" :type="samMode ? 'danger' : 'primary'" :loading="samBusy" @click="toggleSamMode" v-if="!sessionRunning">{{ samMode ? 'SAM 點選中 (點離開關閉)' : 'SAM 點選車格' }}</el-button>
       <el-button size="small" :type="fillMode ? 'danger' : 'success'" @click="toggleFillMode" v-if="!sessionRunning">{{ fillMode ? '填車位中 (點空位複製鄰格,再按關閉)' : '點擊填車位' }}</el-button>
@@ -52,37 +52,37 @@
       <el-button size="small" plain @click="loadExistingSlots">重新載入</el-button>
       <el-button size="small" type="warning" plain @click="restoreSlots">還原上一版</el-button>
       <el-button size="small" type="danger" plain @click="clearAllSlots" :disabled="!slots.length || sessionRunning">清空全部</el-button>
-      <el-divider direction="vertical"/>
+      <el-divider direction="vertical"></el-divider>
       <el-button size="small" type="warning" plain v-if="!maskMode && !exMode" @click="startMaskMode">畫停車場區域</el-button>
       <el-button size="small" type="success" v-if="maskMode" @click="finishMask" :disabled="maskDraft.length < 3">完成區域 ({{ maskDraft.length }})</el-button>
       <el-button size="small" type="danger" plain v-if="maskMode" @click="cancelMask">取消</el-button>
       <el-button size="small" type="danger" plain v-if="maskPolygon.length && !maskMode && !exMode" @click="clearMask">清除區域</el-button>
-      <el-divider direction="vertical"/>
+      <el-divider direction="vertical"></el-divider>
       <el-button size="small" type="danger" plain v-if="!exMode && !maskMode" @click="startExMode">畫不偵測區</el-button>
       <el-button size="small" type="success" v-if="exMode" @click="finishEx" :disabled="exDraft.length < 3">完成不偵測 ({{ exDraft.length }})</el-button>
       <el-button size="small" type="danger" plain v-if="exMode" @click="cancelEx">取消</el-button>
       <el-button size="small" type="danger" plain v-if="exPolygon.length && !exMode && !maskMode" @click="clearEx">清除不偵測區</el-button>
-      <el-divider direction="vertical"/>
+      <el-divider direction="vertical"></el-divider>
       <el-button size="small" type="primary" plain v-if="!lineMode && !measureMode && !maskMode && !exMode && !gridMode" @click="startLineMode">畫計數線</el-button>
       <el-button size="small" type="danger" plain v-if="lineMode" @click="cancelLineMode">取消計數線</el-button>
       <span v-if="lineMode" style="font-size:12px;color:#dc2626;font-weight:600">點 2 個端點: {{ lineDraft.length }}/2</span>
       <el-button size="small" type="warning" plain v-if="countingLine.length===2 && !lineMode" @click="toggleEnterNormal">翻轉進場方向 (目前: {{ enterNormalLabel }})</el-button>
       <el-button size="small" type="danger" plain v-if="countingLine.length===2 && !lineMode" @click="clearCountingLine">清除計數線</el-button>
-      <el-divider direction="vertical" v-if="countingLine.length===2 || lineMode"/>
+      <el-divider direction="vertical" v-if="countingLine.length===2 || lineMode"></el-divider>
       <el-button size="small" type="info" plain v-if="!measureMode && !maskMode && !exMode && !gridMode && !lineMode" @click="measureMode=true; measureLast=null">測量大小</el-button>
       <el-button size="small" type="danger" plain v-if="measureMode" @click="measureMode=false; measureLast=null; dragging=false; dragStart=null; dragEnd=null; redraw()">退出測量</el-button>
       <span v-if="measureMode && measureLast" style="font-size:12px;color:#0b5ea8;font-weight:600;font-family:monospace">最後測量: {{ measureLast.w }} × {{ measureLast.h }} px ({{ (measureLast.w*measureLast.h).toLocaleString() }} px²)</span>
       <span v-else-if="measureMode" style="font-size:12px;color:#dc2626;font-weight:600">在影像上拖框 →</span>
-      <el-divider direction="vertical" v-if="!measureMode"/>
+      <el-divider direction="vertical" v-if="!measureMode"></el-divider>
       <el-select v-model="gridPreset" size="small" style="width:140px" v-if="!maskMode && !exMode && !measureMode">
-        <el-option value="standard" label="直排"/>
-        <el-option value="double-row" label="雙排背靠背"/>
-        <el-option value="angled" label="斜停 30°"/>
+        <el-option value="standard" label="直排"></el-option>
+        <el-option value="double-row" label="雙排背靠背"></el-option>
+        <el-option value="angled" label="斜停 30°"></el-option>
       </el-select>
       <el-button size="small" type="primary" plain v-if="!gridMode && !maskMode && !exMode" @click="startGridMode">Grid 透視 (4 點)</el-button>
       <span v-if="gridMode" style="font-size:12px;color:#dc2626;font-weight:600">點 4 角:{{ gridCorners.length }}/4 {{ ['(近左)','(近右)','(遠右)','(遠左)'][gridCorners.length] || '' }}</span>
       <el-button size="small" type="danger" plain v-if="gridMode" @click="cancelGrid">取消 Grid</el-button>
-      <el-divider direction="vertical" v-if="!gridMode && !maskMode && !exMode && !measureMode && !lineMode"/>
+      <el-divider direction="vertical" v-if="!gridMode && !maskMode && !exMode && !measureMode && !lineMode"></el-divider>
       <el-button size="small" type="warning" plain v-if="!rowAdjustMode && !gridMode && !maskMode && !exMode && !measureMode && !lineMode && slots.length" @click="startRowAdjust">整排調整</el-button>
       <el-button size="small" type="danger" plain v-if="rowAdjustMode" @click="exitRowAdjust">退出整排</el-button>
       <span v-if="rowAdjustMode" style="font-size:12px;color:#d97706;font-weight:600">點一格選同排,拖曳或方向鍵微調 (已選 {{ rowSelection.length }} 格,Shift=5px)</span>
@@ -116,7 +116,7 @@
         <div v-if="!slots.length" style="color:#9ca3af;font-size:13px;padding:10px">尚無車位,在影像上拖框 / Grid 透視 / 自動偵測新增</div>
         <div v-for="(s, idx) in slots" :key="s.id + idx" class="slot-row" style="flex-wrap:wrap">
           <span class="slot-id" style="min-width:48px">{{ s.id }}</span>
-          <el-input v-model="s.label" size="small" style="width:110px"/>
+          <el-input v-model="s.label" size="small" style="width:110px"></el-input>
           <el-button size="small" type="danger" plain @click="removeSlot(idx)" style="margin-left:auto">刪除</el-button>
         </div>
       </div>
