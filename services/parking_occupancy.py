@@ -768,15 +768,42 @@ def evaluate_occupancy(source_key: str) -> Dict:
             "vlm_verdict": vlm_verdict,
         })
 
-    occupied = sum(1 for s in slot_results if s["occupied"])
+    occupied = sum(1 for s in slot_results if s["occupied"])   # 車格佔用數 (slot-based)
     total = len(slot_results)
-    available = total - occupied
-    rate = (occupied / total * 100.0) if total else 0.0
+    # 選項2: 偵測到、落在停車區內、但沒落在任何車格的車 = 「格外車」,併入佔用
+    # (車格漏抓時不少算;不需另畫區域 mask — 沒 mask 就用車格聯集外接框 +15% margin 當停車區)
+    _sp = [s["polygon"] for s in slot_results if len(s.get("polygon") or []) >= 3]
+    _am = meta.get("parking_area_mask") or []
+    _em = meta.get("exclusion_mask") or []
+    _bx0 = _bx1 = _by0 = _by1 = 0.0
+    if _sp:
+        _xs = [p[0] for poly in _sp for p in poly]
+        _ys = [p[1] for poly in _sp for p in poly]
+        _mx = (max(_xs) - min(_xs)) * 0.15
+        _my = (max(_ys) - min(_ys)) * 0.15
+        _bx0, _bx1, _by0, _by1 = min(_xs) - _mx, max(_xs) + _mx, min(_ys) - _my, max(_ys) + _my
+
+    def _in_lot(cx: float, cy: float) -> bool:
+        if _am:
+            return _point_in_polygon(cx, cy, _am) and not (_em and _point_in_polygon(cx, cy, _em))
+        if not _sp:
+            return False
+        return _bx0 <= cx <= _bx1 and _by0 <= cy <= _by1
+
+    extra_vehicles = sum(
+        1 for v in vehicles
+        if _in_lot(v["cx"], v["cy"])
+        and not any(_point_in_polygon(v["cx"], v["cy"], poly) for poly in _sp)
+    )
+    occupied_total = occupied + extra_vehicles
+    available = max(0, total - occupied_total)
+    rate = (min(occupied_total, total) / total * 100.0) if total else 0.0
     result = {
         "source": source_key,
         "source_name": meta.get("name", source_key),
         "frame_w": w, "frame_h": h,
-        "total": total, "occupied": occupied, "available": available,
+        "total": total, "occupied": occupied_total, "available": available,
+        "occupied_slots": occupied, "extra_vehicles": extra_vehicles,
         "occupancy_rate": round(rate, 1),
         "detected_vehicles": len(vehicles),
         "slots": slot_results,
