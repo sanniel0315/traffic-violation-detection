@@ -32,7 +32,7 @@
     </div>
     <div class="toolbar">
       <span>來源:</span>
-      <el-input v-model="sourceKey" size="small" style="width:240px"/>
+      <el-input v-model="sourceKey" size="small" style="width:240px"></el-input>
       <el-button size="small" plain @click="load">載入</el-button>
       <el-button size="small" type="primary" @click="save" :loading="saving" :disabled="!slots.length">儲存標註 ({{ slots.length }} 格)</el-button>
       <el-button size="small" plain @click="loadMetrics">看準確率</el-button>
