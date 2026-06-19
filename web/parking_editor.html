@@ -45,6 +45,7 @@
       <el-input v-model="currentSlotLabel" size="small" style="width:120px"/>
       <el-button size="small" type="success" :loading="autoDetecting" @click="autoDetectSlots" v-if="!sessionRunning">自動偵測車位 (單張)</el-button>
       <el-button size="small" :type="samMode ? 'danger' : 'primary'" :loading="samBusy" @click="toggleSamMode" v-if="!sessionRunning">{{ samMode ? 'SAM 點選中 (點離開關閉)' : 'SAM 點選車格' }}</el-button>
+      <el-button size="small" :type="fillMode ? 'danger' : 'success'" @click="toggleFillMode" v-if="!sessionRunning">{{ fillMode ? '填車位中 (點空位複製鄰格,再按關閉)' : '點擊填車位' }}</el-button>
       <el-button size="small" type="primary" @click="startSession" v-if="!sessionRunning">背景累積偵測</el-button>
       <el-button size="small" type="danger" @click="stopSessionAndImport" v-if="sessionRunning">停止累積並匯入</el-button>
       <el-button size="small" @click="cancelCurrent" :disabled="!dragging">取消拖拉</el-button>
@@ -158,6 +159,8 @@ const app = createApp({
     // SAM 點選模式 (Phase B) — 點一下車格,MobileSAM 自動框
     const samMode = ref(false);
     const samBusy = ref(false);
+    // 點擊填車位 — 點空車位,複製最近一格形狀平移過去 (對空車位最可靠,秒填)
+    const fillMode = ref(false);
     const sessionRunning = ref(false);
     const sessionStatus = ref({frames_processed: 0, merged_slots: 0, total_detections: 0});
     let _sessionPollTimer = null;
@@ -523,6 +526,12 @@ const app = createApp({
         }
         return;
       }
+      // 點擊填車位: 點空位 → 複製最近一格形狀平移過去
+      if (fillMode.value) {
+        const pt = _toImagePx(e);
+        fillClick(pt[0], pt[1]);
+        return;
+      }
       // SAM 點選模式: 點一下 → MobileSAM 自動框該車格
       if (samMode.value) {
         const pt = _toImagePx(e);
@@ -865,6 +874,43 @@ const app = createApp({
       } finally {
         samBusy.value = false;
       }
+    };
+
+    // ── 點擊填車位: 複製最近一格形狀平移到點擊處 (對空車位最可靠;同區透視大小一致) ──
+    const _nextPid = () => {
+      const ex = new Set(slots.value.map(s => String(s.id)));
+      let n = 1; while (ex.has('P' + n)) n++; return 'P' + n;
+    };
+    const toggleFillMode = () => {
+      fillMode.value = !fillMode.value;
+      if (fillMode.value) {
+        samMode.value = false; maskMode.value = false; exMode.value = false; gridMode.value = false;
+        measureMode.value = false; lineMode.value = false; rowAdjustMode.value = false;
+        ElementPlus.ElMessage.info('點空車位 → 複製最近一格形狀放上去;連續點可快速填滿,完成按「儲存全部」');
+      }
+      redraw();
+    };
+    const fillClick = (px, py) => {
+      const ss = slots.value.filter(s => (s.polygon || []).length >= 3);
+      let poly;
+      if (ss.length) {
+        let best = ss[0], bestD = Infinity;
+        for (const s of ss) {
+          const cx = s.polygon.reduce((a, p) => a + p[0], 0) / s.polygon.length;
+          const cy = s.polygon.reduce((a, p) => a + p[1], 0) / s.polygon.length;
+          const d = (cx - px) * (cx - px) + (cy - py) * (cy - py);
+          if (d < bestD) { bestD = d; best = s; }
+        }
+        const bcx = best.polygon.reduce((a, p) => a + p[0], 0) / best.polygon.length;
+        const bcy = best.polygon.reduce((a, p) => a + p[1], 0) / best.polygon.length;
+        poly = best.polygon.map(p => [Math.round(p[0] - bcx + px), Math.round(p[1] - bcy + py)]);
+      } else {
+        const w = 70, h = 40;
+        poly = [[px - w / 2, py - h / 2], [px + w / 2, py - h / 2], [px + w / 2, py + h / 2], [px - w / 2, py + h / 2]].map(p => [Math.round(p[0]), Math.round(p[1])]);
+      }
+      const sid = _nextPid();
+      slots.value.push({ id: sid, label: sid, polygon: poly });
+      redraw();
     };
 
     const startSession = async () => {
@@ -1214,6 +1260,7 @@ const app = createApp({
       dragging, dragStart, dragEnd,
       saving, saveMsg, autoDetecting, sessionRunning, sessionStatus,
       samMode, samBusy, toggleSamMode,
+      fillMode, toggleFillMode,
       maskMode, maskPolygon, maskDraft,
       exMode, exPolygon, exDraft,
       gridMode, gridCorners, gridPreset,
