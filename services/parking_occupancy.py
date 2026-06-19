@@ -775,20 +775,17 @@ def evaluate_occupancy(source_key: str) -> Dict:
     _sp = [s["polygon"] for s in slot_results if len(s.get("polygon") or []) >= 3]
     _am = meta.get("parking_area_mask") or []
     _em = meta.get("exclusion_mask") or []
-    _bx0 = _bx1 = _by0 = _by1 = 0.0
-    if _sp:
-        _xs = [p[0] for poly in _sp for p in poly]
-        _ys = [p[1] for poly in _sp for p in poly]
-        _mx = (max(_xs) - min(_xs)) * 0.15
-        _my = (max(_ys) - min(_ys)) * 0.15
-        _bx0, _bx1, _by0, _by1 = min(_xs) - _mx, max(_xs) + _mx, min(_ys) - _my, max(_ys) + _my
+    # 沒畫區域 mask 時: 「在停車排附近」= 車中心落在任一車格 bbox + 車身邊距(±40x/±30y) 內。
+    # 比車格聯集外接框緊很多 → 排除中間行車道/遠方路過車 (左右兩排中間隔車道,大框會誤收)
+    _sp_box = []
+    for poly in _sp:
+        xs = [p[0] for p in poly]; ys = [p[1] for p in poly]
+        _sp_box.append((min(xs) - 40, max(xs) + 40, min(ys) - 30, max(ys) + 30))
 
     def _in_lot(cx: float, cy: float) -> bool:
         if _am:
             return _point_in_polygon(cx, cy, _am) and not (_em and _point_in_polygon(cx, cy, _em))
-        if not _sp:
-            return False
-        return _bx0 <= cx <= _bx1 and _by0 <= cy <= _by1
+        return any(x0 <= cx <= x1 and y0 <= cy <= y1 for (x0, x1, y0, y1) in _sp_box)
 
     extra_vehicles = sum(
         1 for v in vehicles
