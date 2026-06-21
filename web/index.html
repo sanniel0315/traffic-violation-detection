@@ -10659,6 +10659,12 @@ const app=createApp({
             try {
                 const r = await fetch(`/api/parking/occupancy?source=${encodeURIComponent(parkingSource.value)}`);
                 parkingData.value = await r.json();
+                // 下拉選單車位數同步當前真實格數 (改了車位設定後即時反映,不靠 /sources 快取)
+                const _t = Number(parkingData.value?.total);
+                if (Number.isFinite(_t)) {
+                    const src = (parkingSources.value || []).find(s => s.key === parkingSource.value);
+                    if (src) src.slot_count = _t;
+                }
             } catch(e) {}
             loadParkingCounting();
             loadParkingHistory();   // 佔用率趨勢圖資料 (update('none') 防閃爍,可每次刷)
