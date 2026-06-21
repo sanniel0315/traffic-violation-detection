@@ -837,6 +837,11 @@ def auto_detect_slots(source: str = Query(..., description="source key"),
     import numpy as np
 
     vehicle_classes = {"car", "truck", "bus", "heavy_truck", "light_truck", "non_truck"}
+    # 範圍限定: 自動偵測車位也只在「停車場區域」內、排除「不偵測區」
+    from services.parking_occupancy import get_source_meta as _gsm, _point_in_polygon as _pip
+    _auto_meta = _gsm(source)
+    _auto_area = _auto_meta.get("parking_area_mask") or []
+    _auto_excl = _auto_meta.get("exclusion_mask") or []
     all_raw_boxes: list = []
     frame_info = []
     w_img, h_img = 0, 0
@@ -870,6 +875,11 @@ def auto_detect_slots(source: str = Query(..., description="source key"),
             x1 = int(bb.get("x1", 0)); y1 = int(bb.get("y1", 0))
             x2 = int(bb.get("x2", 0)); y2 = int(bb.get("y2", 0))
             if x2 <= x1 or y2 <= y1:
+                continue
+            cx = (x1 + x2) // 2; cy = (y1 + y2) // 2
+            if _auto_area and not _pip(cx, cy, _auto_area):
+                continue
+            if _auto_excl and _pip(cx, cy, _auto_excl):
                 continue
             all_raw_boxes.append([x1, y1, x2, y2])
             n_this += 1

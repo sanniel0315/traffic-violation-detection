@@ -684,7 +684,10 @@ def evaluate_occupancy(source_key: str) -> Dict:
                 "total": len(slots_cfg), "occupied": 0, "available": 0,
                 "occupancy_rate": 0.0, "slots": []}
 
-    # 過濾車輛類別
+    # 過濾車輛類別 + 範圍限定: 畫了「停車場區域」(area_mask) 只算區域內;
+    # 畫了「不偵測區」(exclusion_mask) 排除其內。逐格佔用/格外車/交叉校正全依此受限。
+    _area_mask = meta.get("parking_area_mask") or []
+    _excl_mask = meta.get("exclusion_mask") or []
     vehicle_classes = {"car", "truck", "bus", "heavy_truck", "light_truck",
                        "non_truck", "motorcycle"}
     vehicles = []
@@ -698,6 +701,11 @@ def evaluate_occupancy(source_key: str) -> Dict:
         if x2 <= x1 or y2 <= y1:
             continue
         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+        # 範圍限定: 區域外 / 不偵測區內的車直接丟棄 (連 slot 判定都不參與)
+        if _area_mask and not _point_in_polygon(cx, cy, _area_mask):
+            continue
+        if _excl_mask and _point_in_polygon(cx, cy, _excl_mask):
+            continue
         vehicles.append({"bbox": (x1, y1, x2, y2), "cx": cx, "cy": cy, "cls": cls})
 
     # 對每 slot 判定 + VLM 仲裁 hook (borderline conf 0.3~0.6 排入背景 queue)
