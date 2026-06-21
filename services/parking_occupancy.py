@@ -778,28 +778,24 @@ def evaluate_occupancy(source_key: str) -> Dict:
 
     occupied = sum(1 for s in slot_results if s["occupied"])   # 車格佔用數 (slot-based)
     total = len(slot_results)
-    # 選項2: 偵測到、落在停車區內、但沒落在任何車格的車 = 「格外車」,併入佔用
-    # (車格漏抓時不少算;不需另畫區域 mask — 沒 mask 就用車格聯集外接框 +15% margin 當停車區)
+    # 未入格車: 偵測到、緊貼某車格、但沒落在任何車格的車 (vehicles 已先被 area/exclusion 過濾)。
+    # 收緊「緊貼」= 車中心落在某車格 bbox + 半格寬/高內,排除區域內路過/車道車。
     _sp = [s["polygon"] for s in slot_results if len(s.get("polygon") or []) >= 3]
-    _am = meta.get("parking_area_mask") or []
-    _em = meta.get("exclusion_mask") or []
-    # 沒畫區域 mask 時: 「在停車排附近」= 車中心落在任一車格 bbox + 車身邊距(±40x/±30y) 內。
-    # 比車格聯集外接框緊很多 → 排除中間行車道/遠方路過車 (左右兩排中間隔車道,大框會誤收)
     _sp_box = []
     for poly in _sp:
         xs = [p[0] for p in poly]; ys = [p[1] for p in poly]
-        _sp_box.append((min(xs) - 40, max(xs) + 40, min(ys) - 30, max(ys) + 30))
+        bw = max(xs) - min(xs); bh = max(ys) - min(ys)
+        mx = bw * 0.5; my = bh * 0.5   # 與該車格同尺寸半徑內才算「停車排上」
+        _sp_box.append((min(xs) - mx, max(xs) + mx, min(ys) - my, max(ys) + my))
 
-    def _in_lot(cx: float, cy: float) -> bool:
-        if _am:
-            return _point_in_polygon(cx, cy, _am) and not (_em and _point_in_polygon(cx, cy, _em))
+    def _near_slot(cx: float, cy: float) -> bool:
         return any(x0 <= cx <= x1 and y0 <= cy <= y1 for (x0, x1, y0, y1) in _sp_box)
 
     # 格外車 = 偵測到、在停車排附近、但沒落在任何車格的車 (只當提示,不灌佔用率分母)。
     # 佔用率以「車格」為準: 空車格永遠正確顯示為空,不會被路過/車道車灌爆成 100%。
     extra_vehicles = sum(
         1 for v in vehicles
-        if _in_lot(v["cx"], v["cy"])
+        if _near_slot(v["cx"], v["cy"])
         and not any(_point_in_polygon(v["cx"], v["cy"], poly) for poly in _sp)
     )
     available = total - occupied
