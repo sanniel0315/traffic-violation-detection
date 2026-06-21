@@ -6007,7 +6007,7 @@
                                         </div>
                                         <div style="text-align:right;font-family:var(--font-mono);line-height:1.5">
                                             <div style="font-size:13px;color:var(--gov-text-secondary)"><b style="font-size:24px;color:var(--gov-fault)">{{ parkingData?.occupied || 0 }}</b> 佔用</div>
-                                            <div v-if="parkingData?.extra_vehicles" style="font-size:11px;color:var(--gov-warn)">格內 {{ parkingData?.occupied_slots || 0 }} + 格外車 {{ parkingData?.extra_vehicles }}</div>
+                                            <div v-if="parkingData?.extra_vehicles" style="font-size:11px;color:var(--gov-warn)">另偵測 {{ parkingData?.extra_vehicles }} 台未入格車</div>
                                             <div style="font-size:13px;color:var(--gov-text-secondary)"><b style="font-size:24px;color:var(--gov-ok)">{{ parkingData?.available || 0 }}</b> 空 · 共 {{ parkingData?.total || 0 }}</div>
                                         </div>
                                     </div>
