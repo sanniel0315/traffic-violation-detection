@@ -80,8 +80,11 @@ class CongestionDetector:
         high_t = float(params.get("high_threshold", 0.4))
         critical_t = float(params.get("critical_threshold", 0.6))
         window = max(1, int(params.get("smoothing_window", 10)))
-        stop_distance_px = max(4.0, float(params.get("stop_distance_px", 18.0)))
-        stop_min_frames = max(2, int(params.get("stop_min_frames", 4)))
+        # stop_distance_px 18→45 / stop_min_frames 4→3: 原值只認「完全靜止」,抓不到緩行車隊;
+        # 放寬後緩行排隊(實測國8 匝道 19m)抓得到,自由車流(>45px/3f)仍排除。
+        stop_distance_px = max(4.0, float(params.get("stop_distance_px", 45.0)))
+        stop_min_frames = max(2, int(params.get("stop_min_frames", 3)))
+        # queue_min_vehicles 維持 2: 降為 1 會讓單一台停/緩行車誤判成排隊(實測疏流段 19/26 幀假陽性)。
         queue_min_vehicles = max(2, int(params.get("queue_min_vehicles", 2)))
         track_hold_frames = max(1, int(params.get("track_hold_frames", 3)))
         safety_gap_m = max(0.0, float(params.get("queue_vehicle_gap_m", self.DEFAULT_SAFETY_GAP_M)))
@@ -113,8 +116,10 @@ class CongestionDetector:
         # 過濾異常大的 bbox（面積 > 畫面 40% 不可能是車）
         max_area = w * h * 0.4
         vehicles = [v for v in vehicles if v['bbox'].get('width', 0) * v['bbox'].get('height', 0) < max_area]
-        # 過濾過小 bbox（< 8000 px，避免三角錐 / 路標 / 反光鏡誤判成 car）
-        MIN_VEHICLE_AREA = 8000
+        # 過濾過小 bbox（避免路標 / 反光鏡誤判成 car）
+        # 註：原 8000 太嚴,會把「匝道遠處因透視變小的排隊車」整排濾掉(實測 2296~5917px 都是真車),
+        # 降到 2000；三角錐經實測 YOLO 信心度不足、不會被分類成車,不靠面積門檻擋。
+        MIN_VEHICLE_AREA = 2000
         vehicles = [v for v in vehicles if v['bbox'].get('width', 0) * v['bbox'].get('height', 0) >= MIN_VEHICLE_AREA]
 
         if roi_mask is not None:
