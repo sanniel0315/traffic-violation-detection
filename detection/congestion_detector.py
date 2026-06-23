@@ -139,8 +139,18 @@ class CongestionDetector:
             stop_min_frames=stop_min_frames,
         )
         
-        vehicle_area = sum(v['bbox']['width'] * v['bbox']['height'] for v in tracked_vehicles)
-        occupancy = min(vehicle_area / roi_area, 1.0) if roi_area > 0 else 0
+        # 佔用率 = 車輛 bbox「聯集 ∩ ROI」/ ROI面積。原本用 bbox 面積「加總」會把重疊區與
+        # 超出 ROI 的部分重複計入,近鏡頭大車 2 台就灌到 100%(實測 100%→45%)→ 假性嚴重壅塞。
+        if tracked_vehicles:
+            _vm = np.zeros((h, w), dtype=np.uint8)
+            for _v in tracked_vehicles:
+                _b = _v['bbox']
+                cv2.rectangle(_vm, (int(_b.get('x1', 0)), int(_b.get('y1', 0))),
+                              (int(_b.get('x2', 0)), int(_b.get('y2', 0))), 255, -1)
+            _covered = cv2.countNonZero(cv2.bitwise_and(_vm, roi_mask)) if roi_mask is not None else cv2.countNonZero(_vm)
+            occupancy = min(_covered / roi_area, 1.0) if roi_area > 0 else 0
+        else:
+            occupancy = 0.0
 
         history = self.history_map[camera_key]
         count_density = self._vehicle_density_score(tracked_vehicles, roi_area)
@@ -215,8 +225,16 @@ class CongestionDetector:
             if zarea <= 0:
                 continue
             zvehicles = self._filter_in_roi(tracked_vehicles, zmask)
-            z_vehicle_area = sum(v['bbox']['width'] * v['bbox']['height'] for v in zvehicles)
-            z_occ_raw = min(z_vehicle_area / zarea, 1.0)
+            # 同上: zone 佔用率改聯集∩zone / zone面積,避免 bbox 加總灌爆
+            if zvehicles:
+                _zvm = np.zeros((h, w), dtype=np.uint8)
+                for _v in zvehicles:
+                    _b = _v['bbox']
+                    cv2.rectangle(_zvm, (int(_b.get('x1', 0)), int(_b.get('y1', 0))),
+                                  (int(_b.get('x2', 0)), int(_b.get('y2', 0))), 255, -1)
+                z_occ_raw = min(cv2.countNonZero(cv2.bitwise_and(_zvm, zmask)) / zarea, 1.0)
+            else:
+                z_occ_raw = 0.0
             z_density = self._vehicle_density_score(zvehicles, zarea)
             z_stopped = sum(1 for v in zvehicles if int(v.get("track_id", 0)) in stopped_track_ids)
             z_stopped_ratio = (z_stopped / len(zvehicles)) if zvehicles else 0.0
