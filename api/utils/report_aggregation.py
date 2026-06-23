@@ -331,7 +331,9 @@ def refresh_congestion_aggregates(
         row["vehicle_count_sum"] += float(sample.vehicle_count or 0)
         row["stopped_vehicle_count_sum"] += float(sample.stopped_vehicle_count or 0)
         queue_length = float(sample.estimated_queue_length_m) if sample.estimated_queue_length_m is not None else None
-        if queue_length is not None and queue_length >= 0:
+        # 平均估計排隊長度只算「真的有排隊(>0)」的樣本;原本 >=0 把大量暢通 0m 灌進分母,
+        # 平均被稀釋到趨近 0(實測 cam7: 含0=4.0m vs 只算有排隊=21.4m)。最大值不受影響。
+        if queue_length is not None and queue_length > 0:
             row["queue_length_sum"] += queue_length
             row["queue_length_count"] += 1
             row["max_queue_length_m"] = max(float(row["max_queue_length_m"] or 0.0), queue_length)

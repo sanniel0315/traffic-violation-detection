@@ -401,6 +401,7 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
     print(f"🚦 壅塞偵測啟動: camera_id={camera_id} (file_source={is_file_source}, shared_frames={is_file_source})")
     fail_count = 0
     last_ok = time.time()
+    last_success = time.time()  # 最後一次「成功分析」時間(reconnect 不重設,給幻影清除判斷用)
     try:
         while congestion_services.get(camera_id, {}).get('running', False):
             if is_file_source:
@@ -470,6 +471,18 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                     time.sleep(0.1)
                     continue
                 fail_count += 1
+                # 連續讀不到 frame 超過 15 秒 → 清掉舊結果,避免 status 一直回傳斷線前的「幻影排隊」
+                # (RTSP 斷線時原本完全不更新 congestion_results,舊值會無限期殘留誤導)
+                if (time.time() - last_success) > 15.0 and not congestion_results.get(camera_id, {}).get("no_frame"):
+                    congestion_results[camera_id] = {
+                        "timestamp": datetime.now().isoformat(),
+                        "vehicle_count": 0, "stopped_vehicle_count": 0, "stopped_ratio": 0.0,
+                        "occupancy": 0.0, "queue_score": 0.0, "queue_active": False,
+                        "estimated_queue_length_m": 0.0, "queue_duration_sec": 0,
+                        "level": "low", "level_name": "暢通", "zone_results": [],
+                        "no_frame": True,
+                    }
+                    print(f"📵 congestion cam_{camera_id} 無畫面 >15s,清除幻影結果", flush=True)
                 if fail_count >= 50:
                     # 連續 50 次讀不到 → 強制 reconnect
                     try: cap.release()
@@ -487,6 +500,7 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                 result = analyze_with_lock(frame, zones, camera_id)
                 congestion_results[camera_id] = result
                 congestion_services[camera_id]['last_update'] = datetime.now().isoformat()
+                last_success = time.time()
                 sample_interval_sec = float(get_effective_params(camera_id).get("analyze_interval_sec", 1.0))
                 _store_congestion_samples(camera_id, camera_name, result, sample_interval_sec)
                 time.sleep(sample_interval_sec)
