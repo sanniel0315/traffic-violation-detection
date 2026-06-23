@@ -1,0 +1,23 @@
+[Unit]
+Description=Traffic IO Daemon (PD3R3 Modbus + DI/DO)
+After=network.target
+Before=traffic-api.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/traffic-violation-detection
+EnvironmentFile=/home/ubuntu/traffic-violation-detection/.env
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+# RS-485 序列埠（依現場硬體調整，Jetson 常見 /dev/ttyTHS2）
+Environment=IO_PORT=/dev/ttyTHS2
+ExecStart=/usr/bin/python3 -m services.io_daemon
+Restart=always
+RestartSec=3
+TimeoutStopSec=10
+KillMode=mixed
+SupplementaryGroups=dialout
+
+[Install]
+WantedBy=multi-user.target
