@@ -14,6 +14,7 @@ from api.utils.report_aggregation import (
     build_vd_report_rows,
     normalize_bucket_size,
     refresh_traffic_aggregates,
+    refresh_congestion_aggregates,
 )
 
 router = APIRouter(prefix="/api/traffic", tags=["交通流"])
@@ -74,10 +75,12 @@ def get_vd_report(
         pass
 
     def rebuild_aggs():
-        # VD 報表只需要 traffic_events 聚合；不跑 congestion + LPR 聚合節省時間
+        # VD 報表有「排隊長度」欄位 → traffic + congestion 聚合都要建(否則 queue 欄位恆 0);
+        # LPR 聚合與報表無關,仍跳過省時間。
         n = refresh_traffic_aggregates(db, start_time, end_time, bucket_size, camera_id=camera_id)
+        nc = refresh_congestion_aggregates(db, start_time, end_time, bucket_size, camera_id=camera_id)
         db.commit()
-        return {f"traffic_{bucket_size}": n}
+        return {f"traffic_{bucket_size}": n, f"congestion_{bucket_size}": nc}
 
     def build_rows():
         return build_vd_report_rows(
