@@ -1,0 +1,16 @@
+[Unit]
+Description=Traffic Frigate NVR
+After=network.target docker.service mnt-nvme.mount
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=ubuntu
+WorkingDirectory=/home/ubuntu/traffic-violation-detection
+ExecStart=/usr/bin/docker compose up frigate -d
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

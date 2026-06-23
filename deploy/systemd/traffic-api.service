@@ -1,0 +1,21 @@
+[Unit]
+Description=Traffic Violation Detection API
+After=network.target docker.service traffic-frigate.service traffic-ocr.service
+Wants=docker.service traffic-frigate.service traffic-ocr.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/traffic-violation-detection
+EnvironmentFile=/home/ubuntu/traffic-violation-detection/.env
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Jetson torch/ultralytics 需要 cusparselt（否則 ImportError: libcusparseLt.so.0）
+Environment=LD_LIBRARY_PATH=/home/ubuntu/.local/lib/python3.10/site-packages/nvidia/cusparselt/lib
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=/bin/sleep 10
+ExecStart=/home/ubuntu/.local/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
