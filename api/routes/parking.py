@@ -50,7 +50,8 @@ class MaskSaveBody(BaseModel):
 
 class ExclusionMaskBody(BaseModel):
     source: str
-    exclusion_mask: List[List[float]]      # 不偵測區 polygon or [] to clear
+    # 不偵測區: 相容單一多邊形 [[x,y],...] 與多個多邊形 [[[x,y],...],...];[] 清除
+    exclusion_mask: list = []
 
 
 class CountingLineBody(BaseModel):
@@ -246,8 +247,9 @@ def _vehicle_analysis(frame, source: str) -> dict:
     # 區域 mask 過濾
     area_mask = exclusion_mask = None
     _pip = None
+    _pie = None
     try:
-        from services.parking_occupancy import get_source_meta, _point_in_polygon as _pip
+        from services.parking_occupancy import get_source_meta, _point_in_polygon as _pip, _point_in_exclusions as _pie
         meta = get_source_meta(source) or {}
         area_mask = meta.get("parking_area_mask") or None
         exclusion_mask = meta.get("exclusion_mask") or None
@@ -259,7 +261,7 @@ def _vehicle_analysis(frame, source: str) -> dict:
             return True
         if area_mask and not _pip(cx, cy, area_mask):
             return False
-        if exclusion_mask and _pip(cx, cy, exclusion_mask):
+        if _pie and _pie(cx, cy, exclusion_mask):  # 不偵測區(相容多個)
             return False
         return True
 
@@ -838,7 +840,7 @@ def auto_detect_slots(source: str = Query(..., description="source key"),
 
     vehicle_classes = {"car", "truck", "bus", "heavy_truck", "light_truck", "non_truck"}
     # 範圍限定: 自動偵測車位也只在「停車場區域」內、排除「不偵測區」
-    from services.parking_occupancy import get_source_meta as _gsm, _point_in_polygon as _pip
+    from services.parking_occupancy import get_source_meta as _gsm, _point_in_polygon as _pip, _point_in_exclusions as _pie
     _auto_meta = _gsm(source)
     _auto_area = _auto_meta.get("parking_area_mask") or []
     _auto_excl = _auto_meta.get("exclusion_mask") or []
@@ -879,7 +881,7 @@ def auto_detect_slots(source: str = Query(..., description="source key"),
             cx = (x1 + x2) // 2; cy = (y1 + y2) // 2
             if _auto_area and not _pip(cx, cy, _auto_area):
                 continue
-            if _auto_excl and _pip(cx, cy, _auto_excl):
+            if _pie(cx, cy, _auto_excl):  # 不偵測區(相容多個)
                 continue
             all_raw_boxes.append([x1, y1, x2, y2])
             n_this += 1

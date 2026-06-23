@@ -351,6 +351,24 @@ def _point_in_polygon(px: float, py: float, polygon: List[List[float]]) -> bool:
     return inside
 
 
+def _exclusion_polygons(excl) -> List[List[List[float]]]:
+    """不偵測區相容多個: 回傳多邊形清單。
+    舊格式 = 單一多邊形(點清單 [[x,y],...]);新格式 = 多邊形清單 [[[x,y],...], ...]。"""
+    if not excl:
+        return []
+    first = excl[0]
+    # 新格式: first 是多邊形 → first[0] 是點 [x,y]
+    if isinstance(first, (list, tuple)) and first and isinstance(first[0], (list, tuple)):
+        return [p for p in excl if isinstance(p, (list, tuple)) and len(p) >= 3]
+    # 舊格式: 單一多邊形
+    return [excl] if len(excl) >= 3 else []
+
+
+def _point_in_exclusions(px: float, py: float, excl) -> bool:
+    """車中心是否落在任一不偵測區內 (相容單一/多個)。"""
+    return any(_point_in_polygon(px, py, poly) for poly in _exclusion_polygons(excl))
+
+
 def _polygon_bbox(polygon: List[List[float]]) -> Tuple[int, int, int, int]:
     xs = [p[0] for p in polygon]
     ys = [p[1] for p in polygon]
@@ -589,7 +607,7 @@ def _eval_auto_mode(source_key: str, frame: np.ndarray, meta: Dict) -> Dict:
             if _point_in_poly:
                 if area_mask and not _point_in_poly(cx, cy, area_mask):
                     continue
-                if exclusion_mask and _point_in_poly(cx, cy, exclusion_mask):
+                if _point_in_exclusions(cx, cy, exclusion_mask):
                     continue
             poly = [[max(0,x1), max(0,y1)],
                     [min(w_img-1,x2), max(0,y1)],
@@ -704,7 +722,7 @@ def evaluate_occupancy(source_key: str) -> Dict:
         # 範圍限定: 區域外 / 不偵測區內的車直接丟棄 (連 slot 判定都不參與)
         if _area_mask and not _point_in_polygon(cx, cy, _area_mask):
             continue
-        if _excl_mask and _point_in_polygon(cx, cy, _excl_mask):
+        if _point_in_exclusions(cx, cy, _excl_mask):
             continue
         vehicles.append({"bbox": (x1, y1, x2, y2), "cx": cx, "cy": cy, "cls": cls})
 
@@ -845,7 +863,7 @@ def evaluate_occupancy(source_key: str) -> Dict:
     def _veh_in_area(cx: float, cy: float) -> bool:
         if area_mask and not _point_in_polygon(cx, cy, area_mask):
             return False
-        if exclusion_mask and _point_in_polygon(cx, cy, exclusion_mask):
+        if _point_in_exclusions(cx, cy, exclusion_mask):
             return False
         return True
 

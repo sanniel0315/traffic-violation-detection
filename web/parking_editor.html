@@ -58,10 +58,10 @@
       <el-button size="small" type="danger" plain v-if="maskMode" @click="cancelMask">取消</el-button>
       <el-button size="small" type="danger" plain v-if="maskPolygon.length && !maskMode && !exMode" @click="clearMask">清除區域</el-button>
       <el-divider direction="vertical"></el-divider>
-      <el-button size="small" type="danger" plain v-if="!exMode && !maskMode" @click="startExMode">畫不偵測區</el-button>
-      <el-button size="small" type="success" v-if="exMode" @click="finishEx" :disabled="exDraft.length < 3">完成不偵測 ({{ exDraft.length }})</el-button>
-      <el-button size="small" type="danger" plain v-if="exMode" @click="cancelEx">取消</el-button>
-      <el-button size="small" type="danger" plain v-if="exPolygon.length && !exMode && !maskMode" @click="clearEx">清除不偵測區</el-button>
+      <el-button size="small" type="danger" plain v-if="!exMode && !maskMode" @click="startExMode">畫不偵測區{{ exPolygons.length ? ' (已'+exPolygons.length+'區)' : '' }}</el-button>
+      <el-button size="small" type="success" v-if="exMode" @click="finishEx" :disabled="exDraft.length < 3">完成此區 ({{ exDraft.length }})</el-button>
+      <el-button size="small" type="primary" plain v-if="exMode" @click="cancelEx">結束</el-button>
+      <el-button size="small" type="danger" plain v-if="exPolygons.length && !exMode && !maskMode" @click="clearEx">清除全部不偵測</el-button>
       <el-divider direction="vertical"></el-divider>
       <el-button size="small" type="primary" plain v-if="!lineMode && !measureMode && !maskMode && !exMode && !gridMode" @click="startLineMode">畫計數線</el-button>
       <el-button size="small" type="danger" plain v-if="lineMode" @click="cancelLineMode">取消計數線</el-button>
@@ -168,10 +168,21 @@ const app = createApp({
     const maskMode = ref(false);
     const maskPolygon = ref([]);
     const maskDraft = ref([]);
-    // 不偵測區 exclusion state
+    // 不偵測區 exclusion state — 支援多個 polygon
     const exMode = ref(false);
-    const exPolygon = ref([]);
+    const exPolygons = ref([]);   // 多邊形清單 [[[x,y],...], ...]
     const exDraft = ref([]);
+    // 相容舊格式(單一多邊形 [[x,y],...])與新格式(多邊形清單)
+    const normalizeExclusions = (excl) => {
+      if (!Array.isArray(excl) || !excl.length) return [];
+      const first = excl[0];
+      // 新格式: first 是多邊形 → first[0] 是點 [x,y]
+      if (Array.isArray(first) && first.length && Array.isArray(first[0])) {
+        return excl.filter(p => Array.isArray(p) && p.length >= 3);
+      }
+      // 舊格式: 單一多邊形
+      return excl.length >= 3 ? [excl] : [];
+    };
     // Grid 透視推算 state
     const gridMode = ref(false);
     const gridCorners = ref([]);   // 4 個角 (近左 / 近右 / 遠右 / 遠左)
@@ -243,14 +254,15 @@ const app = createApp({
           ctx.stroke();
         }
       }
-      // 已存 exclusion polygon — 紅半透 + 紅虛線邊 + 紅頂點 handle
-      if (exPolygon.value.length >= 3) {
+      // 已存 exclusion polygons (可多個) — 紅半透 + 紅虛線邊 + 紅頂點 handle
+      exPolygons.value.forEach((poly, polyIdx) => {
+        if (!poly || poly.length < 3) return;
         ctx.fillStyle = 'rgba(220,38,38,0.18)';
         ctx.strokeStyle = '#dc2626';
         ctx.setLineDash([8, 4]);
         ctx.lineWidth = 2;
         ctx.beginPath();
-        exPolygon.value.forEach((p, i) => {
+        poly.forEach((p, i) => {
           const x = p[0] / scaleX, y = p[1] / scaleY;
           if (i === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
@@ -260,9 +272,10 @@ const app = createApp({
         ctx.stroke();
         ctx.setLineDash([]);
         // 頂點 handle (紅)
-        for (let pi = 0; pi < exPolygon.value.length; pi++) {
-          const p = exPolygon.value[pi];
-          const isEd = editingPoint.value && editingPoint.value.type === 'ex' && editingPoint.value.pointIdx === pi;
+        for (let pi = 0; pi < poly.length; pi++) {
+          const p = poly[pi];
+          const isEd = editingPoint.value && editingPoint.value.type === 'ex'
+            && editingPoint.value.polyIdx === polyIdx && editingPoint.value.pointIdx === pi;
           ctx.beginPath();
           ctx.arc(p[0] / scaleX, p[1] / scaleY, isEd ? 7 : 5, 0, 2 * Math.PI);
           ctx.fillStyle = '#dc2626';
@@ -271,7 +284,7 @@ const app = createApp({
           ctx.lineWidth = 1.5;
           ctx.stroke();
         }
-      }
+      });
       // 畫中的 exclusion draft — 橘紅實線 + 頂點
       if (exMode.value && exDraft.value.length > 0) {
         ctx.strokeStyle = '#ea580c';
@@ -507,10 +520,10 @@ const app = createApp({
         const pi = test(maskPolygon.value);
         if (pi >= 0) return { type: 'mask', pointIdx: pi };
       }
-      // exclusion 頂點
-      if (exPolygon.value.length) {
-        const pi = test(exPolygon.value);
-        if (pi >= 0) return { type: 'ex', pointIdx: pi };
+      // exclusion 頂點 (可多個 polygon)
+      for (let polyIdx = 0; polyIdx < exPolygons.value.length; polyIdx++) {
+        const pi = test(exPolygons.value[polyIdx]);
+        if (pi >= 0) return { type: 'ex', polyIdx, pointIdx: pi };
       }
       return null;
     };
@@ -628,8 +641,8 @@ const app = createApp({
           }
         } else if (ep.type === 'mask' && maskPolygon.value[ep.pointIdx]) {
           maskPolygon.value[ep.pointIdx] = [px, py];
-        } else if (ep.type === 'ex' && exPolygon.value[ep.pointIdx]) {
-          exPolygon.value[ep.pointIdx] = [px, py];
+        } else if (ep.type === 'ex' && exPolygons.value[ep.polyIdx] && exPolygons.value[ep.polyIdx][ep.pointIdx]) {
+          exPolygons.value[ep.polyIdx][ep.pointIdx] = [px, py];
         }
         redraw();
         return;
@@ -678,7 +691,7 @@ const app = createApp({
         } else if (ep.type === 'ex') {
           fetch('/api/parking/exclusion_mask/save', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ source: sourceKey.value, exclusion_mask: exPolygon.value }),
+            body: JSON.stringify({ source: sourceKey.value, exclusion_mask: exPolygons.value }),
           });
         }
         return;
@@ -992,7 +1005,7 @@ const app = createApp({
         if (r3.ok) {
           const meta = await r3.json();
           maskPolygon.value = meta.parking_area_mask || [];
-          exPolygon.value = meta.exclusion_mask || [];
+          exPolygons.value = normalizeExclusions(meta.exclusion_mask);
           countingLine.value = meta.counting_line || [];
           enterNormal.value = meta.counting_enter_normal || 'right';
         }
@@ -1184,17 +1197,18 @@ const app = createApp({
         ElementPlus.ElMessage.warning('至少 3 點');
         return;
       }
+      // 把這一區加入清單,存整批,並保持畫模式可繼續畫下一個
+      const next = [...exPolygons.value, exDraft.value.slice()];
       try {
         const r = await fetch('/api/parking/exclusion_mask/save', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ source: sourceKey.value, exclusion_mask: exDraft.value }),
+          body: JSON.stringify({ source: sourceKey.value, exclusion_mask: next }),
         });
         const d = await r.json();
         if (r.ok && d.ok) {
-          exPolygon.value = exDraft.value.slice();
+          exPolygons.value = next;
           exDraft.value = [];
-          exMode.value = false;
-          ElementPlus.ElMessage.success(`已設定不偵測區 (${d.exclusion_points} 點)`);
+          ElementPlus.ElMessage.success(`已新增不偵測區 (共 ${next.length} 區),可繼續畫或按「結束」`);
           redraw();
         } else {
           ElementPlus.ElMessage.error(d.detail || '儲存失敗');
@@ -1204,14 +1218,14 @@ const app = createApp({
       }
     };
     const clearEx = async () => {
-      if (!confirm('確定清除不偵測區?')) return;
+      if (!confirm('確定清除全部不偵測區?')) return;
       try {
         await fetch('/api/parking/exclusion_mask/save', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ source: sourceKey.value, exclusion_mask: [] }),
         });
-        exPolygon.value = [];
-        ElementPlus.ElMessage.success('已清除');
+        exPolygons.value = [];
+        ElementPlus.ElMessage.success('已清除全部不偵測區');
         redraw();
       } catch (e) {
         ElementPlus.ElMessage.error('錯誤: ' + e.message);
@@ -1262,7 +1276,7 @@ const app = createApp({
       samMode, samBusy, toggleSamMode,
       fillMode, toggleFillMode,
       maskMode, maskPolygon, maskDraft,
-      exMode, exPolygon, exDraft,
+      exMode, exPolygons, exDraft,
       gridMode, gridCorners, gridPreset,
       measureMode, measureLast,
       lineMode, lineDraft, countingLine, enterNormal, enterNormalLabel,
