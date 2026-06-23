@@ -88,3 +88,10 @@ temp_pdf_pages/
 
 # 個人文件 (root 層 PDF) — 真要納入版本請放 docs/
 /*.pdf
+
+# VLM 偵錯暫存
+.vlm_debug/
+
+# 誤放到 web/ 的暫存腳本 (_ 前綴) — 正式腳本在專案根/Jetson parking_autolabel
+web/_*.py
+web/_*.json
