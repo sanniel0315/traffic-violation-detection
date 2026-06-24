@@ -76,9 +76,25 @@ sudo systemctl enable --now traffic-frigate traffic-ocr traffic-io traffic-api
 > `IO_PORT`（traffic-io）依現場序列埠調整；無 RS-485 硬體可不啟 traffic-io。
 > 停車場自動標註（parking-collector/retrain）是特定測試點專屬，新站通常不用。
 
-## 8. 開站設定（網頁 http://<板IP>:8000）
-現場重設（每站不同，不會自動帶）：攝影機、車道/方向、偵測 ROI、車速區、計數線、停車格 ROI。
-車速區記得設**真實世界尺寸校正**（width_m/length_m）否則速度不準。
+## 8. 帶設定過來（主機匯出 → 新站匯入）
+**不要手動重打**——用 `settings_backup.py` 從主機帶過來。涵蓋：
+攝影機(含帳密/source)、`detection_config`(偵測/壅塞/車速參數)、`zones`(全部 ROI：偵測區/車速區/
+計數線/不偵測區/停車格)、使用者角色、system_files(feature_state/ntp)。
+**不含**：辨識/違規/事件紀錄、模型、錄影、DB 等大檔案（這些不需備份，各機自管）。
+
+```bash
+# 主機(現有站)匯出：
+python3 scripts/settings_backup.py export --file /tmp/settings.json
+scp /tmp/settings.json <新板>:/home/ubuntu/traffic-violation-detection/config/
+
+# 新站匯入(先確定 data/violations.db 已建好 schema：跑過一次 traffic-api 或 init)：
+python3 scripts/settings_backup.py import --file config/settings.json
+sudo systemctl restart traffic-api
+```
+
+> 匯入後上網頁 :8000 微調**本站差異**：攝影機 source / 上游 RTSP（見 §6 frigate）、
+> 以及因鏡頭角度不同需重畫的 ROI。**車速區記得設真實世界尺寸校正**（width_m/length_m）否則速度不準。
+> users 匯入只更新「已存在」帳號的角色（不建新帳號/不帶密碼），新站的登入帳密另設。
 
 ## 9. 驗證
 ```bash

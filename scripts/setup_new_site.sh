@@ -59,7 +59,9 @@ cat <<'NEXT'
 3. 編輯 .env: FRIGATE_RTSP_PASSWORD / EXTERNAL_API_KEY (換新隨機值)
 4. Frigate 攝影機: 改 config/frigate/config.yml 的 go2rtc streams + cameras 成「本站」攝影機 RTSP
 5. 啟動: sudo systemctl start traffic-frigate traffic-ocr traffic-io traffic-api
-6. 開站設定(網頁 :8000): 攝影機、車道/方向、偵測ROI、車速區、計數線、停車格 ROI 等現場重設
+6. 帶設定(不用手打): 主機匯出 settings_backup.json scp 過來,再
+     python3 scripts/settings_backup.py import --file config/settings.json
+   (涵蓋攝影機/偵測參數/全部ROI/使用者;不含紀錄/模型/大檔)。匯入後微調本站差異(上游RTSP/角度不同的ROI/車速校正)
 7. 驗證: python3 scripts/smoke_check.py
 ============================================================
 NEXT
