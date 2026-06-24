@@ -39,11 +39,14 @@ else
   echo "  .env 已存在,略過"
 fi
 
-# 5) systemd units
-echo "==> [5/5] 安裝 systemd units"
-sudo cp deploy/systemd/*.service /etc/systemd/system/
+# 5) systemd units — unit 檔以 /home/ubuntu/User=ubuntu 為樣板，安裝時自動換成本機實際 user/home
+echo "==> [5/5] 安裝 systemd units (user=$(whoami) home=$HOME)"
+U="$(whoami)"; H="$HOME"
+for f in deploy/systemd/*.service; do
+  sed "s|/home/ubuntu|$H|g; s|^User=ubuntu$|User=$U|" "$f" | sudo tee "/etc/systemd/system/$(basename "$f")" >/dev/null
+done
 sudo mkdir -p /etc/systemd/system/traffic-api.service.d
-sudo cp deploy/systemd/traffic-api.service.d/override.conf /etc/systemd/system/traffic-api.service.d/
+sed "s|/home/ubuntu|$H|g" deploy/systemd/traffic-api.service.d/override.conf | sudo tee /etc/systemd/system/traffic-api.service.d/override.conf >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable traffic-ocr traffic-io traffic-frigate traffic-api
 echo "  已 enable: traffic-ocr / traffic-io / traffic-frigate / traffic-api"
