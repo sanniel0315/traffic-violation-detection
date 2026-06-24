@@ -88,10 +88,25 @@ curl -s http://127.0.0.1:8000/api/cameras
 
 ---
 
-## 自動部署（CI/CD）注意
-現有 `.github/workflows/jetson-verify.yml` 綁定 **單一 self-hosted runner，label `jetson-agx-orin`**，
-只會部署到原本那台 AGX。第二站要自動部署，二選一：
-- **A（建議起步）手動部署**：新站 `git pull` + `sudo systemctl restart traffic-api`（用 `scripts/restart_and_verify.sh`）
-- **B 多站 CI**：在新板註冊**自己的 runner + 不同 label**，並把 workflow 的 `runs-on` 參數化成各站 label
+## 自動部署（CI/CD）— 多站已參數化
+`.github/workflows/jetson-verify.yml` 已改成 **matrix 多站**：每站 = 一台 Jetson + 一個有唯一 label 的 runner。
+```yaml
+strategy:
+  matrix:
+    site: [agx-orin]          # ← 新增站點就在這加 label
+runs-on: [self-hosted, "${{ matrix.site }}"]
+```
+push main 時，matrix 會在「每一台」對應 runner 各自 verify + 自我部署。
+
+**把第二站加入自動部署**：
+1. 新板註冊 self-hosted runner，給**唯一 label**（例 `site2`）：
+   `./config.sh --url <repo> --token <T> --labels self-hosted,jetson,gpu,site2`
+2. 把 label 加進 workflow 的 `matrix.site`：`site: [agx-orin, site2]`
+3. push → 兩站都會自動部署。
+
+> 🛑 **加自動部署前必解的雷**：deploy 的 `git reset --hard origin/main` 會把 `config/frigate/config.yml`
+> 還原成 origin 版（= 第一站的攝影機）。各站攝影機不同，所以第二站直接吃進 matrix 會被洗掉設定。
+> **在做「每站獨立 frigate 設定」之前，第二站請維持手動部署**：
+> `git pull && sudo systemctl restart traffic-api`（或 `scripts/restart_and_verify.sh`）。
 
 > 對外網路不穩時 runner 會接不到 job / `git fetch` 失敗 → 手動 scp 改檔 + 重啟為 fallback。
