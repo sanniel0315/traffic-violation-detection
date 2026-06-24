@@ -11,7 +11,18 @@ on:
 
 jobs:
   verify:
-    runs-on: self-hosted
+    # ── 多站部署 ──────────────────────────────────────────────
+    # 每個站點 = 一台 Jetson + 一個有「唯一 label」的 self-hosted runner。
+    # 新增站點：在新板註冊 runner 並給唯一 label(例 site2)，然後把該 label 加進下面 matrix.site 陣列。
+    # matrix 會在「每一台」對應 runner 上各跑一次 verify + 自我部署(deploy 用 origin/main)。
+    # 🛑 注意: deploy 的 git reset --hard 會把 config/frigate/config.yml 還原成 origin 版,
+    #         各站攝影機設定不同 → 第二站若加進來自動部署前,需先做「每站獨立 frigate 設定」
+    #         (見 DEPLOY_NEW_SITE.md);在那之前第二站建議維持手動部署,只放現有 agx-orin 一站。
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [agx-orin]
+    runs-on: [self-hosted, "${{ matrix.site }}"]
     timeout-minutes: 15
 
     # PyTorch 裝在 ~/.local/.../torch (NVIDIA Jetson 變體)，但 libcusparseLt.so.0 在
@@ -177,7 +188,7 @@ jobs:
         run: |
           set -e
           PROD=/home/ubuntu/traffic-violation-detection
-          echo "=== Deploy to $PROD ==="
+          echo "=== Deploy to site [${{ matrix.site }}] @ $PROD ==="
           cd "$PROD"
           BEFORE=$(git rev-parse --short HEAD)
           git fetch origin main
