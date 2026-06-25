@@ -19,9 +19,10 @@ from api.utils.report_aggregation import (
 
 router = APIRouter(prefix="/api/traffic", tags=["交通流"])
 
-# 聚合 cache：避免每次查詢都重建（rebuild 35 萬筆要 16 秒）
-_AGG_CACHE: dict[tuple, float] = {}
-_AGG_CACHE_TTL_SEC = 60.0  # 60 秒內同樣的範圍/bucket/cam 跳過 rebuild
+# 聚合結果 cache：快取「完整結果」(range/bucket/cam → (ts, result))。
+# 命中時直接回先前已重建好的完整結果,不去讀持久化聚合表(該表的 5m/1m 可能稀疏 → 會缺口)。
+_AGG_CACHE: dict[tuple, tuple] = {}
+_AGG_CACHE_TTL_SEC = 60.0
 
 
 def _to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
@@ -91,7 +92,6 @@ def get_vd_report(
             camera_id=camera_id,
         )
 
-    # Cache 鍵：相同的時間範圍 + bucket + camera 在 TTL 內跳過 rebuild
     cache_key = (
         start_time.replace(second=0, microsecond=0),
         end_time.replace(second=0, microsecond=0),
@@ -99,21 +99,14 @@ def get_vd_report(
         camera_id,
     )
     now_ts = time.time()
-    cached_at = _AGG_CACHE.get(cache_key, 0.0)
-    if (now_ts - cached_at) < _AGG_CACHE_TTL_SEC:
-        # 跳過 rebuild，直接讀已有聚合
-        refreshed = {"cached": True}
-    else:
-        refreshed = _run_with_sqlite_retry(db, rebuild_aggs)
-        _AGG_CACHE[cache_key] = now_ts
-        # 清掉太舊的 cache 項目
-        if len(_AGG_CACHE) > 100:
-            cutoff = now_ts - _AGG_CACHE_TTL_SEC * 2
-            for k in list(_AGG_CACHE.keys()):
-                if _AGG_CACHE[k] < cutoff:
-                    del _AGG_CACHE[k]
+    hit = _AGG_CACHE.get(cache_key)
+    if hit is not None and (now_ts - hit[0]) < _AGG_CACHE_TTL_SEC:
+        # 回先前已重建好的「完整結果」,不重讀可能稀疏的聚合表 → 不會缺口
+        return hit[1]
+    # 未命中: rebuild 查詢範圍聚合 → 讀 → 快取完整結果
+    refreshed = _run_with_sqlite_retry(db, rebuild_aggs)
     rows = _run_with_sqlite_retry(db, build_rows)
-    return {
+    result = {
         "bucket_size": bucket_size,
         "camera_id": camera_id,
         "start_time": start_time.replace(tzinfo=timezone.utc).isoformat(),
@@ -121,6 +114,13 @@ def get_vd_report(
         "aggregation": refreshed,
         "items": rows,
     }
+    _AGG_CACHE[cache_key] = (now_ts, result)
+    if len(_AGG_CACHE) > 100:
+        cutoff = now_ts - _AGG_CACHE_TTL_SEC * 2
+        for k in list(_AGG_CACHE.keys()):
+            if _AGG_CACHE[k][0] < cutoff:
+                del _AGG_CACHE[k]
+    return result
 
 
 @router.get("/events")
