@@ -100,6 +100,7 @@ class IOService:
         self._lock_connected = False
         self._lock_status: dict = {}
         self._lock_err = ""
+        self._lock_poll_tick = 0
 
     # ── lifecycle ─────────────────────────────────────────────────────
     def start(self) -> None:
@@ -454,9 +455,6 @@ class IOService:
                         print(f"[io_svc] DI rising edge: ch={ch} levels {self._di_levels} -> {cur}", flush=True)
                         self._fire_di(ch)
                 self._di_levels = cur
-                # 同一 thread 內讀電子鎖(同 bus),每 ~1s 一次 → 零並發、不增 SEGV 風險
-                if self._lock_enabled and _sample_count % _LOCK_POLL_EVERY == 0:
-                    self._poll_lock()
                 # 每 200 sample (~10s) 印一次心跳
                 if _sample_count % 200 == 0:
                     print(f"[io_svc] _di_loop alive, samples={_sample_count} last_di={cur}", flush=True)
@@ -467,6 +465,12 @@ class IOService:
                 if not self._mod.ok:
                     if self._mod.connect():
                         _log("info", "IO 模組重連成功")
+            # 電子鎖讀取獨立於 read_inputs(同 bus、同 thread、每 ~1s 一次):
+            # 即使沒接 PD3R3(read_inputs 一直失敗),也要能讀鎖。_poll_lock 自己吞例外。
+            if self._lock_enabled:
+                self._lock_poll_tick += 1
+                if self._lock_poll_tick % _LOCK_POLL_EVERY == 0:
+                    self._poll_lock()
             self._stop_di.wait(interval)
 
     def _fire_di(self, ch: int) -> None:

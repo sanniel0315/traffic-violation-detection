@@ -165,6 +165,14 @@ class PD3R3:
             raise ModbusError(f"unexpected reg byte count {nbytes}")
         return list(struct.unpack(">" + "H" * count, body[1:1 + nbytes]))
 
+    def write_holding_at(self, slave_addr: int, reg: int, value: int) -> None:
+        """FC06 寫單個 holding register 到「指定從機位址」(raw 位址)。
+        給 E-1507 電子鎖設定用(如改 485 位址 reg 0x2000、485 開鎖 reg 0x2004)。
+        正常應答 echo 整個請求(addr fc reg_hi reg_lo val_hi val_lo crc)。"""
+        payload = reg.to_bytes(2, "big") + value.to_bytes(2, "big")
+        # echo 應答 = 1addr+1fc+2reg+2val+2crc = 8 bytes
+        self._txrx(6, payload, expected_len=8, addr=slave_addr)
+
     def _write_lenient(self, fc: int, payload: bytes) -> None:
         """Modbus write 對手上這顆 PD3R3 的 echo 第一個 byte 常被讀成 0
         (RS-485 line floating / converter timing)，但實際 hardware action 已生效。
