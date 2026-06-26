@@ -49,6 +49,17 @@ DI_RESET    = 1
 
 _DAEMON_URL = os.getenv("IO_DAEMON_URL", "").rstrip("/")
 
+# ── E-1507 電子鎖 (同一條 RS-485 上的另一個 Modbus 從機) ──────────────
+# 設定 LOCK_MODBUS_ADDR(1-247,需與 PD3R3 的 IO_ADDR 不同) 才會啟用;未設=停用,零影響。
+LOCK_ADDR = int(os.getenv("LOCK_MODBUS_ADDR", "0"))   # 0 = 停用
+LOCK_ENABLED = 1 <= LOCK_ADDR <= 247
+# 狀態寄存器: 0x0020 手柄 / 0x0021 門磁 / 0x0022 鑰匙 / 0x0023 鎖具動作 (連續 4 個 FC03)
+_LOCK_STATUS_START = 0x0020
+_LOCK_STATUS_COUNT = 4
+_LOCK_ACTION_NAMES = {0: "無", 1: "刷卡", 2: "密碼", 3: "指紋", 4: "鑰匙", 5: "手柄開"}
+# di_loop 每 N 個 sample(200ms) 讀一次鎖 → 5≈1s,符合協議建議輪詢 >800ms
+_LOCK_POLL_EVERY = 5
+
 
 class IOService:
     def __init__(self, module: Optional[IOModule] = None):
@@ -84,6 +95,11 @@ class IOService:
         # Monotonic sequence number for WS tracking — deque maxlen 會讓 len() 飽和，
         # 超過 50 個事件後 len() 不再變大，需要獨立 seq 才能正確判斷新事件。
         self._di_event_seq = 0
+        # E-1507 電子鎖狀態 cache (由 _di_loop 每 ~1s 更新;未啟用則恆 None)
+        self._lock_enabled = LOCK_ENABLED
+        self._lock_connected = False
+        self._lock_status: dict = {}
+        self._lock_err = ""
 
     # ── lifecycle ─────────────────────────────────────────────────────
     def start(self) -> None:
@@ -402,6 +418,26 @@ class IOService:
         )
         self._di_thread.start()
 
+    def _poll_lock(self) -> None:
+        """讀 E-1507 電子鎖狀態(0x0020-0x0023),更新 cache。失敗只標斷線,不拋出(不可拖垮 di_loop)。"""
+        try:
+            regs = self._mod.read_holding(LOCK_ADDR, _LOCK_STATUS_START, _LOCK_STATUS_COUNT)
+            handle, door, key, action = regs[0], regs[1], regs[2], regs[3]
+            self._lock_status = {
+                "handle": {"raw": handle, "in_place": handle == 0,
+                           "label": "手柄在位" if handle == 0 else "手柄不在位"},
+                "door":   {"raw": door, "closed": door == 0,
+                           "label": "門磁閉合(門關)" if door == 0 else "門磁斷開(門開)"},
+                "key":    {"raw": key, "in_place": key == 0,
+                           "label": "鑰匙在位" if key == 0 else "鑰匙不在位"},
+                "action": {"raw": action, "label": _LOCK_ACTION_NAMES.get(action, f"未知({action})")},
+            }
+            self._lock_connected = True
+            self._lock_err = ""
+        except Exception as e:
+            self._lock_connected = False
+            self._lock_err = str(e)
+
     def _di_loop(self) -> None:
         # 50ms → 200ms：降低 RS-485 / pyserial / Tegra UART 半雙工 race window，
         # native SEGV 發生率明顯下降；DI rising edge 仍能 catch 一般按鍵 (≥200ms)
@@ -418,6 +454,9 @@ class IOService:
                         print(f"[io_svc] DI rising edge: ch={ch} levels {self._di_levels} -> {cur}", flush=True)
                         self._fire_di(ch)
                 self._di_levels = cur
+                # 同一 thread 內讀電子鎖(同 bus),每 ~1s 一次 → 零並發、不增 SEGV 風險
+                if self._lock_enabled and _sample_count % _LOCK_POLL_EVERY == 0:
+                    self._poll_lock()
                 # 每 200 sample (~10s) 印一次心跳
                 if _sample_count % 200 == 0:
                     print(f"[io_svc] _di_loop alive, samples={_sample_count} last_di={cur}", flush=True)
@@ -511,6 +550,13 @@ class IOService:
                 "comm_ok":     self._comm_ok,
                 "auto_mode":   self._auto_mode,
                 "downloading": self._downloading,
+            },
+            "lock": {
+                "enabled":   self._lock_enabled,
+                "addr":      LOCK_ADDR if self._lock_enabled else None,
+                "connected": self._lock_connected,
+                "error":     self._lock_err,
+                "status":    self._lock_status,
             },
             "config_sync": config_sync.status(),
         }

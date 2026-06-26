@@ -101,8 +101,9 @@ class PD3R3:
         self.close()
 
     # ── low-level Modbus RTU framing ─────────────────────────────────────
-    def _txrx(self, fc: int, payload: bytes, expected_len: int) -> bytes:
-        frame = bytes([self.address, fc]) + payload
+    def _txrx(self, fc: int, payload: bytes, expected_len: int, addr: int | None = None) -> bytes:
+        a = self.address if addr is None else addr
+        frame = bytes([a, fc]) + payload
         frame += _crc16(frame)
         self._ser.reset_input_buffer()
         self._ser.write(frame)
@@ -110,7 +111,7 @@ class PD3R3:
         resp = self._ser.read(expected_len)
         if len(resp) < 3:
             raise ModbusError(f"timeout, got {resp!r}")
-        if resp[0] != self.address:
+        if resp[0] != a:
             raise ModbusError(f"wrong slave addr in reply: {resp[0]}")
         if resp[1] & 0x80:
             # exception frame: addr fc|0x80 ex_code crc_lo crc_hi
@@ -148,6 +149,17 @@ class PD3R3:
             raise ValueError(f"bad fc {fc}")
         payload = offset.to_bytes(2, "big") + count.to_bytes(2, "big")
         body = self._txrx(fc, payload, expected_len=3 + 1 + 2 * count + 2)
+        nbytes = body[0]
+        if nbytes != 2 * count:
+            raise ModbusError(f"unexpected reg byte count {nbytes}")
+        return list(struct.unpack(">" + "H" * count, body[1:1 + nbytes]))
+
+    def read_holding_at(self, slave_addr: int, start: int, count: int) -> list[int]:
+        """FC03 讀「指定從機位址」的 holding register，start 為 raw 寄存器位址（不做 40001 偏移）。
+        供同一條 RS-485 上的其他 Modbus 設備使用（如 E-1507 電子鎖，狀態寄存器 0x0020 起）。
+        共用本連線的 serial port，呼叫端需自行用 IOModule._lock 序列化避免 bus 並發。"""
+        payload = start.to_bytes(2, "big") + count.to_bytes(2, "big")
+        body = self._txrx(3, payload, expected_len=3 + 1 + 2 * count + 2, addr=slave_addr)
         nbytes = body[0]
         if nbytes != 2 * count:
             raise ModbusError(f"unexpected reg byte count {nbytes}")
