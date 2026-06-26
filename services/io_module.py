@@ -108,6 +108,11 @@ class IOModule:
     def read_inputs(self) -> list[bool]:
         return self._call(lambda: self._dev.read_inputs())
 
+    def read_holding(self, slave_addr: int, start: int, count: int) -> list[int]:
+        """FC03 讀同一條 RS-485 上其他從機(如 E-1507 電子鎖)的 holding register。
+        經 _call → _lock 與 PD3R3 的 read/write 序列化,避免 bus 並發 SEGV。"""
+        return self._call(lambda: self._dev.read_holding_at(slave_addr, start, count))
+
     def read_outputs(self) -> list[bool]:
         return self._call(lambda: self._dev.read_outputs())
 
