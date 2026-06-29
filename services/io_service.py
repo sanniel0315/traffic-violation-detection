@@ -687,7 +687,14 @@ class IOService:
                 if cur and cur != before and cur != "00000000":
                     _log("info", f"加卡成功,新卡號 {cur}")
                     return {"ok": True, "card_no": cur, "msg": f"加卡成功！卡號 {cur}"}
-            return {"ok": True, "card_no": None, "msg": "加卡結束:未偵測到新卡(沒刷/超時/卡已存在)"}
+            # 超時未偵測到卡號變化:可能剛刷的是既有卡(卡號==before)。仍讀當前卡號回傳,
+            # 讓卡片庫 upsert(既有卡會重新啟用),避免「刷了卡庫卻沒新增」。
+            final = self._read_lock_cardno()
+            if final and final != "00000000":
+                _log("info", f"加卡完成(卡號未變,既有卡/重複),卡號 {final}")
+                return {"ok": True, "card_no": final,
+                        "msg": f"加卡完成,卡號 {final}（既有卡則重新啟用）"}
+            return {"ok": True, "card_no": None, "msg": "加卡結束:未讀到卡號(沒刷/超時)"}
         except Exception as e:
             return {"ok": False, "msg": f"加卡失敗: {e}"}
 
@@ -706,8 +713,12 @@ class IOService:
             from api.models import SessionLocal, LockCard
             db = SessionLocal()
             try:
-                ex = db.query(LockCard).filter(LockCard.card_no == card_no, LockCard.active == True).first()
-                if not ex:
+                ex = db.query(LockCard).filter(LockCard.card_no == card_no).first()
+                if ex:
+                    if not ex.active:          # 既有卡曾被刪(active=0) → 重新啟用
+                        ex.active = True
+                        db.commit()
+                else:
                     db.add(LockCard(lock_addr=(LOCK_ADDR or None), card_no=card_no))
                     db.commit()
             finally:
