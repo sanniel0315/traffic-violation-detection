@@ -86,6 +86,18 @@
     .pulse-dot { width:9px; height:9px; border-radius:50%; background:#22c55e; box-shadow:0 0 0 0 rgba(34,197,94,0.6); animation:pulse 1.2s infinite; }
     @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(34,197,94,0.55);} 70%{box-shadow:0 0 0 8px rgba(34,197,94,0);} 100%{box-shadow:0 0 0 0 rgba(34,197,94,0);} }
     .muted-note { font-size:12.5px; color:var(--gov-mute-2); line-height:1.6; }
+    /* el-message / el-message-box 對齊主系統公務風格 (lock_panel 獨立 iframe 缺主頁美化) */
+    .el-message { border-radius:8px !important; border:1px solid var(--gov-border) !important; box-shadow:0 8px 24px rgba(11,30,60,0.12) !important; }
+    .el-message--success { border-left:4px solid var(--gov-ok) !important; }
+    .el-message--warning { border-left:4px solid var(--gov-warn) !important; }
+    .el-message--error { border-left:4px solid var(--gov-fault) !important; }
+    .el-message--info { border-left:4px solid var(--gov-primary) !important; }
+    .el-message-box { border-radius:12px !important; border:1px solid var(--gov-border) !important; box-shadow:0 20px 50px rgba(11,30,60,0.32) !important; overflow:hidden; }
+    .el-message-box__header { background:linear-gradient(135deg,var(--gov-primary) 0%,#094680 100%); padding:14px 22px !important; position:relative; }
+    .el-message-box__header::after { content:''; position:absolute; left:0; right:0; bottom:0; height:2px; background:linear-gradient(90deg,var(--gov-warn) 0%,transparent 60%); }
+    .el-message-box__title { color:#fff !important; font-weight:700 !important; font-size:15px !important; }
+    .el-message-box__headerbtn .el-message-box__close { color:rgba(255,255,255,0.75) !important; }
+    .el-message-box__headerbtn:hover .el-message-box__close { color:#fff !important; }
   </style>
 </head>
 <body>
