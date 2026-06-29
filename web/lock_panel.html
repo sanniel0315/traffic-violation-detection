@@ -68,6 +68,8 @@
     .badge-warning { background:#fef3c7; color:#92400e; }
     .badge-primary { background:#dbeafe; color:#1e40af; }
     .badge-action { background:#dcfce7; color:#166534; }
+    .badge-alert { background:#fee2e2; color:#991b1b; }
+    .alarm-row { background:#fef2f2; border-radius:6px; }
     .event-list { max-height:360px; overflow-y:auto; display:flex; flex-direction:column; }
     .event-entry { display:flex; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid #f3f4f6; }
     .event-entry:last-child { border-bottom:none; }
@@ -99,6 +101,10 @@
         <div class="card-title">
           <span>即時狀態 (E-1507)</span>
           <span style="display:flex;align-items:center;gap:10px;">
+            <button v-if="lock.connected" @click="unlockLock"
+                    style="font-size:12px;font-weight:600;cursor:pointer;border:none;background:var(--gov-ok,#1f9d55);color:#fff;border-radius:6px;padding:5px 12px;">
+              遠端開鎖
+            </button>
             <button v-if="lock.connected" :disabled="adding" @click="addCard"
                     style="font-size:12px;font-weight:600;cursor:pointer;border:none;background:var(--gov-primary);color:#fff;border-radius:6px;padding:5px 12px;">
               + 新增卡片
@@ -196,9 +202,9 @@
           尚無開鎖記錄 — 刷卡 / 輸密碼 / 指紋 / 轉鑰匙 / 扳手柄 都會記一筆。
         </div>
         <div v-else class="event-list">
-          <div v-for="(e, idx) in events" :key="e.id || idx" class="event-entry">
+          <div v-for="(e, idx) in events" :key="e.id || idx" class="event-entry" :class="{'alarm-row': e.event_type==='alarm'}">
             <span class="event-time">{{ formatTime(e.time) }}</span>
-            <span class="event-badge badge-action">{{ e.label }}</span>
+            <span class="event-badge" :class="evBadge(e)">{{ e.label }}</span>
             <span class="event-ctx">{{ doorNote(e) }}</span>
           </div>
         </div>
@@ -239,6 +245,12 @@
           if (e.door_closed === true) return '門關';
           if (e.door_closed === false) return '門開';
           return '';
+        }
+        function evBadge(e) {
+          const t = e.event_type || 'swipe';
+          if (t === 'alarm') return 'badge-alert';
+          if (t === 'swipe' || t === 'unlock') return 'badge-action';
+          return 'badge-primary';
         }
 
         async function fetchStatus() {
@@ -292,6 +304,16 @@
           } catch (e) {}
           fetchCards();
         }
+        async function unlockLock() {
+          if (!confirm('確定遠端開鎖？門會打開。')) return;
+          addMsg.value = '遠端開鎖中…';
+          try {
+            const d = await (await fetch('/api/lock/unlock', { method: 'POST' })).json();
+            addMsg.value = d.msg || (d.ok ? '已開鎖' : '開鎖失敗');
+          } catch (e) { addMsg.value = '開鎖失敗'; }
+          if (addTimer) clearTimeout(addTimer);
+          addTimer = setTimeout(() => { addMsg.value = ''; }, 5000);
+        }
 
         async function removeCard() {
           if (adding.value) return;
@@ -335,7 +357,7 @@
           if (ws.value) ws.value.close();
         });
 
-        return { lock, st, doorClosed, handleIn, keyIn, events, total, cards, flash, adding, addMsg, addCard, deleteCard, editCard, formatTime, doorNote };
+        return { lock, st, doorClosed, handleIn, keyIn, events, total, cards, flash, adding, addMsg, addCard, deleteCard, editCard, unlockLock, formatTime, doorNote, evBadge };
       }
     }).mount('#app');
   </script>

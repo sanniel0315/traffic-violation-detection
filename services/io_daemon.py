@@ -128,6 +128,12 @@ def lock_delete_card(body: CardNoBody):
     return io.delete_lock_card_by_no(body.card_no)
 
 
+@app.post("/lock/unlock")
+def lock_unlock():
+    """遠端開鎖 (寫 0x2004=0x0033)。"""
+    return io.unlock_lock()
+
+
 @app.get("/health")
 def health():
     return {"ok": True, "connected": io._mod.ok,

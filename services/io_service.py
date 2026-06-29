@@ -69,6 +69,9 @@ _LOCK_AUX_DEL_CARD = 0x0055   # 寫 0x2005=0x0055 → 鎖進入刪卡模式(隨�
 _LOCK_REG_CARD_HI = 0x0044    # 加卡寄存器2 (最近加的卡號高 16bit)
 _LOCK_REG_CARD_LO = 0x0045    # 加卡寄存器3 (最近加的卡號低 16bit)
 _LOCK_REG_DEL_CARD = 0x0047   # 刪卡寄存器1 (FC10 連寫 0x0047-0x0049: 工號+卡號,直接刪不用刷卡)
+_LOCK_REG_UNLOCK = 0x2004     # 485 開鎖:寫 0x0033 遠端開鎖
+_LOCK_UNLOCK_VAL = 0x0033
+_DOOR_OPEN_ALARM_SEC = float(os.getenv("LOCK_DOOR_ALARM_SEC", "30"))  # 門開超過 N 秒觸發警報
 
 
 class IOService:
@@ -117,6 +120,9 @@ class IOService:
         self.lock_events: deque = deque(maxlen=100)
         self._lock_event_seq = 0
         self._lock_prev_action: Optional[int] = None
+        self._lock_prev_states: dict = {}        # 門磁/手柄/鑰匙上次狀態(邊沿偵測)
+        self._door_open_since: Optional[float] = None
+        self._door_alarmed = False
 
     # ── lifecycle ─────────────────────────────────────────────────────
     def start(self) -> None:
@@ -246,6 +252,7 @@ class IOService:
             try:
                 db.add(LockEvent(
                     lock_addr=evt.get("addr"),
+                    event_type=evt.get("event_type", "swipe"),
                     action_code=evt.get("action"),
                     action_label=evt.get("label"),
                     door_closed=evt.get("door_closed"),
@@ -521,22 +528,49 @@ class IOService:
             self._lock_connected = False
             self._lock_err = str(e)
 
-    def _fire_lock_event(self, action: int) -> None:
-        """偵測到刷卡/開鎖動作 → 建事件進 deque (client 端拉去寫 DB + 推 WS)。"""
+    def _fire_lock_event(self, event_type: str, label: str, action_code=None) -> None:
+        """建鎖事件進 deque (client 端拉去寫 DB + 推 WS)。
+        event_type: swipe(刷卡)/door(門磁)/handle(手柄)/key(鑰匙)/alarm(警報)/unlock(遠端開鎖)。"""
         self._lock_event_seq += 1
         st = self._lock_status or {}
         evt = {
             "seq":     self._lock_event_seq,
             "addr":    LOCK_ADDR,
-            "action":  action,
-            "label":   _LOCK_ACTION_NAMES.get(action, f"未知({action})"),
+            "event_type": event_type,
+            "action":  action_code,
+            "label":   label,
             "door_closed":     st.get("door", {}).get("closed"),
             "handle_in_place": st.get("handle", {}).get("in_place"),
             "key_in_place":    st.get("key", {}).get("in_place"),
             "time":    datetime.datetime.now().isoformat(),
         }
         self.lock_events.append(evt)
-        _log("info", f"電子鎖動作: {evt['label']} (addr {LOCK_ADDR})")
+        _log("warning" if event_type == "alarm" else "info", f"電子鎖[{event_type}]: {label}")
+
+    def _detect_state_events(self) -> None:
+        """偵測門磁/手柄/鑰匙狀態變化 → 事件;門開超時 → 警報。在慢輪詢更新狀態後呼叫。"""
+        st = self._lock_status or {}
+        door = st.get("door", {}).get("closed")
+        handle = st.get("handle", {}).get("in_place")
+        key = st.get("key", {}).get("in_place")
+        prev = self._lock_prev_states
+        if door is not None and prev.get("door") is not None and door != prev["door"]:
+            self._fire_lock_event("door", "門關" if door else "門開")
+        if handle is not None and prev.get("handle") is not None and handle != prev["handle"]:
+            self._fire_lock_event("handle", "手柄復位" if handle else "手柄移開")
+        if key is not None and prev.get("key") is not None and key != prev["key"]:
+            self._fire_lock_event("key", "鑰匙插回" if key else "鑰匙拔出")
+        self._lock_prev_states = {"door": door, "handle": handle, "key": key}
+        # 門長開警報 (門開超過閾值,只觸發一次,門關後重置)
+        if door is False:
+            if self._door_open_since is None:
+                self._door_open_since = time.time()
+            elif not self._door_alarmed and (time.time() - self._door_open_since) >= _DOOR_OPEN_ALARM_SEC:
+                self._fire_lock_event("alarm", f"門長時間未關 (>{int(_DOOR_OPEN_ALARM_SEC)}秒)")
+                self._door_alarmed = True
+        elif door is True:
+            self._door_open_since = None
+            self._door_alarmed = False
 
     def _start_lock_monitor(self) -> None:
         """啟動電子鎖獨立 poll thread。與 _di_loop 共用 IOModule._lock 序列化 RS-485,
@@ -561,13 +595,14 @@ class IOService:
                 self._lock_err = ""
                 # 上升沿: 前一刻非動作(idle/0) → 此刻 1-5 → 觸發一次事件
                 if self._is_real_action(action) and not self._is_real_action(self._lock_prev_action):
-                    self._fire_lock_event(action)
+                    self._fire_lock_event("swipe", _LOCK_ACTION_NAMES.get(action, f"未知({action})"), action)
                 self._lock_prev_action = action
             except Exception as e:
                 self._lock_connected = False
                 self._lock_err = str(e)
             if tick % 7 == 0:
                 self._poll_lock_states(action)
+                self._detect_state_events()
             tick += 1
             self._stop_lock.wait(0.15)
 
@@ -717,6 +752,21 @@ class IOService:
             return {"ok": True, "msg": f"已刪除卡號 {cn}"}
         except Exception as e:
             return {"ok": False, "msg": f"刪卡失敗: {e}"}
+
+    def unlock_lock(self) -> dict:
+        """遠端開鎖 (寫 0x2004=0x0033)。client mode 轉發 daemon;native 直接寫。"""
+        if self._daemon_url:
+            self._daemon_post("/lock/unlock", {})
+            return {"ok": True, "msg": "已送出遠端開鎖指令"}
+        if not self._lock_enabled:
+            return {"ok": False, "msg": "電子鎖未啟用 (LOCK_MODBUS_ADDR 未設)"}
+        try:
+            self._mod.write_holding(LOCK_ADDR, _LOCK_REG_UNLOCK, _LOCK_UNLOCK_VAL)
+            self._fire_lock_event("unlock", "遠端開鎖")
+            _log("info", "電子鎖遠端開鎖")
+            return {"ok": True, "msg": "已遠端開鎖"}
+        except Exception as e:
+            return {"ok": False, "msg": f"遠端開鎖失敗: {e}"}
 
     @property
     def di_event_seq(self) -> int:

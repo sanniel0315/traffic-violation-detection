@@ -42,6 +42,9 @@ THS2 板載 RS-485 轉換器 TX→RX 換向慢，會吃掉「多暫存器長回�
 - 動作暫存器 0x0023 做**上升沿偵測**（idle→1~5）→ 觸發一筆事件（`_fire_lock_event`）。
 - 記錄欄位：開鎖方式、時間、當下門磁/手柄/鑰匙狀態。
 - daemon 端進 deque（`lock_events`，maxlen=100）+ 單調 seq；traffic-api(client) 拉去**寫 DB + 推 WS**。
+- **事件類型 `event_type`**:swipe(刷卡)/door(門開關)/handle(手柄)/key(鑰匙)/alarm(警報)/unlock(遠端開鎖)。門磁/手柄/鑰匙狀態變化(邊沿偵測)也記一筆,前端記錄列表按類型分色(刷卡綠/門磁手柄藍/警報紅)。
+- **即時警報**:門開超過 `LOCK_DOOR_ALARM_SEC`(預設30秒) → 觸發 alarm 事件(前端整行紅色醒目),門關後重置。`_lock_loop._detect_state_events`。
+- **遠端開鎖**:`POST /api/lock/unlock` → 寫 0x2004=0x0033 + 記 unlock 事件。前端綠色「遠端開鎖」按鈕(confirm 後執行)。
 
 ### 新增卡片（學習式加卡）
 - 前端「**+ 新增卡片**」按鈕 → `POST /api/lock/add-card` → 寫 `0x2005=0x0033` → 鎖進入**加卡模式**（約 10 秒）→ 在鎖上**刷要新增的卡**，鎖自動學習錄入卡號。
@@ -67,6 +70,7 @@ THS2 板載 RS-485 轉換器 TX→RX 換向慢，會吃掉「多暫存器長回�
 | `PUT /api/lock/cards/{id}` | 編輯持有人/部門 |
 | `DELETE /api/lock/cards/{id}` | 刪卡(FC10 直接刪鎖內卡+庫停用,不需現場刷) |
 | `POST /api/lock/remove-card` | (備用)學習式刪卡:進刪卡模式現場刷 |
+| `POST /api/lock/unlock` | 遠端開鎖(0x2004=0x0033) |
 | daemon `GET /lock_events?since=N` | (內部) traffic-api long-poll 拉事件 |
 | daemon `POST /lock/add_card` `/lock/remove_card` | (內部) 寫 0x2005=0x0033 / 0x0055 |
 

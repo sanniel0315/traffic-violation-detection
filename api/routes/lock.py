@@ -86,6 +86,12 @@ def delete_card(card_id: int, db: Session = Depends(get_db)):
     return res
 
 
+@router.post("/unlock")
+def unlock():
+    """遠端開鎖。"""
+    return get_service().unlock_lock()
+
+
 @router.get("/events")
 def lock_events(
     page: int = Query(1, ge=1),
@@ -104,6 +110,7 @@ def lock_events(
             {
                 "id": r.id,
                 "addr": r.lock_addr,
+                "event_type": r.event_type,
                 "action": r.action_code,
                 "label": r.action_label,
                 "door_closed": r.door_closed,
