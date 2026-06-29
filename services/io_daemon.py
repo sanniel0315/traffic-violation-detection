@@ -94,9 +94,44 @@ def get_events(since: int = 0):
     return {"events": [], "latest_seq": io.di_event_seq}
 
 
+@app.get("/lock_events")
+def get_lock_events(since: int = 0):
+    """Long-poll: 最多等 5 秒拿到 seq > since 的電子鎖刷卡/開鎖事件。"""
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        events = [e for e in list(io.lock_events) if int(e.get("seq", 0)) > since]
+        if events:
+            return {"events": events, "latest_seq": io.lock_event_seq}
+        time.sleep(0.1)
+    return {"events": [], "latest_seq": io.lock_event_seq}
+
+
+@app.post("/lock/add_card")
+def lock_add_card():
+    """讓電子鎖進入加卡模式 (寫 0x2005=0x0033),隨後在鎖上刷卡學習錄入。"""
+    return io.add_lock_card()
+
+
+@app.post("/lock/remove_card")
+def lock_remove_card():
+    """讓電子鎖進入刪卡模式 (寫 0x2005=0x0055),隨後在鎖上刷要刪除的卡。"""
+    return io.remove_lock_card()
+
+
+class CardNoBody(BaseModel):
+    card_no: str
+
+
+@app.post("/lock/delete_card")
+def lock_delete_card(body: CardNoBody):
+    """已知卡號直接刪卡 (FC10 寫 0x0047-0x0049),不需現場刷卡。"""
+    return io.delete_lock_card_by_no(body.card_no)
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "connected": io._mod.ok, "di_seq": io.di_event_seq}
+    return {"ok": True, "connected": io._mod.ok,
+            "di_seq": io.di_event_seq, "lock_seq": io.lock_event_seq}
 
 
 if __name__ == "__main__":

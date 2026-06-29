@@ -159,7 +159,9 @@ class PD3R3:
         供同一條 RS-485 上的其他 Modbus 設備使用（如 E-1507 電子鎖，狀態寄存器 0x0020 起）。
         共用本連線的 serial port，呼叫端需自行用 IOModule._lock 序列化避免 bus 並發。"""
         payload = start.to_bytes(2, "big") + count.to_bytes(2, "big")
-        body = self._txrx(3, payload, expected_len=3 + 1 + 2 * count + 2, addr=slave_addr)
+        # 正確幀長 = addr+fc+len(3) + data(2*count) + crc(2)。count=1 → 7 bytes;
+        # 給對的長度才能讀滿就返回,不會多等一次 read timeout。
+        body = self._txrx(3, payload, expected_len=3 + 2 * count + 2, addr=slave_addr)
         nbytes = body[0]
         if nbytes != 2 * count:
             raise ModbusError(f"unexpected reg byte count {nbytes}")
@@ -167,11 +169,45 @@ class PD3R3:
 
     def write_holding_at(self, slave_addr: int, reg: int, value: int) -> None:
         """FC06 寫單個 holding register 到「指定從機位址」(raw 位址)。
-        給 E-1507 電子鎖設定用(如改 485 位址 reg 0x2000、485 開鎖 reg 0x2004)。
-        正常應答 echo 整個請求(addr fc reg_hi reg_lo val_hi val_lo crc)。"""
-        payload = reg.to_bytes(2, "big") + value.to_bytes(2, "big")
-        # echo 應答 = 1addr+1fc+2reg+2val+2crc = 8 bytes
-        self._txrx(6, payload, expected_len=8, addr=slave_addr)
+        給 E-1507 電子鎖設定用(改位址 0x2000、開鎖 0x2004、加卡觸發 0x2005 等)。
+        THS2 換向會吃掉 echo 回應 → 用寬容模式(寫完 drain 不驗回應,寫入已生效;
+        寫操作不需讀回應確認,同 _write_lenient)。"""
+        frame = bytes([slave_addr, 6]) + reg.to_bytes(2, "big") + value.to_bytes(2, "big")
+        frame += _crc16(frame)
+        self._ser.reset_input_buffer()
+        self._ser.write(frame)
+        try:
+            self._ser.flush()
+        except Exception:
+            pass
+        time.sleep(0.020)        # 等 echo 傳完 (8 bytes @9600 ≈ 9ms)
+        try:
+            self._ser.read(16)   # drain echo,不驗證
+        except Exception:
+            pass
+        time.sleep(self.inter_frame_pause)
+
+    def write_multi_holding_at(self, slave_addr: int, start: int, values: list[int]) -> None:
+        """FC10 (0x10) 寫多個連續 holding register 到指定從機(寬容,不驗回應)。
+        給電子鎖刪卡(0x0047-0x0049: 工號+卡號)等多寄存器寫。THS2 換向吃 echo,寫已生效。"""
+        n = len(values)
+        payload = start.to_bytes(2, "big") + n.to_bytes(2, "big") + bytes([n * 2])
+        for v in values:
+            payload += int(v).to_bytes(2, "big")
+        frame = bytes([slave_addr, 0x10]) + payload
+        frame += _crc16(frame)
+        self._ser.reset_input_buffer()
+        self._ser.write(frame)
+        try:
+            self._ser.flush()
+        except Exception:
+            pass
+        time.sleep(0.025)
+        try:
+            self._ser.read(16)   # drain echo,不驗證
+        except Exception:
+            pass
+        time.sleep(self.inter_frame_pause)
 
     def _write_lenient(self, fc: int, payload: bytes) -> None:
         """Modbus write 對手上這顆 PD3R3 的 echo 第一個 byte 常被讀成 0

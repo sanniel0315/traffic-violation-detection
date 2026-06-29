@@ -102,6 +102,8 @@ class LPRRecord(Base):
     vehicle_type = Column(String(50))
     snapshot = Column(String(255))
     raw = Column(String(100))
+    vehicle_bbox = Column(JSON)        # 該車 bbox [x1,y1,x2,y2],供 violation 嚴格 plate 關聯用
+    lane_no = Column(Integer)          # 車道 (輔助關聯,暫保留)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
@@ -133,6 +135,31 @@ class TrafficEvent(Base):
     bbox = Column(JSON)
     source = Column(String(32), default="roi_detection", index=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class LockEvent(Base):
+    """E-1507 電子鎖刷卡/開鎖事件歷史 (動作暫存器 0x0023 邊沿偵測寫入)"""
+    __tablename__ = "lock_events"
+    id = Column(Integer, primary_key=True, index=True)
+    lock_addr = Column(Integer, index=True)
+    action_code = Column(Integer)          # 1=刷卡 2=密碼 3=指紋 4=鑰匙 5=手柄開
+    action_label = Column(String(20))
+    door_closed = Column(Boolean)          # 當下門磁 (True=門關)
+    handle_in_place = Column(Boolean)
+    key_in_place = Column(Boolean)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class LockCard(Base):
+    """電子鎖卡片庫 (加卡時記錄卡號;THS2 刷卡讀不到卡號,故僅加卡建庫)"""
+    __tablename__ = "lock_cards"
+    id = Column(Integer, primary_key=True, index=True)
+    lock_addr = Column(Integer, index=True)
+    card_no = Column(String(20), index=True)       # hex 卡號,如 E14D0395
+    holder_name = Column(String(100))              # 持有人
+    dept = Column(String(100))                     # 部門
+    active = Column(Boolean, default=True, index=True)
+    added_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
 class CongestionSample(Base):
@@ -324,6 +351,7 @@ def init_db():
     _migrate_camera_columns()
     _migrate_report_indexes()
     _migrate_parking_columns()
+    _migrate_lpr_columns()
     db = SessionLocal()
     try:
         if db.query(User).count() == 0:
@@ -385,6 +413,20 @@ def _migrate_parking_columns():
             col_names = {str(c[1]) for c in cols}
             if "vehicles_in_area" not in col_names:
                 conn.execute(text("ALTER TABLE parking_samples ADD COLUMN vehicles_in_area INTEGER DEFAULT 0"))
+    except Exception:
+        pass
+
+
+def _migrate_lpr_columns():
+    """為既有 lpr_records 表補上 vehicle_bbox / lane_no (violation 嚴格 plate 關聯用)。"""
+    try:
+        with engine.begin() as conn:
+            cols = conn.execute(text("PRAGMA table_info(lpr_records)")).fetchall()
+            col_names = {str(c[1]) for c in cols}
+            if "vehicle_bbox" not in col_names:
+                conn.execute(text("ALTER TABLE lpr_records ADD COLUMN vehicle_bbox JSON"))
+            if "lane_no" not in col_names:
+                conn.execute(text("ALTER TABLE lpr_records ADD COLUMN lane_no INTEGER"))
     except Exception:
         pass
 

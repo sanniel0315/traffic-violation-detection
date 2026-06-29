@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>電子鎖狀態</title>
+  <link rel="icon" type="image/svg+xml" href="/web/favicon.svg?v=20260627" />
+  <style>
+    :root {
+      --gov-bg:#eef2f6; --gov-surface:#ffffff; --gov-primary:#0b5ea8;
+      --gov-text:#1f2937; --gov-muted:#5b6778; --gov-mute-2:#8b95a4;
+      --gov-border:#d7dee8; --gov-ok:#1f9d55; --gov-warn:#d97706; --gov-fault:#c43a31;
+      --font-mono:"IBM Plex Mono", ui-monospace, monospace;
+    }
+    *,*::before,*::after { box-sizing:border-box; }
+    body {
+      margin:0; padding:0;
+      background:linear-gradient(180deg,#f4f7fb 0%,var(--gov-bg) 100%);
+      color:var(--gov-text);
+      font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,-apple-system,sans-serif;
+      font-size:14px;
+    }
+    .navbar {
+      background:rgba(255,255,255,0.92); backdrop-filter:blur(12px);
+      padding:0 24px; height:56px; display:flex; align-items:center; gap:14px;
+      border-bottom:1px solid var(--gov-border); box-shadow:0 1px 3px rgba(16,24,40,0.04);
+      position:sticky; top:0; z-index:5;
+    }
+    .navbar::before {
+      content:''; width:3px; height:22px;
+      background:linear-gradient(180deg,var(--gov-primary) 0%,#eaf2fb 100%);
+      border-radius:2px; margin-right:4px;
+    }
+    .navbar-title { color:var(--gov-primary); font-size:16px; font-weight:700; white-space:nowrap; }
+    .navbar-subtitle {
+      color:var(--gov-mute-2); font-size:11.5px; margin-left:4px; white-space:nowrap;
+      font-family:var(--font-mono); letter-spacing:0.06em; padding-left:12px;
+      border-left:1px solid var(--gov-border);
+    }
+    .page-body { max-width:860px; margin:0 auto; padding:24px 16px; display:flex; flex-direction:column; gap:16px; }
+    .card {
+      background:var(--gov-surface); border-radius:10px; border:1px solid var(--gov-border);
+      padding:20px 24px; box-shadow:0 1px 3px rgba(16,24,40,0.06),0 1px 2px rgba(16,24,40,0.04);
+    }
+    .card-title {
+      font-weight:600; font-size:15px; color:var(--gov-text);
+      border-bottom:1px solid var(--gov-border); padding-bottom:12px; margin-bottom:16px;
+      display:flex; align-items:center; justify-content:space-between;
+    }
+    .relay-row {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:12px 0; border-bottom:1px solid #f3f4f6;
+    }
+    .relay-row:last-child { border-bottom:none; }
+    .relay-left { display:flex; align-items:center; gap:10px; }
+    .relay-dot { width:12px; height:12px; border-radius:50%; flex-shrink:0; }
+    .relay-name { font-size:14px; font-weight:600; color:var(--gov-text); }
+    .relay-label { font-size:12px; color:var(--gov-muted); }
+    .conn-chip-row { margin-top:16px; display:flex; align-items:center; gap:8px; }
+    .conn-chip { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:12px; font-size:12px; font-weight:500; }
+    .conn-chip.connected { background:#dcfce7; color:#166534; }
+    .conn-chip.disconnected { background:#fee2e2; color:#991b1b; }
+    .conn-dot { width:7px; height:7px; border-radius:50%; }
+    .conn-chip.connected .conn-dot { background:#22c55e; }
+    .conn-chip.disconnected .conn-dot { background:#ef4444; }
+    .event-badge { display:inline-block; padding:2px 10px; border-radius:10px; font-size:12px; font-weight:500; line-height:1.6; }
+    .badge-idle { background:#f1f5f9; color:#64748b; }
+    .badge-warning { background:#fef3c7; color:#92400e; }
+    .badge-primary { background:#dbeafe; color:#1e40af; }
+    .badge-action { background:#dcfce7; color:#166534; }
+    .event-list { max-height:360px; overflow-y:auto; display:flex; flex-direction:column; }
+    .event-entry { display:flex; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid #f3f4f6; }
+    .event-entry:last-child { border-bottom:none; }
+    .event-time { font-family:"Courier New",Courier,monospace; font-size:12px; color:var(--gov-muted); white-space:nowrap; flex-shrink:0; min-width:64px; }
+    .event-ctx { font-size:12px; color:var(--gov-mute-2); margin-left:auto; white-space:nowrap; }
+    .event-empty { font-size:13px; color:#9ca3af; padding:18px 0; text-align:center; }
+    .flash-banner {
+      background:#dcfce7; color:#166534; border:1px solid #86efac; border-radius:8px;
+      padding:10px 14px; margin-bottom:14px; font-weight:600; font-size:14px;
+      display:flex; align-items:center; gap:8px; animation:flash-in 0.2s ease;
+    }
+    @keyframes flash-in { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:none; } }
+    .pulse-dot { width:9px; height:9px; border-radius:50%; background:#22c55e; box-shadow:0 0 0 0 rgba(34,197,94,0.6); animation:pulse 1.2s infinite; }
+    @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(34,197,94,0.55);} 70%{box-shadow:0 0 0 8px rgba(34,197,94,0);} 100%{box-shadow:0 0 0 0 rgba(34,197,94,0);} }
+    .muted-note { font-size:12.5px; color:var(--gov-mute-2); line-height:1.6; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <nav class="navbar">
+      <span class="navbar-title">電子鎖狀態</span>
+      <span class="navbar-subtitle">E-1507 LEEKA</span>
+    </nav>
+
+    <div class="page-body">
+
+      <!-- CARD 1: 即時狀態 -->
+      <div class="card">
+        <div class="card-title">
+          <span>即時狀態 (E-1507)</span>
+          <span style="display:flex;align-items:center;gap:10px;">
+            <button v-if="lock.connected" :disabled="adding" @click="addCard"
+                    style="font-size:12px;font-weight:600;cursor:pointer;border:none;background:var(--gov-primary);color:#fff;border-radius:6px;padding:5px 12px;">
+              + 新增卡片
+            </button>
+            <span v-if="lock.enabled" class="event-badge"
+                  :class="lock.connected ? 'badge-primary' : 'badge-warning'">
+              {{ lock.connected ? ('連線 · addr ' + lock.addr) : '未連線' }}
+            </span>
+          </span>
+        </div>
+
+        <div v-if="addMsg" class="flash-banner" style="margin-top:14px;">
+          <span class="pulse-dot"></span>{{ addMsg }}
+        </div>
+
+        <div v-if="!lock.enabled" class="muted-note">
+          電子鎖未啟用（未設定 LOCK_MODBUS_ADDR）。
+        </div>
+        <div v-else-if="!lock.connected" style="font-size:13px;color:#f59e0b;">
+          鎖未回應 — 檢查 RS-485 接線與從機位址。
+          <span v-if="lock.error">（{{ lock.error }}）</span>
+        </div>
+        <template v-else>
+          <!-- 門磁 -->
+          <div class="relay-row">
+            <div class="relay-left">
+              <div class="relay-dot" :style="doorClosed ? 'background:#22c55e;' : 'background:#f59e0b;'"></div>
+              <div><div class="relay-name">門磁</div><div class="relay-label">門開關感應</div></div>
+            </div>
+            <span class="event-badge" :class="doorClosed ? 'badge-action' : 'badge-warning'">{{ st.door && st.door.label }}</span>
+          </div>
+          <!-- 手柄 -->
+          <div class="relay-row">
+            <div class="relay-left">
+              <div class="relay-dot" :style="handleIn ? 'background:#22c55e;' : 'background:#f59e0b;'"></div>
+              <div><div class="relay-name">手柄</div><div class="relay-label">把手在位/不在位</div></div>
+            </div>
+            <span class="event-badge" :class="handleIn ? 'badge-action' : 'badge-warning'">{{ st.handle && st.handle.label }}</span>
+          </div>
+          <!-- 鑰匙 -->
+          <div class="relay-row">
+            <div class="relay-left">
+              <div class="relay-dot" :style="keyIn ? 'background:#22c55e;' : 'background:#f59e0b;'"></div>
+              <div><div class="relay-name">鑰匙</div><div class="relay-label">機械鑰匙在位</div></div>
+            </div>
+            <span class="event-badge" :class="keyIn ? 'badge-action' : 'badge-warning'">{{ st.key && st.key.label }}</span>
+          </div>
+          <!-- 動作 -->
+          <div class="relay-row">
+            <div class="relay-left">
+              <div class="relay-dot" style="background:#94a3b8;"></div>
+              <div><div class="relay-name">鎖具動作</div><div class="relay-label">最近開鎖方式（瞬時）</div></div>
+            </div>
+            <span class="event-badge badge-idle">{{ st.action && st.action.label }}</span>
+          </div>
+        </template>
+      </div>
+
+      <!-- CARD: 卡片庫 -->
+      <div class="card">
+        <div class="card-title">
+          <span>卡片庫</span>
+          <span class="muted-note">共 {{ cards.length }} 張</span>
+        </div>
+        <div v-if="cards.length === 0" class="event-empty">尚無卡片。點「+ 新增卡片」加卡學習。</div>
+        <div v-else class="event-list">
+          <div v-for="c in cards" :key="c.id" class="relay-row">
+            <div class="relay-left">
+              <div>
+                <div class="relay-name">{{ c.holder_name || '(未命名)' }}</div>
+                <div class="relay-label">卡號 {{ c.card_no }} · {{ formatTime(c.added_at) }}</div>
+              </div>
+            </div>
+            <span style="display:flex;gap:8px;">
+              <button @click="editCard(c)" style="font-size:12px;cursor:pointer;border:1px solid var(--gov-border);background:#fff;color:var(--gov-text);border-radius:6px;padding:4px 10px;">改名</button>
+              <button @click="deleteCard(c)" style="font-size:12px;cursor:pointer;border:none;background:var(--gov-fault,#c43a31);color:#fff;border-radius:6px;padding:4px 10px;">刪除</button>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- CARD 2: 刷卡 / 開鎖事件記錄 -->
+      <div class="card">
+        <div class="card-title">
+          <span>刷卡 / 開鎖記錄</span>
+          <span class="muted-note">共 {{ total }} 筆</span>
+        </div>
+
+        <div v-if="flash" class="flash-banner">
+          <span class="pulse-dot"></span>
+          剛偵測到開鎖：{{ flash.label }}（{{ formatTime(flash.time) }}）
+        </div>
+
+        <div v-if="events.length === 0" class="event-empty">
+          尚無開鎖記錄 — 刷卡 / 輸密碼 / 指紋 / 轉鑰匙 / 扳手柄 都會記一筆。
+        </div>
+        <div v-else class="event-list">
+          <div v-for="(e, idx) in events" :key="e.id || idx" class="event-entry">
+            <span class="event-time">{{ formatTime(e.time) }}</span>
+            <span class="event-badge badge-action">{{ e.label }}</span>
+            <span class="event-ctx">{{ doorNote(e) }}</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="/web/lib/vue.global.prod.js?v=20260407"></script>
+  <script>
+    const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
+
+    createApp({
+      setup() {
+        const lock = ref({ enabled: false, connected: false, status: {} });
+        const events = ref([]);
+        const total = ref(0);
+        const wsConnected = ref(false);
+        const flash = ref(null);
+        const ws = ref(null);
+        let flashTimer = null;
+
+        const st = computed(() => lock.value.status || {});
+        const doorClosed = computed(() => !!st.value.door?.closed);
+        const handleIn = computed(() => !!st.value.handle?.in_place);
+        const keyIn = computed(() => !!st.value.key?.in_place);
+
+        function formatTime(iso) {
+          if (!iso) return '--:--:--';
+          try {
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return String(iso).slice(0, 8);
+            const p = (n) => String(n).padStart(2, '0');
+            return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+          } catch (e) { return '--:--:--'; }
+        }
+        function doorNote(e) {
+          if (e.door_closed === true) return '門關';
+          if (e.door_closed === false) return '門開';
+          return '';
+        }
+
+        async function fetchStatus() {
+          try { lock.value = await (await fetch('/api/lock/status')).json(); } catch (e) {}
+        }
+        async function fetchHistory() {
+          try {
+            const d = await (await fetch('/api/lock/events?page_size=100')).json();
+            events.value = d.items || [];
+            total.value = d.total || 0;
+          } catch (e) {}
+        }
+
+        const adding = ref(false);
+        const addMsg = ref('');
+        let addTimer = null;
+        const cards = ref([]);
+        async function fetchCards() {
+          try { cards.value = (await (await fetch('/api/lock/cards')).json()).items || []; } catch (e) {}
+        }
+        async function addCard() {
+          if (adding.value) return;
+          adding.value = true;
+          addMsg.value = '加卡模式開啟,請在約 10 秒內到鎖上刷新卡…';
+          try {
+            const d = await (await fetch('/api/lock/add-card', { method: 'POST' })).json();
+            addMsg.value = d.msg || (d.ok ? '完成' : '加卡失敗');
+            fetchCards();
+          } catch (e) { addMsg.value = '加卡指令失敗'; }
+          adding.value = false;
+          if (addTimer) clearTimeout(addTimer);
+          addTimer = setTimeout(() => { addMsg.value = ''; }, 6000);
+        }
+        async function deleteCard(c) {
+          if (!confirm('確定刪除卡號 ' + c.card_no + '？會從鎖內移除該卡。')) return;
+          addMsg.value = '刪卡中…';
+          try {
+            const d = await (await fetch('/api/lock/cards/' + c.id, { method: 'DELETE' })).json();
+            addMsg.value = d.msg || (d.ok ? '已刪除' : '刪除失敗');
+          } catch (e) { addMsg.value = '刪除失敗'; }
+          fetchCards();
+          if (addTimer) clearTimeout(addTimer);
+          addTimer = setTimeout(() => { addMsg.value = ''; }, 5000);
+        }
+        async function editCard(c) {
+          const name = prompt('持有人姓名:', c.holder_name || '');
+          if (name === null) return;
+          const dept = prompt('部門:', c.dept || '');
+          try {
+            await fetch('/api/lock/cards/' + c.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ holder_name: name || '', dept: dept || '' }) });
+          } catch (e) {}
+          fetchCards();
+        }
+
+        async function removeCard() {
+          if (adding.value) return;
+          adding.value = true;
+          addMsg.value = '送出刪卡指令…';
+          try {
+            const d = await (await fetch('/api/lock/remove-card', { method: 'POST' })).json();
+            addMsg.value = d.msg || (d.ok ? '請在鎖上刷要刪除的卡' : '刪卡失敗');
+          } catch (e) { addMsg.value = '刪卡指令失敗'; }
+          if (addTimer) clearTimeout(addTimer);
+          addTimer = setTimeout(() => { adding.value = false; addMsg.value = ''; }, 12000);
+        }
+
+        function connectWS() {
+          const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+          ws.value = new WebSocket(`${proto}://${location.host}/api/lock/live`);
+          ws.value.onopen = () => { wsConnected.value = true; };
+          ws.value.onmessage = (ev) => {
+            const evt = JSON.parse(ev.data);
+            // 即時提示 banner 3 秒
+            flash.value = evt;
+            if (flashTimer) clearTimeout(flashTimer);
+            flashTimer = setTimeout(() => { flash.value = null; }, 4000);
+            // DB 已寫入 → 短延遲後重抓歷史 (保持與 DB 一致的時間格式)
+            setTimeout(fetchHistory, 600);
+          };
+          ws.value.onclose = () => { wsConnected.value = false; setTimeout(connectWS, 3000); };
+          ws.value.onerror = () => { wsConnected.value = false; };
+        }
+
+        let statusTimer = null;
+        onMounted(() => {
+          fetchStatus();
+          fetchHistory();
+          fetchCards();
+          connectWS();
+          statusTimer = setInterval(fetchStatus, 2000);
+        });
+        onUnmounted(() => {
+          if (statusTimer) clearInterval(statusTimer);
+          if (ws.value) ws.value.close();
+        });
+
+        return { lock, st, doorClosed, handleIn, keyIn, events, total, cards, flash, adding, addMsg, addCard, deleteCard, editCard, formatTime, doorNote };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
