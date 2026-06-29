@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>電子鎖狀態</title>
   <link rel="icon" type="image/svg+xml" href="/web/favicon.svg?v=20260627" />
+  <link rel="stylesheet" href="/web/lib/element-plus.css?v=20260407" />
   <style>
     :root {
       --gov-bg:#eef2f6; --gov-surface:#ffffff; --gov-primary:#0b5ea8;
@@ -116,10 +117,6 @@
           </span>
         </div>
 
-        <div v-if="addMsg" class="flash-banner" style="margin-top:14px;">
-          <span class="pulse-dot"></span>{{ addMsg }}
-        </div>
-
         <div v-if="!lock.enabled" class="muted-note">
           電子鎖未啟用（未設定 LOCK_MODBUS_ADDR）。
         </div>
@@ -214,6 +211,7 @@
   </div>
 
   <script src="/web/lib/vue.global.prod.js?v=20260407"></script>
+  <script src="/web/lib/element-plus.min.js?v=20260407"></script>
   <script>
     const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
 
@@ -274,45 +272,52 @@
         async function addCard() {
           if (adding.value) return;
           adding.value = true;
-          addMsg.value = '加卡模式開啟,請在約 10 秒內到鎖上刷新卡…';
+          ElementPlus.ElMessage({ message: '加卡模式開啟,請在約 10 秒內到鎖上刷新卡…', type: 'info', duration: 11000 });
           try {
             const d = await (await fetch('/api/lock/add-card', { method: 'POST' })).json();
-            addMsg.value = d.msg || (d.ok ? '完成' : '加卡失敗');
+            if (d.ok && d.card_no) ElementPlus.ElMessage.success(d.msg || ('加卡成功 ' + d.card_no));
+            else if (d.ok) ElementPlus.ElMessage.warning(d.msg || '未偵測到新卡');
+            else ElementPlus.ElMessage.error(d.msg || '加卡失敗');
             fetchCards();
-          } catch (e) { addMsg.value = '加卡指令失敗'; }
+          } catch (e) { ElementPlus.ElMessage.error('加卡指令失敗'); }
           adding.value = false;
-          if (addTimer) clearTimeout(addTimer);
-          addTimer = setTimeout(() => { addMsg.value = ''; }, 6000);
         }
         async function deleteCard(c) {
-          if (!confirm('確定刪除卡號 ' + c.card_no + '？會從鎖內移除該卡。')) return;
-          addMsg.value = '刪卡中…';
+          try {
+            await ElementPlus.ElMessageBox.confirm('確定刪除卡號 ' + c.card_no + '？會從鎖內移除該卡。', '刪除卡片', { type: 'warning', confirmButtonText: '確定刪除', cancelButtonText: '取消' });
+          } catch (e) { return; }
           try {
             const d = await (await fetch('/api/lock/cards/' + c.id, { method: 'DELETE' })).json();
-            addMsg.value = d.msg || (d.ok ? '已刪除' : '刪除失敗');
-          } catch (e) { addMsg.value = '刪除失敗'; }
+            if (d.ok) ElementPlus.ElMessage.success(d.msg || '已刪除');
+            else ElementPlus.ElMessage.error(d.msg || '刪除失敗');
+          } catch (e) { ElementPlus.ElMessage.error('刪除失敗'); }
           fetchCards();
-          if (addTimer) clearTimeout(addTimer);
-          addTimer = setTimeout(() => { addMsg.value = ''; }, 5000);
         }
         async function editCard(c) {
-          const name = prompt('持有人姓名:', c.holder_name || '');
-          if (name === null) return;
-          const dept = prompt('部門:', c.dept || '');
+          let name, dept;
+          try {
+            const r1 = await ElementPlus.ElMessageBox.prompt('持有人姓名', '編輯卡片', { inputValue: c.holder_name || '', confirmButtonText: '下一步', cancelButtonText: '取消' });
+            name = r1.value;
+            const r2 = await ElementPlus.ElMessageBox.prompt('部門', '編輯卡片', { inputValue: c.dept || '', confirmButtonText: '儲存', cancelButtonText: '取消' });
+            dept = r2.value;
+          } catch (e) { return; }
           try {
             await fetch('/api/lock/cards/' + c.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ holder_name: name || '', dept: dept || '' }) });
-          } catch (e) {}
+            ElementPlus.ElMessage.success('已更新');
+          } catch (e) { ElementPlus.ElMessage.error('更新失敗'); }
           fetchCards();
         }
         async function unlockLock() {
-          if (!confirm('確定遠端開鎖？門會打開。')) return;
-          addMsg.value = '遠端開鎖中…';
+          try {
+            await ElementPlus.ElMessageBox.confirm('確定遠端開鎖？門會打開。', '遠端開鎖', {
+              confirmButtonText: '確定開鎖', cancelButtonText: '取消', type: 'warning'
+            });
+          } catch (e) { return; }   // 使用者取消
           try {
             const d = await (await fetch('/api/lock/unlock', { method: 'POST' })).json();
-            addMsg.value = d.msg || (d.ok ? '已開鎖' : '開鎖失敗');
-          } catch (e) { addMsg.value = '開鎖失敗'; }
-          if (addTimer) clearTimeout(addTimer);
-          addTimer = setTimeout(() => { addMsg.value = ''; }, 5000);
+            if (d.ok) ElementPlus.ElMessage.success(d.msg || '已遠端開鎖');
+            else ElementPlus.ElMessage.error(d.msg || '開鎖失敗');
+          } catch (e) { ElementPlus.ElMessage.error('遠端開鎖失敗'); }
         }
 
         async function removeCard() {
