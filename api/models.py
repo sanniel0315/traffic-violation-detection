@@ -142,6 +142,7 @@ class LockEvent(Base):
     __tablename__ = "lock_events"
     id = Column(Integer, primary_key=True, index=True)
     lock_addr = Column(Integer, index=True)
+    event_type = Column(String(16), index=True, default="swipe")  # swipe/door/handle/key/alarm/unlock
     action_code = Column(Integer)          # 1=刷卡 2=密碼 3=指紋 4=鑰匙 5=手柄開
     action_label = Column(String(20))
     door_closed = Column(Boolean)          # 當下門磁 (True=門關)
@@ -352,6 +353,7 @@ def init_db():
     _migrate_report_indexes()
     _migrate_parking_columns()
     _migrate_lpr_columns()
+    _migrate_lock_events_columns()
     db = SessionLocal()
     try:
         if db.query(User).count() == 0:
@@ -413,6 +415,18 @@ def _migrate_parking_columns():
             col_names = {str(c[1]) for c in cols}
             if "vehicles_in_area" not in col_names:
                 conn.execute(text("ALTER TABLE parking_samples ADD COLUMN vehicles_in_area INTEGER DEFAULT 0"))
+    except Exception:
+        pass
+
+
+def _migrate_lock_events_columns():
+    """為既有 lock_events 表補上 event_type 欄 (事件分類:刷卡/門磁/手柄/鑰匙/警報/開鎖)。"""
+    try:
+        with engine.begin() as conn:
+            cols = conn.execute(text("PRAGMA table_info(lock_events)")).fetchall()
+            col_names = {str(c[1]) for c in cols}
+            if "event_type" not in col_names:
+                conn.execute(text("ALTER TABLE lock_events ADD COLUMN event_type VARCHAR(16) DEFAULT 'swipe'"))
     except Exception:
         pass
 
