@@ -72,6 +72,8 @@ _LOCK_REG_DEL_CARD = 0x0047   # 刪卡寄存器1 (FC10 連寫 0x0047-0x0049: 工
 _LOCK_REG_UNLOCK = 0x2004     # 485 開鎖:寫 0x0033 遠端開鎖
 _LOCK_UNLOCK_VAL = 0x0033
 _DOOR_OPEN_ALARM_SEC = float(os.getenv("LOCK_DOOR_ALARM_SEC", "30"))  # 門開超過 N 秒觸發警報
+_HANDLE_OFF_ALARM_SEC = float(os.getenv("LOCK_HANDLE_ALARM_SEC", "60"))  # 手柄不在位超過 N 秒觸發警報(門磁恆0時的實質開門訊號)
+_LOCK_OFFLINE_ALARM_SEC = float(os.getenv("LOCK_OFFLINE_ALARM_SEC", "60"))  # 斷電/失聯超過 N 秒觸發警報(斷電期間鑰匙機械開門記不到,至少留斷電時段紀錄供查核)
 
 
 class IOService:
@@ -123,6 +125,10 @@ class IOService:
         self._lock_prev_states: dict = {}        # 門磁/手柄/鑰匙上次狀態(邊沿偵測)
         self._door_open_since: Optional[float] = None
         self._door_alarmed = False
+        self._handle_off_since: Optional[float] = None
+        self._handle_alarmed = False
+        self._offline_since: Optional[float] = None
+        self._offline_alarmed = False
 
     # ── lifecycle ─────────────────────────────────────────────────────
     def start(self) -> None:
@@ -235,7 +241,16 @@ class IOService:
                     params={"since": self._lock_event_seq},
                     timeout=10,
                 )
-                for evt in r.json().get("events", []) or []:
+                data = r.json()
+                # daemon 重啟偵測:latest_seq 倒退 → daemon seq 歸0,client 舊 seq 過高會
+                # 永遠抓不到新事件(警報沒紀錄)。重置為0,下輪從重啟後的事件重新接收。
+                latest = int(data.get("latest_seq", 0))
+                if latest < self._lock_event_seq:
+                    print(f"[io_svc client] daemon lock_seq 倒退 ({self._lock_event_seq}->{latest}),"
+                          f"daemon 重啟,resync", flush=True)
+                    self._lock_event_seq = 0
+                    continue
+                for evt in data.get("events", []) or []:
                     seq = int(evt.get("seq", 0))
                     if seq > self._lock_event_seq:
                         self._lock_event_seq = seq
@@ -571,6 +586,31 @@ class IOService:
         elif door is True:
             self._door_open_since = None
             self._door_alarmed = False
+        # 手柄長時間不在位警報 (門磁恆0時,手柄不在位才是實質的「門開著」訊號)
+        if handle is False:
+            if self._handle_off_since is None:
+                self._handle_off_since = time.time()
+            elif not self._handle_alarmed and (time.time() - self._handle_off_since) >= _HANDLE_OFF_ALARM_SEC:
+                self._fire_lock_event("alarm", f"手柄長時間不在位 (>{int(_HANDLE_OFF_ALARM_SEC)}秒)")
+                self._handle_alarmed = True
+        elif handle is True:
+            self._handle_off_since = None
+            self._handle_alarmed = False
+
+    def _detect_offline(self) -> None:
+        """斷電/失聯告警:鎖持續讀不到(connected=false)超過閾值 → 告警一次;恢復連線記一筆。
+        斷電期間鑰匙機械開門鎖無電記不到,此告警至少留下斷電時段供事後查核。"""
+        if not self._lock_connected:
+            if self._offline_since is None:
+                self._offline_since = time.time()
+            elif not self._offline_alarmed and (time.time() - self._offline_since) >= _LOCK_OFFLINE_ALARM_SEC:
+                self._fire_lock_event("alarm", f"電子鎖斷電/失聯 (>{int(_LOCK_OFFLINE_ALARM_SEC)}秒)")
+                self._offline_alarmed = True
+        else:
+            if self._offline_alarmed:   # 之前告警過 → 恢復連線記一筆(界定斷電時段結束)
+                self._fire_lock_event("info", "電子鎖恢復連線")
+            self._offline_since = None
+            self._offline_alarmed = False
 
     def _start_lock_monitor(self) -> None:
         """啟動電子鎖獨立 poll thread。與 _di_loop 共用 IOModule._lock 序列化 RS-485,
@@ -602,7 +642,9 @@ class IOService:
                 self._lock_err = str(e)
             if tick % 7 == 0:
                 self._poll_lock_states(action)
-                self._detect_state_events()
+                if self._lock_connected:
+                    self._detect_state_events()   # 斷電時 _lock_status 為舊值,跳過避免誤報
+                self._detect_offline()
             tick += 1
             self._stop_lock.wait(0.15)
 
