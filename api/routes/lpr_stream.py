@@ -1787,6 +1787,8 @@ class LPRStreamTask:
                             prev_row.snapshot = record.get("snapshot")
                         if record.get("raw"):
                             prev_row.raw = record.get("raw")
+                        if record.get("vehicle_bbox"):
+                            prev_row.vehicle_bbox = record.get("vehicle_bbox")
                         prev_row.created_at = datetime.utcnow()
                         db.commit()
                         cache[cache_key] = (prev_row.id, new_conf, now_ts)
@@ -1801,6 +1803,7 @@ class LPRStreamTask:
                     vehicle_type=record.get("vehicle_type"),
                     snapshot=record.get("snapshot"),
                     raw=record.get("raw"),
+                    vehicle_bbox=record.get("vehicle_bbox"),
                     created_at=datetime.utcnow(),
                 )
                 db.add(row)
@@ -1868,6 +1871,7 @@ class LPRStreamTask:
             'snapshot': snapshot_name,
             'plate_snapshot': saved_plate_snapshot,
             'plate_bbox': list(plate_bbox) if isinstance(plate_bbox, (list, tuple)) and len(plate_bbox) == 4 else None,
+            'vehicle_bbox': [int(v) for v in vehicle_bbox] if vehicle_bbox else None,
             'raw': raw or ('vehicle_only' if plate_text == "UNKNOWN" else ""),
         }
         self.results.insert(0, record)
@@ -2694,8 +2698,12 @@ class LPRStreamTask:
             db = SessionLocal()
             cam = db.query(Camera).filter(Camera.id == self.camera_id).first()
             if cam and cam.zones:
-                self.zones = cam.zones
-                print(f"[LPR] 載入 {len(self.zones)} 個 ROI 區域")
+                # LPR 車輛偵測只用「車道相關」zone(車流/測速);禁停區/人行道/紅線不是
+                # 車道偵測範圍,誤用會把主車道的車全濾掉(cam_6 只有禁停區→偵測恆 0)。
+                # 過濾後若無車道 zone → self.zones 空 → in_any_zone 改全幀偵測。
+                _exclude = {"no_parking", "sidewalk", "red_line"}
+                self.zones = [z for z in cam.zones if z.get("type") not in _exclude]
+                print(f"[LPR] 載入 {len(self.zones)} 個車道 ROI (原 {len(cam.zones)} 個,排除禁停/人行道/紅線)")
             db.close()
         except Exception as e:
             print(f"[LPR] 載入 zones 失敗: {e}")

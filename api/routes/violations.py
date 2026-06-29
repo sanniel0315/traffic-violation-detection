@@ -114,6 +114,81 @@ def _find_nearest_lpr_plate(v: Violation, db: Session) -> Optional[dict]:
         return None
 
 
+def _norm_bbox(b) -> Optional[tuple]:
+    """dict {x1,y1,x2,y2} 或 list/tuple [x1,y1,x2,y2] → (x1,y1,x2,y2) floats。"""
+    try:
+        if isinstance(b, dict):
+            return (float(b["x1"]), float(b["y1"]), float(b["x2"]), float(b["y2"]))
+        if isinstance(b, (list, tuple)) and len(b) >= 4:
+            return (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
+    except Exception:
+        pass
+    return None
+
+
+def _bbox_iou(a: tuple, b: tuple) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    if inter <= 0:
+        return 0.0
+    aa = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    ba = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = aa + ba - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _find_strict_lpr_plate(v: Violation, db: Session) -> Optional[dict]:
+    """嚴格 plate-vehicle 關聯 (階段B): 同 camera + 時間 ±window + violation.bbox 與
+    LPRRecord.vehicle_bbox 的 IoU≥門檻,取 IoU 最高 (conf≥0.5)。無匹配回 None (寧缺勿錯)。
+    只對有 vehicle_bbox 的 LPR (階段A 之後新資料) 生效;舊資料無 bbox 自動略過。
+    門檻可用 STRICT_LPR_WINDOW_SEC / STRICT_LPR_MIN_IOU 調 (白天用真實資料調參)。"""
+    if not v.camera_id or not v.created_at or not v.bbox:
+        return None
+    vb = _norm_bbox(v.bbox)
+    if not vb:
+        return None
+    try:
+        import os as _os
+        from api.models import LPRRecord
+        from api.routes.lpr_stream import SNAPSHOT_DIR
+        window = float(_os.getenv("STRICT_LPR_WINDOW_SEC", "3.0"))
+        min_iou = float(_os.getenv("STRICT_LPR_MIN_IOU", "0.30"))
+        lo = v.created_at - timedelta(seconds=window)
+        hi = v.created_at + timedelta(seconds=window)
+        rows = (db.query(LPRRecord)
+                .filter(LPRRecord.camera_id == int(v.camera_id))
+                .filter(LPRRecord.created_at >= lo, LPRRecord.created_at <= hi)
+                .filter(LPRRecord.plate_number.isnot(None))
+                .filter(LPRRecord.plate_number != "")
+                .filter(LPRRecord.confidence >= 0.5)
+                .filter(LPRRecord.vehicle_bbox.isnot(None))
+                .all())
+        best = None
+        best_iou = min_iou
+        for r in rows:
+            rb = _norm_bbox(r.vehicle_bbox)
+            if not rb:
+                continue
+            iou = _bbox_iou(vb, rb)
+            if iou >= best_iou:
+                best_iou = iou
+                best = r
+        if not best:
+            return None
+        out = {"plate": best.plate_number, "plate_path": None, "iou": round(best_iou, 3)}
+        if best.snapshot:
+            pn = best.snapshot.rsplit(".", 1)[0] + "_plate.png"
+            p = Path(SNAPSHOT_DIR) / pn
+            if p.exists():
+                out["plate_path"] = p
+        return out
+    except Exception:
+        return None
+
+
 def _build_composite_image(vid: int, v: Violation, plate_disk: Optional[Path], out_path: Path) -> bool:
     """拼 2x2 (4 張時間軸) → 1 張高解析度 JPG (2560x1440 2K)。
     每 cell 1280x720 (從 1920x1080 LANCZOS)，左上角貼 plate.png (LPR 真實裁切)。
@@ -502,17 +577,25 @@ def get_violation_snapshots(violation_id: int, db: Session = Depends(get_db)):
         plate_disk = _vp
         plate_url = f"/files/violations/snapshots/{_vp.name}"
     else:
-        # 優先 2: LPR plate match (舊資料 fallback)
+        # 優先 2: LPR plate match (舊資料 fallback, v 已有 license_plate)
         plate_disk = _find_plate_crop_disk_path(v, db)
         if plate_disk and plate_disk.exists():
             plate_url = f"/api/lpr/stream/snapshot/{plate_disk.name}"
         elif not v.license_plate:
-            # 優先 3: violation 完全沒車牌 → plate_number text fallback (純資訊用)
-            # ⚠ 不嚴格 — LPR ±2 分鐘抓最近一筆可能是別車,標 inferred=True 給 UI
-            nearest = _find_nearest_lpr_plate(v, db)
-            if nearest:
-                plate_number = nearest.get("plate")
-                plate_is_inferred = True
+            # 優先 2.5 (階段B): 當下OCR失敗 → bbox IoU 嚴格匹配 LPR (同車才貼牌,不抓前車)
+            strict = _find_strict_lpr_plate(v, db)
+            if strict and strict.get("plate_path"):
+                plate_disk = strict["plate_path"]
+                plate_url = f"/api/lpr/stream/snapshot/{plate_disk.name}"
+                plate_number = strict.get("plate")  # 嚴格匹配=真違規車,不標 inferred
+            elif strict and strict.get("plate"):
+                plate_number = strict.get("plate")  # 有牌號無 crop,text only(嚴格,不標 inferred)
+            else:
+                # 優先 3: 時間窗 fallback (text only,標 inferred — 可能別車,UI 顯示「推測」)
+                nearest = _find_nearest_lpr_plate(v, db)
+                if nearest:
+                    plate_number = nearest.get("plate")
+                    plate_is_inferred = True
 
     # 至少 1 張時間軸 frame 就拼 composite (缺的格子留深灰底，避免 frigate 末端 seek 失敗整個拿不到)
     # v2 = 乾淨版 (移除時間標籤/info bar)，新檔名自動讓舊 cache 失效

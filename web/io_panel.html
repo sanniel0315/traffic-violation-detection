@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>燈號 I/O 控制面板</title>
+  <link rel="icon" type="image/svg+xml" href="/web/favicon.svg?v=20260627" />
   <link rel="stylesheet" href="/web/lib/element-plus.css?v=20260407" />
   <style>
     :root {
@@ -541,57 +542,6 @@
         </div>
       </div>
 
-      <!-- CARD: E-1507 電子鎖狀態 -->
-      <div class="card" v-if="status.lock">
-        <div class="card-title">
-          電子鎖狀態 (E-1507)
-          <span v-if="status.lock.enabled" class="event-badge"
-                :class="status.lock.connected ? 'badge-primary' : 'badge-warning'" style="margin-left:8px;">
-            {{ status.lock.connected ? ('連線 · addr ' + status.lock.addr) : '未連線' }}
-          </span>
-        </div>
-
-        <div v-if="!status.lock.enabled" style="font-size:13px;color:#94a3b8;line-height:1.6;">
-          未啟用。設定環境變數 <code>LOCK_MODBUS_ADDR</code>（鎖的 Modbus 位址，1-247，須與 IO 模組位址不同）後重啟 traffic-io 服務即可顯示。
-        </div>
-        <div v-else-if="!status.lock.connected" style="font-size:13px;color:#f59e0b;">
-          鎖未回應 — 檢查 RS-485 接線與從機位址。{{ status.lock.error ? '（' + status.lock.error + '）' : '' }}
-        </div>
-        <template v-else>
-          <!-- 門磁 -->
-          <div class="relay-row">
-            <div class="relay-left">
-              <div class="relay-dot" :style="status.lock.status.door && status.lock.status.door.closed ? 'background:#22c55e;' : 'background:#ef4444;'"></div>
-              <div><div class="relay-name">門磁</div><div class="relay-label">門開關感應</div></div>
-            </div>
-            <span class="event-badge" :class="status.lock.status.door && status.lock.status.door.closed ? 'badge-primary' : 'badge-warning'">{{ status.lock.status.door && status.lock.status.door.label }}</span>
-          </div>
-          <!-- 手柄 -->
-          <div class="relay-row">
-            <div class="relay-left">
-              <div class="relay-dot" :style="status.lock.status.handle && status.lock.status.handle.in_place ? 'background:#22c55e;' : 'background:#94a3b8;'"></div>
-              <div><div class="relay-name">手柄</div><div class="relay-label">把手在位/不在位</div></div>
-            </div>
-            <span class="event-badge" :class="status.lock.status.handle && status.lock.status.handle.in_place ? 'badge-primary' : 'badge-idle'">{{ status.lock.status.handle && status.lock.status.handle.label }}</span>
-          </div>
-          <!-- 鑰匙 -->
-          <div class="relay-row">
-            <div class="relay-left">
-              <div class="relay-dot" :style="status.lock.status.key && status.lock.status.key.in_place ? 'background:#22c55e;' : 'background:#94a3b8;'"></div>
-              <div><div class="relay-name">鑰匙</div><div class="relay-label">機械鑰匙在位</div></div>
-            </div>
-            <span class="event-badge" :class="status.lock.status.key && status.lock.status.key.in_place ? 'badge-primary' : 'badge-idle'">{{ status.lock.status.key && status.lock.status.key.label }}</span>
-          </div>
-          <!-- 鎖具動作 -->
-          <div class="relay-row">
-            <div class="relay-left">
-              <div class="relay-dot" style="background:#3b82f6;"></div>
-              <div><div class="relay-name">鎖具動作</div><div class="relay-label">最近開鎖方式</div></div>
-            </div>
-            <span class="event-badge badge-primary">{{ status.lock.status.action && status.lock.status.action.label }}</span>
-          </div>
-        </template>
-      </div>
 
       <!-- CARD 3: Config sync settings & event log -->
       <div class="card">

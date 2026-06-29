@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>AI交通影像分析</title>
-    <link rel="icon" href="/favicon.ico">
+    <link rel="icon" type="image/svg+xml" href="/web/favicon.svg?v=20260627">
     <script src="/web/lib/vue.global.prod.js?v=20260407"></script>
     <script src="/web/lib/element-plus.min.js?v=20260407"></script>
     <script src="/web/lib/element-plus-icons.min.js?v=20260407"></script>
@@ -4667,6 +4667,7 @@
             <div v-if="hasPerm('hwmonitor')" class="menu-item" :class="{active:page==='hwmonitor'}" @click="page='hwmonitor';loadHwStatus()"><svg class="nav-icon"><use href="#i-activity"/></svg><span>{{ $t('nav_hwmonitor') }}</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='permission_admin'}" @click="page='permission_admin'"><svg class="nav-icon"><use href="#i-lock"/></svg><span>{{ $t('nav_permission') }}</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='io_panel'}" @click="page='io_panel'"><svg class="nav-icon"><use href="#i-zap"/></svg><span>{{ $t('nav_io') }}</span></div>
+            <div v-if="isAdmin" class="menu-item" :class="{active:page==='lock'}" @click="page='lock'"><svg class="nav-icon"><use href="#i-lock"/></svg><span>{{ $t('nav_lock') }}</span></div>
             </div><!-- /sidebar-menu-area -->
 
             <!-- sidebar 底部 status (動態 health 切換 online / fault) -->
@@ -7277,6 +7278,10 @@
                 <!-- 燈號 I/O 控制 -->
                 <div v-if="page==='io_panel'" style="height:calc(100vh - 60px);margin:-16px">
                     <iframe src="/web/io_panel.html" style="width:100%;height:100%;border:none;display:block;"></iframe>
+                </div>
+                <!-- 電子鎖 -->
+                <div v-if="page==='lock'" style="height:calc(100vh - 60px);margin:-16px">
+                    <iframe src="/web/lock_panel.html" style="width:100%;height:100%;border:none;display:block;"></iframe>
                 </div>
 
                 <!-- NVR 設定 -->
@@ -10309,6 +10314,7 @@ const app=createApp({
             vd_report:           'i-road',
             permission_admin:    'i-lock',
             io_panel:            'i-zap',
+            lock:                'i-lock',
             frigate:             'i-server',
             lpr:                 'i-scan',
             hwmonitor:           'i-activity',
@@ -18248,7 +18254,7 @@ const __I18N = {
     nav_parking_violation:'停車違規設定', nav_parking_detection:'停車場車位偵測',
     nav_analytics:'分析功能', nav_cameras:'攝影機管理', nav_nx:'Nx 串流',
     nav_frigate:'NVR 設定', nav_logs:'系統監控日誌', nav_mqtt:'MQTT',
-    nav_hwmonitor:'硬體效能監測', nav_permission:'權限管理', nav_io:'燈號 I/O 控制',
+    nav_hwmonitor:'硬體效能監測', nav_permission:'權限管理', nav_io:'燈號 I/O 控制', nav_lock:'電子鎖',
     common_update:'更新', common_refresh_query:'重新查詢', common_auto:'自動', common_manual:'手動',
     dash_title_a:'違規件數', dash_title_b:'統計', dash_kpi_today:'今日違規', dash_kpi_pending:'待審核',
     dash_kpi_cameras:'攝影機線上', dash_view_detail:'查看明細 →', dash_goto_review:'前往開單管理 →',
@@ -18268,7 +18274,7 @@ const __I18N = {
     nav_parking_violation:'Parking Violation', nav_parking_detection:'Parking Occupancy',
     nav_analytics:'Analytics', nav_cameras:'Cameras', nav_nx:'Nx Stream',
     nav_frigate:'NVR Settings', nav_logs:'System Logs', nav_mqtt:'MQTT',
-    nav_hwmonitor:'Hardware Monitor', nav_permission:'Permissions', nav_io:'I/O Control',
+    nav_hwmonitor:'Hardware Monitor', nav_permission:'Permissions', nav_io:'I/O Control', nav_lock:'Electronic Lock',
     common_update:'Update', common_refresh_query:'Refresh', common_auto:'Auto', common_manual:'Manual',
     dash_title_a:'Violation ', dash_title_b:'Stats', dash_kpi_today:"Today's Violations", dash_kpi_pending:'Pending Review',
     dash_kpi_cameras:'Cameras Online', dash_view_detail:'View Details →', dash_goto_review:'Go to Review →',

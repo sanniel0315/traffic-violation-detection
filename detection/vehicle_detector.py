@@ -229,8 +229,29 @@ class VehicleDetector:
                         det['truck_cls'] = cls_result
 
                 detections.append(det)
-        
-        return detections
+
+        # ── 機車類誤判防護 (只動 motorcycle,不影響其他車種計數) ──────────
+        # 國8(demo 影片)實測:車輛駛出畫面邊緣時,殘缺車尾+紅尾燈被誤判成機車,
+        # bbox 緊貼邊緣、信心 0.13~0.75。兩道防護:
+        #   ① 貼畫面邊緣(出畫殘影,分類不可靠) → 丟
+        #   ② 信心低於門檻 → 丟
+        # 門檻可用環境變數 MOTO_EDGE_MARGIN_PX / MOTO_MIN_CONF 調整。
+        # 台62 等有真機車的點位:完整在畫面內且信心足者仍保留。
+        ih, iw = frame.shape[:2]
+        _edge = int(os.getenv("MOTO_EDGE_MARGIN_PX", "6"))
+        _moto_min_conf = float(os.getenv("MOTO_MIN_CONF", "0.30"))
+        filtered = []
+        for det in detections:
+            if det['class_name'] == 'motorcycle':
+                b = det['bbox']
+                if (b['x1'] <= _edge or b['y1'] <= _edge
+                        or b['x2'] >= iw - _edge or b['y2'] >= ih - _edge):
+                    continue  # 出畫殘影(貼邊)
+                if det['confidence'] < _moto_min_conf:
+                    continue  # 低信心機車誤判
+            filtered.append(det)
+
+        return filtered
     
     def detect_with_draw(self, frame: np.ndarray) -> tuple:
         """
