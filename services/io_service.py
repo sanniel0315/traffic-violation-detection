@@ -592,7 +592,9 @@ class IOService:
                 self._fire_lock_event("alarm", f"電子鎖斷電/失聯 (>{int(_LOCK_OFFLINE_ALARM_SEC)}秒)")
                 self._offline_alarmed = True
         else:
-            if self._offline_alarmed:   # 之前告警過 → 恢復連線記一筆(界定斷電時段結束)
+            # 失聯持續 ≥5 秒後恢復 → 記恢復連線(不必等滿告警閾值,過濾<5秒偶發抖動;
+            # 也讓 daemon 重啟後只要重新失聯過再恢復就記得到)
+            if self._offline_since is not None and (time.time() - self._offline_since) >= 5:
                 self._fire_lock_event("info", "電子鎖恢復連線")
             self._offline_since = None
             self._offline_alarmed = False
