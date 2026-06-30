@@ -18,6 +18,7 @@ from api.utils.feature_state import get_feature_state, set_feature_state
 from api.utils.camera_stream import resolve_analysis_source
 
 router = APIRouter(prefix="/api/congestion", tags=["壅塞偵測"])
+_OFFLINE_MAX_RECONNECT = 8  # 連續 N 次 reconnect 都失敗(約2分鐘)→ 判定相機離線,自動停壅塞,不再無限硬撐
 
 # 壅塞偵測服務狀態
 congestion_services: Dict[int, dict] = {}
@@ -400,6 +401,7 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
     _last_shared_ts = 0.0
     print(f"🚦 壅塞偵測啟動: camera_id={camera_id} (file_source={is_file_source}, shared_frames={is_file_source})")
     fail_count = 0
+    reconnect_count = 0  # 連續 reconnect 次數(成功讀到 frame 歸零;達上限判定離線自動停)
     last_ok = time.time()
     last_success = time.time()  # 最後一次「成功分析」時間(reconnect 不重設,給幻影清除判斷用)
     try:
@@ -440,7 +442,13 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                     cap.release()
                 except Exception:
                     pass
-                print(f"🔄 congestion cam_{camera_id} reconnect (fail={fail_count})", flush=True)
+                reconnect_count += 1
+                if reconnect_count >= _OFFLINE_MAX_RECONNECT:
+                    print(f"📵 congestion cam_{camera_id} 連續 {reconnect_count} 次重連失敗 → 判定離線,自動停止", flush=True)
+                    congestion_services[camera_id]["error"] = f"相機離線(連續{reconnect_count}次重連失敗,自動停止)"
+                    set_feature_state("congestion", camera_id, False)
+                    break
+                print(f"🔄 congestion cam_{camera_id} reconnect (fail={fail_count}, retry={reconnect_count}/{_OFFLINE_MAX_RECONNECT})", flush=True)
                 cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                 fail_count = 0
                 last_ok = time.time()
@@ -487,6 +495,12 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                     # 連續 50 次讀不到 → 強制 reconnect
                     try: cap.release()
                     except: pass
+                    reconnect_count += 1
+                    if reconnect_count >= _OFFLINE_MAX_RECONNECT:
+                        print(f"📵 congestion cam_{camera_id} 連續 {reconnect_count} 次重連失敗 → 判定離線,自動停止", flush=True)
+                        congestion_services[camera_id]["error"] = f"相機離線(連續{reconnect_count}次重連失敗,自動停止)"
+                        set_feature_state("congestion", camera_id, False)
+                        break
                     cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                     fail_count = 0
                     last_ok = time.time()
@@ -494,6 +508,7 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                 continue
 
             fail_count = 0
+            reconnect_count = 0  # 成功讀到 frame → 重置離線計數
             last_ok = time.time()
 
             try:
