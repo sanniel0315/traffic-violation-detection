@@ -197,7 +197,7 @@
           <div v-for="(e, idx) in events" :key="e.id || idx" class="event-entry" :class="{'alarm-row': e.event_type==='alarm'}">
             <span class="event-time">{{ formatTime(e.time) }}</span>
             <span class="event-badge" :class="evBadge(e)">{{ e.label }}</span>
-            <span class="event-ctx">{{ doorNote(e) }}</span>
+            <span class="event-ctx">{{ e.card_no ? ('卡號 ' + e.card_no) : doorNote(e) }}</span>
           </div>
         </div>
       </div>

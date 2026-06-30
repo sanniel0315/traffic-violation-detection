@@ -148,6 +148,8 @@ class LockEvent(Base):
     door_closed = Column(Boolean)          # 當下門磁 (True=門關)
     handle_in_place = Column(Boolean)
     key_in_place = Column(Boolean)
+    card_no = Column(String(20), index=True)   # USB-485 刷卡讀到的卡號(THS2 讀不到為 None)
+    holder_name = Column(String(100))          # 比對卡片庫的持有人(刷卡時關聯)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
@@ -427,6 +429,10 @@ def _migrate_lock_events_columns():
             col_names = {str(c[1]) for c in cols}
             if "event_type" not in col_names:
                 conn.execute(text("ALTER TABLE lock_events ADD COLUMN event_type VARCHAR(16) DEFAULT 'swipe'"))
+            if "card_no" not in col_names:
+                conn.execute(text("ALTER TABLE lock_events ADD COLUMN card_no VARCHAR(20)"))
+            if "holder_name" not in col_names:
+                conn.execute(text("ALTER TABLE lock_events ADD COLUMN holder_name VARCHAR(100)"))
     except Exception:
         pass
 
