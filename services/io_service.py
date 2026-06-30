@@ -595,15 +595,39 @@ class IOService:
                  f"{regs[5] & 0xFF:02d}:{regs[6] >> 8:02d}:{regs[6] & 0xFF:02d}",
         }
 
+    def _read_lock_fail_record(self):
+        """USB-485 連讀 0xD000 一條開鎖失敗記錄(連讀6),出隊一條。失效卡/未授權刷卡記在此。
+        回傳 {way,card,t} 或 None(空/非卡片失敗/讀失敗)。"""
+        try:
+            regs = self._lock_read(0xD000, 6)
+        except Exception:
+            return None
+        if not regs or len(regs) < 6:
+            return None
+        way = regs[0] & 0xFF
+        card = f"{regs[1]:04X}{regs[2]:04X}"
+        if card == "00000000":
+            return None   # 空記錄/非卡片失敗(指紋/密碼失敗無卡號)
+        return {
+            "way": way, "card": card,
+            "t": f"{2000 + (regs[3] >> 8)}-{regs[3] & 0xFF:02d}-{regs[4] >> 8:02d} "
+                 f"{regs[4] & 0xFF:02d}:{regs[5] >> 8:02d}:{regs[5] & 0xFF:02d}",
+        }
+
     def _drain_lock_records(self, limit: int = 200):
-        """啟動清空 0xC000 積壓(歷史刷卡不 fire,避免 flood)。"""
+        """啟動清空 0xC000(成功)+0xD000(失敗)積壓(歷史不 fire,避免 flood)。"""
         n = 0
         for _ in range(limit):
             if self._read_lock_swipe_record() is None:
                 break
             n += 1
-        if n:
-            print(f"[io_svc] 鎖 0xC000 清空 {n} 條啟動前積壓", flush=True)
+        nf = 0
+        for _ in range(limit):
+            if self._read_lock_fail_record() is None:
+                break
+            nf += 1
+        if n or nf:
+            print(f"[io_svc] 鎖清空啟動前積壓:成功 {n} 失敗 {nf}", flush=True)
 
     def _lookup_card_holder(self, card_no: str):
         """查卡片庫該卡號持有人(daemon 直讀 sqlite,找不到回 None)。"""
@@ -741,6 +765,12 @@ class IOService:
                         holder = self._lookup_card_holder(rec["card"])
                         disp = f"{base}:{holder}" if holder else f"{base}:{rec['card']}"
                         self._fire_lock_event("swipe", disp, rec["way"], card_no=rec["card"])
+                    # 失效卡/未授權刷卡 → 0xD000 失敗記錄 → 告警
+                    frec = self._read_lock_fail_record()
+                    if frec:
+                        who = self._lookup_card_holder(frec["card"])
+                        tag = f":{who}" if who else f":{frec['card']}"
+                        self._fire_lock_event("alarm", f"未授權刷卡{tag}", frec["way"], card_no=frec["card"])
                 else:
                     # THS2:0x0023 action 上升沿(讀不到卡號)
                     action = self._lock_read(_LOCK_REG_ACTION)[0]
