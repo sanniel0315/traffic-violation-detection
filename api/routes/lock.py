@@ -113,6 +113,8 @@ def lock_events(
                 "event_type": r.event_type,
                 "action": r.action_code,
                 "label": r.action_label,
+                "card_no": r.card_no,
+                "holder_name": r.holder_name,
                 "door_closed": r.door_closed,
                 "handle_in_place": r.handle_in_place,
                 "key_in_place": r.key_in_place,
