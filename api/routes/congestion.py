@@ -446,7 +446,7 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                 if reconnect_count >= _OFFLINE_MAX_RECONNECT:
                     print(f"📵 congestion cam_{camera_id} 連續 {reconnect_count} 次重連失敗 → 判定離線,自動停止", flush=True)
                     congestion_services[camera_id]["error"] = f"相機離線(連續{reconnect_count}次重連失敗,自動停止)"
-                    set_feature_state("congestion", camera_id, False)
+                    congestion_services[camera_id]["offline"] = True  # 保留 feature_state(偵測意圖),watchdog 探測影像恢復後自動續偵測
                     break
                 print(f"🔄 congestion cam_{camera_id} reconnect (fail={fail_count}, retry={reconnect_count}/{_OFFLINE_MAX_RECONNECT})", flush=True)
                 cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
@@ -499,7 +499,7 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                     if reconnect_count >= _OFFLINE_MAX_RECONNECT:
                         print(f"📵 congestion cam_{camera_id} 連續 {reconnect_count} 次重連失敗 → 判定離線,自動停止", flush=True)
                         congestion_services[camera_id]["error"] = f"相機離線(連續{reconnect_count}次重連失敗,自動停止)"
-                        set_feature_state("congestion", camera_id, False)
+                        congestion_services[camera_id]["offline"] = True  # 保留 feature_state(偵測意圖),watchdog 探測影像恢復後自動續偵測
                         break
                     cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                     fail_count = 0
@@ -582,6 +582,32 @@ def resume_congestion_services() -> dict:
 _congestion_watchdog_started = False
 
 
+def _probe_source_online(camera_id) -> bool:
+    """輕量探測相機影像是否恢復(開 cap 讀一張即釋放)。檔案來源視為一直在線。"""
+    db = SessionLocal()
+    try:
+        cam = db.query(Camera).filter(Camera.id == camera_id).first()
+        source = resolve_analysis_source(cam) if cam else None
+    finally:
+        db.close()
+    if not source:
+        return False
+    if str(source).lower().endswith((".mp4", ".avi", ".mkv", ".mov")):
+        return True
+    cap = None
+    try:
+        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        return bool(cap.isOpened() and cap.read()[0])
+    except Exception:
+        return False
+    finally:
+        try:
+            if cap is not None:
+                cap.release()
+        except Exception:
+            pass
+
+
 def _ensure_congestion_watchdog():
     """監控 congestion thread：last_update 超過 60s 沒推進就重啟該 cam thread"""
     global _congestion_watchdog_started
@@ -619,6 +645,24 @@ def _ensure_congestion_watchdog():
                                 db.close()
                         except Exception as e:
                             print(f"⚠️ [congestion watchdog] 重啟 cam_{camera_id} 失敗: {e}", flush=True)
+                # 離線自動停掉的(feature_state 仍要偵測、worker 沒在跑) → 探測影像,恢復了自動續偵測
+                wants = get_feature_state("congestion") or {}
+                for _cid_raw, _en in list(wants.items()):
+                    if not _en:
+                        continue
+                    _cid = int(_cid_raw)
+                    _cur = congestion_services.get(_cid)
+                    if _cur and _cur.get("running"):
+                        continue
+                    if _probe_source_online(_cid):
+                        print(f"🔁 [congestion watchdog] cam_{_cid} 影像恢復 → 自動恢復壅塞偵測", flush=True)
+                        _db = SessionLocal()
+                        try:
+                            _cam = _db.query(Camera).filter(Camera.id == _cid).first()
+                            if _cam:
+                                _start_congestion_service(_cam)
+                        finally:
+                            _db.close()
             except Exception as e:
                 print(f"⚠️ [congestion watchdog] loop error: {e}", flush=True)
 
