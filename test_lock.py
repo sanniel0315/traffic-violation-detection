@@ -113,6 +113,21 @@ check("raw1 鎖定=已解鎖", s._lock_status["handle"]["label"] == "已解鎖")
 check("raw1 門磁斷開", s._lock_status["door"]["label"] == "門磁斷開(門開)")
 check("action1 刷卡", s._lock_status["action"]["label"] == "刷卡")
 
+print("=== 6. 失效卡/未授權刷卡(0xD000)解析 ===")
+sd = IOService.__new__(IOService)
+
+
+class _ModD:
+    def read_holding(self, addr, reg, cnt):
+        # 0xD000 失敗記錄: [剩餘方式, 卡號hi, 卡號lo, 年月, 日時, 分秒]
+        return [0x0001, 0xBF7B, 0x7CB2, 0x1404, 0x0B0D, 0x3938]
+
+
+sd._mod = _ModD()
+fr = sd._read_lock_fail_record()
+check("0xD000 解析出卡號 BF7B7CB2", bool(fr) and fr["card"] == "BF7B7CB2")
+check("0xD000 方式=1(卡片)", bool(fr) and fr["way"] == 1)
+
 print()
 passed = sum(1 for _, c in results if c)
 total = len(results)
