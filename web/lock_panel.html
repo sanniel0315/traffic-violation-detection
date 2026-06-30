@@ -141,7 +141,7 @@
           <div class="relay-row">
             <div class="relay-left">
               <div class="relay-dot" :style="doorClosed ? 'background:#22c55e;' : 'background:#f59e0b;'"></div>
-              <div><div class="relay-name">門磁</div><div class="relay-label">門開關感應（本鎖恒回門關·參考）</div></div>
+              <div><div class="relay-name">門磁</div><div class="relay-label">門開關感應</div></div>
             </div>
             <span class="event-badge" :class="doorClosed ? 'badge-action' : 'badge-warning'">{{ st.door && st.door.label }}</span>
           </div>
@@ -152,14 +152,6 @@
               <div><div class="relay-name">手柄</div><div class="relay-label">把手在位/不在位</div></div>
             </div>
             <span class="event-badge" :class="handleIn ? 'badge-action' : 'badge-warning'">{{ st.handle && st.handle.label }}</span>
-          </div>
-          <!-- 鑰匙 -->
-          <div class="relay-row">
-            <div class="relay-left">
-              <div class="relay-dot" :style="keyIn ? 'background:#22c55e;' : 'background:#f59e0b;'"></div>
-              <div><div class="relay-name">鑰匙</div><div class="relay-label">本鎖恒回在位·參考</div></div>
-            </div>
-            <span class="event-badge" :class="keyIn ? 'badge-action' : 'badge-warning'">{{ st.key && st.key.label }}</span>
           </div>
           <!-- 動作 -->
           <div class="relay-row">
@@ -240,7 +232,6 @@
         const st = computed(() => lock.value.status || {});
         const doorClosed = computed(() => !!st.value.door?.closed);
         const handleIn = computed(() => !!st.value.handle?.in_place);
-        const keyIn = computed(() => !!st.value.key?.in_place);
 
         function formatTime(iso) {
           if (!iso) return '--:--:--';
@@ -374,7 +365,7 @@
           if (ws.value) ws.value.close();
         });
 
-        return { lock, st, doorClosed, handleIn, keyIn, events, total, cards, flash, adding, addMsg, addCard, deleteCard, editCard, unlockLock, formatTime, doorNote, evBadge };
+        return { lock, st, doorClosed, handleIn, events, total, cards, flash, adding, addMsg, addCard, deleteCard, editCard, unlockLock, formatTime, doorNote, evBadge };
       }
     }).mount('#app');
   </script>
