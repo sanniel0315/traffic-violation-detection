@@ -61,7 +61,7 @@ _LOCK_REG_DOOR   = 0x0021   # 門磁狀態
 _LOCK_REG_KEY    = 0x0022   # 鑰匙狀態
 _LOCK_REG_ACTION = 0x0023   # 鎖具動作(刷卡/密碼/指紋/鑰匙/手柄開)
 # 動作 idle 實測回 0xfa(250)(此版固件哨兵=無動作),刷卡/開門時才變 1-5
-_LOCK_ACTION_NAMES = {0: "無", 1: "刷卡", 2: "密碼", 3: "指紋", 4: "鑰匙", 5: "手柄開", 0xfa: "無"}
+_LOCK_ACTION_NAMES = {0: "無", 1: "刷卡", 2: "密碼", 3: "指紋", 4: "鑰匙轉動", 0xfa: "無"}  # 協議 0x0023:0-4
 # 透過 485 輔助錄入用戶資訊 (0x2005): 寫 0x0033 → 鎖進入「加卡模式」,隨後在鎖上刷卡即學習錄入
 _LOCK_REG_AUX_ENROLL = 0x2005
 _LOCK_AUX_ADD_CARD = 0x0033
@@ -512,8 +512,8 @@ class IOService:
 
     @staticmethod
     def _is_real_action(a) -> bool:
-        """動作碼 1-5 才算真的開鎖動作 (0=無, 0xfa/250=idle 哨兵)。"""
-        return a is not None and 1 <= a <= 5
+        """動作碼 1-4 才算真的開鎖動作 (協議 0x0023:0無/1刷卡/2密碼/3指紋/4鑰匙轉動; 0xfa/250=idle 哨兵)。"""
+        return a is not None and 1 <= a <= 4
 
     @property
     def lock_event_seq(self) -> int:
