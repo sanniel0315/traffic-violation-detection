@@ -159,7 +159,10 @@
       <div class="card">
         <div class="card-title">
           <span>卡片庫</span>
-          <span class="muted-note">共 {{ cards.length }} 張</span>
+          <span style="display:flex;align-items:center;gap:10px;">
+            <span class="muted-note">共 {{ cards.length }} 張</span>
+            <button @click="clearCards" style="font-size:12px;cursor:pointer;border:1px solid var(--gov-fault,#c43a31);background:#fff;color:var(--gov-fault,#c43a31);border-radius:6px;padding:4px 10px;">清空所有卡片</button>
+          </span>
         </div>
         <div v-if="cards.length === 0" class="event-empty">尚無卡片。點「+ 新增卡片」加卡學習。</div>
         <div v-else class="event-list">
@@ -282,9 +285,22 @@
           } catch (e) { return; }
           try {
             const d = await (await fetch('/api/lock/cards/' + c.id, { method: 'DELETE' })).json();
-            if (d.ok) ElementPlus.ElMessage.success(d.msg || '已刪除');
-            else ElementPlus.ElMessage.error(d.msg || '刪除失敗');
+            if (d.ok) {
+              if (d.lock_removed === 'pending') ElementPlus.ElMessageBox.alert(d.msg, '請現場刷卡刪除', { type: 'warning', confirmButtonText: '知道了' });
+              else ElementPlus.ElMessage.success(d.msg || '已刪除');
+            } else ElementPlus.ElMessage.error(d.msg || '刪除失敗');
           } catch (e) { ElementPlus.ElMessage.error('刪除失敗'); }
+          fetchCards();
+        }
+        async function clearCards() {
+          try {
+            await ElementPlus.ElMessageBox.confirm('確定清空鎖內所有卡片?此動作刪除鎖內全部白名單卡片,無法復原。', '清空所有卡片', { type: 'warning', confirmButtonText: '確定清空', cancelButtonText: '取消' });
+          } catch (e) { return; }
+          try {
+            const d = await (await fetch('/api/lock/clear-cards', { method: 'POST' })).json();
+            if (d.ok) ElementPlus.ElMessage.success(d.msg || '已清空');
+            else ElementPlus.ElMessage.error(d.msg || '清空失敗');
+          } catch (e) { ElementPlus.ElMessage.error('清空失敗'); }
           fetchCards();
         }
         async function editCard(c) {
@@ -356,7 +372,7 @@
           if (ws.value) ws.value.close();
         });
 
-        return { lock, st, doorClosed, handleIn, events, total, cards, flash, adding, addMsg, addCard, deleteCard, editCard, unlockLock, formatTime, doorNote, evBadge };
+        return { lock, st, doorClosed, handleIn, events, total, cards, flash, adding, addMsg, addCard, deleteCard, clearCards, editCard, unlockLock, formatTime, doorNote, evBadge };
       }
     }).mount('#app');
   </script>
