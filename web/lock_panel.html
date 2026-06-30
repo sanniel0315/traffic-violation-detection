@@ -145,11 +145,11 @@
             </div>
             <span class="event-badge" :class="doorClosed ? 'badge-action' : 'badge-warning'">{{ st.door && st.door.label }}</span>
           </div>
-          <!-- 手柄 -->
+          <!-- 鎖定狀態(0x0020,轉鑰匙上鎖/解鎖) -->
           <div class="relay-row">
             <div class="relay-left">
               <div class="relay-dot" :style="handleIn ? 'background:#22c55e;' : 'background:#f59e0b;'"></div>
-              <div><div class="relay-name">手柄</div><div class="relay-label">把手在位/不在位</div></div>
+              <div><div class="relay-name">鎖定狀態</div><div class="relay-label">轉鑰匙上鎖/解鎖</div></div>
             </div>
             <span class="event-badge" :class="handleIn ? 'badge-action' : 'badge-warning'">{{ st.handle && st.handle.label }}</span>
           </div>

@@ -1,7 +1,8 @@
 """電子鎖邏輯自動化測試 (不需真鎖)。
 
 用 IOService.__new__ 繞過 __init__(不連串口/daemon) + mock IOModule,
-純驗證:協議 action 定義、手柄/門/斷電警報計時觸發、狀態 label 協議用詞。
+純驗證:協議 action 定義、箱門未關告警(門磁)、上鎖/解鎖事件(0x0020)、
+斷電告警、狀態 label。
 跑法: cd 專案根 → python3 test_lock.py
 """
 import time
@@ -10,7 +11,6 @@ import sys
 from services.io_service import (
     IOService,
     _LOCK_ACTION_NAMES,
-    _HANDLE_OFF_ALARM_SEC,
     _LOCK_OFFLINE_ALARM_SEC,
     _DOOR_OPEN_ALARM_SEC,
 )
@@ -24,7 +24,6 @@ def check(name: str, cond: bool) -> None:
 
 
 def new_svc() -> IOService:
-    """造一個只夠測方法的 IOService,_fire_lock_event 改成收集器。"""
     s = IOService.__new__(IOService)
     s._fired = []
     s._fire_lock_event = lambda et, label, *a, **k: s._fired.append((et, label))
@@ -38,33 +37,38 @@ check("_is_real_action 1..4 為真", all(IOService._is_real_action(a) for a in (
 check("_is_real_action 0/5/250/None 為假",
       not any(IOService._is_real_action(a) for a in (0, 5, 250, None)))
 
-print("=== 2. 手柄長時間不在位警報 ===")
+print("=== 2. 箱門未關告警(門磁 0x0021) ===")
 s = new_svc()
-s._lock_status = {"handle": {"in_place": False}, "door": {"closed": True}, "key": {"in_place": True}}
-s._lock_prev_states = {"door": True, "handle": False, "key": True}
-s._door_open_since = None
-s._door_alarmed = False
-s._handle_off_since = time.time() - (_HANDLE_OFF_ALARM_SEC + 2)
-s._handle_alarmed = False
-s._detect_state_events()
-check("手柄超時觸發 alarm", any(et == "alarm" and "手柄長時間不在位" in l for et, l in s._fired))
-check("觸發後標記 alarmed(只發一次)", s._handle_alarmed is True)
-s._fired.clear()
-s._lock_status["handle"]["in_place"] = True
-s._lock_prev_states = {"door": True, "handle": False, "key": True}
-s._detect_state_events()
-check("手柄復位後重置 alarmed", s._handle_alarmed is False)
-
-print("=== 3. 門長時間未關警報(回歸,確保沒被改壞) ===")
-s = new_svc()
-s._lock_status = {"handle": {"in_place": True}, "door": {"closed": False}, "key": {"in_place": True}}
-s._lock_prev_states = {"door": False, "handle": True, "key": True}
-s._handle_off_since = None
-s._handle_alarmed = False
+s._lock_status = {"door": {"closed": False}, "handle": {"in_place": True}}
+s._lock_prev_states = {"door": False, "handle": True}
 s._door_open_since = time.time() - (_DOOR_OPEN_ALARM_SEC + 2)
 s._door_alarmed = False
 s._detect_state_events()
-check("門開超時觸發 alarm", any(et == "alarm" and "門長時間未關" in l for et, l in s._fired))
+check("門開超時觸發箱門未關告警", any(et == "alarm" and "箱門未關" in l for et, l in s._fired))
+check("觸發後標記 alarmed(只發一次)", s._door_alarmed is True)
+s2 = new_svc()
+s2._lock_status = {"door": {"closed": True}, "handle": {"in_place": True}}
+s2._lock_prev_states = {"door": False, "handle": True}
+s2._door_open_since = time.time()
+s2._door_alarmed = True
+s2._detect_state_events()
+check("門關後重置 door_alarmed", s2._door_alarmed is False)
+
+print("=== 3. 鎖定狀態(0x0020) 上鎖/解鎖事件 ===")
+s = new_svc()
+s._lock_status = {"door": {"closed": True}, "handle": {"in_place": False}}  # 解鎖
+s._lock_prev_states = {"door": True, "handle": True}                         # 前次上鎖
+s._door_open_since = None
+s._door_alarmed = False
+s._detect_state_events()
+check("轉鑰匙解鎖 → lock事件『解鎖』", any(et == "lock" and l == "解鎖" for et, l in s._fired))
+s = new_svc()
+s._lock_status = {"door": {"closed": True}, "handle": {"in_place": True}}    # 上鎖
+s._lock_prev_states = {"door": True, "handle": False}                        # 前次解鎖
+s._door_open_since = None
+s._door_alarmed = False
+s._detect_state_events()
+check("轉鑰匙上鎖 → lock事件『上鎖』", any(et == "lock" and l == "上鎖" for et, l in s._fired))
 
 print("=== 4. 斷電/失聯告警 + 恢復 ===")
 s = new_svc()
@@ -80,7 +84,7 @@ s._detect_offline()
 check("恢復連線記一筆", any("恢復連線" in l for et, l in s._fired))
 check("恢復後重置 since/alarmed", s._offline_since is None and s._offline_alarmed is False)
 
-print("=== 5. 狀態 label 協議用詞 ===")
+print("=== 5. 狀態 label ===")
 s = IOService.__new__(IOService)
 
 
@@ -93,9 +97,8 @@ s._mod = _Mod0()
 s._lock_status = {}
 s._lock_prev_action = 0
 s._poll_lock_states(action=0)
-check("raw0 手柄在位", s._lock_status["handle"]["label"] == "手柄在位")
+check("raw0 鎖定=已上鎖", s._lock_status["handle"]["label"] == "已上鎖")
 check("raw0 門磁閉合", s._lock_status["door"]["label"] == "門磁閉合(門關)")
-check("raw0 鑰匙在位", s._lock_status["key"]["label"] == "鑰匙在位")
 check("action0 無", s._lock_status["action"]["label"] == "無")
 
 
@@ -106,7 +109,7 @@ class _Mod1:
 
 s._mod = _Mod1()
 s._poll_lock_states(action=1)
-check("raw1 手柄不在位", s._lock_status["handle"]["label"] == "手柄不在位")
+check("raw1 鎖定=已解鎖", s._lock_status["handle"]["label"] == "已解鎖")
 check("raw1 門磁斷開", s._lock_status["door"]["label"] == "門磁斷開(門開)")
 check("action1 刷卡", s._lock_status["action"]["label"] == "刷卡")
 
