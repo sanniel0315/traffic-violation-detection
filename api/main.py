@@ -124,7 +124,9 @@ def _service_watchdog():
                 if want_cong:
                     cong_svc = congestion.congestion_services.get(cam_id, {})
                     ct = cong_svc.get("_thread")
-                    if ct is not None and not ct.is_alive():
+                    # 離線自動停的(offline 標記)不在這裡無條件重啟,否則離線相機會死循環重啟;
+                    # 交給 congestion watchdog 輕量探測影像,恢復了才續偵測。
+                    if ct is not None and not ct.is_alive() and not cong_svc.get("offline"):
                         congestion.congestion_services.pop(cam_id, None)
                         congestion._start_congestion_service(cam)
                         restarted.append(f"congestion-{cam_id}")
