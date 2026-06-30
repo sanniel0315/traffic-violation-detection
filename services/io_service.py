@@ -909,10 +909,15 @@ class IOService:
             if len(cn) != 8:
                 return {"ok": False, "msg": f"卡號格式錯誤(需8位hex): {card_no}"}
             hi = int(cn[:4], 16); lo = int(cn[4:], 16)
-            # 刪卡寄存器: 0x0047=工號(0) / 0x0048=卡號高 / 0x0049=卡號低
+            if not LOCK_SERIAL_PORT:
+                # THS2 共用模式:FC16 長幀被 turnaround 吃,寫不進鎖內,刪不掉白名單。
+                # 誠實回報(不假成功);卡片庫記錄由上層 DB 移除。
+                return {"ok": True, "lock_removed": False,
+                        "msg": "已移除卡片庫記錄;THS2 模式無法刪鎖內白名單(需切 USB-485 或現場學習刪)"}
+            # USB-485:刪卡寄存器 0x0047=工號(0)/0x0048=卡號高/0x0049=卡號低,FC16 生效
             self._lock_write_multi(_LOCK_REG_DEL_CARD, [0, hi, lo])
-            _log("info", f"電子鎖刪卡 {cn}")
-            return {"ok": True, "msg": f"已刪除卡號 {cn}"}
+            _log("info", f"電子鎖刪卡 {cn}(USB-485)")
+            return {"ok": True, "lock_removed": True, "msg": f"已刪除卡號 {cn}(鎖內白名單已移除)"}
         except Exception as e:
             return {"ok": False, "msg": f"刪卡失敗: {e}"}
 
