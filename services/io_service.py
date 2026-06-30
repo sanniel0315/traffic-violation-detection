@@ -67,6 +67,8 @@ _LOCK_ACTION_NAMES = {0: "無", 1: "刷卡", 2: "密碼", 3: "指紋", 4: "鑰�
 _LOCK_REG_AUX_ENROLL = 0x2005
 _LOCK_AUX_ADD_CARD = 0x0033
 _LOCK_AUX_DEL_CARD = 0x0055   # 寫 0x2005=0x0055 → 鎖進入刪卡模式(隨後鎖上刷要刪除的卡)
+_LOCK_REG_CLEAR = 0x2006      # 刪除用戶訊息寄存器
+_LOCK_CLEAR_CARDS = 0x0011    # 寫 0x2006=0x0011 → 清空所有卡片(FC06,THS2/USB-485 都生效)
 _LOCK_REG_CARD_HI = 0x0044    # 加卡寄存器2 (最近加的卡號高 16bit)
 _LOCK_REG_CARD_LO = 0x0045    # 加卡寄存器3 (最近加的卡號低 16bit)
 _LOCK_REG_DEL_CARD = 0x0047   # 刪卡寄存器1 (FC10 連寫 0x0047-0x0049: 工號+卡號,直接刪不用刷卡)
@@ -892,6 +894,23 @@ class IOService:
         except Exception as e:
             return {"ok": False, "msg": f"刪卡指令失敗: {e}"}
 
+    def clear_all_lock_cards(self) -> dict:
+        """清空鎖內所有卡片 (寫 0x2006=0x0011,FC06 單寄存器,THS2/USB-485 都寫得進)。client 轉發 daemon。"""
+        if self._daemon_url:
+            try:
+                r = self._session.post(f"{self._daemon_url}/lock/clear_cards", timeout=8)
+                return r.json()
+            except Exception as e:
+                return {"ok": False, "msg": f"清空失敗(daemon 無回應): {e}"}
+        if not self._lock_enabled:
+            return {"ok": False, "msg": "電子鎖未啟用 (LOCK_MODBUS_ADDR 未設)"}
+        try:
+            self._lock_write(_LOCK_REG_CLEAR, _LOCK_CLEAR_CARDS)
+            _log("info", "電子鎖清空所有卡片")
+            return {"ok": True, "msg": "已清空鎖內所有卡片"}
+        except Exception as e:
+            return {"ok": False, "msg": f"清空失敗: {e}"}
+
     def delete_lock_card_by_no(self, card_no: str) -> dict:
         """已知卡號直接刪卡 (FC10 寫刪卡寄存器 0x0047-0x0049: 工號0+卡號),不需現場刷卡。
         card_no = 8 位 hex 字串 (如 E14D0395)。client mode 轉發 daemon。"""
@@ -910,10 +929,15 @@ class IOService:
                 return {"ok": False, "msg": f"卡號格式錯誤(需8位hex): {card_no}"}
             hi = int(cn[:4], 16); lo = int(cn[4:], 16)
             if not LOCK_SERIAL_PORT:
-                # THS2 共用模式:FC16 長幀被 turnaround 吃,寫不進鎖內,刪不掉白名單。
-                # 誠實回報(不假成功);卡片庫記錄由上層 DB 移除。
-                return {"ok": True, "lock_removed": False,
-                        "msg": "已移除卡片庫記錄;THS2 模式無法刪鎖內白名單(需切 USB-485 或現場學習刪)"}
+                # THS2:指定刪 FC16 寫不進。改用學習刪——寫 0x2005=0x0055 進刪卡模式,
+                # 使用者現場刷該卡才從鎖內白名單刪除(FC06 單寄存器 THS2 寫得進)。
+                try:
+                    self._lock_write(_LOCK_REG_AUX_ENROLL, _LOCK_AUX_DEL_CARD)
+                except Exception as e:
+                    return {"ok": False, "msg": f"進刪卡模式失敗: {e}"}
+                _log("info", f"電子鎖學習刪卡模式(THS2),待現場刷 {cn}")
+                return {"ok": True, "lock_removed": "pending",
+                        "msg": f"已進刪卡模式:請在約 10 秒內到鎖上刷「{cn}」這張卡,刷了才會從鎖內白名單刪除(卡片庫記錄已移除)"}
             # USB-485:刪卡寄存器 0x0047=工號(0)/0x0048=卡號高/0x0049=卡號低,FC16 生效
             self._lock_write_multi(_LOCK_REG_DEL_CARD, [0, hi, lo])
             _log("info", f"電子鎖刪卡 {cn}(USB-485)")

@@ -134,6 +134,12 @@ def lock_unlock():
     return io.unlock_lock()
 
 
+@app.post("/lock/clear_cards")
+def lock_clear_cards():
+    """清空鎖內所有卡片 (寫 0x2006=0x0011)。"""
+    return io.clear_all_lock_cards()
+
+
 @app.get("/health")
 def health():
     return {"ok": True, "connected": io._mod.ok,

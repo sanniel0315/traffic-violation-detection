@@ -92,6 +92,17 @@ def unlock():
     return get_service().unlock_lock()
 
 
+@router.post("/clear-cards")
+def clear_cards(db: Session = Depends(get_db)):
+    """清空鎖內所有卡片 + 卡片庫全部停用。"""
+    res = get_service().clear_all_lock_cards()
+    if res.get("ok"):
+        from api.models import LockCard
+        db.query(LockCard).filter(LockCard.active == True).update({"active": False})
+        db.commit()
+    return res
+
+
 @router.get("/events")
 def lock_events(
     page: int = Query(1, ge=1),
