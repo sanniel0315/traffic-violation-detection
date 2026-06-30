@@ -71,8 +71,7 @@ _LOCK_REG_CARD_LO = 0x0045    # 加卡寄存器3 (最近加的卡號低 16bit)
 _LOCK_REG_DEL_CARD = 0x0047   # 刪卡寄存器1 (FC10 連寫 0x0047-0x0049: 工號+卡號,直接刪不用刷卡)
 _LOCK_REG_UNLOCK = 0x2004     # 485 開鎖:寫 0x0033 遠端開鎖
 _LOCK_UNLOCK_VAL = 0x0033
-_DOOR_OPEN_ALARM_SEC = float(os.getenv("LOCK_DOOR_ALARM_SEC", "30"))  # 門開超過 N 秒觸發警報
-_HANDLE_OFF_ALARM_SEC = float(os.getenv("LOCK_HANDLE_ALARM_SEC", "60"))  # 手柄不在位超過 N 秒觸發警報(門磁恆0時的實質開門訊號)
+_DOOR_OPEN_ALARM_SEC = float(os.getenv("LOCK_DOOR_ALARM_SEC", "30"))  # 箱門開超過 N 秒觸發告警
 _LOCK_OFFLINE_ALARM_SEC = float(os.getenv("LOCK_OFFLINE_ALARM_SEC", "60"))  # 斷電/失聯超過 N 秒觸發警報(斷電期間鑰匙機械開門記不到,至少留斷電時段紀錄供查核)
 
 
@@ -125,8 +124,6 @@ class IOService:
         self._lock_prev_states: dict = {}        # 門磁/手柄/鑰匙上次狀態(邊沿偵測)
         self._door_open_since: Optional[float] = None
         self._door_alarmed = False
-        self._handle_off_since: Optional[float] = None
-        self._handle_alarmed = False
         self._offline_since: Optional[float] = None
         self._offline_alarmed = False
 
@@ -530,7 +527,7 @@ class IOService:
             act = action if action is not None else (self._lock_prev_action or 0)
             self._lock_status = {
                 "handle": {"raw": handle, "in_place": handle == 0,
-                           "label": "手柄在位" if handle == 0 else "手柄不在位"},
+                           "label": "已上鎖" if handle == 0 else "已解鎖"},
                 "door":   {"raw": door, "closed": door == 0,
                            "label": "門磁閉合(門關)" if door == 0 else "門磁斷開(門開)"},
                 "key":    {"raw": key, "in_place": key == 0,
@@ -563,39 +560,27 @@ class IOService:
         _log("warning" if event_type == "alarm" else "info", f"電子鎖[{event_type}]: {label}")
 
     def _detect_state_events(self) -> None:
-        """偵測門磁/手柄/鑰匙狀態變化 → 事件;門開超時 → 警報。在慢輪詢更新狀態後呼叫。"""
+        """偵測門磁(門開/關)+鎖定狀態(0x0020,轉鑰匙帶動上鎖/解鎖)變化 → 事件;
+        門開超過閾值 → 箱門未關告警。鑰匙 0x0022 恒0 不處理。"""
         st = self._lock_status or {}
         door = st.get("door", {}).get("closed")
-        handle = st.get("handle", {}).get("in_place")
-        key = st.get("key", {}).get("in_place")
+        handle = st.get("handle", {}).get("in_place")  # 0x0020: True=上鎖(raw0) False=解鎖(raw1)
         prev = self._lock_prev_states
         if door is not None and prev.get("door") is not None and door != prev["door"]:
             self._fire_lock_event("door", "門關" if door else "門開")
         if handle is not None and prev.get("handle") is not None and handle != prev["handle"]:
-            self._fire_lock_event("handle", "手柄復位" if handle else "手柄移開")
-        if key is not None and prev.get("key") is not None and key != prev["key"]:
-            self._fire_lock_event("key", "鑰匙插回" if key else "鑰匙拔出")
-        self._lock_prev_states = {"door": door, "handle": handle, "key": key}
-        # 門長開警報 (門開超過閾值,只觸發一次,門關後重置)
+            self._fire_lock_event("lock", "上鎖" if handle else "解鎖")
+        self._lock_prev_states = {"door": door, "handle": handle}
+        # 箱門未關告警 (門開超過閾值,只觸發一次,門關後重置)
         if door is False:
             if self._door_open_since is None:
                 self._door_open_since = time.time()
             elif not self._door_alarmed and (time.time() - self._door_open_since) >= _DOOR_OPEN_ALARM_SEC:
-                self._fire_lock_event("alarm", f"門長時間未關 (>{int(_DOOR_OPEN_ALARM_SEC)}秒)")
+                self._fire_lock_event("alarm", f"箱門未關 (>{int(_DOOR_OPEN_ALARM_SEC)}秒)")
                 self._door_alarmed = True
         elif door is True:
             self._door_open_since = None
             self._door_alarmed = False
-        # 手柄長時間不在位警報 (門磁恆0時,手柄不在位才是實質的「門開著」訊號)
-        if handle is False:
-            if self._handle_off_since is None:
-                self._handle_off_since = time.time()
-            elif not self._handle_alarmed and (time.time() - self._handle_off_since) >= _HANDLE_OFF_ALARM_SEC:
-                self._fire_lock_event("alarm", f"手柄長時間不在位 (>{int(_HANDLE_OFF_ALARM_SEC)}秒)")
-                self._handle_alarmed = True
-        elif handle is True:
-            self._handle_off_since = None
-            self._handle_alarmed = False
 
     def _detect_offline(self) -> None:
         """斷電/失聯告警:鎖持續讀不到(connected=false)超過閾值 → 告警一次;恢復連線記一筆。
