@@ -337,14 +337,16 @@ def generate_congestion_stream(camera_id: int, source: str, zones: list):
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             continue
         
-        result = analyze_with_lock(frame, zones, camera_id)
+        # 不每幀重跑 YOLO:worker 已在背景分析,串流直接用最新結果畫 overlay,
+        # 避免每幀 analyze+搶 analyze lock 拖垮串流(這是 overlay 卡頓主因)
+        result = congestion_results.get(camera_id) or {}
         annotated = draw_congestion(frame, result)
         annotated = cv2.resize(annotated, (640, 360))
-        
+
         _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 70])
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        time.sleep(0.2)  # 5 FPS
+        time.sleep(0.08)  # ~12 FPS(不受 YOLO 拖累,可拉高)
     
     cap.release()
 
