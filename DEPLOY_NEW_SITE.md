@@ -126,3 +126,45 @@ push main 時，matrix 會在「每一台」對應 runner 各自 verify + 自我
 > `git pull && sudo systemctl restart traffic-api`（或 `scripts/restart_and_verify.sh`）。
 
 > 對外網路不穩時 runner 會接不到 job / `git fetch` 失敗 → 手動 scp 改檔 + 重啟為 fallback。
+
+---
+
+## 遠端運維、現場網路與遠端連線（現場站必讀）
+
+> 現場主機平時**沒有對外網際網路**，插上網卡才上線。以下配置是**每台主機的系統設定**（含
+> tailscaled 憑證、nmcli 連線、systemd watchdog），**不進版控**、機器各自管；本節只記
+> 機制、位置與排查方式，方便任何一台上的 Claude Code / 運維人員接手。真正的 auth key 不寫在此。
+
+### A. 現場網路（eth1 固定 IP，零設定拔主口即用）
+- 現場網口 = **eth1 = `enP5p3s0`**（物理亮燈那口）；測試環境主口 = `enP5p5s0`。
+- nmcli 連線 `eth1-test` 已配完整（**不用再下任何設定命令**）：
+  - IP `10.42.38.35/20`、閘道 `10.42.32.254`、`ipv4.route-metric 4000`（實際 default metric 顯示 24000，高於主口 100 → 平時主口優先、eth1 備援不搶路由）。
+- **現場上線步驟**：
+  1. eth1(`enP5p3s0`) 接現場 10.42.x 網路
+  2. 拔線或 `sudo nmcli con down <enP5p5s0 連線>` 停掉測試主口 → eth1 自動變唯一預設路由
+  3. 驗證：`ping 10.42.32.254` + 相機/服務正常；此後管理走 `10.42.38.35`
+- 測試環境 `ping 10.42.32.254` 不通是正常（eth1 沒接到現場網段）。
+
+### B. 遠端連線（Tailscale mesh VPN，穿 CGNAT / 隔離網）
+- 本機 Tailscale：機器名 `field-jetson`、tailnet IP **`100.92.17.87`**、tailnet 帳號 `sannielshi@`、已開 `--ssh`、`tailscaled` 開機自啟+自動重連。
+- **系統登入用戶是 `ubuntu`**；`sannielshi@` 只是 Tailscale 帳號，別拿來當 ssh user。
+- 連法（你的電腦先裝 Tailscale 並登入同帳號）：
+  - `ssh ubuntu@100.92.17.87`，或 MagicDNS `ssh ubuntu@field-jetson`
+  - Cowork / Claude Code 桌面版：SSH host 填 `ubuntu@100.92.17.87` 或 `ubuntu@field-jetson`
+- **關鍵特性**：Tailscale 是疊在底層網路上的 overlay，兩端不用同網段、你的電腦也不用能直連現場 10.42.x；只要**現場那條 eth port 能通外網**，主機就自動回 tailnet，`100.92.17.87` 就連得進（不隨底層 IP 變）。純內網不通外網才需改插行動網卡。
+
+### C. 上線監控 watchdog + 手機通知（ntfy）
+- `/usr/local/bin/field-link-monitor.sh` + `field-link-monitor.service`（systemd 開機自啟）：
+  探測網路（gstatic 204）+ tailscale 狀態，**上線那刻推一則 ntfy 心跳（附 Tailscale IP）**，斷線時補跑 `tailscale up`。狀態機 offline / net_no_ts / online 只在轉態時動作。
+- ntfy topic 存在主機 `/etc/default/field-link-monitor`（`NTFY_TOPIC=...`）；手機 ntfy app 訂閱該 topic 即收上線通知。**知道 topic 即可收發，勿外流。**
+- **現場上線確認流程**：手機收到 ntfy 上線通知 → `ssh ubuntu@100.92.17.87 hostname`（應回 `nvagxorinafer750a1`）→ 通了代表遠端運維正常。離線時連不上是正常，不是故障。
+
+### D. 電子鎖讀卡硬體切換（USB-485 / THS2，改 env 不改碼）
+- 環境變數 `LOCK_SERIAL_PORT`（在 `.env`）決定讀卡通道：
+  - **留空 / 註解** → THS2 自動方向轉換器模式：門磁、開關鎖動作可讀，但**讀不到刷卡卡號**（長回應被 turnaround 吃中段）、FC10 長幀寫入失敗（優雅降級）。
+  - **設 `/dev/ttyUSB0`**（USB-485，FTDI FT232）→ 全功能：可讀 0xC000 開鎖成功記錄（含卡號+持卡人）、0xD000 失敗記錄（未授權/失效卡告警）。
+- 現場換好硬體後只要 uncomment `LOCK_SERIAL_PORT=/dev/ttyUSB0` 再重啟 traffic-api，**不用改程式碼**。另見 `電子鎖_README.md`。
+
+### E. 給 Jetson 本機 Claude Code 的提示
+- 本專案程式碼透過 `git pull` 同步；**上面 A–D 的系統配置不在 repo**，實體在主機的 nmcli / systemd / `/etc/default` / `.env`。要查現況直接讀那些檔或 `systemctl status field-link-monitor tailscaled traffic-api traffic-io`。
+- 部署機資訊、CI 流程見 `RUNBOOK.md` 與本檔上半部。
