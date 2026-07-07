@@ -120,6 +120,8 @@ class IOModule:
                 self._dev = PD3R3(IO_PORT, IO_ADDR, IO_BAUD)
             try:
                 return self._dev.read_holding_at(slave_addr, start, count)
+            except ModbusError:
+                raise  # 鎖(其他從機)沒回應 != serial 壞;不關共用 IO 裝置
             except OSError:
                 self._close_locked()   # serial 層壞了 → 下次重開
                 raise
@@ -134,6 +136,8 @@ class IOModule:
                 self._dev = PD3R3(IO_PORT, IO_ADDR, IO_BAUD)
             try:
                 self._dev.write_holding_at(slave_addr, reg, value)
+            except ModbusError:
+                raise  # 其他從機(鎖)沒回應 != serial 壞;不關共用 IO 裝置
             except OSError:
                 self._close_locked()
                 raise
@@ -147,6 +151,8 @@ class IOModule:
                 self._dev = PD3R3(IO_PORT, IO_ADDR, IO_BAUD)
             try:
                 self._dev.write_multi_holding_at(slave_addr, start, values)
+            except ModbusError:
+                raise  # 其他從機(鎖)沒回應 != serial 壞;不關共用 IO 裝置
             except OSError:
                 self._close_locked()
                 raise
