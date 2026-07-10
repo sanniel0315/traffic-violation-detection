@@ -23,6 +23,20 @@ import secrets
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/violations.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
+if DATABASE_URL.startswith("sqlite"):
+    from sqlalchemy import event as _sa_event
+
+    @_sa_event.listens_for(engine, "connect")
+    def _sqlite_on_connect(dbapi_conn, _connection_record):
+        # WAL：讀寫不互鎖（報表聚合 DELETE/INSERT 與即時事件寫入共存的關鍵）；
+        # busy_timeout：寫鎖衝突時等待 5 秒，取代預設立即拋 "database is locked"。
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
