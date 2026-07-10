@@ -15,7 +15,6 @@ from api.utils.api_key_auth import require_scope
 from api.utils.report_aggregation import (
     build_vd_report_rows,
     normalize_bucket_size,
-    refresh_report_aggregates_for_range,
 )
 
 router = APIRouter(prefix="/api/v1/external", tags=["External API"])
@@ -66,7 +65,8 @@ async def external_vd_report(
     bucket = normalize_bucket_size(interval)
     _validate_time_range(start_time, end_time, bucket)
 
-    refresh_report_aggregates_for_range(db, start_time, end_time, bucket_sizes=(bucket,), camera_id=detector_id)
+    # 只讀聚合表（背景 job 每分鐘增量維護），不在請求當下重建 — 重建的 DELETE
+    # 會與即時事件寫入搶鎖，正是報表 0 筆/500 的根因。
     rows = build_vd_report_rows(db, start_time, end_time, bucket, camera_id=detector_id)
 
     bucket_delta = _BUCKET_INTERVALS.get(bucket, timedelta(minutes=5))
@@ -178,8 +178,7 @@ async def external_congestion_report(
     bucket = normalize_bucket_size(interval)
     _validate_time_range(start_time, end_time, bucket)
 
-    refresh_report_aggregates_for_range(db, start_time, end_time, bucket_sizes=(bucket,), camera_id=detector_id)
-
+    # 同 vd-report：只讀聚合表，重建交給背景 job
     query = db.query(CongestionReportAgg).filter(
         CongestionReportAgg.bucket_size == bucket,
         CongestionReportAgg.bucket_start >= start_time,

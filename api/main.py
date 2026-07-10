@@ -144,6 +144,67 @@ def _service_watchdog():
         _time.sleep(_WATCHDOG_INTERVAL)
 
 
+_REPORT_AGG_INTERVAL = 60  # 每分鐘增量聚合（報表聚合表設計.md）
+_REPORT_AGG_BACKFILL_DAYS = 7
+_REPORT_AGG_CHUNK_HOURS = 12
+
+
+def _report_aggregation_worker():
+    """報表聚合背景 job：每分鐘增量聚合 traffic/congestion/LPR 到報表聚合表。
+
+    報表端點改為只讀聚合表，不再於請求當下重建
+    （重建的 DELETE 會與即時事件寫入搶鎖 → "database is locked" → 報表 0 筆/500）。
+    首次啟動（無 job state）先分段回填近 7 天，避免單一巨型交易長時間佔用寫鎖。
+    """
+    from api.models import SessionLocal, AggregationJobState
+    from api.utils.report_aggregation import (
+        INCREMENTAL_JOB_NAME,
+        run_incremental_report_aggregation,
+    )
+    from api.utils.shutdown import shutdown_event
+
+    if shutdown_event.wait(30):  # 等初始啟動完成
+        return
+    print("📊 [report-agg] 報表聚合 job 啟動", flush=True)
+
+    try:
+        db = SessionLocal()
+        try:
+            has_state = (
+                db.query(AggregationJobState)
+                .filter(AggregationJobState.job_name == INCREMENTAL_JOB_NAME)
+                .first()
+                is not None
+            )
+        finally:
+            db.close()
+        if not has_state:
+            now = datetime.utcnow()
+            chunk_start = now - timedelta(days=_REPORT_AGG_BACKFILL_DAYS)
+            print(f"📊 [report-agg] 首次回填近 {_REPORT_AGG_BACKFILL_DAYS} 天聚合資料", flush=True)
+            while chunk_start < now and not shutdown_event.is_set():
+                chunk_end = min(chunk_start + timedelta(hours=_REPORT_AGG_CHUNK_HOURS), now)
+                db = SessionLocal()
+                try:
+                    run_incremental_report_aggregation(db, start_time=chunk_start, end_time=chunk_end)
+                finally:
+                    db.close()
+                chunk_start = chunk_end
+            print("📊 [report-agg] 回填完成", flush=True)
+    except Exception as e:
+        print(f"⚠️ [report-agg] 回填異常: {e}", flush=True)
+
+    while not shutdown_event.is_set():
+        db = SessionLocal()
+        try:
+            run_incremental_report_aggregation(db)
+        except Exception as e:
+            print(f"⚠️ [report-agg] 聚合異常: {e}", flush=True)
+        finally:
+            db.close()
+        shutdown_event.wait(_REPORT_AGG_INTERVAL)
+
+
 def _assert_gpu_ready():
     """強制檢查 GPU 是否可用，避免推論誤落到 CPU。"""
     force_gpu = os.getenv("FORCE_GPU", "true").lower() in ("1", "true", "yes", "on")
@@ -188,6 +249,7 @@ async def lifespan(app: FastAPI):
     os.makedirs("./output/violations", exist_ok=True)
     threading.Thread(target=_resume_services_in_background, daemon=True, name="resume-services").start()
     threading.Thread(target=_service_watchdog, daemon=True, name="service-watchdog").start()
+    threading.Thread(target=_report_aggregation_worker, daemon=True, name="report-aggregation").start()
     # 啟動 MQTT bridge (讀 config，自動連 broker)
     try:
         from services.mqtt_bridge import start as _mqtt_start
