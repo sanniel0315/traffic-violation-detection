@@ -505,20 +505,22 @@ async def get_nvr_settings():
             cameras = config.get("cameras", {})
             first_cam = next(iter(cameras.values()), {}) if cameras else {}
 
-            # 全域 record 設定（continuous + motion days）
+            # 全域 record 設定（frigate 0.16 schema: retain.days + retain.mode）
             global_record = config.get("record", {}) or {}
             global_enabled = global_record.get("enabled", True)
-            continuous_days = int((global_record.get("continuous") or {}).get("days") or 0)
-            motion_days = int((global_record.get("motion") or {}).get("days") or 0)
+            retain_cfg = global_record.get("retain") or {}
+            retain_days = int(retain_cfg.get("days") or 1)
+            retain_mode = str(retain_cfg.get("mode") or "all")
             # 判斷錄影模式
             if not global_enabled:
                 record_mode = "off"
-            elif continuous_days > 0:
+            elif retain_mode == "all":
                 record_mode = "all"
             else:
                 record_mode = "motion"
-            # 顯示主要保留天數（取較大者）
-            retain_days = max(continuous_days, motion_days, 1)
+            # 舊回應欄位相容（UI 仍讀這兩個 key）
+            continuous_days = retain_days if retain_mode == "all" else 0
+            motion_days = retain_days
 
             # 偵測設定
             detect_cfg = first_cam.get("detect", {})
@@ -597,13 +599,15 @@ async def update_nvr_settings(settings: NvrSettings):
         record_enabled = settings.record_mode != "off"
 
         # 全域 record 設定 — 只控制保留天數，不強制覆寫每台 enabled
+        # ⚠️ frigate 0.16 schema 是 retain: {days, mode}；continuous/motion 是
+        # 未來版 schema，0.16.4 驗證直接 reject → 容器 crash loop（2026-07-11 實案）
         global_record = config.get("record", {}) or {}
-        if settings.record_mode == "all":
-            global_record["continuous"] = {"days": int(settings.retain_days)}
-            global_record["motion"] = {"days": int(settings.retain_days)}
-        else:
-            global_record["continuous"] = {"days": 0}
-            global_record["motion"] = {"days": int(settings.retain_days)}
+        global_record.pop("continuous", None)
+        global_record.pop("motion", None)
+        global_record["retain"] = {
+            "days": int(settings.retain_days),
+            "mode": "all" if settings.record_mode == "all" else "motion",
+        }
         # 全域 enabled 維持 True，由每台 cam 個別控制
         global_record["enabled"] = True
         config["record"] = global_record
