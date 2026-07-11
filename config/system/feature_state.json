@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-05-06T06:47:41.211111",
+  "updated_at": "2026-07-11T13:23:36.687114",
   "features": {
     "detection": {
       "3": false,
@@ -17,7 +17,8 @@
       "4": false,
       "5": true,
       "7": true,
-      "6": false
+      "6": false,
+      "8": true
     },
     "lpr": {
       "1": false,
