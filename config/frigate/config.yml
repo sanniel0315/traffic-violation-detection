@@ -31,7 +31,7 @@ cameras:
     record:
       enabled: true
       retain:
-        days: 7
+        days: 3
         mode: all
     snapshots:
       bounding_box: true
@@ -90,7 +90,7 @@ cameras:
     record:
       enabled: true
       retain:
-        days: 7
+        days: 3
         mode: all
     snapshots:
       bounding_box: true
@@ -170,7 +170,7 @@ cameras:
     record:
       enabled: true
       retain:
-        days: 7
+        days: 3
         mode: all
     snapshots:
       enabled: true
@@ -198,7 +198,7 @@ mqtt:
 record:
   enabled: true
   retain:
-    days: 7
+    days: 3
     mode: all
 snapshots:
   enabled: false
