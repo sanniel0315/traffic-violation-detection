@@ -739,19 +739,18 @@ def _violation_download_basename(v: Violation) -> str:
 
 @router.get("/{violation_id}/clip.mp4")
 def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)):
-    """違規事件錄影 (±12s)，ffmpeg drawtext 動態時間 OSD 燒進右下。
-    Cache: {vid}_clip_osd_v5.mp4。下載檔名 {plate}_{YYYYMMDD_HHMMSS}.mp4。
+    """違規事件錄影 (±12s)，ffmpeg drawtext 逐秒跳動時間 OSD 燒進右下。
+    Cache: {vid}_clip_osd_v7.mp4。下載檔名 {plate}_{YYYYMMDD_HHMMSS}.mp4。
 
-    動態時間實作: 用 %{pts:localtime:base_unix} expression。base 是 violation
-    觸發時的 unix timestamp,影片 frame 顯示 base + pts → 跟 clip 時間軸對應。
-    需要 ffmpeg drawtext 支援 expression — 4.x 版實測 work (預設 fmt 含 :)。"""
+    動態時間實作: 每秒一個 textfile + enable=between(t,i,i+1) 切換
+    (避開 ffmpeg 4.x %{pts:localtime} expansion 不可靠問題,見下註解)。"""
     v = db.query(Violation).filter(Violation.id == violation_id).first()
     if not v:
         raise HTTPException(status_code=404, detail="violation not found")
     if not v.created_at or not v.camera_id:
         raise HTTPException(status_code=404, detail="missing time/camera")
 
-    out_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_osd_v6.mp4"
+    out_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_osd_v7.mp4"
     if not (out_path.exists() and out_path.stat().st_size > 4096):
         camera_name = f"cam_{int(v.camera_id)}"
         ts_unix = int(calendar.timegm(v.created_at.utctimetuple()))
@@ -762,25 +761,32 @@ def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)
         raw_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_clip_raw.mp4"
         raw_path.write_bytes(clip_bytes)
 
-        # OSD 靜態事件時間 (textfile) — ffmpeg 4.4 drawtext expand_text 對
-        # `:`, `%`, `{}` escape 不可靠,test 過 5 種變體 (%{localtime:fmt} /
-        # %{pts:localtime:N} / %{eif:trunc(t):d} 等) 都踩 Unterminated %{}
-        # 或殘字。User 想要影片時間流動,但 ffmpeg 4.x 做不到 reliable
-        # event_time+pts 流動 OSD。退而求其次:純靜態,影片播放器 progress
-        # bar 本身有流動感。
+        # 逐秒跳動時間 OSD:ffmpeg 4.4 drawtext 的 %{pts:localtime} expansion
+        # 不可靠(test 過 5 種變體都踩 Unterminated %{} 或殘字),改用「每秒一個
+        # textfile + enable=between(t,i,i+1) 逐秒切換」— 完全避開 expand_text
+        # 與 text= 的 `:` escape 地雷(textfile 內容不過 filter parser),
+        # 時間逐秒跳動如監視器 OSD。
         TPE_TZ = timezone(timedelta(hours=8))
         v_ts = v.created_at if v.created_at.tzinfo else v.created_at.replace(tzinfo=timezone.utc)
-        osd_text = v_ts.astimezone(TPE_TZ).strftime("%Y-%m-%d %H:%M:%S")
-        osd_text_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_osd.txt"
-        osd_text_path.write_text(osd_text, encoding="utf-8")
+        clip_start_local = (v_ts - timedelta(seconds=12)).astimezone(TPE_TZ)
         font_path = _find_unicode_font_path() or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        drawtext = (
-            f"drawtext=fontfile={font_path}:textfile={osd_text_path}:"
-            f"x=w-tw-30:y=h-th-30:fontsize=36:fontcolor=white:borderw=3:bordercolor=black"
-        )
+        osd_txt_paths: list[Path] = []
+        filters = []
+        for i in range(26):  # clip 名目 24s,多留 2s 餘裕
+            sec_path = _SNAPSHOT_CACHE_DIR / f"{violation_id}_osd_{i}.txt"
+            sec_path.write_text(
+                (clip_start_local + timedelta(seconds=i)).strftime("%Y-%m-%d %H:%M:%S"),
+                encoding="utf-8",
+            )
+            osd_txt_paths.append(sec_path)
+            filters.append(
+                f"drawtext=fontfile={font_path}:textfile={sec_path}:"
+                f"x=w-tw-30:y=h-th-30:fontsize=36:fontcolor=white:borderw=3:bordercolor=black:"
+                f"enable='between(t,{i},{i + 1})'"
+            )
         cmd = [
             "ffmpeg", "-y", "-i", str(raw_path),
-            "-vf", drawtext,
+            "-vf", ",".join(filters),
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
             "-c:a", "copy", "-movflags", "+faststart",
             str(out_path),
@@ -800,6 +806,11 @@ def get_violation_clip_with_osd(violation_id: int, db: Session = Depends(get_db)
             if raw_path.exists() and out_path.exists() and raw_path != out_path:
                 try:
                     raw_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            for sec_path in osd_txt_paths:
+                try:
+                    sec_path.unlink(missing_ok=True)
                 except Exception:
                     pass
 
