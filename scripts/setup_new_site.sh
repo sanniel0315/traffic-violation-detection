@@ -11,19 +11,19 @@ cd "$REPO"
 echo "==> 專案目錄: $REPO"
 
 # 1) 系統依賴
-echo "==> [1/5] 系統套件 (tesseract / docker compose)"
+echo "==> [1/6] 系統套件 (tesseract / docker compose)"
 if ! command -v tesseract >/dev/null 2>&1; then
   sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-chi-tra
 fi
 command -v docker >/dev/null 2>&1 || echo "  !! 未偵測到 docker，請先安裝 docker + compose plugin"
 
 # 2) Python 依賴 (Jetson 用 --break-system-packages；torch 是 Jetson 專屬 wheel,需另裝)
-echo "==> [2/5] pip install -r requirements.txt"
+echo "==> [2/6] pip install -r requirements.txt"
 pip install -r requirements.txt --break-system-packages 2>/dev/null || pip install -r requirements.txt
 echo "  注意: Jetson 的 torch/torchvision 要用 NVIDIA 專屬 wheel 另行安裝 (見 DEPLOY_NEW_SITE.md)"
 
 # 3) 資料/模型/輸出/儲存 目錄
-echo "==> [3/5] init_dirs (data/models/output/storage)"
+echo "==> [3/6] init_dirs (data/models/output/storage)"
 if [ -n "${TRAFFIC_STORAGE_ROOT:-}" ]; then
   TRAFFIC_STORAGE_ROOT="$TRAFFIC_STORAGE_ROOT" bash scripts/init_dirs.sh
 else
@@ -31,7 +31,7 @@ else
 fi
 
 # 4) .env
-echo "==> [4/5] .env"
+echo "==> [4/6] .env"
 if [ ! -f .env ]; then
   cp .env.example .env
   echo "  已從 .env.example 複製成 .env — 請編輯填入 FRIGATE_RTSP_PASSWORD / EXTERNAL_API_KEY 等"
@@ -40,16 +40,34 @@ else
 fi
 
 # 5) systemd units — unit 檔以 /home/ubuntu/User=ubuntu 為樣板，安裝時自動換成本機實際 user/home
-echo "==> [5/5] 安裝 systemd units (user=$(whoami) home=$HOME)"
+echo "==> [5/6] 安裝 systemd units (user=$(whoami) home=$HOME)"
 U="$(whoami)"; H="$HOME"
-for f in deploy/systemd/*.service; do
+for f in deploy/systemd/*.service deploy/systemd/*.timer; do
   sed "s|/home/ubuntu|$H|g; s|^User=ubuntu$|User=$U|" "$f" | sudo tee "/etc/systemd/system/$(basename "$f")" >/dev/null
 done
 sudo mkdir -p /etc/systemd/system/traffic-api.service.d
 sed "s|/home/ubuntu|$H|g" deploy/systemd/traffic-api.service.d/override.conf | sudo tee /etc/systemd/system/traffic-api.service.d/override.conf >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable traffic-ocr traffic-io traffic-frigate traffic-api
-echo "  已 enable: traffic-ocr / traffic-io / traffic-frigate / traffic-api"
+sudo systemctl enable --now traffic-cleanup.timer
+echo "  已 enable: traffic-ocr / traffic-io / traffic-frigate / traffic-api / traffic-cleanup.timer(每日02:30快照清理,保留30天)"
+
+# 6) journald 半年保存 — 需要大容量碟(20G上限,eMMC裝不下),只在有 TRAFFIC_STORAGE_ROOT 時做
+echo "==> [6/6] journald 半年保存"
+if [ -n "${TRAFFIC_STORAGE_ROOT:-}" ]; then
+  JDIR="$(dirname "$TRAFFIC_STORAGE_ROOT")/journal"   # 例: /mnt/nvme/traffic → /mnt/nvme/journal
+  if [ ! -L /var/log/journal ]; then
+    sudo mkdir -p "$JDIR"
+    [ -d /var/log/journal ] && sudo rsync -a /var/log/journal/ "$JDIR/" && sudo rm -rf /var/log/journal
+    sudo ln -s "$JDIR" /var/log/journal
+  fi
+  sudo mkdir -p /etc/systemd/journald.conf.d
+  sudo cp deploy/journald/retention.conf /etc/systemd/journald.conf.d/retention.conf
+  sudo systemctl restart systemd-journald
+  echo "  journal → $JDIR (20G / 6 個月)"
+else
+  echo "  !! 未設 TRAFFIC_STORAGE_ROOT，跳過（journal 半年約需 16G+，eMMC 放不下）"
+fi
 
 cat <<'NEXT'
 

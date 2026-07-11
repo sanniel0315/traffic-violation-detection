@@ -1,0 +1,10 @@
+[Unit]
+Description=Traffic snapshot retention cleanup (keep 30 days)
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/traffic-violation-detection
+ExecStart=/usr/bin/python3 scripts/cleanup_storage.py --days 30
+Nice=10
+IOSchedulingClass=idle
