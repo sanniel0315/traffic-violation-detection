@@ -1235,6 +1235,12 @@ async def sync_cameras_to_nvr():
             if not rtsp_url:
                 continue
             cam_name = f"cam_{cam.id}"
+            # 帶帳密的直連 RTSP 一律改走 go2rtc restream:frigate 對 camera input
+            # path 的帳密會再 percent-encode 一次(%40→%2540)→ 401 認證失敗
+            # (2026-07-12 cam_8 實案)。go2rtc 無此問題,且與 cam_2/cam_6 架構一致。
+            if "@" in rtsp_url and "127.0.0.1" not in rtsp_url and "localhost" not in rtsp_url:
+                config.setdefault("go2rtc", {}).setdefault("streams", {})[cam_name] = [rtsp_url]
+                rtsp_url = f"rtsp://127.0.0.1:8554/{cam_name}"
             zones_config = {}
             if cam.zones:
                 for zone in cam.zones:

@@ -186,7 +186,7 @@ cameras:
     enabled: true
     ffmpeg:
       inputs:
-      - path: rtsp://admin:1qaz%40WSX@111.70.34.184:6554/profile2/media.smp
+      - path: rtsp://127.0.0.1:8554/cam_8
         roles:
         - record
     motion:
@@ -250,6 +250,8 @@ go2rtc:
     - rtsp://admin:1qaz%40WSX@111.70.34.184:6554/profile2/media.smp
     cam_6:
     - rtsp://admin:1qaz%40WSX@111.70.34.184:7554/profile2/media.smp
+    cam_8:
+    - rtsp://admin:1qaz%40WSX@111.70.34.184:6554/profile2/media.smp
 mqtt:
   enabled: false
 record:
