@@ -656,8 +656,21 @@ async def create_violation(data: ViolationCreate, db: Session = Depends(get_db))
         speed_roi_hit=bool(data.speed_roi_hit),
         violation_time=datetime.utcnow()
     )
-    db.add(v)
-    db.commit()
+    # 撞鎖重試:WAL 下兩個寫者仍會衝突,且 read→write 升級撞上聚合 job 提交時
+    # 是立即 SQLITE_BUSY_SNAPSHOT、不吃 busy_timeout → 違規會直接遺失(實測
+    # 每小時 3-4 筆)。重試會重新開 transaction,可解。
+    import time as _time
+    from sqlalchemy.exc import OperationalError as _OpErr
+    for attempt in range(4):
+        try:
+            db.add(v)
+            db.commit()
+            break
+        except _OpErr as exc:
+            if "database is locked" not in str(exc).lower() or attempt == 3:
+                raise
+            db.rollback()
+            _time.sleep(0.2 * (attempt + 1))
     db.refresh(v)
     add_log(
         "warning",
