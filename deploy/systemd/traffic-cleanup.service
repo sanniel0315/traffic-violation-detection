@@ -5,6 +5,6 @@ Description=Traffic snapshot retention cleanup (keep 30 days)
 Type=oneshot
 User=ubuntu
 WorkingDirectory=/home/ubuntu/traffic-violation-detection
-ExecStart=/usr/bin/python3 scripts/cleanup_storage.py --days 30
+ExecStart=/usr/bin/python3 scripts/cleanup_storage.py --days 30 --camera-days 8:3
 Nice=10
 IOSchedulingClass=idle

@@ -45,10 +45,82 @@ def cleanup_dir(root: str, cutoff_ts: float, dry_run: bool) -> tuple[int, int, i
     return deleted, freed, errors
 
 
+def cleanup_camera_media(
+    db_path: str, camera_id: int, keep_days: int, dry_run: bool
+) -> tuple[int, int]:
+    """指定相機的違規「媒體檔」短保留：刪除該相機超過 keep_days 的
+    主圖(image_path)與 snapshots/{id}_* 衍生檔(時間軸圖/組合圖/影片cache)。
+
+    ⚠️ 只刪媒體檔，violations 資料列不動（報表/紀錄依政策保留半年）。
+    用途：cam_8 測試灌單每天 ~7000 筆 SPEEDING，快照佔 400G+。
+
+    回傳 (刪除檔案數, 釋放 bytes)。
+    """
+    import sqlite3
+
+    cutoff = time.time() - keep_days * 86400
+    cutoff_dt = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(cutoff))  # DB 存 UTC naive
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.execute("PRAGMA busy_timeout = 5000")
+    rows = conn.execute(
+        "SELECT id, image_path FROM violations WHERE camera_id = ? AND created_at < ?",
+        (int(camera_id), cutoff_dt),
+    ).fetchall()
+    conn.close()
+
+    deleted = freed = 0
+
+    def _unlink(path: str) -> None:
+        nonlocal deleted, freed
+        try:
+            size = os.path.getsize(path)
+            if not dry_run:
+                os.unlink(path)
+            deleted += 1
+            freed += size
+        except OSError:
+            pass
+
+    # 主圖：image_path 形如 /files/violations/XXX.jpg → output/violations/XXX.jpg
+    ids = set()
+    for vid, image_path in rows:
+        ids.add(int(vid))
+        p = str(image_path or "")
+        if p.startswith("/files/"):
+            _unlink(p.replace("/files/", "output/", 1))
+
+    # 衍生檔：snapshots/{id}_*.*（單次 scandir 掃全目錄，用 id 前綴比對）
+    snap_dir = "output/violations/snapshots"
+    if ids and os.path.isdir(snap_dir):
+        with os.scandir(snap_dir) as it:
+            for entry in it:
+                head = entry.name.split("_", 1)[0]
+                if head.isdigit() and int(head) in ids and entry.is_file():
+                    _unlink(entry.path)
+    return deleted, freed
+
+
+def _parse_camera_days(items: list[str]) -> dict[int, int]:
+    """解析 --camera-days 參數，格式 '8:3' = camera_id 8 保留 3 天"""
+    result: dict[int, int] = {}
+    for item in items:
+        cam_s, _, days_s = str(item).partition(":")
+        if cam_s.strip().isdigit() and days_s.strip().isdigit() and int(days_s) >= 1:
+            result[int(cam_s)] = int(days_s)
+        else:
+            print(f"  ⏭️ 忽略無效 --camera-days 項目: {item}（格式應為 8:3 且天數>=1）")
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="刪除超過保留天數的快照檔案")
     parser.add_argument("--days", type=int, default=30, help="保留天數（預設 30）")
     parser.add_argument("--paths", nargs="*", default=DEFAULT_TARGETS, help="要清理的目錄")
+    parser.add_argument(
+        "--camera-days", nargs="*", default=[],
+        help="指定相機媒體短保留，格式 camera_id:days（例：8:3 = cam_8 測試快照只留 3 天）",
+    )
+    parser.add_argument("--db", default="data/violations.db", help="violations DB 路徑")
     parser.add_argument("--dry-run", action="store_true", help="只統計不刪除")
     args = parser.parse_args()
 
@@ -70,6 +142,16 @@ def main() -> int:
         total_freed += freed
         total_errors += errors
         print(f"  {target}: {deleted} 檔 / {freed / 1e9:.1f} GB" + (f" / {errors} 錯誤" if errors else ""))
+
+    # 指定相機媒體短保留（cam_8 測試灌單等）
+    for cam_id, keep_days in _parse_camera_days(args.camera_days).items():
+        if not os.path.exists(args.db):
+            print(f"  ⏭️ 跳過 camera-days（DB 不存在）: {args.db}")
+            break
+        deleted, freed = cleanup_camera_media(args.db, cam_id, keep_days, args.dry_run)
+        total_deleted += deleted
+        total_freed += freed
+        print(f"  cam_{cam_id} 媒體（保留 {keep_days} 天）: {deleted} 檔 / {freed / 1e9:.1f} GB")
 
     print(f"✅ 合計: {total_deleted} 檔 / {total_freed / 1e9:.1f} GB" + (f" / {total_errors} 錯誤" if total_errors else ""))
     return 0
