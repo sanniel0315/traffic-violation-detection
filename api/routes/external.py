@@ -253,6 +253,68 @@ def _vd_csv_response(records: list, start_time, end_time, bucket):
 
 # ── 壅塞報表 ──────────────────────────────────────────────
 
+def _congestion_rows_to_records(rows: list, bucket: str) -> list:
+    """把 CongestionReportAgg 列轉成對外 JSON 記錄(congestion-report / latest 共用)。"""
+    bucket_delta = _BUCKET_INTERVALS.get(bucket, timedelta(minutes=5))
+    records = []
+    for r in rows:
+        ts = r.bucket_start.replace(tzinfo=timezone.utc).astimezone(TZ_TAIPEI) if r.bucket_start else None
+        records.append({
+            "detector_id": str(r.camera_id or ""),
+            "camera_name": r.camera_name or "",
+            "time_start": ts.isoformat() if ts else None,
+            "time_end": (ts + bucket_delta).isoformat() if ts else None,
+            "zone_name": r.zone_name or "",
+            "lane_no": r.lane_no,
+            "direction": r.direction or "",
+            "avg_occupancy_pct": round((r.avg_occupancy or 0) * 100, 1),
+            "max_occupancy_pct": round((r.max_occupancy or 0) * 100, 1),
+            "avg_vehicle_count": round(r.avg_vehicle_count or 0, 1),
+            "avg_stopped_vehicle_count": round(r.avg_stopped_vehicle_count or 0, 1),
+            "avg_queue_length_m": round(r.avg_queue_length_m or 0, 1),
+            "max_queue_length_m": round(r.max_queue_length_m or 0, 1),
+            "queue_active_duration_sec": round(r.queue_active_duration_sec or 0, 1),
+            "sample_count": r.sample_count or 0,
+        })
+    return records
+
+
+def _congestion_stats(records: list) -> dict:
+    """壅塞統計摘要:整體 + 各偵測器(sample_count 加權平均)+ 最壅塞桶。"""
+    def summarize(recs: list) -> dict:
+        wsum = sum(r["sample_count"] for r in recs) or 0
+        def wavg(key):
+            if not wsum:
+                return None
+            return round(sum(r[key] * r["sample_count"] for r in recs) / wsum, 1)
+        return {
+            "avg_occupancy_pct": wavg("avg_occupancy_pct"),
+            "max_occupancy_pct": round(max((r["max_occupancy_pct"] for r in recs), default=0), 1),
+            "avg_vehicle_count": wavg("avg_vehicle_count"),
+            "avg_stopped_vehicle_count": wavg("avg_stopped_vehicle_count"),
+            "avg_queue_length_m": wavg("avg_queue_length_m"),
+            "max_queue_length_m": round(max((r["max_queue_length_m"] for r in recs), default=0), 1),
+            "total_queue_active_duration_sec": round(sum(r["queue_active_duration_sec"] for r in recs), 1),
+            "sample_count": wsum,
+        }
+
+    by_detector = {}
+    for r in records:
+        by_detector.setdefault(r["detector_id"], []).append(r)
+    peak = max(records, key=lambda r: r["max_occupancy_pct"], default=None)
+    return {
+        "bucket_count": len(records),
+        "overall": summarize(records),
+        "by_detector": [
+            {"detector_id": did, "camera_name": recs[0]["camera_name"], **summarize(recs)}
+            for did, recs in by_detector.items()
+        ],
+        "peak_bucket": {"time_start": peak["time_start"], "detector_id": peak["detector_id"],
+                        "camera_name": peak["camera_name"], "max_occupancy_pct": peak["max_occupancy_pct"]}
+                       if peak and peak["max_occupancy_pct"] else None,
+    }
+
+
 @router.get("/congestion-report")
 async def external_congestion_report(
     start_time: datetime = Query(...),
@@ -283,27 +345,7 @@ async def external_congestion_report(
             "error": {"code": "TOO_MANY_RECORDS", "message": f"結果超過 {_MAX_RECORDS} 筆，請縮小時間範圍"},
         })
 
-    bucket_delta = _BUCKET_INTERVALS.get(bucket, timedelta(minutes=5))
-    records = []
-    for r in rows:
-        ts = r.bucket_start.replace(tzinfo=timezone.utc).astimezone(TZ_TAIPEI) if r.bucket_start else None
-        records.append({
-            "detector_id": str(r.camera_id or ""),
-            "camera_name": r.camera_name or "",
-            "time_start": ts.isoformat() if ts else None,
-            "time_end": (ts + bucket_delta).isoformat() if ts else None,
-            "zone_name": r.zone_name or "",
-            "lane_no": r.lane_no,
-            "direction": r.direction or "",
-            "avg_occupancy_pct": round((r.avg_occupancy or 0) * 100, 1),
-            "max_occupancy_pct": round((r.max_occupancy or 0) * 100, 1),
-            "avg_vehicle_count": round(r.avg_vehicle_count or 0, 1),
-            "avg_stopped_vehicle_count": round(r.avg_stopped_vehicle_count or 0, 1),
-            "avg_queue_length_m": round(r.avg_queue_length_m or 0, 1),
-            "max_queue_length_m": round(r.max_queue_length_m or 0, 1),
-            "queue_active_duration_sec": round(r.queue_active_duration_sec or 0, 1),
-            "sample_count": r.sample_count or 0,
-        })
+    records = _congestion_rows_to_records(rows, bucket)
 
     if format == "csv":
         return _congestion_csv_response(records, start_time, end_time, bucket)
@@ -317,6 +359,46 @@ async def external_congestion_report(
         },
         "meta": _meta("json"),
     }
+
+
+@router.get("/congestion-report/latest")
+async def external_congestion_report_latest(
+    minutes: int = Query(5, ge=1, le=360, description="回傳最近幾個完整桶(interval=1m 時即分鐘數)"),
+    interval: str = Query("1m"),
+    detector_id: Optional[int] = Query(None),
+    include_records: bool = Query(True, description="False 只回統計摘要,不回逐桶明細"),
+    api_key: ApiKey = Depends(require_scope("congestion_report")),
+    db: Session = Depends(get_db),
+):
+    """壅塞統計報表快捷:免自己算時間/UTC,自動回最近 N 個「已結束」的桶 + 統計摘要。
+    上層每分鐘輪詢就打這個(建議 minutes 給 3~5 容忍聚合延遲,以 time_start 去重 upsert)。"""
+    bucket = normalize_bucket_size(interval)
+    step = BUCKET_SECONDS[bucket]
+    now = datetime.now(timezone.utc)
+    epoch = int(now.timestamp())
+    end = datetime.fromtimestamp(epoch - (epoch % step), tz=timezone.utc)
+    start = end - timedelta(seconds=step * minutes)
+
+    query = db.query(CongestionReportAgg).filter(
+        CongestionReportAgg.bucket_size == bucket,
+        CongestionReportAgg.bucket_start >= start.replace(tzinfo=None),
+        CongestionReportAgg.bucket_start < end.replace(tzinfo=None),
+    )
+    if detector_id:
+        query = query.filter(CongestionReportAgg.camera_id == detector_id)
+    rows = query.order_by(CongestionReportAgg.bucket_start).all()
+    records = _congestion_rows_to_records(rows, bucket)
+    stats = _congestion_stats(records)
+
+    data = {
+        "interval": bucket,
+        "period": {"start": start.astimezone(TZ_TAIPEI).isoformat(),
+                   "end": end.astimezone(TZ_TAIPEI).isoformat()},
+        "stats": stats,
+    }
+    if include_records:
+        data["records"] = records
+    return {"status": "success", "data": data, "meta": _meta("json")}
 
 
 def _congestion_csv_response(records: list, start_time, end_time, bucket):
