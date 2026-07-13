@@ -140,11 +140,17 @@ def _bbox_iou(a: tuple, b: tuple) -> float:
     return inter / union if union > 0 else 0.0
 
 
+# 靜止類違規:車輛不動,bbox 隨時間穩定 → 長時窗安全且 IoU 應更高;
+# 行進類:60km/h 每秒移動 ~16m,±2 秒外還 IoU 重疊的多半是後車開到同位置(假匹配),
+# 時窗必須窄。2026-07-13 用 cam_2 14 天 3000 筆實測調參:寬窗命中率上升是陷阱。
+_STATIONARY_VIOLATION_TYPES = {"ILLEGAL_PARKING", "RED_LINE_STOP", "NO_PARKING", "PARKING"}
+
+
 def _find_strict_lpr_plate(v: Violation, db: Session) -> Optional[dict]:
     """嚴格 plate-vehicle 關聯 (階段B): 同 camera + 時間 ±window + violation.bbox 與
     LPRRecord.vehicle_bbox 的 IoU≥門檻,取 IoU 最高 (conf≥0.5)。無匹配回 None (寧缺勿錯)。
     只對有 vehicle_bbox 的 LPR (階段A 之後新資料) 生效;舊資料無 bbox 自動略過。
-    門檻可用 STRICT_LPR_WINDOW_SEC / STRICT_LPR_MIN_IOU 調 (白天用真實資料調參)。"""
+    參數依違規類型自適應(靜止類長窗/行進類窄窗),env STRICT_LPR_* 可全域覆寫。"""
     if not v.camera_id or not v.created_at or not v.bbox:
         return None
     vb = _norm_bbox(v.bbox)
@@ -154,8 +160,12 @@ def _find_strict_lpr_plate(v: Violation, db: Session) -> Optional[dict]:
         import os as _os
         from api.models import LPRRecord
         from api.routes.lpr_stream import SNAPSHOT_DIR
-        window = float(_os.getenv("STRICT_LPR_WINDOW_SEC", "3.0"))
-        min_iou = float(_os.getenv("STRICT_LPR_MIN_IOU", "0.30"))
+        if str(v.violation_type or "").upper() in _STATIONARY_VIOLATION_TYPES:
+            d_window, d_iou = "15.0", "0.45"   # 靜止:長窗+高IoU(bbox不動,同車重疊度高)
+        else:
+            d_window, d_iou = "2.0", "0.30"    # 行進:窄窗防「後車同位置」假匹配
+        window = float(_os.getenv("STRICT_LPR_WINDOW_SEC", d_window))
+        min_iou = float(_os.getenv("STRICT_LPR_MIN_IOU", d_iou))
         lo = v.created_at - timedelta(seconds=window)
         hi = v.created_at + timedelta(seconds=window)
         rows = (db.query(LPRRecord)
