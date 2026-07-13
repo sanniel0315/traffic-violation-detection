@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from api.models import ApiKey, CongestionReportAgg, get_db
 from api.utils.api_key_auth import require_scope
 from api.utils.report_aggregation import (
+    BUCKET_SECONDS,
     build_vd_report_rows,
     normalize_bucket_size,
 )
@@ -50,25 +51,8 @@ def _validate_time_range(start_time: datetime, end_time: datetime, bucket_size: 
         })
 
 
-# ── VD 車流報表 ──────────────────────────────────────────────
-
-@router.get("/vd-report")
-async def external_vd_report(
-    start_time: datetime = Query(...),
-    end_time: datetime = Query(...),
-    detector_id: Optional[int] = Query(None),
-    interval: str = Query("5m"),
-    format: str = Query("json"),
-    api_key: ApiKey = Depends(require_scope("vd_report")),
-    db: Session = Depends(get_db),
-):
-    bucket = normalize_bucket_size(interval)
-    _validate_time_range(start_time, end_time, bucket)
-
-    # 只讀聚合表（背景 job 每分鐘增量維護），不在請求當下重建 — 重建的 DELETE
-    # 會與即時事件寫入搶鎖，正是報表 0 筆/500 的根因。
-    rows = build_vd_report_rows(db, start_time, end_time, bucket, camera_id=detector_id)
-
+def _vd_rows_to_records(rows: list, bucket: str) -> list:
+    """把 build_vd_report_rows 的原始列轉成對外 JSON 記錄(vd-report / latest 共用)。"""
     bucket_delta = _BUCKET_INTERVALS.get(bucket, timedelta(minutes=5))
     records = []
     for row in rows:
@@ -76,9 +60,8 @@ async def external_vd_report(
         time_start = datetime.fromtimestamp(ts / 1000, tz=TZ_TAIPEI).isoformat() if ts else None
         time_end = (datetime.fromtimestamp(ts / 1000, tz=TZ_TAIPEI) + bucket_delta).isoformat() if ts else None
 
-        lanes_raw = row.get("lanes") or {}
         lanes = []
-        for lane_no, ld in lanes_raw.items():
+        for lane_no, ld in (row.get("lanes") or {}).items():
             lanes.append({
                 "lane_no": int(lane_no) if str(lane_no).isdigit() else lane_no,
                 "flow": ld.get("flow", 0),
@@ -112,6 +95,66 @@ async def external_vd_report(
             "lane_count": row.get("laneCount", 0),
             "lanes": lanes,
         })
+    return records
+
+
+def _vd_stats(records: list) -> dict:
+    """對一批記錄做統計摘要:整體 + 各偵測器 + 尖峰時段(flow 加權平均速度/佔有率)。"""
+    def summarize(recs: list) -> dict:
+        flow = sum(r["total_flow"] for r in recs)
+        small = sum(r["small_vehicle_flow"] for r in recs)
+        large = sum(r["large_vehicle_flow"] for r in recs)
+        # 車流加權平均;速度與佔有率各自獨立分母 — 塞車分鐘速度為 None 但佔有率有值,
+        # 共用分母會讓佔有率被灌爆超過 100%。
+        spd_w = sum(r["total_flow"] for r in recs if r["total_flow"] and r["avg_speed_kmh"])
+        spd = sum(r["avg_speed_kmh"] * r["total_flow"] for r in recs if r["total_flow"] and r["avg_speed_kmh"])
+        occ_w = sum(r["total_flow"] for r in recs if r["total_flow"] and r["avg_occupancy_pct"])
+        occ = sum(r["avg_occupancy_pct"] * r["total_flow"] for r in recs if r["total_flow"] and r["avg_occupancy_pct"])
+        qmax = [r["max_queue_length_m"] for r in recs if r["max_queue_length_m"] is not None]
+        return {
+            "total_flow": flow,
+            "small_vehicle_flow": small,
+            "large_vehicle_flow": large,
+            "avg_speed_kmh": round(spd / spd_w, 1) if spd_w else None,
+            "avg_occupancy_pct": round(occ / occ_w, 1) if occ_w else None,
+            "max_queue_length_m": round(max(qmax), 1) if qmax else None,
+        }
+
+    by_detector = {}
+    for r in records:
+        by_detector.setdefault(r["detector_id"], []).append(r)
+    peak = max(records, key=lambda r: r["total_flow"], default=None)
+    return {
+        "bucket_count": len(records),
+        "overall": summarize(records),
+        "by_detector": [
+            {"detector_id": did, "road_name": recs[0]["road_name"], **summarize(recs)}
+            for did, recs in by_detector.items()
+        ],
+        "peak_bucket": {"time_start": peak["time_start"], "detector_id": peak["detector_id"],
+                        "total_flow": peak["total_flow"]} if peak and peak["total_flow"] else None,
+    }
+
+
+# ── VD 車流報表 ──────────────────────────────────────────────
+
+@router.get("/vd-report")
+async def external_vd_report(
+    start_time: datetime = Query(...),
+    end_time: datetime = Query(...),
+    detector_id: Optional[int] = Query(None),
+    interval: str = Query("5m"),
+    format: str = Query("json"),
+    api_key: ApiKey = Depends(require_scope("vd_report")),
+    db: Session = Depends(get_db),
+):
+    bucket = normalize_bucket_size(interval)
+    _validate_time_range(start_time, end_time, bucket)
+
+    # 只讀聚合表（背景 job 每分鐘增量維護），不在請求當下重建 — 重建的 DELETE
+    # 會與即時事件寫入搶鎖，正是報表 0 筆/500 的根因。
+    rows = build_vd_report_rows(db, start_time, end_time, bucket, camera_id=detector_id)
+    records = _vd_rows_to_records(rows, bucket)
 
     if len(records) > _MAX_RECORDS:
         raise HTTPException(status_code=413, detail={
@@ -131,6 +174,40 @@ async def external_vd_report(
         },
         "meta": _meta("json"),
     }
+
+
+@router.get("/vd-report/latest")
+async def external_vd_report_latest(
+    minutes: int = Query(5, ge=1, le=360, description="回傳最近幾個完整桶(interval=1m 時即分鐘數)"),
+    interval: str = Query("1m"),
+    detector_id: Optional[int] = Query(None),
+    include_records: bool = Query(True, description="False 只回統計摘要,不回逐桶明細"),
+    api_key: ApiKey = Depends(require_scope("vd_report")),
+    db: Session = Depends(get_db),
+):
+    """快捷查詢:免自己算時間/UTC,自動回最近 N 個「已結束」的桶 + 統計摘要。
+    上層每分鐘輪詢就打這個(建議 minutes 給 3~5 容忍聚合延遲,以 time_start 去重 upsert)。"""
+    bucket = normalize_bucket_size(interval)
+    step = BUCKET_SECONDS[bucket]
+    now = datetime.now(timezone.utc)
+    # 對齊到桶邊界 → 排除當下還在累積的桶(end 為 exclusive 上界)
+    epoch = int(now.timestamp())
+    end = datetime.fromtimestamp(epoch - (epoch % step), tz=timezone.utc)
+    start = end - timedelta(seconds=step * minutes)
+
+    rows = build_vd_report_rows(db, start, end, bucket, camera_id=detector_id)
+    records = _vd_rows_to_records(rows, bucket)
+    stats = _vd_stats(records)
+
+    data = {
+        "interval": bucket,
+        "period": {"start": start.astimezone(TZ_TAIPEI).isoformat(),
+                   "end": end.astimezone(TZ_TAIPEI).isoformat()},
+        "stats": stats,
+    }
+    if include_records:
+        data["records"] = records
+    return {"status": "success", "data": data, "meta": _meta("json")}
 
 
 def _vd_csv_response(records: list, start_time, end_time, bucket):
