@@ -192,7 +192,9 @@ def build_dataset(
             no_chars.append(vid)
             continue
         ocr_str = chars_to_string(chars)
-        if ocr_str == expected:
+        # DB 車牌 98.6% 含 "-"(格式化後),YOLO 字元類別無 dash → 去 dash 再比,
+        # 否則幾乎全部誤判 mismatch(實測 5000 張只剩 459 matched)
+        if ocr_str.replace("-", "") == str(expected or "").replace("-", ""):
             matched.append((vid, png, chars))
         else:
             mismatched.append((vid, expected, ocr_str))
