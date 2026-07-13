@@ -140,11 +140,15 @@ def _vd_stats(records: list) -> dict:
 
 @router.get("/vd-report", summary="VD 車流報表 — 指定時間區間")
 async def external_vd_report(
-    start_time: datetime = Query(...),
-    end_time: datetime = Query(...),
-    detector_id: Optional[int] = Query(None),
-    interval: str = Query("5m"),
-    format: str = Query("json"),
+    start_time: datetime = Query(
+        ..., example="2026-07-13T00:00:00+08:00",
+        description="起始時間 ISO8601。不帶時區視為 UTC;查台北時間請帶 +08:00,例 2026-07-13T00:00:00+08:00"),
+    end_time: datetime = Query(
+        ..., example="2026-07-13T23:59:59+08:00",
+        description="結束時間 ISO8601。格式同 start_time"),
+    detector_id: Optional[int] = Query(None, description="攝影機 camera_id(2/3/6/8,見 /streams);留空=全部"),
+    interval: str = Query("5m", example="5m", description="時間桶大小:1m / 5m / 1h"),
+    format: str = Query("json", example="json", description="輸出格式:json / csv"),
     api_key: ApiKey = Depends(require_scope("vd_report")),
     db: Session = Depends(get_db),
 ):
@@ -317,11 +321,15 @@ def _congestion_stats(records: list) -> dict:
 
 @router.get("/congestion-report", summary="壅塞報表 — 指定時間區間")
 async def external_congestion_report(
-    start_time: datetime = Query(...),
-    end_time: datetime = Query(...),
-    detector_id: Optional[int] = Query(None),
-    interval: str = Query("5m"),
-    format: str = Query("json"),
+    start_time: datetime = Query(
+        ..., example="2026-07-13T00:00:00+08:00",
+        description="起始時間 ISO8601。不帶時區視為 UTC;查台北時間請帶 +08:00,例 2026-07-13T00:00:00+08:00"),
+    end_time: datetime = Query(
+        ..., example="2026-07-13T23:59:59+08:00",
+        description="結束時間 ISO8601。格式同 start_time"),
+    detector_id: Optional[int] = Query(None, description="攝影機 camera_id(2/3/6/8,見 /streams);留空=全部"),
+    interval: str = Query("5m", example="5m", description="時間桶大小:1m / 5m / 1h"),
+    format: str = Query("json", example="json", description="輸出格式:json / csv"),
     api_key: ApiKey = Depends(require_scope("congestion_report")),
     db: Session = Depends(get_db),
 ):
