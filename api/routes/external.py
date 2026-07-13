@@ -138,7 +138,7 @@ def _vd_stats(records: list) -> dict:
 
 # ── VD 車流報表 ──────────────────────────────────────────────
 
-@router.get("/vd-report")
+@router.get("/vd-report", summary="VD 車流報表 — 指定時間區間")
 async def external_vd_report(
     start_time: datetime = Query(...),
     end_time: datetime = Query(...),
@@ -176,7 +176,7 @@ async def external_vd_report(
     }
 
 
-@router.get("/vd-report/latest")
+@router.get("/vd-report/latest", summary="VD 車流報表(快捷) — 最近 N 分鐘 + 統計摘要")
 async def external_vd_report_latest(
     minutes: int = Query(5, ge=1, le=360, description="回傳最近幾個完整桶(interval=1m 時即分鐘數)"),
     interval: str = Query("1m"),
@@ -315,7 +315,7 @@ def _congestion_stats(records: list) -> dict:
     }
 
 
-@router.get("/congestion-report")
+@router.get("/congestion-report", summary="壅塞報表 — 指定時間區間")
 async def external_congestion_report(
     start_time: datetime = Query(...),
     end_time: datetime = Query(...),
@@ -361,7 +361,7 @@ async def external_congestion_report(
     }
 
 
-@router.get("/congestion-report/latest")
+@router.get("/congestion-report/latest", summary="壅塞統計報表(快捷) — 最近 N 分鐘 + 統計摘要")
 async def external_congestion_report_latest(
     minutes: int = Query(5, ge=1, le=360, description="回傳最近幾個完整桶(interval=1m 時即分鐘數)"),
     interval: str = Query("1m"),
@@ -477,7 +477,7 @@ def _parse_go2rtc_sdp(sdp: str) -> dict:
     return result
 
 
-@router.get("/streams")
+@router.get("/streams", summary="即時影像串流清單 — 取得 cam id 與 RTSP/HLS/MJPEG URL")
 def external_streams(
     api_key: ApiKey = Depends(require_scope("streams")),
     db: Session = Depends(get_db),
