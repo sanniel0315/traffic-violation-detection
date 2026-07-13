@@ -207,3 +207,17 @@ DETECT_MODEL_PT=yolov8n.pt
 - 不可停用目前登入中的管理者。
 - 不可刪除目前登入中的管理者。
 - 系統至少保留一位啟用中的管理者。
+
+## 資料保存政策（2026-07 定案）
+
+| 資料 | 保留期 | 機制 |
+|------|--------|------|
+| DB 紀錄（traffic_events / congestion_samples / lpr_records / violations / 聚合表） | **至少半年，不自動刪除** | 程式無任何 DB 清除邏輯；SystemLog 保留 365 天 |
+| frigate 錄影（REC 連續錄影） | 3 天 | frigate `record.retain.days: 3` |
+| 正式相機違規 / LPR 快照 | 30 天 | `traffic-cleanup.timer` 每日 02:30 |
+| cam_8（測試相機）違規媒體 | 3 天 | 同上，`--camera-days 8:3`（只刪媒體檔，DB 列保留） |
+| journald 服務日誌 | 6 個月 / 20G | journal 目錄在 NVMe（`/var/log/journal` → `/mnt/nvme/journal`） |
+
+**⚠️ 鐵律**：任何新清理功能**不得刪除 DB 資料列**（報表查詢資料要保存至少半年）；只能刪媒體檔。DB 增速約 4G/月，NVMe 容量可撐多年。
+
+**已知風險**：violations.db 無備份（單一 NVMe），若硬碟故障半年紀錄全失；如需保障可另排 `VACUUM INTO` 週期備份到外部儲存。
