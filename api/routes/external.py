@@ -88,6 +88,8 @@ async def external_vd_report(
                 "avg_occupancy_pct": round(ld.get("avgOccupancyPct") or 0, 1),
                 "avg_queue_length_m": round(ld.get("avgQueueLengthM") or 0, 1) if ld.get("avgQueueLengthM") else None,
                 "max_queue_length_m": round(ld.get("maxQueueLengthM") or 0, 1) if ld.get("maxQueueLengthM") else None,
+                "queue_duration_sec": round(ld.get("queueDurationSec") or 0, 1) if ld.get("queueDurationSec") else None,
+                "max_queue_duration_sec": round(ld.get("maxQueueDurationSec") or 0, 1) if ld.get("maxQueueDurationSec") else None,
             })
 
         records.append({
@@ -102,6 +104,11 @@ async def external_vd_report(
             "large_vehicle_flow": row.get("largeFlow", 0),
             "avg_speed_kmh": round(row.get("avgSpeed") or 0, 1),
             "avg_occupancy_pct": round(row.get("avgOccupancyPct") or 0, 1),
+            "direction_counts": row.get("directionCounts") or {},
+            "avg_queue_length_m": round(row.get("avgQueueLengthM") or 0, 1) if row.get("avgQueueLengthM") else None,
+            "max_queue_length_m": round(row.get("maxQueueLengthM") or 0, 1) if row.get("maxQueueLengthM") else None,
+            "queue_duration_sec": round(row.get("queueDurationSec") or 0, 1) if row.get("queueDurationSec") else None,
+            "max_queue_duration_sec": round(row.get("maxQueueDurationSec") or 0, 1) if row.get("maxQueueDurationSec") else None,
             "lane_count": row.get("laneCount", 0),
             "lanes": lanes,
         })
@@ -133,6 +140,7 @@ def _vd_csv_response(records: list, start_time, end_time, bucket):
         "detector_id", "road_name", "time_start", "time_end", "direction",
         "lane_no", "flow", "small_vehicle_flow", "large_vehicle_flow",
         "avg_speed_kmh", "avg_occupancy_pct", "avg_queue_length_m", "max_queue_length_m",
+        "queue_duration_sec", "max_queue_duration_sec",
     ]
     writer.writerow(header)
     for rec in records:
@@ -145,13 +153,16 @@ def _vd_csv_response(records: list, start_time, end_time, bucket):
                     lane["small_vehicle_flow"], lane["large_vehicle_flow"],
                     lane["avg_speed_kmh"], lane["avg_occupancy_pct"],
                     lane.get("avg_queue_length_m", ""), lane.get("max_queue_length_m", ""),
+                    lane.get("queue_duration_sec", ""), lane.get("max_queue_duration_sec", ""),
                 ])
         else:
             writer.writerow([
                 rec["detector_id"], rec["road_name"], rec["time_start"], rec["time_end"],
                 rec["direction"], "", rec["total_flow"],
                 rec["small_vehicle_flow"], rec["large_vehicle_flow"],
-                rec["avg_speed_kmh"], rec["avg_occupancy_pct"], "", "",
+                rec["avg_speed_kmh"], rec["avg_occupancy_pct"],
+                rec.get("avg_queue_length_m", "") or "", rec.get("max_queue_length_m", "") or "",
+                rec.get("queue_duration_sec", "") or "", rec.get("max_queue_duration_sec", "") or "",
             ])
 
     output.seek(0)
