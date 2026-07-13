@@ -8,10 +8,15 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, HTTPException
+from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
 
 from api.models import ApiKey, get_db, verify_password
+
+# X-API-Key 安全方案 → 讓 Swagger /docs 出現「Authorize」鈕,貼一次全站套用。
+# auto_error=False:缺 key 時回 None(不自動 403),保留下方自訂的 401 錯誤格式。
+_api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 # In-memory rate limiter: key_id -> deque of timestamps
 _rate_windows: dict[int | str, collections.deque] = {}
@@ -47,7 +52,7 @@ def _check_rate_limit(key_id, limit: int = 60) -> None:
 
 
 async def get_api_key(
-    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    x_api_key: Optional[str] = Depends(_api_key_scheme),
     db: Session = Depends(get_db),
 ) -> ApiKey | _StaticApiKey:
     """驗證 X-API-Key header，支援固定 key 和資料庫 key"""
