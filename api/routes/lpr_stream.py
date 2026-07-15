@@ -117,6 +117,73 @@ _PLATE_CONFUSION_MAP = {
 SNAPSHOT_DIR = '/workspace/storage/lpr_snapshots'
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 TZ_TAIPEI = ZoneInfo("Asia/Taipei")
+
+# ─── 台灣車牌格式強制 (存 DB 前最後一道) ───
+# 背景:多幀投票可能選出「4 字母開頭」等無效格式(如真牌 BKA-5681 的數字 5 被
+# 誤讀成字母 S → 存成 BKAS-681),且高信心通過確認門檻。此處用車牌位置結構做邊界
+# 數字/字母修復:數字位若是形近字母就換回數字(反之亦然)。實測近 7 天無效車牌 99%
+# 可救回。鏡像 services/ocr_service._repair_plate,兩處同步維護。
+_FMT_TO_DIGIT = {"O": "0", "Q": "0", "D": "0", "U": "0", "I": "1", "L": "1",
+                 "Z": "2", "S": "5", "G": "6", "T": "7", "B": "8"}
+_FMT_TO_ALPHA = {"0": "O", "1": "I", "2": "Z", "4": "A", "5": "S", "6": "G",
+                 "7": "T", "8": "B"}
+# (總長, (字母位置, 數字位置), dash 切點)
+_FMT_PLATE_FORMATS = [
+    (7, (frozenset({0, 1, 2}), frozenset({3, 4, 5, 6})), 3),  # AAA-DDDD 新式
+    (7, (frozenset({4, 5, 6}), frozenset({0, 1, 2, 3})), 4),  # DDDD-AAA
+    (7, (frozenset({0, 1}), frozenset({2, 3, 4, 5, 6})), 2),  # AA-DDDDD
+    (6, (frozenset({0, 1, 2}), frozenset({3, 4, 5})), 3),     # AAA-DDD
+    (6, (frozenset({3, 4, 5}), frozenset({0, 1, 2})), 3),     # DDD-AAA
+    (6, (frozenset({0, 1}), frozenset({2, 3, 4, 5})), 2),     # AA-DDDD
+    (6, (frozenset({4, 5}), frozenset({0, 1, 2, 3})), 4),     # DDDD-AA
+    (5, (frozenset({0, 1, 2}), frozenset({3, 4})), 3),        # AAA-DD
+    (5, (frozenset({0, 1}), frozenset({2, 3, 4})), 2),        # AA-DDD
+    (5, (frozenset({3, 4}), frozenset({0, 1, 2})), 3),        # DDD-AA
+]
+_FMT_LETTERS_BLACKLIST = frozenset("IOQ")  # 台灣車牌不用 I/O/Q
+
+
+def _enforce_plate_format(plate: Optional[str], valid: bool) -> tuple:
+    """存 DB 前格式強制:無效台灣車牌格式做邊界數字/字母修復。
+    只修復(無效→有效),絕不丟棄:修不成就原樣回傳(下游 min_confidence 會濾)。
+    對已合法車牌 idempotent。回傳 (plate, valid)。"""
+    if not plate:
+        return plate, valid
+    raw = re.sub(r"[^A-Z0-9]", "", str(plate).upper())
+    n = len(raw)
+    best = None  # (repaired_with_dash, swap_count)
+    for total, (letters_set, digits_set), split in _FMT_PLATE_FORMATS:
+        if n != total:
+            continue
+        chars = []
+        swaps = 0
+        ok = True
+        for i, ch in enumerate(raw):
+            if i in letters_set:
+                if ch.isalpha():
+                    chars.append(ch)
+                elif ch in _FMT_TO_ALPHA:
+                    chars.append(_FMT_TO_ALPHA[ch]); swaps += 1
+                else:
+                    ok = False; break
+            else:  # digit position
+                if ch.isdigit():
+                    chars.append(ch)
+                elif ch in _FMT_TO_DIGIT:
+                    chars.append(_FMT_TO_DIGIT[ch]); swaps += 1
+                else:
+                    ok = False; break
+        if not ok or swaps > 2:
+            continue
+        if any(chars[i] in _FMT_LETTERS_BLACKLIST for i in letters_set):
+            continue
+        if best is None or swaps < best[1]:
+            best = ("".join(chars[:split]) + "-" + "".join(chars[split:]), swaps)
+    if best is None:
+        return plate, valid          # 修不成合法格式 → 原樣(不丟)
+    if best[1] == 0:
+        return best[0], True         # 本來就合法(重新標準化 dash 位置)
+    return best[0], True             # 邊界修復成功 → 標記 valid
 _LPR_CUMULATIVE_COUNTER_FIELDS = (
     "total_frames",
     "vehicles_detected",
@@ -1829,6 +1896,9 @@ class LPRStreamTask:
         plate_crop=None,
     ) -> dict:
         self.total_detections += 1
+        # 存 DB 前最後一道格式強制:無效格式(如 BKAS-681)邊界修復回 BKA-5681,
+        # 同時修正快照檔名與 DB plate_number/valid。
+        plate_number, valid = _enforce_plate_format(plate_number, valid)
         plate_text = str(plate_number or "UNKNOWN").strip() or "UNKNOWN"
         timestamp = time.strftime('%Y%m%d_%H%M%S')
         safe_plate = re.sub(r"[^A-Z0-9]+", "", plate_text.upper()) or "UNKNOWN"
