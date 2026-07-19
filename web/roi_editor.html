@@ -711,14 +711,35 @@ createApp({
                 ElementPlus.ElMessage.warning('車速進出線請設定方向（左/直/右）');
                 return;
             }
-            
+            // Tier 3-B: 畫 trip-wire 進/出線時強制填車道編號 + 兩線實距，並直接綁到 zone，
+            // 消除「畫了線卻沒距離/沒車道 → trip-wire 沉默不觸發」的雙步驟漏洞。
+            let _speedLineLaneNo = null, _speedLineDist = null;
+            if (speedLineTypes.includes(zoneType.value)) {
+                try {
+                    const laneRes = await ElementPlus.ElMessageBox.prompt(
+                        '車道編號（進入線與離開線要填相同編號才能配對測速）', 'Trip-wire 車道編號',
+                        { confirmButtonText: '下一步', cancelButtonText: '取消',
+                          inputPattern: /^[1-9]\d*$/, inputErrorMessage: '請輸入正整數車道編號', inputValue: '1' });
+                    _speedLineLaneNo = Number(laneRes.value);
+                    const distRes = await ElementPlus.ElMessageBox.prompt(
+                        '進入線與離開線之間的實際距離（公尺）；兩條線請填相同值', 'Trip-wire 兩線實距 (m)',
+                        { confirmButtonText: '確定', cancelButtonText: '取消',
+                          inputPattern: /^\d+(\.\d+)?$/, inputErrorMessage: '請輸入正數（公尺）', inputValue: '10' });
+                    _speedLineDist = Number(distRes.value);
+                } catch (e) {
+                    return;  // 取消任一步 → 不儲存
+                }
+            }
+
             const newZone = {
                 id: `zone_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 type: zoneType.value,
                 name: zoneName.value || `${typeNames[zoneType.value]} ${zones.value.length + 1}`,
                 points: [...points.value],
                 lane_tags: isFlowZoneType(zoneType.value) ? normalizeLaneTags(zoneLaneTags.value) : [],
-                lane_no: isFlowZoneType(zoneType.value) ? normalizeLaneNo(zoneLaneNo.value) : null,
+                lane_no: isFlowZoneType(zoneType.value) ? normalizeLaneNo(zoneLaneNo.value)
+                         : (speedLineTypes.includes(zoneType.value) ? _speedLineLaneNo : null),
+                line_distance_m: speedLineTypes.includes(zoneType.value) ? _speedLineDist : undefined,
                 direction: zoneDirection.value || null,
                 speed_limit: isSpeedZoneType(zoneType.value) ? Number(zoneSpeedLimit.value || 60) : null,
                 overspeed_kmh: isSpeedZoneType(zoneType.value) ? Number(zoneOverSpeedKmh.value || 10) : null,

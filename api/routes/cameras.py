@@ -594,6 +594,21 @@ async def auto_calibrate_camera(camera_id: int, lane_width_m: float = 3.5, rect_
     }
 
 
+@router.get("/{camera_id}/speed-calib-report")
+async def speed_calib_report(camera_id: int):
+    """車速估算精度報告：以 trip-wire 跨線速度為 ground truth，回傳該相機
+    「已校正 homography」與「純 pixel」兩組的 MAE/bias/MAPE，並對純 pixel
+    反推建議的 speed_kmh_per_pxps（前端可一鍵套用）。
+
+    前置：該相機需開 detection_config.speed_calib_log 並設好 trip-wire 兩線，
+    收集一段車流後才有資料。"""
+    from detection.speed_calib import load_samples, analyze
+    samples = [s for s in load_samples() if s.get("camera_id") == camera_id]
+    rep = analyze(samples)
+    rep["camera_id"] = camera_id
+    return rep
+
+
 @router.post("/{camera_id}/auto-calibrate/apply")
 async def auto_calibrate_apply(camera_id: int, lane_width_m: float = 3.5, rect_length_m: float = 10.0, lane_no: int = 1, db: Session = Depends(get_db)):
     """P7 一鍵自動校正並建立 speed_roi zone（含 calibration_width_m / calibration_length_m）"""

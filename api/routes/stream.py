@@ -1661,6 +1661,12 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     # track_ttl 從 1.2 → 5 秒：塞車場景偶爾 1 frame detection miss 不會讓 track
     # 被刪除產生新 ID，避免 traffic_event cooldown 被頻繁 reset 導致重複計數
     track_ttl_sec = float(detection_config.get("speed_track_ttl_sec", 5.0) or 5.0)
+    # 信任門檻（DB 寫入與超速開單共用）：飽和上限、純 pixel 可信上限
+    _speed_clamp_max = float(detection_config.get("speed_clamp_max", 150.0) or 150.0)
+    _speed_pixel_trust_max = float(detection_config.get("speed_pixel_trust_max", 100.0) or 100.0)
+    # 車速精度校正記錄：開啟後 trip-wire 跨線測速時，額外記一筆
+    # 「實測(GT) vs 視覺估算」供離線比對誤差、反推 speed_kmh_per_pxps。
+    _speed_calib_log = bool(detection_config.get("speed_calib_log"))
     tracks = {}
     next_track_id = 1
     
@@ -1877,13 +1883,23 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     stale_ids = [tid for tid, tr in tracks.items() if (now_ts - tr.get("t", now_ts)) > track_ttl_sec]
                     for tid in stale_ids:
                         tracks.pop(tid, None)
-                    # P1: 找有 calibration 的 speed_zone (拿第一個)
-                    _calib_zone = None
+                    # P1: 找能算出 homography 的 speed_zone (拿第一個)
+                    # 改用「_get_zone_homography 回非 None」為條件,讓 helper 自己判 Form A/B:
+                    #   Form A: zone.calibration = {points_pixel, width_m, length_m}
+                    #   Form B: zone.points(4) + calibration_width_m + calibration_length_m (自動校正/前端手填走這型)
+                    # 之前只認 Form A → 自動校正產生的 Form B zone 永遠選不上 → homography/Kalman 全關退回純 pixel。
+                    # 1-C: 預先算出每個可校正 speed_zone 的 (H, 多邊形)，per-vehicle 依接地點選對應 H。
+                    _calib_zones = []  # [(H, poly_np or None), ...]
                     for _z in (speed_zones or []):
-                        if _z and isinstance(_z, dict) and _z.get("calibration"):
-                            _calib_zone = _z
-                            break
-                    _H = _get_zone_homography(_calib_zone) if _calib_zone else None
+                        if not (_z and isinstance(_z, dict)):
+                            continue
+                        _h = _get_zone_homography(_z)
+                        if _h is None:
+                            continue
+                        _cpts = _z.get("points") or (_z.get("calibration") or {}).get("points_pixel") or []
+                        _poly = (np.array(_cpts, dtype=np.float32).reshape(-1, 1, 2)
+                                 if len(_cpts) >= 3 else None)
+                        _calib_zones.append((_h, _poly))
                     # P3: 速度平穩化 — N=5 滑動窗口 + median 多 sample + outlier reject
                     # 3 個參數從 hard-code 改成 detection_config 可調 (web UI 車速設定頁)
                     _SPEED_WINDOW = 5      # 保留最近 5 個 (t, x, y) sample
@@ -1907,6 +1923,17 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         _ground_x, _ground_y = _bbox_bottom_center(b, cls)
                         if _ground_x is None:
                             _ground_x, _ground_y = cx, cy
+                        # 1-C: 單一 calib zone 維持原行為（直接用）；多 zone 才依接地點選落在的 zone 的 H
+                        # （多車道各自透視不同）。多 zone 沒命中任何 → world_xy=None 退回 pixel（不外推 homography）。
+                        if len(_calib_zones) <= 1:
+                            _H = _calib_zones[0][0] if _calib_zones else None
+                        else:
+                            _H = None
+                            for _ch, _poly in _calib_zones:
+                                if _poly is not None and cv2.pointPolygonTest(
+                                        _poly, (float(_ground_x), float(_ground_y)), False) >= 0:
+                                    _H = _ch
+                                    break
                         world_xy = _pixel_to_world_m(_H, _ground_x, _ground_y) if _H is not None else None
                         # sample = (timestamp, x, y) 在 world m (若校正) 或 pixel 空間
                         if world_xy is not None:
@@ -1936,6 +1963,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             samples.pop(0)
                         # P11: Kalman filter on world coords (if calibrated) gives smoother velocity
                         speed_kmh = None
+                        _speed_method = None  # 標記速度來源:kalman / homography / pixel,供信任過濾與開單 gate
                         if world_xy is not None:
                             kf = prev.get("kalman") or _KalmanCV()
                             vx, vy = kf.update(world_xy[0], world_xy[1], now_ts)
@@ -1951,6 +1979,8 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                     speed_kmh = prev_speed
                                 else:
                                     speed_kmh = max(0.0, min(150.0, kalman_kmh))
+                            if speed_kmh is not None:
+                                _speed_method = "kalman"
                         if speed_kmh is None and len(samples) >= _SPEED_MIN_SAMPLES:
                             t0, x0, y0 = samples[0]
                             t1, x1, y1 = samples[-1]
@@ -1986,6 +2016,12 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             # 同樣 clamp 從 220 → 150
                             if speed_kmh is not None:
                                 speed_kmh = max(0.0, min(150.0, float(speed_kmh)))
+                                _speed_method = "homography" if sample_unit == "world_m" else "pixel"
+                                # 1-A: EMA 平滑（speed_smooth_alpha，預設 0.35）。只作用於窗口法
+                                # （Kalman 已遞迴平滑、trip-wire 為物理真值皆不套）；僅在有前值時
+                                # 套用，避免首筆被 (1-α)*0 拉向 0 而低估。
+                                if prev_speed > 0:
+                                    speed_kmh = speed_smooth_alpha * speed_kmh + (1.0 - speed_smooth_alpha) * prev_speed
                         # 用 update 而非 replace — 保留 _event_log_ts (cooldown), kalman,
                         # tw_samples, tw_speed_kmh 等 state，否則每 frame 都被丟掉，
                         # cooldown / trip_wire median 都會失效
@@ -2009,7 +2045,11 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             v["speed_calibrated"] = True
                             tracks[track_id]["tw_speed_kmh"] = _persisted_tw  # 沿襲下去
                         else:
-                            v["speed_kmh"] = speed_kmh if (speed_kmh is not None and (prev_frames + 1) >= _SPEED_MIN_SAMPLES) else None
+                            if speed_kmh is not None and (prev_frames + 1) >= _SPEED_MIN_SAMPLES:
+                                v["speed_kmh"] = speed_kmh
+                                v["speed_method"] = _speed_method or ("homography" if world_xy is not None else "pixel")
+                            else:
+                                v["speed_kmh"] = None
                             v["speed_calibrated"] = world_xy is not None
 
                         # P4: Trip wire 跨線測速（用 bbox 底中 pixel 座標）
@@ -2050,6 +2090,18 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                             v["speed_calibrated"] = True
                                             v["tw_sample_count"] = len(tw_samples)
                                             print(f"[trip_wire] cam={camera_id} track={track_id} lane={lane_key} {dist_m}m in {dt_cross:.3f}s -> raw {tw_speed_kmh:.1f} km/h, median(n={len(tw_samples)})={tw_median:.1f}", flush=True)
+                                            # 精度校正記錄：GT=本次跨線實測，est=同 track 視覺估算(未被 tw 覆寫前)
+                                            if _speed_calib_log:
+                                                try:
+                                                    from detection.speed_calib import log_sample as _log_calib
+                                                    _log_calib(
+                                                        camera_id, track_id, tw_speed_kmh, speed_kmh,
+                                                        calibrated=(world_xy is not None), unit=sample_unit,
+                                                        dist_m=dist_m, dt_cross=dt_cross,
+                                                        coeff=speed_kmh_per_pxps, lane=str(lane_key), ts=now_ts,
+                                                    )
+                                                except Exception:
+                                                    pass
                                     cross_state[f"in_{lane_key}"] = None
                                     cross_state[f"out_{lane_key}"] = None
                             tracks[track_id]["trip_wire"] = cross_state
@@ -2106,14 +2158,14 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     # 飆到 100+ km/h，跟 trip_wire 觀察到的真實塞車速度 (3-15) 矛盾。
                     if speed_num is None or speed_num <= 0:
                         speed_val = None
-                    elif speed_num >= 150.0:  # 飽和不可信 (clamp ceiling = 150)
+                    elif speed_num >= _speed_clamp_max:  # 飽和不可信 (clamp ceiling)
                         speed_val = None
-                    elif speed_method in ("trip_wire", "trip_wire_median", "kalman"):
-                        # 校正過的 method，相對可信
+                    elif speed_method in ("trip_wire", "trip_wire_median", "kalman", "homography"):
+                        # 校正過的 method（trip-wire 物理真值 / homography+Kalman 世界座標），相對可信
                         speed_val = speed_num
                     else:
-                        # 純 pixel-based，限制 < 100 km/h 才可信 (高速車流會被 trip_wire 補上)
-                        speed_val = speed_num if speed_num < 100.0 else None
+                        # 純 pixel-based，限制 < pixel_trust_max 才可信 (高速車流會被 trip_wire 補上)
+                        speed_val = speed_num if speed_num < _speed_pixel_trust_max else None
                     row = TrafficEvent(
                         camera_id=int(camera_id),
                         label=str(v.get("class_name", "unknown")).lower(),
@@ -2201,13 +2253,20 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     or _overspeed_threshold_kmh
                 )
                 _effective_limit = _speed_limit_kmh + _overspeed_threshold_kmh
+                # 2-B: 開單門檻參數改走 detection_config（可調）
+                _min_frames = int(detection_config.get("speeding_min_frames", 5) or 5)
+                _min_frames_no_tw = int(detection_config.get("speeding_min_frames_no_tw", 8) or 8)
+                # _speed_clamp_max 已於 run_detection 頂端讀入（DB 寫入共用）
+                # 2-A: 只信校正來源開單（trip-wire 物理真值 / homography+Kalman 世界座標）；
+                # 純 pixel 未校正只顯示不開單。預設 True,可用此開關回退。
+                _require_calibrated = bool(detection_config.get("speeding_require_calibrated", True))
                 global _violation_dedup
                 try:
                     _violation_dedup
                 except NameError:
                     _violation_dedup = {}
                 _now_t = time.time()
-                _DEDUP_WINDOW = 5.0
+                _DEDUP_WINDOW = float(detection_config.get("speeding_dedup_sec", 5.0) or 5.0)
                 for _v in speed_zone_vehicles:
                     _raw_speed = _v.get("speed_kmh")
                     if not isinstance(_raw_speed, (int, float)) or _raw_speed <= 0:
@@ -2219,17 +2278,23 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     if _track_state is None:
                         continue
                     _track_frames = int(_track_state.get("frames", 0) or 0)
-                    if _track_frames < 5:
+                    if _track_frames < _min_frames:
                         continue
                     _has_tw = bool(_track_state.get("tw_speed_kmh"))
-                    if not _has_tw and _track_frames < 8:
+                    if not _has_tw and _track_frames < _min_frames_no_tw:
                         continue
                     if _raw_speed < _effective_limit:
                         continue
-                    # 飽和不可信 (clamp ceiling = 150): TrafficEvent 寫入已過濾 (stream.py:1881
-                    # 將 >=150 設 None)，Violation 線之前漏掉同樣過濾 → speed 估算飆高的 case
+                    # 飽和不可信 (clamp ceiling = 150): TrafficEvent 寫入已過濾
+                    # 將 >=clamp_max 設 None)，Violation 線之前漏掉同樣過濾 → speed 估算飆高的 case
                     # 全被當「超速 150 km/h」誤開單。此處補上一致過濾。
-                    if _raw_speed >= 150.0:
+                    if _raw_speed >= _speed_clamp_max:
+                        continue
+                    # 2-A: 只信校正來源開單 — 純 pixel（未校正）只顯示/寫 DB,不開單。
+                    # 依賴 0-B 的 speed_method 標記;speeding_require_calibrated 可回退。
+                    _method = str(_v.get("speed_method") or "")
+                    if _require_calibrated and _method not in (
+                            "trip_wire", "trip_wire_median", "kalman", "homography"):
                         continue
                     _track_id = _v.get("track_id")
                     if _track_id is None:
