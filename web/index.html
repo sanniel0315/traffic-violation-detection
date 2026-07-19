@@ -8895,10 +8895,47 @@
                                 <span>最少採樣 frame <span style="color:#94a3b8">(預設 5)</span></span>
                                 <el-input-number v-model="previewCamera.detection_config.speed_min_samples" :min="3" :max="30" :step="1" size="small" controls-position="right" style="width:120px" @change="saveConfig"/>
                             </div>
+                            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0;border-top:1px solid #eef2f7;margin-top:2px">
+                                <span>只信校正來源開單 <span style="color:#94a3b8">(預設 開)</span></span>
+                                <el-switch v-model="previewCamera.detection_config.speeding_require_calibrated" @change="saveConfig"/>
+                            </div>
+                            <div v-if="!previewCamera.detection_config.speeding_require_calibrated" class="analysis-setting-tip" style="color:#b45309;margin:2px 0 4px">
+                                ⚠ 已關閉：未校正相機的純 pixel 估速也會開超速單（準確度低，可能誤開）。
+                            </div>
+                            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0">
+                                <span>Track 逾時 (秒) <span style="color:#94a3b8">(預設 5)</span></span>
+                                <el-input-number v-model="previewCamera.detection_config.speed_track_ttl_sec" :min="1" :max="30" :step="1" size="small" controls-position="right" style="width:120px" @change="saveConfig"/>
+                            </div>
                             <div class="analysis-setting-tip" style="margin-top:6px">
                                 改完按下方「完成」會自動儲存並重啟 traffic-api，detection thread 重新讀入新參數。
                             </div>
                             <el-button type="danger" size="small" style="width:100%;margin-top:8px" @click="confirmRestartTrafficApi">完成（儲存並重啟服務）</el-button>
+                        </div>
+                        <div v-if="page==='speed_detection'" class="analysis-setting-group">
+                            <div class="analysis-setting-head">4. 精度校正報告</div>
+                            <div class="analysis-setting-tip">
+                                以 trip-wire 跨線速度為真值，比對估算誤差。需先開上方「精度校正記錄」並設好 trip-wire 兩線，收一段車流後產生報告。
+                            </div>
+                            <el-button type="primary" plain size="small" style="width:100%" @click="loadSpeedCalibReport(previewCamera.id)">產生 / 更新報告</el-button>
+                            <div v-if="speedCalibReport && speedCalibReport.n_total===0" class="analysis-setting-tip" style="color:#b45309;margin-top:6px">
+                                尚無有效配對資料（gt 與 est 皆需大於 0）。請確認已開精度校正記錄，且有車輛跨越 trip-wire 兩線。
+                            </div>
+                            <div v-for="g in (speedCalibReport && speedCalibReport.groups || [])" :key="(g.calibrated?'c':'p')" style="border:1px solid #eef2f7;border-radius:8px;padding:8px;margin-top:8px">
+                                <div style="font-weight:600;font-size:12px;color:#334155;margin-bottom:4px">
+                                    {{ g.calibrated ? '已校正 (homography)' : '純 pixel' }} · n={{ g.n }}
+                                </div>
+                                <div style="font-size:12px;color:#475569;display:flex;flex-wrap:wrap;gap:10px">
+                                    <span>真值均 {{ g.gt_mean_kmh }}</span>
+                                    <span>估算均 {{ g.est_mean_kmh }}</span>
+                                    <span>MAE {{ g.mae_kmh }}</span>
+                                    <span>偏差 {{ g.bias_kmh }}</span>
+                                    <span>MAPE {{ g.mape_pct }}%</span>
+                                </div>
+                                <div v-if="!g.calibrated && g.suggested_coeff" style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                                    <span style="font-size:12px;color:#64748b">建議係數 {{ g.suggested_coeff }}（目前 {{ g.current_coeff }}）</span>
+                                    <el-button type="success" plain size="small" @click="applySuggestedCoeff(g.suggested_coeff)">套用建議係數</el-button>
+                                </div>
+                            </div>
                         </div>
                     </template>
 
@@ -14262,7 +14299,9 @@ const app=createApp({
             illegal_parking:true,
             wrong_way:false,
             no_helmet:false,
-            speed_limit:50
+            speed_limit:50,
+            speeding_require_calibrated:true,
+            speed_track_ttl_sec:5
         });
         const cameraForm=reactive({
             id:null,name:'',source_mode:'rtsp',raw_source:'',ip:'',username:'admin',password:'',port:'554',stream_path:'stream1',
@@ -14452,7 +14491,7 @@ const app=createApp({
                 return {
                     ...c,
                     thumbKey:Date.now(),
-                    detection_config:c.detection_config||{},
+                    detection_config:{speeding_require_calibrated:true, speed_track_ttl_sec:5, ...(c.detection_config||{})},
                     zones:c.zones||[],
                     snapshotError:false,
                     lastGoodSnapshot:'',
@@ -15004,6 +15043,25 @@ const app=createApp({
             }catch(e){
                 ElementPlus.ElMessage.error(`自動校正錯誤：${e.message||e}`);
             }
+        };
+        const speedCalibReport=ref(null);
+        const loadSpeedCalibReport=async(cameraId)=>{
+            if(!cameraId)return;
+            try{
+                const r=await fetch(`/api/cameras/${cameraId}/speed-calib-report`);
+                speedCalibReport.value=await r.json();
+                if(!speedCalibReport.value.groups||!speedCalibReport.value.groups.length){
+                    ElementPlus.ElMessage.info('尚無校正資料，請先開「精度校正記錄」並設好 trip-wire 兩線');
+                }
+            }catch(e){
+                ElementPlus.ElMessage.error(`讀取校正報告失敗：${e.message||e}`);
+            }
+        };
+        const applySuggestedCoeff=async(coeff)=>{
+            if(!previewCamera.value||!coeff)return;
+            previewCamera.value.detection_config.speed_kmh_per_pxps=Number(coeff);
+            await saveConfig();
+            ElementPlus.ElMessage.success(`已套用建議係數 ${coeff}，重啟偵測後生效`);
         };
         const reloadMonitorStreams=()=>{
             cameras.value.forEach(c=>{
@@ -18271,7 +18329,7 @@ const app=createApp({
         return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,radarCameraId,radarTracks,radarStats,radarDotColor,radarClassZh,radarInsights,loadRadarTracks,visionEyeUrl,onVisionEyeError,trackHistory,parkingSources,parkingSource,parkingData,parkingSnapshotUrl,parkingRawSnapshotUrl,parkingImgEl,pmRect,pmLabel,pmDown,pmMove,pmUp,parkingShowVerify,parkingShowBoxes,parkingShowVehicles,parkingUseStream,vlmStatus,vlmResult,vlmQuerying,loadVlmStatus,triggerVlmLoad,askVlm,assistantOpen,toggleAssistant,assistantZoomImg,assistantPanelStyle,assistantDragStart,assistantSource,assistantMessages,assistantInput,assistantLoading,assistantSnapUrl,assistantSources,reloadAssistantSnap,sendAssistant,assistantPresets,assistantTTS,assistantListening,quickAsk,assistantVoiceInput,loadParkingSources,loadParkingOccupancy,openParkingEditor,downloadParkingSnapshot,openParkingLabel,parkingLiveRunning,parkingIntervalMs,parkingShowAdd,parkingAddForm,startParkingLive,stopParkingLive,addParkingSource,twipcamQuery,twipcamResults,twipcamSearching,searchTwipcam,pickTwipcam,parkingHistory,loadParkingHistory,parkingTrendPath,parkingCounting,parkingCountingMismatch,parkingCrossValidation,parkingCrossCalibrated,parkingCrossEscalated,parkingCrossHasArea,parkingCrossSuspect,parkingCrossTrend,loadParkingCounting,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,previewParkingZones,previewParkingZoneCount,parkingSubKindOptions,applyParkingSubKindToZone,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedPlateIsInferred,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,detailClipRetrying,detailClipReloadKey,onDetailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
-            load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            load,loadCameras,loadViolations,loadPendingViolations,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory};
     }
