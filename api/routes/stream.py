@@ -952,19 +952,39 @@ def _point_in_zone(cx: int, cy: int, zone: dict, frame_w: int, frame_h: int) -> 
     return cv2.pointPolygonTest(poly, (float(cx), float(cy)), False) >= 0
 
 
-def _nearest_track_id(center: tuple, class_name: str, tracks: dict, max_dist: float = 90.0):
+def _nearest_track_id(center: tuple, class_name: str, tracks: dict, max_dist: float = 90.0,
+                      cross_class_dist: float = None):
+    """依位置把偵測配對到既有 track。
+
+    之前硬性要求 class_name 完全相同才配對 → 車型逐幀跳動(truck/heavy_truck/
+    light_truck/car 之間)的車輛會一直配不到舊 track、拿到新 track_id,使以
+    (track_id, zone) 為 key 的事件 30s cooldown 失效 → 同一輛車被重複記成多筆
+    traffic_event(實測 ~1.46x 灌水)。
+
+    改法:取「整體最近」的 track。同 class 放寬到 max_dist;跨 class 只在更嚴的
+    cross_class_dist(預設 0.6×max_dist)內才接受——吸收車型跳動,又限制把兩輛
+    相鄰的不同車併成一輛。class 由呼叫端事後更新為最新值。
+    """
+    if cross_class_dist is None:
+        cross_class_dist = max_dist * 0.6
     cx, cy = center
-    best_id = None
     best_d = float("inf")
+    best_id = None
+    best_same = False
     for tid, tr in tracks.items():
-        if tr.get("class_name") != class_name:
-            continue
         tx, ty = tr.get("center", (0, 0))
         d = ((cx - tx) ** 2 + (cy - ty) ** 2) ** 0.5
-        if d < best_d and d <= max_dist:
+        if d < best_d:
             best_d = d
             best_id = tid
-    return best_id
+            best_same = (tr.get("class_name") == class_name)
+    if best_id is None:
+        return None
+    if best_same and best_d <= max_dist:
+        return best_id
+    if best_d <= cross_class_dist:
+        return best_id
+    return None
 
 
 def _get_unicode_font(size: int = 16):
