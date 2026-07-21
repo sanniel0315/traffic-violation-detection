@@ -14569,118 +14569,61 @@ const app=createApp({
                 return {...r, count:Math.round(val), barHeightPct:Number(pct.toFixed(2))}; });
             if(showMessage){ if(!rows.length)ElementPlus.ElMessage.warning("此時段無車流量資料 (需先跑壅塞偵測累積樣本)"); else ElementPlus.ElMessage.success("分析完成"); }
         };
+        // 事件/車速趨勢改由後端依時間桶聚合（GET /api/traffic/events/trend），
+        // 取代舊的「抓最新 N 筆原始事件再前端分桶」——高流量相機一小時破 2000 筆會被
+        // page_size 截斷成單一 bucket，導致每小時趨勢圖塌成 1 根。空桶在前端補 0。
+        const loadStatsTrend=async(showMessage=false)=>{
+            const mode=statsTrendMode.value;
+            const bucketMode=resolveTrendBucketMode();
+            const secMap={'1s':1,'30s':30,'1m':60,'5m':300,'10m':600,'1h':3600,'1d':86400};
+            const bs=secMap[bucketMode]||3600;
+            const {from,to}=parseStatsTimeRange();
+            const maxN=trendMaxPoints.value||240;
+            const params=new URLSearchParams({bucket_sec:String(bs),mode:(mode==='speed'?'speed':'count'),max_buckets:String(Math.min(5000,maxN*2))});
+            if(from)params.set('start_time',from.toISOString());
+            if(to)params.set('end_time',to.toISOString());
+            if(String(statsCamera.value||'').trim())params.set('camera_id',String(statsCamera.value).trim());
+            if(String(statsLane.value||'').trim())params.set('lane',String(statsLane.value).trim());
+            if(String(statsDirection.value||'').trim())params.set('direction',String(statsDirection.value).trim());
+            let apiBuckets=[];
+            try{
+                const r=await fetch(`/api/traffic/events/trend?${params.toString()}`,{cache:'no-store'});
+                const d=r.ok?await r.json():{};
+                apiBuckets=Array.isArray(d.buckets)?d.buckets:[];
+            }catch(e){ apiBuckets=[]; }
+            const byTs={}; apiBuckets.forEach(b=>{ byTs[Math.floor(Number(b.ts)/1000)*1000*1]=b; });
+            const p2=n=>String(n).padStart(2,'0');
+            const bsMs=bs*1000;
+            const fmtLabel=(ms)=>{ const kd=new Date(ms); const md=`${p2(kd.getMonth()+1)}/${p2(kd.getDate())}`;
+                if(bucketMode==='1d')return md;
+                if(bucketMode==='1h')return `${md} ${p2(kd.getHours())}:00`;
+                if(bucketMode==='1m'||bucketMode==='5m'||bucketMode==='10m')return `${md} ${p2(kd.getHours())}:${p2(kd.getMinutes())}`;
+                return `${md} ${p2(kd.getHours())}:${p2(kd.getMinutes())}:${p2(kd.getSeconds())}`; };
+            const endMs=to?to.getTime():Date.now();
+            const alignedEnd=Math.floor(endMs/bsMs)*bsMs;
+            const startFloor=from?Math.floor(from.getTime()/bsMs)*bsMs:(alignedEnd-(maxN-1)*bsMs);
+            const rows=[];
+            for(let i=maxN-1;i>=0;i--){
+                const t=alignedEnd-i*bsMs;
+                if(t<startFloor)continue;
+                const b=byTs[t];
+                rows.push({label:fmtLabel(t),ts:t,count:b?Number(b.count||0):0,avgSpeed:(b&&b.avg_speed!=null)?Number(b.avg_speed):null,barHeightPct:0});
+            }
+            const isSpeed=mode==='speed';
+            const vals=rows.map(r=>isSpeed?(r.avgSpeed==null?0:r.avgSpeed):Number(r.count||0));
+            const maxVal=Math.max(...vals,0);
+            const denom=maxVal<=0?0:(isSpeed?Math.max(maxVal*1.08,20):Math.max(maxVal*1.1,5));
+            hourlyChartData.value=rows.map(r=>{ const v=isSpeed?(r.avgSpeed==null?0:r.avgSpeed):Number(r.count||0);
+                const pct=(v<=0||denom<=0)?0:Math.max(2,Math.min(100,(v/denom)*100));
+                return {...r,barHeightPct:Number(pct.toFixed(2))}; });
+            if(showMessage){
+                const has=rows.some(r=>(isSpeed?(r.avgSpeed||0):Number(r.count||0))>0);
+                ElementPlus.ElMessage[has?'success':'warning'](has?'分析完成':'目前時段/篩選無資料，請調整時間範圍或放寬條件');
+            }
+        };
         const rebuildStatsTrend=(showMessage=false)=>{
             if(statsTrendMode.value==='flow'){ rebuildFlowTrend(showMessage); return; }
-            const buckets={};
-            const list=statsFilteredEvents.value;
-            const trendBucketMode = resolveTrendBucketMode();
-            list.forEach(evt=>{
-                const tsMs=getEventTimestamp(evt);
-                if(!tsMs)return;
-                const ts=new Date(tsMs);
-                if(Number.isNaN(ts.getTime()))return;
-                const keyDate=new Date(ts);
-                let label='';
-                if(trendBucketMode==='1d'){
-                    keyDate.setHours(0,0,0,0);
-                    label=`${String(keyDate.getMonth()+1).padStart(2,'0')}/${String(keyDate.getDate()).padStart(2,'0')}`;
-                }else if(trendBucketMode==='1h'){
-                    keyDate.setMinutes(0,0,0);
-                    label=`${String(keyDate.getMonth()+1).padStart(2,'0')}/${String(keyDate.getDate()).padStart(2,'0')} ${String(keyDate.getHours()).padStart(2,'0')}:00`;
-                }else if(trendBucketMode==='1m'){
-                    keyDate.setSeconds(0,0);
-                    label=`${String(keyDate.getMonth()+1).padStart(2,'0')}/${String(keyDate.getDate()).padStart(2,'0')} ${String(keyDate.getHours()).padStart(2,'0')}:${String(keyDate.getMinutes()).padStart(2,'0')}`;
-                }else if(trendBucketMode==='5m'){
-                    keyDate.setSeconds(0,0);
-                    keyDate.setMinutes(Math.floor(keyDate.getMinutes()/5)*5);
-                    label=`${String(keyDate.getMonth()+1).padStart(2,'0')}/${String(keyDate.getDate()).padStart(2,'0')} ${String(keyDate.getHours()).padStart(2,'0')}:${String(keyDate.getMinutes()).padStart(2,'0')}`;
-                }else if(trendBucketMode==='10m'){
-                    keyDate.setSeconds(0,0);
-                    keyDate.setMinutes(Math.floor(keyDate.getMinutes()/10)*10);
-                    label=`${String(keyDate.getMonth()+1).padStart(2,'0')}/${String(keyDate.getDate()).padStart(2,'0')} ${String(keyDate.getHours()).padStart(2,'0')}:${String(keyDate.getMinutes()).padStart(2,'0')}`;
-                }else if(trendBucketMode==='30s'){
-                    keyDate.setMilliseconds(0);
-                    keyDate.setSeconds(keyDate.getSeconds()<30?0:30);
-                    label=`${String(keyDate.getMonth()+1).padStart(2,'0')}/${String(keyDate.getDate()).padStart(2,'0')} ${String(keyDate.getHours()).padStart(2,'0')}:${String(keyDate.getMinutes()).padStart(2,'0')}:${String(keyDate.getSeconds()).padStart(2,'0')}`;
-                }else{
-                    keyDate.setMilliseconds(0);
-                    label=`${String(keyDate.getMonth()+1).padStart(2,'0')}/${String(keyDate.getDate()).padStart(2,'0')} ${String(keyDate.getHours()).padStart(2,'0')}:${String(keyDate.getMinutes()).padStart(2,'0')}:${String(keyDate.getSeconds()).padStart(2,'0')}`;
-                }
-                const key=String(keyDate.getTime());
-                if(!buckets[key])buckets[key]={label,count:0,ts:keyDate.getTime(),speedSum:0,speedCount:0,avgSpeed:null,barHeightPct:0};
-                buckets[key].count+=1;
-                const speedVal = parseEventSpeed(evt);
-                if(Number.isFinite(speedVal) && speedVal>0){
-                    buckets[key].speedSum+=speedVal;
-                    buckets[key].speedCount+=1;
-                }
-            });
-            const rows=Object.values(buckets).sort((a,b)=>a.ts-b.ts).slice(-trendMaxPoints.value).map(item=>{
-                const avgSpeed=item.speedCount?item.speedSum/item.speedCount:null;
-                return {...item,avgSpeed};
-            });
-            const calcBarPct=(val,denom,minPct=2)=>{
-                const n=Number(val||0);
-                if(n<=0 || !Number.isFinite(denom) || denom<=0)return 0;
-                const pct=Math.max(minPct,(n/denom)*100);
-                return Number(Math.max(0,Math.min(100,pct)).toFixed(2));
-            };
-            if(statsTrendMode.value==='speed'){
-                const vals=rows.map(r=>Number.isFinite(r.avgSpeed)?r.avgSpeed:0);
-                const maxVal=Math.max(...vals,0);
-                const minVal=Math.min(...vals, maxVal);
-                const denom=maxVal<=0
-                    ? 0
-                    : (maxVal===minVal ? Math.max(maxVal*1.2,20) : Math.max(maxVal*1.08,20));
-                hourlyChartData.value=rows.map(r=>{
-                    const val=Number.isFinite(r.avgSpeed)?r.avgSpeed:0;
-                    const h=calcBarPct(val,denom,2);
-                    return {...r,barHeightPct:h};
-                });
-            }else{
-                const vals=rows.map(r=>Number(r.count||0));
-                const maxVal=Math.max(...vals,0);
-                const minVal=Math.min(...vals, maxVal);
-                const denom=maxVal<=0
-                    ? 0
-                    : (maxVal===minVal ? Math.max(maxVal*1.6,5) : Math.max(maxVal*1.1,5));
-                hourlyChartData.value=rows.map(r=>{
-                    const val=Number(r.count||0);
-                    const h=calcBarPct(val,denom,2);
-                    return {...r,barHeightPct:h};
-                });
-            }
-            if(!showMessage)return;
-            if(hourlyChartData.value.length===0){
-                if((statsCountEvents.value||[]).length===0){
-                    ElementPlus.ElMessage.warning("目前尚無可統計的事件資料");
-                }else{
-                    const {from,to}=parseStatsTimeRange();
-                    const timeMatched=(statsCountEvents.value||[]).filter(evt=>{
-                        const tsMs=getEventTimestamp(evt);
-                        if(!tsMs)return false;
-                        const ts=new Date(tsMs);
-                        if(from && ts<from)return false;
-                        if(to && ts>to)return false;
-                        return true;
-                    }).length;
-                    const activeFilters=[];
-                    if(String(statsPlate.value||'').trim())activeFilters.push('車牌');
-                    if(String(statsLocation.value||'').trim())activeFilters.push('點位');
-                    if(String(statsCamera.value||'').trim())activeFilters.push('攝影機');
-                    if(String(statsLane.value||'').trim())activeFilters.push('車道');
-                    if(String(statsDirection.value||'').trim())activeFilters.push('方向');
-                    if(timeMatched===0){
-                        ElementPlus.ElMessage.warning("目前時段無資料，請調整時間範圍");
-                    }else if(activeFilters.length){
-                        ElementPlus.ElMessage.warning(`目前篩選條件無資料（時段內 ${timeMatched} 筆），請放寬：${activeFilters.join(' / ')}`);
-                    }else{
-                        ElementPlus.ElMessage.warning("目前條件下仍無資料，請調整時間範圍");
-                    }
-                }
-            }else{
-                ElementPlus.ElMessage.success("分析完成");
-            }
+            loadStatsTrend(showMessage);
         };
         const loadStats=async(manual=false,options={})=>{
             if(statsLoading.value)return;
