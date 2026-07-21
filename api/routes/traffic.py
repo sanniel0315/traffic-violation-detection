@@ -54,6 +54,72 @@ def _run_with_sqlite_retry(db: Session, fn: Callable[[], Any], retries: int = 4)
         raise last_error
 
 
+@router.get("/events/trend")
+def get_traffic_events_trend(
+    camera_id: Optional[int] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    bucket_sec: int = Query(3600, ge=1, le=86400),
+    mode: str = Query("count"),
+    lane: Optional[str] = None,
+    direction: Optional[str] = None,
+    max_buckets: int = Query(500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+):
+    """事件趨勢（時間桶聚合）。
+
+    直接在 DB 依 bucket_sec 分桶算 COUNT / AVG(speed_kmh)，取代前端「抓最新 N 筆原始
+    事件再分桶」——高流量相機一小時可破 2000 筆，被 page_size 截斷後整段趨勢會塌成單一
+    bucket。回傳最新 max_buckets 個「非空」桶（空桶由前端補 0）；ts 為 UTC epoch 毫秒。"""
+    start_time = _to_utc_naive(start_time)
+    end_time = _to_utc_naive(end_time)
+    try:
+        db.execute(text("PRAGMA busy_timeout = 5000"))
+    except Exception:
+        pass
+
+    conds = []
+    params: dict[str, Any] = {"bs": int(bucket_sec)}
+    if camera_id is not None:
+        conds.append("camera_id = :cid"); params["cid"] = int(camera_id)
+    if start_time is not None:
+        conds.append("created_at >= :start"); params["start"] = start_time.strftime("%Y-%m-%d %H:%M:%S")
+    if end_time is not None:
+        conds.append("created_at <= :end"); params["end"] = end_time.strftime("%Y-%m-%d %H:%M:%S")
+    if lane is not None and str(lane).strip() != "":
+        try:
+            params["lane"] = int(str(lane).strip()); conds.append("lane_no = :lane")
+        except ValueError:
+            pass
+    if direction is not None and str(direction).strip() != "":
+        conds.append("direction = :dir"); params["dir"] = str(direction).strip()
+    where = (" WHERE " + " AND ".join(conds)) if conds else ""
+    params["maxb"] = int(max_buckets)
+    # 用 substr(1,19)+replace 把 created_at 正規化成 'YYYY-MM-DD HH:MM:SS'（去掉小數秒/時區，
+    # 兼容 SQLite 空白分隔與 ISO 'T'+tz 兩種儲存格式），strftime 才能穩定算 UTC epoch。
+    sql = text(
+        "SELECT (CAST(strftime('%s', replace(substr(created_at,1,19),'T',' ')) AS INTEGER) / :bs) * :bs AS bucket, "
+        "COUNT(*) AS cnt, AVG(speed_kmh) AS avg_speed "
+        "FROM traffic_events" + where +
+        " GROUP BY bucket ORDER BY bucket DESC LIMIT :maxb"
+    )
+
+    def run():
+        return db.execute(sql, params).fetchall()
+
+    rows = _run_with_sqlite_retry(db, run) or []
+    buckets = [
+        {
+            "ts": int(r[0]) * 1000,
+            "count": int(r[1] or 0),
+            "avg_speed": (round(float(r[2]), 1) if r[2] is not None else None),
+        }
+        for r in rows if r[0] is not None
+    ]
+    buckets.sort(key=lambda b: b["ts"])
+    return {"bucket_sec": int(bucket_sec), "mode": mode, "buckets": buckets}
+
+
 @router.get("/vd-report")
 def get_vd_report(
     camera_id: Optional[int] = None,
