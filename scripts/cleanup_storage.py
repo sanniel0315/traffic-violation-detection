@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""儲存空間清理 job — 刪除超過保留天數的違規快照 / LPR 快照。
+"""儲存空間清理 job — 刪除超過保留天數的違規快照 / LPR 快照 / 事件快照 cache。
 
-背景：output/violations（含 snapshots/ 子目錄）與 storage/lpr_snapshots
-無 retention 機制，NVMe 塞到 100% 導致 SQLite 偶發 database or disk is full。
+背景：
+- output/violations（含 snapshots/ 子目錄）與 storage/lpr_snapshots 無 retention →
+  NVMe 塞到 100% 導致 SQLite 偶發 database or disk is full。
+- /tmp/event_snapshots（事件快照 cache，在 eMMC 上，UI 縮圖用）每天新增 ~1.3 萬檔、
+  從不清 → eMMC 一路爬滿（實測 6G / 27 萬檔）。此 cache 短保留 3 天即可。
 
 用法（專案根目錄執行）：
     python3 scripts/cleanup_storage.py --dry-run   # 只列統計不刪
-    python3 scripts/cleanup_storage.py             # 預設保留 30 天
+    python3 scripts/cleanup_storage.py             # NVMe 快照留 30 天、eMMC 事件 cache 留 3 天
     python3 scripts/cleanup_storage.py --days 60
+    python3 scripts/cleanup_storage.py --event-snapshot-days 5
 
 由 systemd timer（traffic-cleanup.timer）每日 02:30 執行。
 """
@@ -121,6 +125,14 @@ def main() -> int:
         help="指定相機媒體短保留，格式 camera_id:days（例：8:3 = cam_8 測試快照只留 3 天）",
     )
     parser.add_argument("--db", default="data/violations.db", help="violations DB 路徑")
+    parser.add_argument(
+        "--event-snapshot-dir", default="/tmp/event_snapshots",
+        help="事件快照 cache 目錄（eMMC /tmp，短保留；設空字串可停用）",
+    )
+    parser.add_argument(
+        "--event-snapshot-days", type=int, default=3,
+        help="事件快照 cache 保留天數（預設 3；設 0 停用）",
+    )
     parser.add_argument("--dry-run", action="store_true", help="只統計不刪除")
     args = parser.parse_args()
 
@@ -152,6 +164,16 @@ def main() -> int:
         total_deleted += deleted
         total_freed += freed
         print(f"  cam_{cam_id} 媒體（保留 {keep_days} 天）: {deleted} 檔 / {freed / 1e9:.1f} GB")
+
+    # 事件快照 cache（/tmp/event_snapshots，在 eMMC，成長快 → 獨立短保留，預設 3 天）
+    esd = str(args.event_snapshot_dir or "").strip()
+    if esd and args.event_snapshot_days >= 1 and os.path.isdir(esd):
+        es_cutoff = time.time() - args.event_snapshot_days * 86400
+        deleted, freed, errors = cleanup_dir(esd, es_cutoff, args.dry_run)
+        total_deleted += deleted
+        total_freed += freed
+        total_errors += errors
+        print(f"  {esd}（保留 {args.event_snapshot_days} 天）: {deleted} 檔 / {freed / 1e9:.1f} GB" + (f" / {errors} 錯誤" if errors else ""))
 
     print(f"✅ 合計: {total_deleted} 檔 / {total_freed / 1e9:.1f} GB" + (f" / {total_errors} 錯誤" if total_errors else ""))
     return 0
