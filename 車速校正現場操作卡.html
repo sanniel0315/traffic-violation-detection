@@ -1,0 +1,363 @@
+<title>車速校正現場操作卡</title>
+<style>
+  :root {
+    --paper: #f7f8fa;
+    --card: #ffffff;
+    --ink: #1a2230;
+    --ink-soft: #4a5566;
+    --ink-faint: #7b8698;
+    --hair: #dce1e9;
+    --hair-soft: #e9edf3;
+    --accent: #1f5fbf;
+    --accent-wash: #eaf1fb;
+    --amber: #b5701a;
+    --amber-wash: #fbf1e2;
+    --green: #2e7d4f;
+    --green-wash: #e7f3ec;
+    --red: #b3402f;
+    --shadow: 0 1px 2px rgba(26,34,48,.05), 0 6px 20px rgba(26,34,48,.06);
+    --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #10141b;
+      --card: #171d27;
+      --ink: #e7ebf2;
+      --ink-soft: #aab3c2;
+      --ink-faint: #7e8a9c;
+      --hair: #2a323f;
+      --hair-soft: #222a35;
+      --accent: #5b9bff;
+      --accent-wash: #1a2740;
+      --amber: #d79a4b;
+      --amber-wash: #2c2416;
+      --green: #5cbe86;
+      --green-wash: #16281d;
+      --red: #e0715f;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"] {
+    --paper: #f7f8fa; --card: #ffffff; --ink: #1a2230; --ink-soft: #4a5566; --ink-faint: #7b8698;
+    --hair: #dce1e9; --hair-soft: #e9edf3; --accent: #1f5fbf; --accent-wash: #eaf1fb;
+    --amber: #b5701a; --amber-wash: #fbf1e2; --green: #2e7d4f; --green-wash: #e7f3ec; --red: #b3402f;
+    --shadow: 0 1px 2px rgba(26,34,48,.05), 0 6px 20px rgba(26,34,48,.06);
+  }
+  :root[data-theme="dark"] {
+    --paper: #10141b; --card: #171d27; --ink: #e7ebf2; --ink-soft: #aab3c2; --ink-faint: #7e8a9c;
+    --hair: #2a323f; --hair-soft: #222a35; --accent: #5b9bff; --accent-wash: #1a2740;
+    --amber: #d79a4b; --amber-wash: #2c2416; --green: #5cbe86; --green-wash: #16281d; --red: #e0715f;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "tnum" 1;
+  }
+  .wrap { max-width: 840px; margin: 0 auto; padding: 32px 22px 64px; }
+
+  .eyebrow {
+    font-size: 11.5px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  /* ── Header ── */
+  header.masthead {
+    border-bottom: 2.5px solid var(--ink);
+    padding-bottom: 16px; margin-bottom: 22px;
+  }
+  header.masthead h1 {
+    font-size: clamp(26px, 5vw, 34px); font-weight: 800; letter-spacing: -.015em;
+    margin: 6px 0 4px; text-wrap: balance;
+  }
+  .sub { color: var(--ink-soft); font-size: 14.5px; max-width: 60ch; margin: 0; }
+  .policy {
+    margin-top: 14px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+    font-size: 13.5px; padding: 9px 13px; background: var(--amber-wash);
+    border-left: 3px solid var(--amber); border-radius: 0 6px 6px 0;
+  }
+  .policy b { color: var(--amber); }
+
+  /* ── Pending cameras chips ── */
+  .pending { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
+  .pending .lbl { font-size: 12px; color: var(--ink-faint); font-weight: 600; }
+  .chip {
+    font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+    padding: 3px 9px; border-radius: 5px; background: var(--card);
+    border: 1px solid var(--hair); color: var(--ink);
+  }
+  .chip span { color: var(--ink-faint); font-family: var(--sans); font-weight: 400; }
+
+  /* ── Shortcut callout ── */
+  .shortcut {
+    margin: 24px 0; background: var(--accent-wash); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 10px; padding: 16px 18px;
+  }
+  .shortcut .eyebrow { color: var(--accent); }
+  .shortcut p { margin: 5px 0 0; font-size: 15.5px; font-weight: 600; color: var(--ink); }
+  .shortcut .rest { font-weight: 400; color: var(--ink-soft); }
+
+  /* ── Section ── */
+  section { margin-top: 30px; }
+  .sec-head { display: flex; align-items: baseline; gap: 11px; margin-bottom: 14px; }
+  .sec-head h2 { font-size: 19px; font-weight: 800; letter-spacing: -.01em; margin: 0; }
+  .sec-head .tag {
+    font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 2px 8px; border-radius: 20px;
+  }
+  .tag.rec { background: var(--green-wash); color: var(--green); }
+  .tag.alt { background: var(--hair-soft); color: var(--ink-faint); }
+  .tag.must { background: var(--amber-wash); color: var(--amber); }
+
+  /* ── Numbered steps ── */
+  ol.steps { list-style: none; counter-reset: s; margin: 0; padding: 0; }
+  ol.steps > li {
+    position: relative; padding: 0 0 16px 46px; break-inside: avoid;
+  }
+  ol.steps > li:not(:last-child)::after {
+    content: ""; position: absolute; left: 15px; top: 30px; bottom: 0; width: 2px;
+    background: var(--hair);
+  }
+  ol.steps > li::before {
+    counter-increment: s; content: counter(s);
+    position: absolute; left: 0; top: 0; width: 32px; height: 32px;
+    display: grid; place-items: center; border-radius: 50%;
+    background: var(--card); border: 2px solid var(--accent); color: var(--accent);
+    font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums;
+  }
+  ol.steps .st { font-weight: 700; font-size: 15px; }
+  ol.steps .sd { color: var(--ink-soft); font-size: 13.7px; margin-top: 2px; }
+  ol.steps code, .inline-k {
+    font-family: var(--mono); font-size: 12.5px; background: var(--hair-soft);
+    padding: 1px 5px; border-radius: 4px; color: var(--ink); white-space: nowrap;
+  }
+  .force {
+    display: inline-block; font-size: 12px; font-weight: 700; color: var(--amber);
+    background: var(--amber-wash); padding: 1px 7px; border-radius: 4px; margin-left: 2px;
+  }
+
+  /* ── Tables ── */
+  .tbl-scroll { overflow-x: auto; border: 1px solid var(--hair); border-radius: 9px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.3px; }
+  thead th {
+    text-align: left; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--ink-faint); padding: 9px 13px; background: var(--hair-soft);
+    border-bottom: 1px solid var(--hair); white-space: nowrap;
+  }
+  tbody td { padding: 9px 13px; border-top: 1px solid var(--hair-soft); vertical-align: top; }
+  tbody tr:first-child td { border-top: none; }
+  td .k { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+  .req { color: var(--amber); font-weight: 700; white-space: nowrap; }
+  .opt { color: var(--ink-faint); white-space: nowrap; }
+  td.def { color: var(--ink-soft); }
+
+  /* ── Verify readout ── */
+  .readout { display: grid; gap: 9px; margin-top: 4px; }
+  .ro {
+    display: grid; grid-template-columns: auto 1fr; gap: 11px; align-items: start;
+    padding: 11px 14px; background: var(--card); border: 1px solid var(--hair); border-radius: 9px;
+    font-size: 13.5px;
+  }
+  .ro .mk { font-weight: 800; font-variant-numeric: tabular-nums; }
+  .ro .mk.g { color: var(--green); } .ro .mk.a { color: var(--amber); } .ro .mk.b { color: var(--accent); }
+  .ro b { color: var(--ink); }
+
+  /* ── Command ── */
+  .cmd {
+    margin-top: 14px; font-family: var(--mono); font-size: 13px; background: var(--ink);
+    color: #e7ebf2; padding: 12px 15px; border-radius: 9px; overflow-x: auto; white-space: nowrap;
+  }
+  .cmd .pr { color: #7e8a9c; }
+  @media (prefers-color-scheme: dark) { .cmd { background: #0b0f15; border: 1px solid var(--hair); } }
+  :root[data-theme="dark"] .cmd { background: #0b0f15; border: 1px solid var(--hair); }
+
+  /* ── Troubleshoot ── */
+  .ts td:first-child { font-weight: 600; }
+  .ts td .cause { color: var(--ink-faint); font-size: 12.5px; }
+
+  /* ── Footer ── */
+  footer {
+    margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--hair);
+    font-size: 12px; color: var(--ink-faint); display: flex; justify-content: space-between;
+    flex-wrap: wrap; gap: 8px;
+  }
+  footer code { font-family: var(--mono); }
+
+  /* ── Print ── */
+  @media print {
+    :root {
+      --paper: #fff; --card: #fff; --ink: #111; --ink-soft: #333; --ink-faint: #666;
+      --hair: #ccc; --hair-soft: #eee; --accent: #14459c; --accent-wash: #eef3fb;
+      --amber: #8a540f; --amber-wash: #f7efe1; --green: #1f6b3f; --green-wash: #e9f3ec; --shadow: none;
+    }
+    body { background: #fff; font-size: 11.5px; }
+    .wrap { padding: 0; max-width: 100%; }
+    section, ol.steps > li, .ro, .shortcut { break-inside: avoid; }
+    .cmd { background: #f2f2f2; color: #111; border: 1px solid #ccc; }
+    .cmd .pr { color: #888; }
+    header.masthead { border-color: #111; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div class="eyebrow">現場作業卡 · 交通違規影像分析系統</div>
+    <h1>車速校正現場操作卡</h1>
+    <p class="sub">替相機設「可信的測速校正」,讓超速能正確、準確開單。現場只做必填即可運作,其餘欄位留空一律吃系統預設。</p>
+    <div class="policy">
+      <b>政策</b>
+      <span>「<b>只信校正來源開單</b>」預設開啟 —— 沒校正的相機<b>不會開速度單</b>(速度仍顯示、仍記錄,只是不開單)。</span>
+    </div>
+    <div class="pending">
+      <span class="lbl">待校正相機</span>
+      <span class="chip">cam 2 <span>台62 基隆段隧道口</span></span>
+      <span class="chip">cam 8 <span>62 交通流量</span></span>
+      <span class="lbl">其餘相機超速未啟用,不需處理</span>
+    </div>
+  </header>
+
+  <div class="shortcut">
+    <div class="eyebrow">最省事做法</div>
+    <p>只畫 trip-wire 兩線 ＋ 填車道編號 ＋ 兩線實距 ＋ 速限,<span class="rest">其餘全部留空吃預設即可。</span></p>
+  </div>
+
+  <!-- 方法 A -->
+  <section>
+    <div class="sec-head">
+      <h2>方法 A · Trip-wire 跨線</h2>
+      <span class="tag rec">建議 · 最準</span>
+    </div>
+    <ol class="steps">
+      <li>
+        <div class="st">現場量兩線實距</div>
+        <div class="sd">沿行車方向選兩個橫斷位置,建議相隔 <b>8–15 公尺</b>(太近時間差小、太遠會出鏡)。用皮尺/測距輪量出實際公尺數並記下(例 10.0)。兩位置須垂直車流、車輛直行通過、相機都看得清楚。</div>
+      </li>
+      <li>
+        <div class="st">畫兩條線</div>
+        <div class="sd">
+          網頁 → 選相機 → <b>車速設定</b> → 開啟 <span class="inline-k">ROI 編輯器</span>。<br>
+          類型選 <span class="inline-k">speed_line_in</span>,點 2 點畫過<b>近端</b>橫斷位置。儲存時系統<span class="force">強制</span>跳出兩欄:填 <b>車道編號</b>(例 1)＋<b>兩線實距(m)</b>(填步驟 1 量到的數,例 10)。<br>
+          類型改 <span class="inline-k">speed_line_out</span>,畫過<b>遠端</b>位置,儲存時填<b>相同</b>車道編號與距離。<br>
+          多車道:每車道各一組 in/out,車道編號不同(1、2、3…)。
+        </div>
+      </li>
+      <li>
+        <div class="st">設速限</div>
+        <div class="sd">回車速設定頁,填 <span class="inline-k">speed_limit</span> 速限與 <span class="inline-k">overspeed_kmh</span> 容許超速(預設 10,即超過「速限＋10」才開單)。</div>
+      </li>
+      <li>
+        <div class="st">存檔重啟</div>
+        <div class="sd">按 <b>完成(儲存並重啟服務)</b>,偵測會重讀新設定。</div>
+      </li>
+    </ol>
+  </section>
+
+  <!-- 方法 B -->
+  <section>
+    <div class="sec-head">
+      <h2>方法 B · Homography 4 點</h2>
+      <span class="tag alt">替代 / 補強 · 路口彎道可用</span>
+    </div>
+    <ol class="steps">
+      <li>
+        <div class="st">畫車速區(4 點梯形)</div>
+        <div class="sd">ROI 編輯器畫一個 <span class="inline-k">speed_roi</span>,4 點梯形罩住一段車道。</div>
+      </li>
+      <li>
+        <div class="st">填實際寬長</div>
+        <div class="sd">該區填 <span class="inline-k">calibration_width_m</span>(車道實寬,台灣約 3.5m,以現場為準)＋ <span class="inline-k">calibration_length_m</span>(梯形涵蓋路面實長,量出來)。</div>
+      </li>
+      <li>
+        <div class="st">或一鍵自動校正</div>
+        <div class="sd">按 <b>自動校正(消失點)</b> 產生 4 點＋寬長。<span style="color:var(--amber);font-weight:600">⚠ 用的是假設值(3.5m / 10m),務必用下方「驗證」量誤差,必要時改回真實寬長。</span></div>
+      </li>
+      <li>
+        <div class="st">存檔重啟</div>
+        <div class="sd">4 點＋寬＋長齊 → 標籤顯示 Homography 啟用 → 按 <b>完成(儲存並重啟)</b>。</div>
+      </li>
+    </ol>
+  </section>
+
+  <!-- 必填表 -->
+  <section>
+    <div class="sec-head">
+      <h2>最少必填 vs 選填</h2>
+      <span class="tag must">留空 = 自動用預設</span>
+    </div>
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr><th>欄位</th><th>必填?</th><th>留空時的預設</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Trip-wire 兩線 in/out ＋ 車道編號 ＋ 兩線實距</td><td class="req">必填(A 方式)</td><td class="def">無預設,缺了不觸發</td></tr>
+          <tr><td>Homography 4 點 ＋ 寬 ＋ 長</td><td class="req">必填(B 方式)</td><td class="def">可按自動校正帶假設值(寬 3.5m / 長 10m)</td></tr>
+          <tr><td><span class="k">speed_limit</span> 速限</td><td class="opt">建議填</td><td class="def">50 km/h</td></tr>
+          <tr><td><span class="k">overspeed_kmh</span> 容許超速</td><td class="opt">選填</td><td class="def">10(超過「速限＋10」才開單)</td></tr>
+          <tr><td><span class="k">calibration_width_m</span> 車道寬</td><td class="req">B 方式必填</td><td class="def">3.5m(自動校正帶入)</td></tr>
+          <tr><td>進階參數(平滑因子 / 離群 / 採樣數 / Track 逾時…)</td><td class="opt">選填</td><td class="def">各有預設(0.35 / 2.0 / 5 / 5s…),現場不用動</td></tr>
+          <tr><td><span class="k">speeding_require_calibrated</span> 只信校正來源開單</td><td class="opt">選填</td><td class="def">開(True)—— 沒設定一律視為只信校正來源</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 驗證 -->
+  <section>
+    <div class="sec-head">
+      <h2>驗證</h2>
+      <span class="tag must">必做 · 確認真的準</span>
+    </div>
+    <ol class="steps">
+      <li>
+        <div class="st">開精度校正記錄</div>
+        <div class="sd">該相機<b>偵測功能</b>設定裡打開 <span class="inline-k">精度校正記錄</span> 開關 → 存檔並重啟。</div>
+      </li>
+      <li>
+        <div class="st">收 ≥ 30 台跨線車</div>
+        <div class="sd">讓現場真實車流跑一段時間,收集至少 30 台跨越 trip-wire 的車。</div>
+      </li>
+      <li>
+        <div class="st">產生報告並判讀</div>
+        <div class="sd">車速設定頁「4. 精度校正報告」→ 按 <b>產生／更新報告</b>。判讀三點如下:</div>
+      </li>
+    </ol>
+    <div class="readout">
+      <div class="ro"><span class="mk b">n &gt; 0</span><span><b>「已校正 (homography)」或 trip-wire 那組有值且 n 大於 0</b> —— 代表校正生效。修復前因舊 bug 恆為 n=0,現在出現才算對。</span></div>
+      <div class="ro"><span class="mk g">MAE</span><span><b>平均絕對誤差越小越好。</b>偏差 bias:正 = 系統高估、負 = 低估。</span></div>
+      <div class="ro"><span class="mk a">建議係數</span><span>「純 pixel」組若列出<b>建議係數</b>,可按 <b>套用建議係數</b> 自動填回 <span class="inline-k">speed_kmh_per_pxps</span>。</span></div>
+    </div>
+    <div class="cmd"><span class="pr">$</span> python scripts/speed_calibration_report.py</div>
+  </section>
+
+  <!-- 常見問題 -->
+  <section>
+    <div class="sec-head"><h2>畫了卻不動?常見狀況</h2></div>
+    <div class="tbl-scroll">
+      <table class="ts">
+        <thead><tr><th>症狀</th><th>原因</th><th>處理</th></tr></thead>
+        <tbody>
+          <tr><td>畫了線卻不開單</td><td class="cause">in/out 車道編號沒配對,或距離沒填</td><td>重畫(現在會強制填車道＋距離)</td></tr>
+          <tr><td>速度全空 (NULL)</td><td class="cause">未校正 ＋「只信校正來源開單」開著</td><td>照卡片校正,或臨時關該開關</td></tr>
+          <tr><td>速度飆到 100+ 不合理</td><td class="cause">純 pixel 抖動偽值</td><td>改用 trip-wire 或 homography</td></tr>
+          <tr><td>報告「已校正」組 n=0</td><td class="cause">沒有生效的 homography / trip-wire</td><td>檢查 4 點＋寬長是否齊、或兩線是否配對</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="policy" style="margin-top:16px">
+      <b>臨時</b>
+      <span>某台暫時無法校正又必須開單:車速設定頁把「只信校正來源開單」<b>關掉</b> → 恢復純 pixel 開單(準確度低、可能誤開,僅臨時)。</span>
+    </div>
+  </section>
+
+  <footer>
+    <span>對應版本:測速準確度 Tier 0–3 · <code>commit d4aded3</code></span>
+    <span>詳版見 <code>車速校正現場SOP.md</code></span>
+  </footer>
+</div>
