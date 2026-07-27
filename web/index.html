@@ -16433,6 +16433,7 @@ const app=createApp({
             enrichPlateSnaps(violations.value);
         };
         const loadPendingViolations=async()=>{
+            if(!(cameras.value||[]).length)loadCameras();   // 補:開單管理頁進入不會自動載攝影機,下拉需要完整清單
             let u="/api/violations?status=pending&page_size=100";
             if(reviewPlate.value)u+=`&license_plate=${reviewPlate.value}`;
             if(reviewType.value)u+=`&violation_type=${reviewType.value}`;
