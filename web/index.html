@@ -5447,14 +5447,14 @@
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>{{ $t('st_location') }}</span>
-                                    <select v-model="reviewLocation" class="stats-native-select" style="width:150px">
+                                    <select v-model="reviewLocation" class="stats-native-select" style="width:150px" @change="loadPendingViolations">
                                         <option value="">全部點位</option>
                                         <option v-for="loc in reviewLocations" :key="loc" :value="loc">{{ loc }}</option>
                                     </select>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>攝影機</span>
-                                    <el-select v-model="reviewCamera" placeholder="攝影機" size="small" style="width:150px" clearable :teleported="true">
+                                    <el-select v-model="reviewCamera" placeholder="攝影機" size="small" style="width:150px" clearable :teleported="true" @change="loadPendingViolations">
                                         <el-option label="全部" value=""/>
                                         <el-option v-for="c in cameras" :key="c.id" :label="c.name" :value="c.id"/>
                                     </el-select>
@@ -5463,7 +5463,7 @@
                             <div style="display:flex;gap:16px;align-items:center">
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>違規種類</span>
-                                    <select v-model="reviewType" class="stats-native-select" style="width:170px">
+                                    <select v-model="reviewType" class="stats-native-select" style="width:170px" @change="loadPendingViolations">
                                         <option value="">全部違規種類</option>
                                         <option value="RED_LIGHT">闖紅燈</option>
                                         <option value="SPEEDING">超速</option>
@@ -5487,7 +5487,7 @@
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>開單結果</span>
-                                    <select v-model="reviewStatus" class="stats-native-select" style="width:120px">
+                                    <select v-model="reviewStatus" class="stats-native-select" style="width:120px" @change="loadPendingViolations">
                                         <option value="pending">未處理</option>
                                         <option value="confirmed">已舉發</option>
                                         <option value="rejected">不舉發</option>
