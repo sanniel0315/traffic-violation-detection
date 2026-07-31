@@ -5227,10 +5227,10 @@
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>攝影機</span>
-                                    <el-select v-model="filters.camera" placeholder="攝影機" size="small" style="width:150px" clearable :teleported="true">
-                                        <el-option label="全部" value=""/>
-                                        <el-option v-for="c in cameras" :key="c.id" :label="c.name" :value="c.id"/>
-                                    </el-select>
+                                    <select v-model="filters.camera" class="stats-native-select" style="width:150px">
+                                        <option value="">全部</option>
+                                        <option v-for="c in cameras" :key="c.id" :value="c.id">{{ c.name }}</option>
+                                    </select>
                                 </div>
                             </div>
                             <div style="display:flex;gap:16px;align-items:center">
