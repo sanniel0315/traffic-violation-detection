@@ -1,6 +1,6 @@
 # ===== 核心框架 =====
 numpy>=1.24.0
-opencv-python-headless>=4.8.0
+opencv-python-headless>=4.8.1.78  # 資安:CVE 修補(原 4.8.0)
 Pillow>=10.0.0
 
 # ===== AI/ML =====
@@ -13,7 +13,7 @@ paddleocr>=2.7.0
 # ===== Web 後端 =====
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
-python-multipart>=0.0.6
+python-multipart>=0.0.26  # 資安:CVE 修補(原 0.0.6,DoS)
 websockets>=12.0
 aiofiles>=23.2.0
 
@@ -40,3 +40,10 @@ pytest>=7.4.0
 black>=23.0.0
 pyyaml
 pytesseract>=0.3.10
+
+# ===== 資安修補:明確 pin 傳遞相依到修補版(Trivy image 掃出 HIGH/CRITICAL) =====
+urllib3>=2.5.0        # 多個 HIGH(原 2.2.1)
+setuptools>=78.1.1    # CVE-2024-6345 / CVE-2025-47273(原 69.2.0)
+wheel>=0.46.2         # HIGH(原 0.43.0)
+Mako>=1.3.12          # HIGH(原 1.3.5,alembic 傳遞相依)
+# 註:pillow / starlette / protobuf / onnx / torch 為需相容性測試或 Jetson 限制,另案處理
