@@ -18,7 +18,16 @@ from api.models import User, get_db, hash_password, verify_password
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 AUTH_COOKIE = "tvd_session"
-AUTH_SECRET = os.getenv("AUTH_SECRET", "change-this-auth-secret")
+# 資安:AUTH_SECRET 是 session token 的 HMAC 簽章金鑰。若沿用公開預設值,
+# 任何人都能偽造合法 admin token(免密碼登入),因此未設定或使用預設值時直接拒絕啟動。
+_DEFAULT_AUTH_SECRET = "change-this-auth-secret"
+AUTH_SECRET = (os.getenv("AUTH_SECRET") or "").strip()
+if not AUTH_SECRET or AUTH_SECRET == _DEFAULT_AUTH_SECRET:
+    raise RuntimeError(
+        "AUTH_SECRET 未設定或使用公開預設值,拒絕啟動(避免 session token 被偽造)。"
+        "請設定強隨機環境變數 AUTH_SECRET 後再啟動,"
+        "產生方式:python3 -c \"import secrets;print(secrets.token_urlsafe(48))\""
+    )
 AUTH_TTL_HOURS = int(os.getenv("AUTH_TTL_HOURS", "24"))
 
 
