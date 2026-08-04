@@ -88,6 +88,8 @@ def _vd_rows_to_records(rows: list, bucket: str) -> list:
             "avg_speed_kmh": round(row.get("avgSpeed") or 0, 1),
             "avg_occupancy_pct": round(row.get("avgOccupancyPct") or 0, 1),
             "direction_counts": row.get("directionCounts") or {},
+            "in_flow": int((row.get("directionCounts") or {}).get("IN", 0)),
+            "out_flow": int((row.get("directionCounts") or {}).get("OUT", 0)),
             "avg_queue_length_m": round(row.get("avgQueueLengthM") or 0, 1) if row.get("avgQueueLengthM") else None,
             "max_queue_length_m": round(row.get("maxQueueLengthM") or 0, 1) if row.get("maxQueueLengthM") else None,
             "queue_duration_sec": round(row.get("queueDurationSec") or 0, 1) if row.get("queueDurationSec") else None,
@@ -104,6 +106,8 @@ def _vd_stats(records: list) -> dict:
         flow = sum(r["total_flow"] for r in recs)
         small = sum(r["small_vehicle_flow"] for r in recs)
         large = sum(r["large_vehicle_flow"] for r in recs)
+        in_f = sum(r.get("in_flow", 0) for r in recs)
+        out_f = sum(r.get("out_flow", 0) for r in recs)
         # 車流加權平均;速度與佔有率各自獨立分母 — 塞車分鐘速度為 None 但佔有率有值,
         # 共用分母會讓佔有率被灌爆超過 100%。
         spd_w = sum(r["total_flow"] for r in recs if r["total_flow"] and r["avg_speed_kmh"])
@@ -113,6 +117,8 @@ def _vd_stats(records: list) -> dict:
         qmax = [r["max_queue_length_m"] for r in recs if r["max_queue_length_m"] is not None]
         return {
             "total_flow": flow,
+            "in_flow": in_f,
+            "out_flow": out_f,
             "small_vehicle_flow": small,
             "large_vehicle_flow": large,
             "avg_speed_kmh": round(spd / spd_w, 1) if spd_w else None,
