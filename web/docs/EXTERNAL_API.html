@@ -13,7 +13,7 @@ h3{font-size:16px;margin-top:1.3em}code{font-family:var(--mono);background:#f2f4
 pre{background:#0d1b2a;color:#cfe3f5;border-radius:8px;padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.55}
 pre code{background:none;border:none;color:inherit;padding:0}
 table{border-collapse:collapse;width:100%;margin:1em 0;font-size:14px}th,td{border:1px solid var(--border);padding:7px 11px;text-align:left}th{background:#f7f9fc}
-a{color:var(--primary)}blockquote{border-left:4px solid var(--primary-line,#c5dbf0);background:var(--soft);margin:1em 0;padding:8px 16px;color:var(--muted)}
+a{color:var(--primary)}blockquote{border-left:4px solid #c5dbf0;background:var(--soft);margin:1em 0;padding:8px 16px;color:var(--muted)}
 ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin:1.6em 0}
 .foot{margin-top:40px;padding-top:14px;border-top:1px solid var(--border);color:#8b95a4;font-size:12px}
 </style></head><body><div class="doc">
@@ -191,6 +191,8 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
         &quot;direction&quot;: &quot;N2S&quot;,
         &quot;direction_label&quot;: &quot;北向南&quot;,
         &quot;total_flow&quot;: 45,
+        &quot;in_flow&quot;: 25,
+        &quot;out_flow&quot;: 20,
         &quot;small_vehicle_flow&quot;: 38,
         &quot;large_vehicle_flow&quot;: 7,
         &quot;avg_speed_kmh&quot;: 42.3,
@@ -273,6 +275,16 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
 <td><code>total_flow</code></td>
 <td>int</td>
 <td>總車流量</td>
+</tr>
+<tr>
+<td><code>in_flow</code></td>
+<td>int</td>
+<td>進場（IN）方向車流量。需該攝影機車流區方向設為 IN 才有值,否則為 0</td>
+</tr>
+<tr>
+<td><code>out_flow</code></td>
+<td>int</td>
+<td>出場（OUT）方向車流量。需車流區方向設為 OUT 才有值,否則為 0</td>
 </tr>
 <tr>
 <td><code>small_vehicle_flow</code></td>
