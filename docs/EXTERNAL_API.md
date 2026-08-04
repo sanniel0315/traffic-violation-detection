@@ -137,6 +137,8 @@ curl -H "X-API-Key: tvd_xxxxxxxx" \
         "direction": "N2S",
         "direction_label": "北向南",
         "total_flow": 45,
+        "in_flow": 25,
+        "out_flow": 20,
         "small_vehicle_flow": 38,
         "large_vehicle_flow": 7,
         "avg_speed_kmh": 42.3,
@@ -187,6 +189,8 @@ curl -H "X-API-Key: tvd_xxxxxxxx" \
 | `direction` | string | 行車方向代碼 |
 | `direction_label` | string | 行車方向中文 |
 | `total_flow` | int | 總車流量 |
+| `in_flow` | int | 進場（IN）方向車流量。需該攝影機車流區方向設為 IN 才有值,否則為 0 |
+| `out_flow` | int | 出場（OUT）方向車流量。需車流區方向設為 OUT 才有值,否則為 0 |
 | `small_vehicle_flow` | int | 小型車流量（小客車、機車） |
 | `large_vehicle_flow` | int | 大型車流量（公車、貨車） |
 | `avg_speed_kmh` | float | 平均車速 (km/h) |
