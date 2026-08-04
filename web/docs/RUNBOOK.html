@@ -1,0 +1,284 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>維運手冊 Runbook — 交通影像服務</title>
+<style>
+:root{--bg:#eef2f6;--surface:#fff;--border:#d7dee8;--text:#1f2937;--muted:#5b6778;--primary:#0b5ea8;--primary-strong:#084d8a;--soft:#eaf2fb;
+--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;--sans:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.7}
+.doc{max-width:900px;margin:0 auto;background:var(--surface);min-height:100vh;padding:40px 52px;box-shadow:0 1px 6px rgba(11,30,60,.08)}
+.top{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid var(--primary);padding-bottom:12px;margin-bottom:24px}
+.top .k{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--primary)}
+.top a{font-size:13px;color:var(--primary);text-decoration:none}.top a:hover{text-decoration:underline}
+h1{font-size:26px;color:var(--primary-strong);margin:.2em 0 .6em}h2{font-size:20px;margin-top:1.6em;border-bottom:1px solid var(--border);padding-bottom:4px}
+h3{font-size:16px;margin-top:1.3em}code{font-family:var(--mono);background:#f2f4f6;border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:.88em;color:var(--primary-strong)}
+pre{background:#0d1b2a;color:#cfe3f5;border-radius:8px;padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.55}
+pre code{background:none;border:none;color:inherit;padding:0}
+table{border-collapse:collapse;width:100%;margin:1em 0;font-size:14px}th,td{border:1px solid var(--border);padding:7px 11px;text-align:left}th{background:#f7f9fc}
+a{color:var(--primary)}blockquote{border-left:4px solid var(--primary-line,#c5dbf0);background:var(--soft);margin:1em 0;padding:8px 16px;color:var(--muted)}
+ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin:1.6em 0}
+.foot{margin-top:40px;padding-top:14px;border-top:1px solid var(--border);color:#8b95a4;font-size:12px}
+</style></head><body><div class="doc">
+<div class="top"><span class="k">交通影像服務 · 交付文件</span><a href="/web/agency_landing.html">← 返回入口</a></div>
+<h1 id="runbook">RUNBOOK</h1>
+<h2 id="1">1) 專案目的與主要模組</h2>
+<h3 id="_1">專案目的</h3>
+<ul>
+<li>以 Jetson 邊緣運算做交通監控：車輛偵測、車牌 OCR、違規判定、壅塞分析，並整合 Frigate NVR 與 FastAPI。</li>
+<li>主要入口：<code>api/main.py</code>。</li>
+</ul>
+<h3 id="_2">模組分工</h3>
+<ul>
+<li>Frigate 整合</li>
+<li>設定檔：<code>config/frigate/config.yml</code></li>
+<li>API 與同步：<code>api/routes/frigate.py</code></li>
+<li>對外呼叫封裝：<code>recognition/frigate_integration.py</code></li>
+<li>偵測（Detection）</li>
+<li>車輛偵測：<code>detection/vehicle_detector.py</code>（Ultralytics YOLO）</li>
+<li>違規邏輯：<code>detection/violation_detector.py</code></li>
+<li>壅塞分析：<code>detection/congestion_detector.py</code></li>
+<li>串流偵測路由：<code>api/routes/stream.py</code></li>
+<li>車牌 OCR（LPR）</li>
+<li>OCR 核心：<code>recognition/plate_recognizer.py</code>（Tesseract）</li>
+<li>單張辨識 API：<code>api/routes/lpr.py</code></li>
+<li>串流辨識 API：<code>api/routes/lpr_stream.py</code></li>
+<li>視覺化串流：<code>api/routes/lpr_visual.py</code></li>
+<li>API / 資料層</li>
+<li>API 啟動：<code>api/main.py</code></li>
+<li>資料模型：<code>api/models.py</code></li>
+<li>登入與帳號管理：<code>api/routes/auth.py</code>（login/me/logout + users CRUD）</li>
+<li>路由：<code>api/routes/*.py</code></li>
+<li>部署</li>
+<li>容器：<code>docker-compose.yml</code>, <code>Dockerfile</code></li>
+<li>偵測腳本：<code>scripts/detection_service.py</code></li>
+</ul>
+<hr />
+<h2 id="2">2) 啟動方式與所需環境變數/模型路徑</h2>
+<h3 id="a-docker-compose">A. Docker Compose（主要方式）</h3>
+<ul>
+<li>檔案：<code>docker-compose.yml</code></li>
+<li>啟動命令：<code>docker compose up -d</code></li>
+<li>服務</li>
+<li><code>api</code>（<code>traffic-api</code>）</li>
+<li><code>frigate</code></li>
+<li><code>dev</code>（profile <code>dev</code>，可選）</li>
+</ul>
+<h4 id="api-compose">API 容器環境變數（compose 內定義）</h4>
+<ul>
+<li><code>TZ=Asia/Taipei</code></li>
+<li><code>NVIDIA_VISIBLE_DEVICES=all</code></li>
+<li><code>NVIDIA_DRIVER_CAPABILITIES=all</code></li>
+<li><code>FRIGATE_HOST=frigate</code></li>
+<li><code>FRIGATE_PORT=5000</code></li>
+</ul>
+<h4 id="frigate">Frigate 容器環境變數</h4>
+<ul>
+<li><code>TZ=Asia/Taipei</code></li>
+<li><code>FRIGATE_RTSP_PASSWORD=${FRIGATE_RTSP_PASSWORD:-}</code>（來自 <code>.env</code>）</li>
+<li><code>YOLO_MODELS=yolo7-tiny-416</code></li>
+</ul>
+<h4 id="env-repo-envexample"><code>.env</code>（目前 repo 提供 <code>.env.example</code>）</h4>
+<ul>
+<li><code>TZ</code></li>
+<li><code>FRIGATE_RTSP_PASSWORD</code></li>
+<li><code>MODEL_DIR</code>（預設 <code>/workspace/models</code>）</li>
+<li><code>DETECT_MODEL_ENGINE</code>（可填絕對路徑或檔名）</li>
+<li><code>DETECT_MODEL_PT</code>（可填絕對路徑或檔名）</li>
+<li>（可選）<code>DATABASE_URL</code></li>
+<li>（可選）<code>MQTT_HOST</code>, <code>MQTT_PORT</code></li>
+</ul>
+<p>範例：</p>
+<pre><code class="language-env">MODEL_DIR=/workspace/models
+DETECT_MODEL_ENGINE=yolov8n.engine
+DETECT_MODEL_PT=yolov8n.pt
+</code></pre>
+<h4 id="_3">模型路徑（統一規則）</h4>
+<ul>
+<li>模型統一放置：<code>/workspace/models</code>（由 compose 將主機 <code>./models</code> 掛載進容器）。</li>
+<li><code>DETECT_MODEL_ENGINE</code> / <code>DETECT_MODEL_PT</code> 為絕對路徑時直接使用。</li>
+<li>若為檔名或相對路徑，程式自動拼成 <code>${MODEL_DIR}/${值}</code>。</li>
+</ul>
+<h3 id="b-api-compose">B. 手動啟動 API（非 compose）</h3>
+<ul>
+<li>README 指令：<code>uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload</code></li>
+<li>依賴需自行準備：Python 套件、Tesseract、OpenCV 可讀 RTSP 的 ffmpeg/gstreamer 環境。</li>
+<li>主要環境變數</li>
+<li><code>DATABASE_URL</code>（預設 <code>sqlite:///./data/violations.db</code>）</li>
+<li><code>FRIGATE_HOST</code>（預設 <code>frigate</code>）</li>
+<li><code>FRIGATE_PORT</code>（預設 <code>5000</code>）</li>
+<li><code>MODEL_DIR</code>（預設 <code>/workspace/models</code>）</li>
+<li><code>DETECT_MODEL_ENGINE</code>（預設 <code>yolov8n.engine</code>）</li>
+<li><code>DETECT_MODEL_PT</code>（預設 <code>yolov8n.pt</code>）</li>
+<li>模型檔放在 <code>MODEL_DIR</code> 對應目錄（預設為 <code>/workspace/models</code>）。</li>
+</ul>
+<h3 id="c-scripts">C. scripts 啟動（測試/批次）</h3>
+<ul>
+<li>檔案：<code>scripts/detection_service.py</code></li>
+<li>指令範例：</li>
+<li><code>python3 scripts/detection_service.py --source ./source/test.mp4 --api http://localhost:8000</code></li>
+<li>參數</li>
+<li><code>--source</code></li>
+<li><code>--camera-id</code></li>
+<li><code>--location</code></li>
+<li><code>--api</code></li>
+<li>模型路徑</li>
+<li>預設使用 env 解析後的 <code>DETECT_MODEL_PT</code></li>
+</ul>
+<h3 id="d-systemd">D. systemd</h3>
+<ul>
+<li>目前 repo <strong>沒有</strong> <code>.service</code> 檔（已掃描）。</li>
+<li>可用 systemd 管理的目標通常會是：</li>
+<li><code>uvicorn api.main:app ...</code></li>
+<li>或 <code>python3 scripts/detection_service.py ...</code></li>
+<li>若要 systemd 化，需額外提供 unit file 與環境變數檔（repo 內尚未提供）。</li>
+</ul>
+<hr />
+<h2 id="3-jetson">3) Jetson 硬體/依賴在專案中的使用方式</h2>
+<h3 id="jetpack-cuda-tensorrt">JetPack / CUDA / TensorRT</h3>
+<ul>
+<li>README 宣告目標平台：JetPack 6.0、CUDA 12.2、TensorRT 8.6。</li>
+<li>Docker base image：<code>dustynv/l4t-pytorch:r36.2.0</code>（Jetson L4T r36）。</li>
+<li>Compose API/Frigate 皆設 <code>runtime: nvidia</code>。</li>
+<li>Frigate image 使用 <code>ghcr.io/blakeblackshear/frigate:stable-tensorrt-jp6</code>。</li>
+<li>Frigate 設定含：</li>
+<li><code>detectors.tensorrt.type: tensorrt</code></li>
+<li><code>detectors.tensorrt.device: 0</code></li>
+</ul>
+<h3 id="ffmpeg-hwaccel">ffmpeg hwaccel</h3>
+<ul>
+<li><code>config/frigate/config.yml</code> 目前為：<code>ffmpeg.hwaccel_args: []</code>（未啟用 Jetson preset）。</li>
+<li><code>api/routes/frigate.py</code> 在 <code>sync-cameras</code> 內僅在 <code>ffmpeg</code> 缺失時補 <code>{"hwaccel_args": "preset-jetson-h264"}</code>；若 <code>ffmpeg</code> 已存在且 <code>hwaccel_args</code> 為空，不會自動覆蓋。</li>
+</ul>
+<h3 id="ocr-cv">OCR / CV 依賴</h3>
+<ul>
+<li>Dockerfile 安裝：<code>tesseract-ocr</code>, <code>tesseract-ocr-eng</code>, <code>tesseract-ocr-chi-tra</code>, <code>ffmpeg</code>。</li>
+<li>OCR 引擎實作為 <code>pytesseract</code>（<code>recognition/plate_recognizer.py</code>）。</li>
+<li>串流讀取主要透過 <code>cv2.VideoCapture(rtsp_url)</code>。</li>
+</ul>
+<hr />
+<h2 id="4">4) 常見故障點與建議排查順序</h2>
+<h3 id="_4">建議排查順序（由外到內）</h3>
+<ol>
+<li>
+<p>容器與服務是否啟動
+- 檢查 <code>traffic-api</code>、<code>frigate</code> 是否在跑。
+- 檢查 API 健康端點：<code>/api/health</code>。</p>
+</li>
+<li>
+<p>RTSP 來源是否可讀
+- 優先用 API：<code>POST /api/cameras/test-url</code>。
+- 失敗時先驗證 URL 格式、帳密、埠號、防火牆、攝影機編碼（H264/H265）。</p>
+</li>
+<li>
+<p>Frigate 連線是否正常
+- 檢查 <code>/api/frigate/status</code>、<code>/api/frigate/version</code>。
+- 確認 <code>FRIGATE_HOST</code>/<code>FRIGATE_PORT</code> 與 Docker 網路一致。</p>
+</li>
+<li>
+<p>模型檔路徑是否對齊程式實際讀取
+- 需特別確認以下檔案存在：
+  - <code>/workspace/models/yolov8n.pt</code>
+  - <code>/workspace/models/yolov8n.engine</code>
+- 若 <code>DETECT_MODEL_*</code> 是相對值，會自動組到 <code>MODEL_DIR</code>（預設 <code>/workspace/models</code>）。</p>
+</li>
+<li>
+<p>Jetson/TensorRT/加速是否真的生效
+- Frigate detector 是否為 <code>tensorrt</code>。
+- <code>hwaccel_args</code> 若為空，視串流負載可能造成 CPU 偏高。</p>
+</li>
+<li>
+<p>OCR 準確率與性能問題
+- 先檢查影像品質（解析度、角度、夜間噪聲）。
+- 再調整辨識幀率與 ROI，降低無效 OCR 次數。</p>
+</li>
+<li>
+<p>資料庫與儲存路徑
+- <code>DATABASE_URL</code> 是否正確。
+- <code>./data</code>, <code>./output</code>, <code>./storage</code> 是否可寫。</p>
+</li>
+</ol>
+<h3 id="_5">目前掃描到的高機率坑點</h3>
+<ul>
+<li><code>DETECT_MODEL_*</code> 值與 <code>MODEL_DIR</code> 不一致（例如檔名拼錯、副檔名不符）。</li>
+<li><code>ffmpeg.hwaccel_args</code> 在現有 Frigate config 是空值。</li>
+<li><code>requirements.txt</code> 與 Dockerfile 實際安裝套件不完全一致（例如 README/requirements 提到 EasyOCR/PaddleOCR，但主流程實作是 Tesseract）。</li>
+</ul>
+<hr />
+<h2 id="5">5) 最小檢查清單（值班版）</h2>
+<ul>
+<li>API alive：<code>GET /api/health</code> 回 <code>healthy</code></li>
+<li>Frigate alive：<code>GET /api/frigate/status</code> 為 <code>online</code></li>
+<li>Camera alive：<code>POST /api/cameras/test-url</code> 成功</li>
+<li>Model ready：<code>MODEL_DIR</code> 目錄下有 <code>DETECT_MODEL_PT</code> / <code>DETECT_MODEL_ENGINE</code> 對應檔案</li>
+<li>OCR ready：容器內可執行 Tesseract（<code>pytesseract</code> 不報錯）</li>
+<li>Storage ready：<code>output/</code>、<code>storage/</code>、<code>data/</code> 可寫</li>
+</ul>
+<hr />
+<h2 id="6-users-crudadmin">6) 登入與 users CRUD（admin）</h2>
+<h3 id="web">Web 操作入口</h3>
+<ul>
+<li>登入頁：<code>/web/</code>（未登入會先顯示登入畫面）</li>
+<li>權限管理頁：側欄 <code>🔐 權限管理</code>（僅 admin 可見）</li>
+<li>使用者管理功能：</li>
+<li>新增使用者</li>
+<li>修改角色（admin/ops/viewer）</li>
+<li>啟用/停用</li>
+<li>重設密碼</li>
+<li>刪除</li>
+</ul>
+<h3 id="api">API 操作</h3>
+<ul>
+<li><code>POST /api/auth/login</code></li>
+<li><code>GET /api/auth/me</code></li>
+<li><code>POST /api/auth/logout</code></li>
+<li><code>GET /api/auth/users</code>（admin）</li>
+<li><code>POST /api/auth/users</code>（admin）</li>
+<li><code>PUT /api/auth/users/{id}</code>（admin）</li>
+<li><code>PUT /api/auth/users/{id}/password</code>（admin）</li>
+<li><code>DELETE /api/auth/users/{id}</code>（admin）</li>
+</ul>
+<h3 id="_6">內建保護規則</h3>
+<ul>
+<li>不可停用目前登入中的管理者。</li>
+<li>不可刪除目前登入中的管理者。</li>
+<li>系統至少保留一位啟用中的管理者。</li>
+</ul>
+<h2 id="2026-07">資料保存政策（2026-07 定案）</h2>
+<table>
+<thead>
+<tr>
+<th>資料</th>
+<th>保留期</th>
+<th>機制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DB 紀錄（traffic_events / congestion_samples / lpr_records / violations / 聚合表）</td>
+<td><strong>至少半年，不自動刪除</strong></td>
+<td>程式無任何 DB 清除邏輯；SystemLog 保留 365 天</td>
+</tr>
+<tr>
+<td>frigate 錄影（REC 連續錄影）</td>
+<td>3 天</td>
+<td>frigate <code>record.retain.days: 3</code></td>
+</tr>
+<tr>
+<td>正式相機違規 / LPR 快照</td>
+<td>30 天</td>
+<td><code>traffic-cleanup.timer</code> 每日 02:30</td>
+</tr>
+<tr>
+<td>cam_8（測試相機）違規媒體</td>
+<td>3 天</td>
+<td>同上，<code>--camera-days 8:3</code>（只刪媒體檔，DB 列保留）</td>
+</tr>
+<tr>
+<td>journald 服務日誌</td>
+<td>6 個月 / 20G</td>
+<td>journal 目錄在 NVMe（<code>/var/log/journal</code> → <code>/mnt/nvme/journal</code>）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>⚠️ 鐵律</strong>：任何新清理功能<strong>不得刪除 DB 資料列</strong>（報表查詢資料要保存至少半年）；只能刪媒體檔。DB 增速約 4G/月，NVMe 容量可撐多年。</p>
+<p><strong>已知風險</strong>：violations.db 無備份（單一 NVMe），若硬碟故障半年紀錄全失；如需保障可另排 <code>VACUUM INTO</code> 週期備份到外部儲存。</p>
+<div class="foot">邊緣交通影像服務 · 機關平台對接交付件</div>
+</div></body></html>
