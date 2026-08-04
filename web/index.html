@@ -7123,11 +7123,13 @@
                                         <th rowspan="2">時間</th>
                                         <th rowspan="2">方向</th>
                                         <th rowspan="2">車道數</th>
-                                        <th colspan="6">總</th>
+                                        <th colspan="8">總</th>
                                         <th v-for="n in vdLaneColumns" :key="`vd-hg-${n}`" colspan="5">{{ laneGroupLabel(n) }}</th>
                                     </tr>
                                     <tr>
                                         <th>總流量</th>
+                                        <th>進(IN)</th>
+                                        <th>出(OUT)</th>
                                         <th>平均速度</th>
                                         <th>平均占量(%)</th>
                                         <th>最大估計排隊長度(m)</th>
@@ -7150,6 +7152,8 @@
                                         <td>{{ row.directionText }}</td>
                                         <td>{{ row.laneCount }}</td>
                                         <td>{{ row.totalFlow }}</td>
+                                        <td>{{ row.directionCounts?.IN || 0 }}</td>
+                                        <td>{{ row.directionCounts?.OUT || 0 }}</td>
                                         <td>{{ row.avgSpeed==null?'-':row.avgSpeed.toFixed(1) }}</td>
                                         <td>{{ row.avgOccupancyPct==null?'-':row.avgOccupancyPct.toFixed(1) }}</td>
                                         <td>{{ formatQueueLengthCell(row.maxQueueLengthM,'-') }}</td>
@@ -7164,7 +7168,7 @@
                                         </template>
                                     </tr>
                                     <tr v-if="!filteredStatsVdLikeRows.length">
-                                        <td :colspan="11 + vdLaneColumns.length * 5" style="text-align:center;color:#999;padding:24px">目前無可顯示的車道報表資料</td>
+                                        <td :colspan="13 + vdLaneColumns.length * 5" style="text-align:center;color:#999;padding:24px">目前無可顯示的車道報表資料</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -12809,6 +12813,8 @@ const app=createApp({
                 {label:'方向',value:(row)=>String(row?.directionText||'-')},
                 {label:'車道數',value:(row)=>formatVdIntegerCell(row?.laneCount,'0')},
                 {label:'總流量',value:(row)=>formatVdIntegerCell(row?.totalFlow,'0')},
+                {label:'進(IN)',value:(row)=>String((row?.directionCounts||{}).IN||0)},
+                {label:'出(OUT)',value:(row)=>String((row?.directionCounts||{}).OUT||0)},
                 {label:'平均速度',value:(row)=>formatVdNumberCell(row?.avgSpeed,1,'-')},
                 {label:'平均占量(%)',value:(row)=>formatVdNumberCell(row?.avgOccupancyPct,1,'-')},
                 {label:'最大估計排隊長度(m)',value:(row)=>formatQueueLengthCell(row?.maxQueueLengthM,'-')},
