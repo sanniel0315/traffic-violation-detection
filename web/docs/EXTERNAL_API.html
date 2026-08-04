@@ -1,0 +1,715 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>對外 API 文件 — 交通影像服務</title>
+<style>
+:root{--bg:#eef2f6;--surface:#fff;--border:#d7dee8;--text:#1f2937;--muted:#5b6778;--primary:#0b5ea8;--primary-strong:#084d8a;--soft:#eaf2fb;
+--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;--sans:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.7}
+.doc{max-width:900px;margin:0 auto;background:var(--surface);min-height:100vh;padding:40px 52px;box-shadow:0 1px 6px rgba(11,30,60,.08)}
+.top{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid var(--primary);padding-bottom:12px;margin-bottom:24px}
+.top .k{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--primary)}
+.top a{font-size:13px;color:var(--primary);text-decoration:none}.top a:hover{text-decoration:underline}
+h1{font-size:26px;color:var(--primary-strong);margin:.2em 0 .6em}h2{font-size:20px;margin-top:1.6em;border-bottom:1px solid var(--border);padding-bottom:4px}
+h3{font-size:16px;margin-top:1.3em}code{font-family:var(--mono);background:#f2f4f6;border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:.88em;color:var(--primary-strong)}
+pre{background:#0d1b2a;color:#cfe3f5;border-radius:8px;padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.55}
+pre code{background:none;border:none;color:inherit;padding:0}
+table{border-collapse:collapse;width:100%;margin:1em 0;font-size:14px}th,td{border:1px solid var(--border);padding:7px 11px;text-align:left}th{background:#f7f9fc}
+a{color:var(--primary)}blockquote{border-left:4px solid var(--primary-line,#c5dbf0);background:var(--soft);margin:1em 0;padding:8px 16px;color:var(--muted)}
+ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin:1.6em 0}
+.foot{margin-top:40px;padding-top:14px;border-top:1px solid var(--border);color:#8b95a4;font-size:12px}
+</style></head><body><div class="doc">
+<div class="top"><span class="k">交通影像服務 · 交付文件</span><a href="/web/agency_landing.html">← 返回入口</a></div>
+<h1 id="api">對外報表 API 文件</h1>
+<blockquote>
+<p>版本：1.0 | 更新日期：2026-04-07</p>
+</blockquote>
+<h2 id="_1">概述</h2>
+<p>交通影像分析系統提供對外 REST API，供政府/交通局系統及內部系統取得 VD 車流報表與壅塞報表資料。</p>
+<ul>
+<li><strong>Base URL：</strong> <code>http://{host}:8000/api/v1/external</code></li>
+<li><strong>認證方式：</strong> API Key（<code>X-API-Key</code> Header）</li>
+<li><strong>輸出格式：</strong> JSON / CSV</li>
+<li><strong>Swagger UI：</strong> <code>http://{host}:8000/docs</code></li>
+</ul>
+<hr />
+<h2 id="_2">認證</h2>
+<p>所有對外 API 端點皆需在 HTTP Header 帶入 API Key：</p>
+<pre><code>X-API-Key: tvd_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+</code></pre>
+<h3 id="_3">錯誤回應</h3>
+<table>
+<thead>
+<tr>
+<th>HTTP Code</th>
+<th>說明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>401</td>
+<td>缺少或無效的 API Key</td>
+</tr>
+<tr>
+<td>403</td>
+<td>API Key 無此報表的存取權限（scope 不足）</td>
+</tr>
+<tr>
+<td>429</td>
+<td>超過速率限制</td>
+</tr>
+</tbody>
+</table>
+<h3 id="api-key">取得 API Key</h3>
+<p><strong>方式一：固定 Key（推薦）</strong></p>
+<p>在 <code>.env</code> 設定固定 API Key，不需透過管理端點建立：</p>
+<pre><code class="language-env">EXTERNAL_API_KEY=tvd_hwacom_traffic_2026
+</code></pre>
+<p>此 Key 擁有所有報表權限（<code>vd_report</code> + <code>congestion_report</code>），速率限制 120 req/min。</p>
+<p><strong>方式二：動態 Key</strong></p>
+<p>由系統管理者透過管理端點建立，詳見 <a href="#api-key-管理">API Key 管理</a>。適合需要多組 Key、個別權限控制的場景。</p>
+<hr />
+<h2 id="_4">統一回應格式</h2>
+<h3 id="json">JSON 成功回應</h3>
+<pre><code class="language-json">{
+  &quot;status&quot;: &quot;success&quot;,
+  &quot;data&quot;: { ... },
+  &quot;meta&quot;: {
+    &quot;request_time&quot;: &quot;2026-04-07T10:00:00+08:00&quot;,
+    &quot;api_version&quot;: &quot;1.0&quot;,
+    &quot;device_id&quot;: &quot;jetson-nx-001&quot;,
+    &quot;format&quot;: &quot;json&quot;
+  }
+}
+</code></pre>
+<h3 id="json_1">JSON 錯誤回應</h3>
+<pre><code class="language-json">{
+  &quot;status&quot;: &quot;error&quot;,
+  &quot;error&quot;: {
+    &quot;code&quot;: &quot;INVALID_PARAMETER&quot;,
+    &quot;message&quot;: &quot;end_time 必須大於 start_time&quot;
+  }
+}
+</code></pre>
+<h3 id="csv">CSV 回應</h3>
+<p>加 <code>?format=csv</code> 參數，回傳 <code>Content-Type: text/csv</code> 檔案下載。</p>
+<hr />
+<h2 id="_5">報表端點</h2>
+<h3 id="1-vd">1. VD 車流報表</h3>
+<p>取得指定時間範圍的車流量、車速、佔用率等聚合數據。</p>
+<pre><code>GET /api/v1/external/vd-report
+</code></pre>
+<h4 id="_6">請求參數</h4>
+<table>
+<thead>
+<tr>
+<th>參數</th>
+<th>類型</th>
+<th>必填</th>
+<th>預設</th>
+<th>說明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start_time</code></td>
+<td>datetime</td>
+<td>是</td>
+<td>—</td>
+<td>起始時間（ISO 8601，如 <code>2026-04-07T00:00:00+08:00</code>）</td>
+</tr>
+<tr>
+<td><code>end_time</code></td>
+<td>datetime</td>
+<td>是</td>
+<td>—</td>
+<td>結束時間（ISO 8601）</td>
+</tr>
+<tr>
+<td><code>detector_id</code></td>
+<td>int</td>
+<td>否</td>
+<td>全部</td>
+<td>攝影機 ID</td>
+</tr>
+<tr>
+<td><code>interval</code></td>
+<td>string</td>
+<td>否</td>
+<td><code>5m</code></td>
+<td>聚合間隔：<code>1m</code> / <code>5m</code> / <code>1h</code></td>
+</tr>
+<tr>
+<td><code>format</code></td>
+<td>string</td>
+<td>否</td>
+<td><code>json</code></td>
+<td>輸出格式：<code>json</code> / <code>csv</code></td>
+</tr>
+</tbody>
+</table>
+<h4 id="_7">時間範圍限制</h4>
+<table>
+<thead>
+<tr>
+<th>間隔</th>
+<th>最大查詢範圍</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>1m</code></td>
+<td>24 小時</td>
+</tr>
+<tr>
+<td><code>5m</code></td>
+<td>7 天</td>
+</tr>
+<tr>
+<td><code>1h</code></td>
+<td>90 天</td>
+</tr>
+</tbody>
+</table>
+<h4 id="_8">請求範例</h4>
+<pre><code class="language-bash">curl -H &quot;X-API-Key: tvd_xxxxxxxx&quot; \
+  &quot;http://10.26.4.102:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&amp;interval=5m&quot;
+</code></pre>
+<h4 id="json_2">JSON 回應範例</h4>
+<pre><code class="language-json">{
+  &quot;status&quot;: &quot;success&quot;,
+  &quot;data&quot;: {
+    &quot;interval&quot;: &quot;5m&quot;,
+    &quot;period&quot;: {
+      &quot;start&quot;: &quot;2026-04-07T00:00:00+08:00&quot;,
+      &quot;end&quot;: &quot;2026-04-07T12:00:00+08:00&quot;
+    },
+    &quot;records&quot;: [
+      {
+        &quot;detector_id&quot;: &quot;台62基隆段隧道口&quot;,
+        &quot;road_name&quot;: &quot;台62線&quot;,
+        &quot;time_start&quot;: &quot;2026-04-07T08:00:00+08:00&quot;,
+        &quot;time_end&quot;: &quot;2026-04-07T08:05:00+08:00&quot;,
+        &quot;direction&quot;: &quot;N2S&quot;,
+        &quot;direction_label&quot;: &quot;北向南&quot;,
+        &quot;total_flow&quot;: 45,
+        &quot;small_vehicle_flow&quot;: 38,
+        &quot;large_vehicle_flow&quot;: 7,
+        &quot;avg_speed_kmh&quot;: 42.3,
+        &quot;avg_occupancy_pct&quot;: 18.5,
+        &quot;lane_count&quot;: 2,
+        &quot;lanes&quot;: [
+          {
+            &quot;lane_no&quot;: 1,
+            &quot;flow&quot;: 25,
+            &quot;small_vehicle_flow&quot;: 22,
+            &quot;large_vehicle_flow&quot;: 3,
+            &quot;avg_speed_kmh&quot;: 44.1,
+            &quot;avg_occupancy_pct&quot;: 16.2,
+            &quot;avg_queue_length_m&quot;: 12.5,
+            &quot;max_queue_length_m&quot;: 38.0
+          },
+          {
+            &quot;lane_no&quot;: 2,
+            &quot;flow&quot;: 20,
+            &quot;small_vehicle_flow&quot;: 16,
+            &quot;large_vehicle_flow&quot;: 4,
+            &quot;avg_speed_kmh&quot;: 40.5,
+            &quot;avg_occupancy_pct&quot;: 20.8,
+            &quot;avg_queue_length_m&quot;: 14.8,
+            &quot;max_queue_length_m&quot;: 52.5
+          }
+        ]
+      }
+    ]
+  },
+  &quot;meta&quot;: {
+    &quot;request_time&quot;: &quot;2026-04-07T10:00:00+08:00&quot;,
+    &quot;api_version&quot;: &quot;1.0&quot;,
+    &quot;device_id&quot;: &quot;jetson-nx-001&quot;,
+    &quot;format&quot;: &quot;json&quot;
+  }
+}
+</code></pre>
+<h4 id="_9">欄位說明</h4>
+<table>
+<thead>
+<tr>
+<th>欄位</th>
+<th>型別</th>
+<th>說明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>detector_id</code></td>
+<td>string</td>
+<td>攝影機名稱/ID</td>
+</tr>
+<tr>
+<td><code>road_name</code></td>
+<td>string</td>
+<td>道路名稱</td>
+</tr>
+<tr>
+<td><code>time_start</code></td>
+<td>string</td>
+<td>時間區間起始（ISO 8601）</td>
+</tr>
+<tr>
+<td><code>time_end</code></td>
+<td>string</td>
+<td>時間區間結束</td>
+</tr>
+<tr>
+<td><code>direction</code></td>
+<td>string</td>
+<td>行車方向代碼</td>
+</tr>
+<tr>
+<td><code>direction_label</code></td>
+<td>string</td>
+<td>行車方向中文</td>
+</tr>
+<tr>
+<td><code>total_flow</code></td>
+<td>int</td>
+<td>總車流量</td>
+</tr>
+<tr>
+<td><code>small_vehicle_flow</code></td>
+<td>int</td>
+<td>小型車流量（小客車、機車）</td>
+</tr>
+<tr>
+<td><code>large_vehicle_flow</code></td>
+<td>int</td>
+<td>大型車流量（公車、貨車）</td>
+</tr>
+<tr>
+<td><code>avg_speed_kmh</code></td>
+<td>float</td>
+<td>平均車速 (km/h)</td>
+</tr>
+<tr>
+<td><code>avg_occupancy_pct</code></td>
+<td>float</td>
+<td>平均佔用率 (%)</td>
+</tr>
+<tr>
+<td><code>lane_count</code></td>
+<td>int</td>
+<td>車道數</td>
+</tr>
+<tr>
+<td><code>lanes</code></td>
+<td>array</td>
+<td>各車道明細</td>
+</tr>
+<tr>
+<td><code>lanes[].lane_no</code></td>
+<td>int</td>
+<td>車道編號</td>
+</tr>
+<tr>
+<td><code>lanes[].flow</code></td>
+<td>int</td>
+<td>該車道車流量</td>
+</tr>
+<tr>
+<td><code>lanes[].avg_queue_length_m</code></td>
+<td>float</td>
+<td>平均排隊長度 (公尺)</td>
+</tr>
+<tr>
+<td><code>lanes[].max_queue_length_m</code></td>
+<td>float</td>
+<td>最大排隊長度 (公尺)</td>
+</tr>
+</tbody>
+</table>
+<h4 id="csv_1">CSV 格式</h4>
+<p>每一筆展平為一行（per lane），欄位順序：</p>
+<pre><code>detector_id, road_name, time_start, time_end, direction,
+lane_no, flow, small_vehicle_flow, large_vehicle_flow,
+avg_speed_kmh, avg_occupancy_pct, avg_queue_length_m, max_queue_length_m
+</code></pre>
+<hr />
+<h3 id="2">2. 壅塞報表</h3>
+<p>取得指定時間範圍的壅塞偵測聚合數據。</p>
+<pre><code>GET /api/v1/external/congestion-report
+</code></pre>
+<h4 id="_10">請求參數</h4>
+<table>
+<thead>
+<tr>
+<th>參數</th>
+<th>類型</th>
+<th>必填</th>
+<th>預設</th>
+<th>說明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start_time</code></td>
+<td>datetime</td>
+<td>是</td>
+<td>—</td>
+<td>起始時間（ISO 8601）</td>
+</tr>
+<tr>
+<td><code>end_time</code></td>
+<td>datetime</td>
+<td>是</td>
+<td>—</td>
+<td>結束時間（ISO 8601）</td>
+</tr>
+<tr>
+<td><code>detector_id</code></td>
+<td>int</td>
+<td>否</td>
+<td>全部</td>
+<td>攝影機 ID</td>
+</tr>
+<tr>
+<td><code>interval</code></td>
+<td>string</td>
+<td>否</td>
+<td><code>5m</code></td>
+<td>聚合間隔：<code>1m</code> / <code>5m</code> / <code>1h</code></td>
+</tr>
+<tr>
+<td><code>format</code></td>
+<td>string</td>
+<td>否</td>
+<td><code>json</code></td>
+<td>輸出格式：<code>json</code> / <code>csv</code></td>
+</tr>
+</tbody>
+</table>
+<h4 id="_11">請求範例</h4>
+<pre><code class="language-bash">curl -H &quot;X-API-Key: tvd_xxxxxxxx&quot; \
+  &quot;http://10.26.4.102:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&quot;
+</code></pre>
+<h4 id="json_3">JSON 回應範例</h4>
+<pre><code class="language-json">{
+  &quot;status&quot;: &quot;success&quot;,
+  &quot;data&quot;: {
+    &quot;interval&quot;: &quot;5m&quot;,
+    &quot;period&quot;: {
+      &quot;start&quot;: &quot;2026-04-07T00:00:00+08:00&quot;,
+      &quot;end&quot;: &quot;2026-04-07T12:00:00+08:00&quot;
+    },
+    &quot;records&quot;: [
+      {
+        &quot;detector_id&quot;: &quot;2&quot;,
+        &quot;camera_name&quot;: &quot;台62基隆段隧道口&quot;,
+        &quot;time_start&quot;: &quot;2026-04-07T08:00:00+08:00&quot;,
+        &quot;time_end&quot;: &quot;2026-04-07T08:05:00+08:00&quot;,
+        &quot;zone_name&quot;: &quot;車流區 1&quot;,
+        &quot;lane_no&quot;: 1,
+        &quot;direction&quot;: &quot;straight&quot;,
+        &quot;avg_occupancy_pct&quot;: 35.2,
+        &quot;max_occupancy_pct&quot;: 58.0,
+        &quot;avg_vehicle_count&quot;: 12.3,
+        &quot;avg_stopped_vehicle_count&quot;: 4.1,
+        &quot;avg_queue_length_m&quot;: 22.5,
+        &quot;max_queue_length_m&quot;: 45.0,
+        &quot;queue_active_duration_sec&quot;: 120.0,
+        &quot;sample_count&quot;: 60
+      }
+    ]
+  },
+  &quot;meta&quot;: {
+    &quot;request_time&quot;: &quot;2026-04-07T10:00:00+08:00&quot;,
+    &quot;api_version&quot;: &quot;1.0&quot;,
+    &quot;device_id&quot;: &quot;jetson-nx-001&quot;,
+    &quot;format&quot;: &quot;json&quot;
+  }
+}
+</code></pre>
+<h4 id="_12">欄位說明</h4>
+<table>
+<thead>
+<tr>
+<th>欄位</th>
+<th>型別</th>
+<th>說明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>detector_id</code></td>
+<td>string</td>
+<td>攝影機 ID</td>
+</tr>
+<tr>
+<td><code>camera_name</code></td>
+<td>string</td>
+<td>攝影機名稱</td>
+</tr>
+<tr>
+<td><code>time_start</code></td>
+<td>string</td>
+<td>時間區間起始</td>
+</tr>
+<tr>
+<td><code>time_end</code></td>
+<td>string</td>
+<td>時間區間結束</td>
+</tr>
+<tr>
+<td><code>zone_name</code></td>
+<td>string</td>
+<td>偵測區域名稱</td>
+</tr>
+<tr>
+<td><code>lane_no</code></td>
+<td>int</td>
+<td>車道編號</td>
+</tr>
+<tr>
+<td><code>direction</code></td>
+<td>string</td>
+<td>行車方向</td>
+</tr>
+<tr>
+<td><code>avg_occupancy_pct</code></td>
+<td>float</td>
+<td>平均佔用率 (%)</td>
+</tr>
+<tr>
+<td><code>max_occupancy_pct</code></td>
+<td>float</td>
+<td>最大佔用率 (%)</td>
+</tr>
+<tr>
+<td><code>avg_vehicle_count</code></td>
+<td>float</td>
+<td>平均車輛數</td>
+</tr>
+<tr>
+<td><code>avg_stopped_vehicle_count</code></td>
+<td>float</td>
+<td>平均停滯車輛數</td>
+</tr>
+<tr>
+<td><code>avg_queue_length_m</code></td>
+<td>float</td>
+<td>平均排隊長度 (公尺)</td>
+</tr>
+<tr>
+<td><code>max_queue_length_m</code></td>
+<td>float</td>
+<td>最大排隊長度 (公尺)</td>
+</tr>
+<tr>
+<td><code>queue_active_duration_sec</code></td>
+<td>float</td>
+<td>排隊持續時間 (秒)</td>
+</tr>
+<tr>
+<td><code>sample_count</code></td>
+<td>int</td>
+<td>取樣數量</td>
+</tr>
+</tbody>
+</table>
+<h4 id="csv_2">CSV 格式</h4>
+<p>欄位順序：</p>
+<pre><code>detector_id, camera_name, time_start, time_end,
+zone_name, lane_no, direction,
+avg_occupancy_pct, max_occupancy_pct,
+avg_vehicle_count, avg_stopped_vehicle_count,
+avg_queue_length_m, max_queue_length_m,
+queue_active_duration_sec, sample_count
+</code></pre>
+<hr />
+<h2 id="api-key_1">API Key 管理</h2>
+<blockquote>
+<p>以下端點需 admin 登入 session，非 API Key 認證。</p>
+</blockquote>
+<h3 id="api-key_2">建立 API Key</h3>
+<pre><code>POST /api/auth/api-keys
+</code></pre>
+<p><strong>Request Body：</strong></p>
+<pre><code class="language-json">{
+  &quot;name&quot;: &quot;交通局正式環境&quot;,
+  &quot;scopes&quot;: [&quot;vd_report&quot;, &quot;congestion_report&quot;],
+  &quot;rate_limit_per_min&quot;: 60,
+  &quot;expires_at&quot;: &quot;2027-01-01T00:00:00+08:00&quot;
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>欄位</th>
+<th>必填</th>
+<th>說明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>是</td>
+<td>用途說明（最多 100 字元）</td>
+</tr>
+<tr>
+<td><code>scopes</code></td>
+<td>否</td>
+<td>授權範圍，預設 <code>["vd_report","congestion_report"]</code></td>
+</tr>
+<tr>
+<td><code>rate_limit_per_min</code></td>
+<td>否</td>
+<td>每分鐘最大請求數，預設 60</td>
+</tr>
+<tr>
+<td><code>expires_at</code></td>
+<td>否</td>
+<td>過期時間（ISO 8601），不填則永不過期</td>
+</tr>
+</tbody>
+</table>
+<p><strong>可用 scopes：</strong></p>
+<table>
+<thead>
+<tr>
+<th>Scope</th>
+<th>對應端點</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vd_report</code></td>
+<td><code>/api/v1/external/vd-report</code></td>
+</tr>
+<tr>
+<td><code>congestion_report</code></td>
+<td><code>/api/v1/external/congestion-report</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response：</strong></p>
+<pre><code class="language-json">{
+  &quot;status&quot;: &quot;success&quot;,
+  &quot;item&quot;: {
+    &quot;id&quot;: 1,
+    &quot;name&quot;: &quot;交通局正式環境&quot;,
+    &quot;api_key&quot;: &quot;tvd_G3iEzmqVzvcGyDj2cndQqb0P5EMoDvDru3q3ngrmUZE&quot;,
+    &quot;key_prefix&quot;: &quot;tvd_G3iE&quot;,
+    &quot;scopes&quot;: [&quot;vd_report&quot;, &quot;congestion_report&quot;],
+    &quot;rate_limit_per_min&quot;: 60,
+    &quot;expires_at&quot;: &quot;2027-01-01T00:00:00+08:00&quot;
+  },
+  &quot;warning&quot;: &quot;此 API Key 僅顯示一次，請妥善保存&quot;
+}
+</code></pre>
+<blockquote>
+<p><strong>重要：</strong> <code>api_key</code> 欄位僅在建立時回傳一次，之後無法再查看。</p>
+</blockquote>
+<h3 id="api-keys">列出所有 API Keys</h3>
+<pre><code>GET /api/auth/api-keys
+</code></pre>
+<h3 id="api-key_3">更新 API Key</h3>
+<pre><code>PUT /api/auth/api-keys/{id}
+</code></pre>
+<p><strong>Request Body（皆為可選）：</strong></p>
+<pre><code class="language-json">{
+  &quot;name&quot;: &quot;新名稱&quot;,
+  &quot;scopes&quot;: [&quot;vd_report&quot;],
+  &quot;enabled&quot;: false,
+  &quot;rate_limit_per_min&quot;: 30
+}
+</code></pre>
+<h3 id="api-key_4">刪除 API Key</h3>
+<pre><code>DELETE /api/auth/api-keys/{id}
+</code></pre>
+<hr />
+<h2 id="_13">錯誤代碼</h2>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>HTTP</th>
+<th>說明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MISSING_API_KEY</code></td>
+<td>401</td>
+<td>未提供 X-API-Key Header</td>
+</tr>
+<tr>
+<td><code>INVALID_API_KEY</code></td>
+<td>401</td>
+<td>API Key 無效或已過期</td>
+</tr>
+<tr>
+<td><code>INSUFFICIENT_SCOPE</code></td>
+<td>403</td>
+<td>API Key 無此報表的存取權限</td>
+</tr>
+<tr>
+<td><code>RATE_LIMITED</code></td>
+<td>429</td>
+<td>超過速率限制</td>
+</tr>
+<tr>
+<td><code>INVALID_PARAMETER</code></td>
+<td>400</td>
+<td>參數錯誤（如時間格式不正確）</td>
+</tr>
+<tr>
+<td><code>RANGE_TOO_LARGE</code></td>
+<td>400</td>
+<td>查詢時間範圍超過限制</td>
+</tr>
+<tr>
+<td><code>TOO_MANY_RECORDS</code></td>
+<td>413</td>
+<td>結果超過 10,000 筆上限</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_14">使用範例</h2>
+<h3 id="python">Python</h3>
+<pre><code class="language-python">import requests
+
+API_KEY = &quot;tvd_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&quot;
+BASE = &quot;http://10.26.4.102:8000/api/v1/external&quot;
+
+# VD 報表 (JSON)
+resp = requests.get(f&quot;{BASE}/vd-report&quot;, headers={&quot;X-API-Key&quot;: API_KEY}, params={
+    &quot;start_time&quot;: &quot;2026-04-07T00:00:00+08:00&quot;,
+    &quot;end_time&quot;: &quot;2026-04-07T12:00:00+08:00&quot;,
+    &quot;interval&quot;: &quot;5m&quot;,
+})
+data = resp.json()
+print(f&quot;車流記錄: {len(data['data']['records'])} 筆&quot;)
+
+# 壅塞報表 (CSV 下載)
+resp = requests.get(f&quot;{BASE}/congestion-report&quot;, headers={&quot;X-API-Key&quot;: API_KEY}, params={
+    &quot;start_time&quot;: &quot;2026-04-07T00:00:00+08:00&quot;,
+    &quot;end_time&quot;: &quot;2026-04-07T12:00:00+08:00&quot;,
+    &quot;format&quot;: &quot;csv&quot;,
+})
+with open(&quot;congestion.csv&quot;, &quot;w&quot;) as f:
+    f.write(resp.text)
+</code></pre>
+<h3 id="curl">cURL</h3>
+<pre><code class="language-bash"># VD 報表 JSON
+curl -H &quot;X-API-Key: tvd_xxx...&quot; \
+  &quot;http://10.26.4.102:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&quot;
+
+# VD 報表 CSV 下載
+curl -H &quot;X-API-Key: tvd_xxx...&quot; -o vd_report.csv \
+  &quot;http://10.26.4.102:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&amp;format=csv&quot;
+
+# 壅塞報表
+curl -H &quot;X-API-Key: tvd_xxx...&quot; \
+  &quot;http://10.26.4.102:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&quot;
+</code></pre>
+<div class="foot">邊緣交通影像服務 · 機關平台對接交付件</div>
+</div></body></html>
