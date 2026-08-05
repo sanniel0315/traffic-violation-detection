@@ -16877,6 +16877,7 @@ const app=createApp({
                 if(!ok)return;
             }
             clearRoiEditorPoll();
+            if(_roiResizeObs){_roiResizeObs.disconnect();_roiResizeObs=null;}
             showPreviewModal.value=false;
             loadCameras();
         };
@@ -17006,7 +17007,46 @@ const app=createApp({
                 ctx.restore();
             }
         };
-        const initRoiCanvas=()=>{nextTick(()=>{const img=previewImg.value,c=roiCanvas.value;if(img&&c){c.width=img.clientWidth;c.height=img.clientHeight;c.style.width=img.clientWidth+'px';c.style.height=img.clientHeight+'px';c.style.left='50%';c.style.top='50%';c.style.transform='translate(-50%,-50%)';drawRoi();}});};
+        // ROI canvas 必須精確蓋在「影像實際顯示區域」上。
+        // .modal-video img 是 object-fit:contain — 影像等比縮放後置中、四周留白，
+        // 直接用 clientWidth/clientHeight 會把 canvas 撐到含留白的容器大小，
+        // ROI 就被拉伸到留白區而跑版(容器長寬比隨頁面/sidebar 內容改變，跑版程度也跟著變)。
+        let _roiResizeObs=null;
+        const initRoiCanvas=()=>{nextTick(()=>{
+            const img=previewImg.value,c=roiCanvas.value;
+            if(!img||!c)return;
+            const cw=img.clientWidth,ch=img.clientHeight;
+            const nw=img.naturalWidth,nh=img.naturalHeight;
+            let dw=cw,dh=ch;
+            if(nw>0&&nh>0&&cw>0&&ch>0){
+                const scale=Math.min(cw/nw,ch/nh);   // contain：取較小的縮放比
+                dw=Math.round(nw*scale);
+                dh=Math.round(nh*scale);
+            }
+            c.width=dw;c.height=dh;
+            c.style.width=dw+'px';c.style.height=dh+'px';
+            // canvas 與影像都是置中，兩者對齊
+            c.style.left='50%';c.style.top='50%';c.style.transform='translate(-50%,-50%)';
+            drawRoi();
+            // 容器尺寸變化(切換頁面使 sidebar 內容改變、視窗 resize)時重算，
+            // 否則 canvas 停留在舊尺寸 → ROI 位置與影像對不上
+            if(typeof ResizeObserver!=='undefined'&&!_roiResizeObs){
+                _roiResizeObs=new ResizeObserver(()=>{
+                    const im=previewImg.value,cv=roiCanvas.value;
+                    if(!im||!cv)return;
+                    const w=im.clientWidth,h=im.clientHeight;
+                    const n1=im.naturalWidth,n2=im.naturalHeight;
+                    if(!(w>0&&h>0&&n1>0&&n2>0))return;
+                    const s=Math.min(w/n1,h/n2);
+                    const tw=Math.round(n1*s),th=Math.round(n2*s);
+                    if(cv.width===tw&&cv.height===th)return;   // 沒變就不重畫
+                    cv.width=tw;cv.height=th;
+                    cv.style.width=tw+'px';cv.style.height=th+'px';
+                    drawRoi();
+                });
+                _roiResizeObs.observe(img);
+            }
+        });};
         const drawRoi=()=>{const c=roiCanvas.value;if(!c)return;const img=previewImg.value;const toCanvasPoint=(z,p)=>{const x=p?.[0]||0;const y=p?.[1]||0;if(z?.coord_space==='natural'&&z?.source_width&&z?.source_height){return [Math.round(x*c.width/z.source_width),Math.round(y*c.height/z.source_height)];}if(img?.naturalWidth&&img?.naturalHeight&&(x>c.width+1||y>c.height+1)){return [Math.round(x*c.width/img.naturalWidth),Math.round(y*c.height/img.naturalHeight)];}return [x,y];};const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);(previewCamera.value?.zones||[]).forEach(z=>{const pts=(z.points||[]).map(p=>toCanvasPoint(z,p));if(!pts.length)return;ctx.fillStyle=zoneColors[z.type]+'40';ctx.strokeStyle=zoneColors[z.type];ctx.lineWidth=2;ctx.beginPath();pts.forEach((p,i)=>{i===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1]);});ctx.closePath();ctx.fill();ctx.stroke();if(isInoutZone(z)&&pts.length>2)drawInoutEdges(ctx,z,pts);});if(roiPoints.value.length){ctx.fillStyle=zoneColors[roiType.value]+'40';ctx.strokeStyle=zoneColors[roiType.value];ctx.lineWidth=2;ctx.beginPath();roiPoints.value.forEach((p,i)=>{i===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1]);});if(roiPoints.value.length>2)ctx.closePath();ctx.fill();ctx.stroke();roiPoints.value.forEach((p,i)=>{ctx.beginPath();ctx.arc(p[0],p[1],5,0,Math.PI*2);ctx.fillStyle=zoneColors[roiType.value];ctx.fill();});}};
         const addRoiPoint=(e)=>{const r=roiCanvas.value.getBoundingClientRect();roiPoints.value.push([Math.round(e.clientX-r.left),Math.round(e.clientY-r.top)]);drawRoi();};
         const undoRoiPoint=()=>{roiPoints.value.pop();drawRoi();};
