@@ -488,6 +488,13 @@ async def create_camera(data: CameraCreate, db: Session = Depends(get_db)):
     db.add(c)
     db.commit()
     db.refresh(c)
+    # 明確寫入啟停狀態:不寫的話會沿用 feature_state.json 裡同 id 的殘留值
+    # (id 會被回收),導致新攝影機不被 watchdog 拉起、影片停在第一幀不播。
+    try:
+        from api.utils.feature_state import set_feature_state
+        set_feature_state("detection", c.id, bool(c.detection_enabled))
+    except Exception:
+        pass
     return _to_dict(c)
 
 
@@ -954,7 +961,48 @@ async def delete_camera(camera_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="攝影機不存在")
     db.delete(c)
     db.commit()
+    _teardown_camera_runtime(camera_id)
     return {"message": "已刪除"}
+
+
+def _teardown_camera_runtime(camera_id: int) -> None:
+    """攝影機刪除後,收掉它殘留的執行中服務與狀態。
+
+    不收的話有兩個問題:
+    1. worker 會繼續讀已刪除攝影機的來源(資源洩漏、log 噪音)
+    2. SQLite 的 id 會被回收,下一台重用同 id 的攝影機會撞上殘留的
+       detection_services[id](running=True) 而不啟動自己的 worker,
+       畫面就停在第一幀不會播;feature_state 的殘留值也會蓋掉預設值。
+    """
+    try:
+        from api.routes import stream as _stream
+        svc = _stream.detection_services.get(camera_id)
+        if svc is not None:
+            svc["running"] = False          # 讓 worker 迴圈自行結束
+            _stream.detection_services.pop(camera_id, None)
+        _stream._shared_frames.pop(camera_id, None)
+    except Exception:
+        pass
+    try:
+        from api.routes import congestion as _cong
+        csvc = _cong.congestion_services.get(camera_id)
+        if csvc is not None:
+            csvc["running"] = False
+            _cong.congestion_services.pop(camera_id, None)
+    except Exception:
+        pass
+    try:
+        from api.routes import lpr_stream as _lpr
+        task = _lpr._lpr_tasks.pop(camera_id, None)
+        if task is not None:
+            task.stop()
+    except Exception:
+        pass
+    try:
+        from api.utils.feature_state import clear_camera_state
+        clear_camera_state(camera_id)
+    except Exception:
+        pass
 
 
 @router.post("/{camera_id}/test")
