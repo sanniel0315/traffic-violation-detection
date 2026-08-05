@@ -91,9 +91,16 @@ def _service_watchdog():
                     svc = stream.detection_services.get(cam_id, {})
                     t = svc.get("_thread")
                     if t is not None and not t.is_alive():
+                        # thread 掛掉 → 清掉殘留狀態後重啟
                         stream.detection_services.pop(cam_id, None)
                         stream._start_detection_service(cam)
                         restarted.append(f"detection-{cam_id}")
+                    elif t is None and not svc.get("running"):
+                        # 從沒啟動過(例如剛上傳影片新建的攝影機) → 首次拉起，
+                        # 否則畫面會一直停在第一幀不會播。這裡不 pop，讓
+                        # _start_detection_service 自身的防重複判斷生效。
+                        stream._start_detection_service(cam)
+                        restarted.append(f"detection-{cam_id}(首次啟動)")
 
                 # --- LPR watchdog ---
                 want_lpr = get_feature_enabled("lpr", cam_id, default=False)

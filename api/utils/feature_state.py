@@ -61,6 +61,27 @@ def set_feature_state(feature: str, camera_id: int, enabled: bool) -> None:
         _save(state)
 
 
+def clear_camera_state(camera_id: int) -> None:
+    """攝影機刪除時清掉它在所有 feature 的殘留狀態。
+
+    SQLite 的 id 會被回收再利用,舊記錄留著的話新攝影機會直接繼承前一台的
+    啟停狀態 — 例如上傳影片新建的攝影機拿到被回收的 id、而該 id 上次是
+    false,watchdog 就不會拉起它,畫面永遠停在第一幀不會播。
+    """
+    key = str(int(camera_id))
+    with _LOCK:
+        state = _load()
+        feats = state.get("features", {})
+        touched = False
+        for name in ("detection", "congestion", "lpr"):
+            val = feats.get(name)
+            if isinstance(val, dict) and key in val:
+                val.pop(key, None)
+                touched = True
+        if touched:
+            _save(state)
+
+
 def get_feature_state(feature: str) -> Dict[int, bool]:
     with _LOCK:
         state = _load()
