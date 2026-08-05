@@ -2149,9 +2149,14 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 # 30s 對快速通過 ROI 仍是 1 車 1 筆；塞車中 30s 也只 1 筆 (ID swap
                 # 偵測會清狀態，新 track 視為新車重新算)。
                 _EVENT_LOG_COOLDOWN = 30.0
+                # INOUT「進出」框:改由下方「進框轉場」計數,一般迴圈要跳過這些框
+                _inout_zones = [z for z in det_zones if _normalize_event_direction(z.get("direction")) == "INOUT"]
+                _inout_keys = {_zone_key(z) for z in _inout_zones}
                 for v in vehicles:
                     bbox = v.get("bbox", {}) or {}
                     hit_zones = _vehicle_hit_zones(v, det_zones)
+                    if _inout_keys:
+                        hit_zones = [z for z in hit_zones if _zone_key(z) not in _inout_keys]
                     if not hit_zones:
                         continue
                     pick_zone = hit_zones[0]
@@ -2199,6 +2204,54 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     )
                     rows.append(row)
                     row_to_vehicle.append(v)
+                # ---- INOUT「進出」框:進框發 IN 一筆、出框發 OUT(EXIT)一筆 ----
+                # 車「框外→框內」發 direction=IN;「框內→框外」發 direction=EXIT。
+                # EXIT 顯示為「出」、計入 out_flow,但不重複計入總流量(進框已計)→ 總=通過量。
+                if _inout_zones:
+                    for _v in vehicles:
+                        _tid = _v.get("track_id")
+                        if _tid is None:
+                            continue
+                        _tr = tracks.setdefault(_tid, {})
+                        _prev_in = _tr.get("_inout_inside") or set()
+                        _cur_in = set()
+                        for _z in _inout_zones:
+                            if _vehicle_hit_zones(_v, [_z]):
+                                _cur_in.add(_zone_key(_z))
+                        if _cur_in != _prev_in:
+                            _bb = _v.get("bbox", {}) or {}
+                            _sp = _v.get("speed_kmh")
+                            try:
+                                _spn = float(_sp)
+                            except Exception:
+                                _spn = None
+                            if _spn is None or _spn <= 0 or _spn >= _speed_clamp_max:
+                                _spv = None
+                            elif str(_v.get("speed_method") or "") in ("trip_wire", "trip_wire_median", "kalman", "homography"):
+                                _spv = _spn
+                            else:
+                                _spv = _spn if _spn < _speed_pixel_trust_max else None
+                            _lbl = str(_v.get("class_name", "unknown")).lower()
+                            _bbl = [_bb.get("x1"), _bb.get("y1"), _bb.get("x2"), _bb.get("y2")]
+                            for _zk, _dir in [(zk, "IN") for zk in (_cur_in - _prev_in)] + [(zk, "EXIT") for zk in (_prev_in - _cur_in)]:
+                                _z = next((_zz for _zz in _inout_zones if _zone_key(_zz) == _zk), None)
+                                if _z is None:
+                                    continue
+                                rows.append(TrafficEvent(
+                                    camera_id=int(camera_id), label=_lbl,
+                                    speed_kmh=_spv, occupancy=zone_occupancy_map.get(_zk),
+                                    lane_no=_parse_lane_no(_z), direction=_dir,
+                                    entered_zones=[str(_z.get("name") or "")],
+                                    bbox=_bbl, source="roi_detection",
+                                ))
+                                row_to_vehicle.append(_v)
+                        _tr["_inout_inside"] = _cur_in
+                    # 框內即時車數(= 目前有多少 track 在該框內),放進偵測狀態
+                    _occ = {}
+                    for _z in _inout_zones:
+                        _zk = _zone_key(_z)
+                        _occ[str(_z.get("name") or _zk)] = sum(1 for _t in tracks.values() if _zk in (_t.get("_inout_inside") or set()))
+                    detection_services[camera_id]["inout_occupancy"] = _occ
                 if rows:
                     db.add_all(rows)
                     db.commit()

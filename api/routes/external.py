@@ -89,7 +89,7 @@ def _vd_rows_to_records(rows: list, bucket: str) -> list:
             "avg_occupancy_pct": round(row.get("avgOccupancyPct") or 0, 1),
             "direction_counts": row.get("directionCounts") or {},
             "in_flow": int((row.get("directionCounts") or {}).get("IN", 0)) + int((row.get("directionCounts") or {}).get("INOUT", 0)),
-            "out_flow": int((row.get("directionCounts") or {}).get("OUT", 0)) + int((row.get("directionCounts") or {}).get("INOUT", 0)),
+            "out_flow": int((row.get("directionCounts") or {}).get("OUT", 0)) + int((row.get("directionCounts") or {}).get("EXIT", 0)) + int((row.get("directionCounts") or {}).get("INOUT", 0)),
             "avg_queue_length_m": round(row.get("avgQueueLengthM") or 0, 1) if row.get("avgQueueLengthM") else None,
             "max_queue_length_m": round(row.get("maxQueueLengthM") or 0, 1) if row.get("maxQueueLengthM") else None,
             "queue_duration_sec": round(row.get("queueDurationSec") or 0, 1) if row.get("queueDurationSec") else None,
