@@ -1689,7 +1689,8 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     _speed_calib_log = bool(detection_config.get("speed_calib_log"))
     tracks = {}
     next_track_id = 1
-    
+    _inout_exit_pending = []  # INOUT:離開畫面(track 被清)時仍在框內 → 待補發 EXIT 的 zone key
+
     frame_count = 0
     detection_count = 0
     
@@ -1902,7 +1903,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     now_ts = time.time()
                     stale_ids = [tid for tid, tr in tracks.items() if (now_ts - tr.get("t", now_ts)) > track_ttl_sec]
                     for tid in stale_ids:
-                        tracks.pop(tid, None)
+                        _st = tracks.pop(tid, None)
+                        if _st and _st.get("_inout_inside"):  # 車在框內就消失(離開畫面)→ 待補發 EXIT
+                            _inout_exit_pending.extend(_st.get("_inout_inside"))
                     # P1: 找能算出 homography 的 speed_zone (拿第一個)
                     # 改用「_get_zone_homography 回非 None」為條件,讓 helper 自己判 Form A/B:
                     #   Form A: zone.calibration = {points_pixel, width_m, length_m}
@@ -2252,6 +2255,21 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         _zk = _zone_key(_z)
                         _occ[str(_z.get("name") or _zk)] = sum(1 for _t in tracks.values() if _zk in (_t.get("_inout_inside") or set()))
                     detection_services[camera_id]["inout_occupancy"] = _occ
+                    # 離開畫面才出框的(track 清除時記下的)→ 這裡補發 EXIT 一筆
+                    if _inout_exit_pending:
+                        for _zk in _inout_exit_pending:
+                            _z = next((_zz for _zz in _inout_zones if _zone_key(_zz) == _zk), None)
+                            if _z is None:
+                                continue
+                            rows.append(TrafficEvent(
+                                camera_id=int(camera_id), label="unknown",
+                                speed_kmh=None, occupancy=None,
+                                lane_no=_parse_lane_no(_z), direction="EXIT",
+                                entered_zones=[str(_z.get("name") or "")],
+                                bbox=[None, None, None, None], source="roi_detection",
+                            ))
+                            row_to_vehicle.append({"bbox": {}})
+                        _inout_exit_pending.clear()
                 if rows:
                     db.add_all(rows)
                     db.commit()
