@@ -33,6 +33,55 @@ from api.utils.shutdown import shutdown_event
 
 router = APIRouter(prefix="/api/stream", tags=["串流"])
 
+
+# ---- INOUT 進出線幾何 (車流 ROI 上指定哪條邊算進、哪條邊算出) ----
+def _vehicle_center(vehicle: dict):
+    """車輛 bbox 中心點(跟 zone 內外判定用的是同一個點)。"""
+    b = vehicle.get("bbox", {}) or {}
+    return (
+        int((b.get("x1", 0) + b.get("x2", 0)) / 2),
+        int((b.get("y1", 0) + b.get("y2", 0)) / 2),
+    )
+
+
+def _zone_edge_segment(zone: dict, edge_idx):
+    """取 ROI 多邊形第 edge_idx 條邊的線段 ((x1,y1),(x2,y2))。
+
+    邊 i 定義為 points[i] → points[(i+1) % n]，索引從 0 起算
+    (前端顯示為「邊1」= index 0)。edge_idx 為 None/空/超界時回 None，
+    代表這個 zone 沒指定進出線 → 沿用「整框進出」的舊行為。
+    """
+    if edge_idx is None or edge_idx == "":
+        return None
+    try:
+        i = int(edge_idx)
+    except (TypeError, ValueError):
+        return None
+    pts = zone.get("points", []) or []
+    n = len(pts)
+    if n < 3 or i < 0 or i >= n:
+        return None
+    a, b = pts[i], pts[(i + 1) % n]
+    try:
+        return ((float(a[0]), float(a[1])), (float(b[0]), float(b[1])))
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _seg_intersect(p1, p2, q1, q2) -> bool:
+    """線段 p1p2 是否與線段 q1q2 相交(標準 orientation 測試)。"""
+    def _orient(a, b, c) -> int:
+        v = (b[1] - a[1]) * (c[0] - b[0]) - (b[0] - a[0]) * (c[1] - b[1])
+        if v > 1e-9:
+            return 1
+        if v < -1e-9:
+            return 2
+        return 0
+    o1, o2 = _orient(p1, p2, q1), _orient(p1, p2, q2)
+    o3, o4 = _orient(q1, q2, p1), _orient(q1, q2, p2)
+    return o1 != o2 and o3 != o4
+
+
 # 偵測服務狀態
 detection_services: Dict[int, dict] = {}
 # detection 服務共享最新 frame 給 overlay（避免 NX 串流開第二條連線）
@@ -751,10 +800,34 @@ def _touch_http_mjpeg_worker(state: dict | None) -> None:
         state["last_consumer_ts"] = time.time()
 
 
+_VIDEO_FILE_EXTS = (".mp4", ".mkv", ".mov", ".avi", ".webm")
+
+
+def _is_file_backed_source(source) -> bool:
+    """來源是不是「上傳的影片檔」(而非 RTSP/NVR 攝影機)。
+
+    影片檔來源跟 frigate/go2rtc 裡的 cam_{id} 串流沒有任何關係，
+    絕對不可以套用 camera_id → cam_{id} 的 fallback：只要 frigate 剛好
+    有同編號的攝影機，畫面就會變成那台的即時影像，而不是使用者選的檔案。
+    (實例：某台 clone 機 camera id=2 綁上傳的 .mov，卻一直播出 frigate
+     cam_2 隧道口的即時畫面。)
+    """
+    text = str(source or "").strip().lower()
+    if not text:
+        return False
+    if "/files/" in text:
+        return True
+    path = text.split("?", 1)[0].split("#", 1)[0]
+    return path.endswith(_VIDEO_FILE_EXTS)
+
+
 def _try_frigate_snapshot(source: str, camera_id: int = None):
     """嘗試透過 Frigate latest.jpg API 取得截圖（適用於 Frigate/go2rtc 管理的串流）。
     優先用 camera_id → cam_{id} 對應 frigate stream name；source URL 解析為 fallback。
     """
+    # 檔案來源不吃 cam_{id} fallback，否則會播成同編號的別台攝影機
+    if _is_file_backed_source(source):
+        return None
     candidates = []
     if camera_id is not None:
         candidates.append(f"cam_{camera_id}")
@@ -816,7 +889,8 @@ def _capture_snapshot_bytes(source: str, camera_id: int = None, overlay_zones: l
         return frigate_jpg
     # go2rtc HTTP frame.jpeg fallback：cv2 對 idle/半死攝影機處理不好，
     # go2rtc 已維持 stream session 可直接給 frame。stream 名稱用 cam_{id} 對應 go2rtc.yaml。
-    if camera_id is not None:
+    # 同 frigate：檔案來源不適用，跳過才不會播成同編號的別台攝影機。
+    if camera_id is not None and not _is_file_backed_source(source):
         try:
             resp = requests.get(
                 f"http://127.0.0.1:1984/api/frame.jpeg?src=cam_{camera_id}",
@@ -1179,7 +1253,7 @@ def generate_frames_overlay(
                     ret, frame = cap.read()
         # frigate/go2rtc fallback：cap.read / _shared_frames 都拿不到時，
         # 試 frigate latest.jpg（很快）或 go2rtc frame.jpeg（較慢），throttle 0.15s ~ 6fps
-        if not ret and camera_id is not None:
+        if not ret and camera_id is not None and not _is_file_backed_source(source):
             _now_fb = time.time()
             if (_now_fb - globals().setdefault('_live_fb_last', {}).get(camera_id, 0.0)) > 0.15:
                 _live_fb_jpg = _try_frigate_snapshot(source, camera_id=camera_id)
@@ -2210,6 +2284,11 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 # ---- INOUT「進出」框:進框發 IN 一筆、出框發 OUT(EXIT)一筆 ----
                 # 車「框外→框內」發 direction=IN;「框內→框外」發 direction=EXIT。
                 # EXIT 顯示為「出」、計入 out_flow,但不重複計入總流量(進框已計)→ 總=通過量。
+                #
+                # 邊線模式:zone 若有設 in_edge / out_edge(ROI 多邊形的邊索引),
+                # 則車輛必須「實際跨越那條邊」才計數 — 用前一幀中心點到本幀中心點
+                # 的移動線段與該邊做相交測試。從其他邊進出的車不計入,避免同一個
+                # ROI 兩側都在灌數。沒設邊索引的 zone 維持舊行為(整框進出都算)。
                 if _inout_zones:
                     for _v in vehicles:
                         _tid = _v.get("track_id")
@@ -2221,6 +2300,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         for _z in _inout_zones:
                             if _vehicle_hit_zones(_v, [_z]):
                                 _cur_in.add(_zone_key(_z))
+                        _cur_pt = _vehicle_center(_v)
+                        _prev_pt = _tr.get("_inout_pt")
+                        _tr["_inout_pt"] = _cur_pt
                         if _cur_in != _prev_in:
                             _bb = _v.get("bbox", {}) or {}
                             _sp = _v.get("speed_kmh")
@@ -2240,6 +2322,15 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                 _z = next((_zz for _zz in _inout_zones if _zone_key(_zz) == _zk), None)
                                 if _z is None:
                                     continue
+                                # 有指定進/出線 → 這一步移動必須真的跨過那條邊才計數
+                                _edge = _zone_edge_segment(
+                                    _z, _z.get("in_edge") if _dir == "IN" else _z.get("out_edge")
+                                )
+                                if _edge is not None:
+                                    if _prev_pt is None:
+                                        continue  # 首次出現、沒有前一點可連線 → 無法判定跨線
+                                    if not _seg_intersect(_prev_pt, _cur_pt, _edge[0], _edge[1]):
+                                        continue
                                 rows.append(TrafficEvent(
                                     camera_id=int(camera_id), label=_lbl,
                                     speed_kmh=_spv, occupancy=zone_occupancy_map.get(_zk),
@@ -2260,6 +2351,10 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         for _zk in _inout_exit_pending:
                             _z = next((_zz for _zz in _inout_zones if _zone_key(_zz) == _zk), None)
                             if _z is None:
+                                continue
+                            # 有指定出線時,「消失在畫面」不算跨越出線 → 不補發,
+                            # 否則沒走出線的車也會被算成 OUT。
+                            if _zone_edge_segment(_z, _z.get("out_edge")) is not None:
                                 continue
                             rows.append(TrafficEvent(
                                 camera_id=int(camera_id), label="unknown",
