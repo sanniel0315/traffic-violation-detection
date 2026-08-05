@@ -67,6 +67,24 @@ import time as _time
 _WATCHDOG_INTERVAL = 15  # 每 15 秒檢查一次
 
 
+def _mark_camera_online(db, cam) -> None:
+    """watchdog 拉起偵測後同步攝影機狀態。
+
+    camera.status 原本只在 detection/start 端點裡被設成 online,而 watchdog
+    是直接呼叫 _start_detection_service() 不經過端點 — 不補這一步的話,
+    watchdog 自動拉起的攝影機會正常運作但前端一直顯示「離線」。
+    """
+    try:
+        if str(getattr(cam, "status", "") or "") != "online":
+            cam.status = "online"
+            db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
 def _service_watchdog():
     """定期監控 detection / LPR / congestion 服務，掛掉自動重啟。"""
     from api.models import SessionLocal, Camera
@@ -101,6 +119,12 @@ def _service_watchdog():
                         # _start_detection_service 自身的防重複判斷生效。
                         stream._start_detection_service(cam)
                         restarted.append(f"detection-{cam_id}(首次啟動)")
+                    # 每輪對帳:偵測確實在跑就把狀態補成 online。
+                    # 不能只在「本輪剛啟動」時做 — 服務啟動時 resume 拉起的
+                    # 攝影機不會經過上面任一分支,狀態會一直卡在 offline。
+                    live = stream.detection_services.get(cam_id, {}).get("_thread")
+                    if live is not None and live.is_alive():
+                        _mark_camera_online(db, cam)
 
                 # --- LPR watchdog ---
                 want_lpr = get_feature_enabled("lpr", cam_id, default=False)
