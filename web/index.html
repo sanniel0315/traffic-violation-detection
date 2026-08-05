@@ -8762,9 +8762,28 @@
                                         <select
                                             v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')"
                                             v-model="item.zone.direction"
+                                            @change="drawRoi"
                                             class="stats-native-select"
                                             style="width:110px">
                                             <option v-for="opt in directionOptionsForZone(item.zone)" :key="`flow-dir-${item.index}-${opt.value||'none'}`" :value="opt.value">{{ opt.label }}</option>
+                                        </select>
+                                        <span v-if="showInoutEdgePicker(item.zone)" style="font-size:12px;color:#16a34a;font-weight:700">進線</span>
+                                        <select
+                                            v-if="showInoutEdgePicker(item.zone)"
+                                            v-model="item.zone.in_edge"
+                                            @change="drawRoi"
+                                            class="stats-native-select"
+                                            style="width:92px">
+                                            <option v-for="opt in zoneEdgeOptions(item.zone)" :key="`in-edge-${item.index}-${opt.value}`" :value="opt.value">{{ opt.label }}</option>
+                                        </select>
+                                        <span v-if="showInoutEdgePicker(item.zone)" style="font-size:12px;color:#dc2626;font-weight:700">出線</span>
+                                        <select
+                                            v-if="showInoutEdgePicker(item.zone)"
+                                            v-model="item.zone.out_edge"
+                                            @change="drawRoi"
+                                            class="stats-native-select"
+                                            style="width:92px">
+                                            <option v-for="opt in zoneEdgeOptions(item.zone)" :key="`out-edge-${item.index}-${opt.value}`" :value="opt.value">{{ opt.label }}</option>
                                         </select>
                                         <span v-if="page==='speed_detection' && ['speed','speed_roi','speed_line_in','speed_line_out'].includes(String(item.zone.type||''))" style="font-size:12px;color:#64748b">車道編號</span>
                                         <el-input-number
@@ -14080,6 +14099,29 @@ const app=createApp({
             };
             return map[k] || directionLabel(k);
         };
+        // ---- 車流 ROI 進出線 ----
+        // 邊 i = points[i] → points[(i+1)%n]，UI 顯示為「邊1」起算(對應 index 0)。
+        // canvas 會在每條邊中點畫同一組編號，使用者照號碼選即可。
+        const zoneEdgeOptions=(zone)=>{
+            const pts=Array.isArray(zone?.points)?zone.points:[];
+            const n=pts.length;
+            if(n<3)return [];
+            const opts=[{label:'未指定',value:''}];
+            for(let i=0;i<n;i++)opts.push({label:`邊${i+1}`,value:i});
+            return opts;
+        };
+        const isInoutZone=(zone)=>String(zone?.direction||'')==='INOUT';
+        // 只有「車流設定頁 + 車流 ROI + 方向選進出(INOUT)」才顯示進出線選擇器
+        const showInoutEdgePicker=(zone)=>page.value==='traffic_flow_settings'
+            && ['flow_detection','detection'].includes(String(zone?.type||''))
+            && isInoutZone(zone);
+        // 邊索引正規化:'' / null → null(未指定,沿用整框進出)
+        const normalizeEdgeIndex=(v,pointCount)=>{
+            if(v===''||v===null||v===undefined)return null;
+            const i=Number(v);
+            if(!Number.isInteger(i) || i<0 || i>=Number(pointCount||0))return null;
+            return i;
+        };
         const monitorZoneOverlayItems=(camera)=>{
             const zones=Array.isArray(camera?.zones)?camera.zones:[];
             return zones.map((zone, idx)=>{
@@ -14282,7 +14324,10 @@ const app=createApp({
                     ? z.vehicle_types.map(v=>String(v||'')).filter(Boolean)
                     : (z?.vehicle_type ? [String(z.vehicle_type)] : []),
                 speed_limit: Number(z?.speed_limit||0) || null,
-                overspeed_kmh: Number(z?.overspeed_kmh||0) || null
+                overspeed_kmh: Number(z?.overspeed_kmh||0) || null,
+                // 進出線邊索引:DB 存 null/數字,select 需要 '' 或數字才對得上 option
+                in_edge: normalizeEdgeIndex(z?.in_edge,(z?.points||[]).length) ?? '',
+                out_edge: normalizeEdgeIndex(z?.out_edge,(z?.points||[]).length) ?? ''
             }));
         };
         
@@ -16864,6 +16909,18 @@ const app=createApp({
                     z.lane_tags=normalized.lane_tags;
                     z.lane_no=normalized.lane_no;
                     z.direction=normalized.direction;
+                    // 進出線:只有 INOUT 方向才留邊索引,換成別的方向就清掉避免殘留
+                    if(isInoutZone(z)){
+                        const pc=(z.points||[]).length;
+                        z.in_edge=normalizeEdgeIndex(z.in_edge,pc);
+                        z.out_edge=normalizeEdgeIndex(z.out_edge,pc);
+                        if(z.in_edge!==null && z.in_edge===z.out_edge){
+                            throw new Error('進線與出線不可為同一條邊');
+                        }
+                    }else{
+                        z.in_edge=null;
+                        z.out_edge=null;
+                    }
                     let {missingLanes,missingDirs,conflicts}=buildTrafficLaneDirectionMap(zones,true);
                     if(missingLanes.length){
                         throw new Error(`車流區缺少車道編號：${Array.from(new Set(missingLanes)).join('、')}`);
@@ -16921,8 +16978,36 @@ const app=createApp({
             }
         };
         
+        // 在 ROI 多邊形上標邊號,並把設為進線/出線的那條邊加粗上色(綠=進、紅=出)
+        const drawInoutEdges=(ctx,zone,pts)=>{
+            const n=pts.length;
+            const inIdx=normalizeEdgeIndex(zone.in_edge,n);
+            const outIdx=normalizeEdgeIndex(zone.out_edge,n);
+            for(let i=0;i<n;i++){
+                const a=pts[i],b=pts[(i+1)%n];
+                const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2;
+                const isIn=(i===inIdx),isOut=(i===outIdx);
+                if(isIn||isOut){
+                    ctx.save();
+                    ctx.strokeStyle=isIn?'#16a34a':'#dc2626';
+                    ctx.lineWidth=6;ctx.lineCap='round';
+                    ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+                    ctx.restore();
+                }
+                const label=isIn?`${i+1} IN`:(isOut?`${i+1} OUT`:String(i+1));
+                ctx.save();
+                ctx.font='bold 12px sans-serif';
+                ctx.textAlign='center';ctx.textBaseline='middle';
+                const w=ctx.measureText(label).width+8;
+                ctx.fillStyle=isIn?'#16a34a':(isOut?'#dc2626':'rgba(15,23,42,0.72)');
+                ctx.fillRect(mx-w/2,my-9,w,18);
+                ctx.fillStyle='#fff';
+                ctx.fillText(label,mx,my);
+                ctx.restore();
+            }
+        };
         const initRoiCanvas=()=>{nextTick(()=>{const img=previewImg.value,c=roiCanvas.value;if(img&&c){c.width=img.clientWidth;c.height=img.clientHeight;c.style.width=img.clientWidth+'px';c.style.height=img.clientHeight+'px';c.style.left='50%';c.style.top='50%';c.style.transform='translate(-50%,-50%)';drawRoi();}});};
-        const drawRoi=()=>{const c=roiCanvas.value;if(!c)return;const img=previewImg.value;const toCanvasPoint=(z,p)=>{const x=p?.[0]||0;const y=p?.[1]||0;if(z?.coord_space==='natural'&&z?.source_width&&z?.source_height){return [Math.round(x*c.width/z.source_width),Math.round(y*c.height/z.source_height)];}if(img?.naturalWidth&&img?.naturalHeight&&(x>c.width+1||y>c.height+1)){return [Math.round(x*c.width/img.naturalWidth),Math.round(y*c.height/img.naturalHeight)];}return [x,y];};const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);(previewCamera.value?.zones||[]).forEach(z=>{const pts=(z.points||[]).map(p=>toCanvasPoint(z,p));if(!pts.length)return;ctx.fillStyle=zoneColors[z.type]+'40';ctx.strokeStyle=zoneColors[z.type];ctx.lineWidth=2;ctx.beginPath();pts.forEach((p,i)=>{i===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1]);});ctx.closePath();ctx.fill();ctx.stroke();});if(roiPoints.value.length){ctx.fillStyle=zoneColors[roiType.value]+'40';ctx.strokeStyle=zoneColors[roiType.value];ctx.lineWidth=2;ctx.beginPath();roiPoints.value.forEach((p,i)=>{i===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1]);});if(roiPoints.value.length>2)ctx.closePath();ctx.fill();ctx.stroke();roiPoints.value.forEach((p,i)=>{ctx.beginPath();ctx.arc(p[0],p[1],5,0,Math.PI*2);ctx.fillStyle=zoneColors[roiType.value];ctx.fill();});}};
+        const drawRoi=()=>{const c=roiCanvas.value;if(!c)return;const img=previewImg.value;const toCanvasPoint=(z,p)=>{const x=p?.[0]||0;const y=p?.[1]||0;if(z?.coord_space==='natural'&&z?.source_width&&z?.source_height){return [Math.round(x*c.width/z.source_width),Math.round(y*c.height/z.source_height)];}if(img?.naturalWidth&&img?.naturalHeight&&(x>c.width+1||y>c.height+1)){return [Math.round(x*c.width/img.naturalWidth),Math.round(y*c.height/img.naturalHeight)];}return [x,y];};const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);(previewCamera.value?.zones||[]).forEach(z=>{const pts=(z.points||[]).map(p=>toCanvasPoint(z,p));if(!pts.length)return;ctx.fillStyle=zoneColors[z.type]+'40';ctx.strokeStyle=zoneColors[z.type];ctx.lineWidth=2;ctx.beginPath();pts.forEach((p,i)=>{i===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1]);});ctx.closePath();ctx.fill();ctx.stroke();if(isInoutZone(z)&&pts.length>2)drawInoutEdges(ctx,z,pts);});if(roiPoints.value.length){ctx.fillStyle=zoneColors[roiType.value]+'40';ctx.strokeStyle=zoneColors[roiType.value];ctx.lineWidth=2;ctx.beginPath();roiPoints.value.forEach((p,i)=>{i===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1]);});if(roiPoints.value.length>2)ctx.closePath();ctx.fill();ctx.stroke();roiPoints.value.forEach((p,i)=>{ctx.beginPath();ctx.arc(p[0],p[1],5,0,Math.PI*2);ctx.fillStyle=zoneColors[roiType.value];ctx.fill();});}};
         const addRoiPoint=(e)=>{const r=roiCanvas.value.getBoundingClientRect();roiPoints.value.push([Math.round(e.clientX-r.left),Math.round(e.clientY-r.top)]);drawRoi();};
         const undoRoiPoint=()=>{roiPoints.value.pop();drawRoi();};
         const clearRoi=()=>{roiPoints.value=[];drawRoi();};
@@ -16968,11 +17053,7 @@ const app=createApp({
                     body:JSON.stringify({zones})
                 });
                 const d=await r.json();
-                if(d.zones){
-                    previewCamera.value.zones=d.zones;
-                }else{
-                    previewCamera.value.zones=zones;
-                }
+                previewCamera.value.zones=normalizeZones(d.zones||zones);
                 roiPoints.value=[];
                 roiName.value="";
                 drawRoi();
@@ -18327,7 +18408,7 @@ const app=createApp({
         return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,radarCameraId,radarTracks,radarStats,radarDotColor,radarClassZh,radarInsights,loadRadarTracks,visionEyeUrl,onVisionEyeError,trackHistory,parkingSources,parkingSource,parkingData,parkingSnapshotUrl,parkingRawSnapshotUrl,parkingImgEl,pmRect,pmLabel,pmDown,pmMove,pmUp,parkingShowVerify,parkingShowBoxes,parkingShowVehicles,parkingUseStream,vlmStatus,vlmResult,vlmQuerying,loadVlmStatus,triggerVlmLoad,askVlm,assistantOpen,toggleAssistant,assistantZoomImg,assistantPanelStyle,assistantDragStart,assistantSource,assistantMessages,assistantInput,assistantLoading,assistantSnapUrl,assistantSources,reloadAssistantSnap,sendAssistant,assistantPresets,assistantTTS,assistantListening,quickAsk,assistantVoiceInput,loadParkingSources,loadParkingOccupancy,openParkingEditor,downloadParkingSnapshot,openParkingLabel,parkingLiveRunning,parkingIntervalMs,parkingShowAdd,parkingAddForm,startParkingLive,stopParkingLive,addParkingSource,twipcamQuery,twipcamResults,twipcamSearching,searchTwipcam,pickTwipcam,parkingHistory,loadParkingHistory,parkingTrendPath,parkingCounting,parkingCountingMismatch,parkingCrossValidation,parkingCrossCalibrated,parkingCrossEscalated,parkingCrossHasArea,parkingCrossSuspect,parkingCrossTrend,loadParkingCounting,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewLocations,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,previewParkingZones,previewParkingZoneCount,parkingSubKindOptions,applyParkingSubKindToZone,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedPlateIsInferred,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,detailClipRetrying,detailClipReloadKey,onDetailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
-            load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneEdgeOptions,showInoutEdgePicker,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory};
     }
