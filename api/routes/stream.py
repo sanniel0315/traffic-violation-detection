@@ -1783,7 +1783,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         if lower in ("unknown", "-", "--", "n/a"):
             return "straight"
         upper = text.upper()
-        if upper in ("IN", "OUT", "N2S", "S2N", "E2W", "W2E"):
+        if upper in ("IN", "OUT", "INOUT", "N2S", "S2N", "E2W", "W2E"):
             return upper
         if "左" in text:
             return "left"
