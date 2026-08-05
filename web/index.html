@@ -8767,24 +8767,27 @@
                                             style="width:110px">
                                             <option v-for="opt in directionOptionsForZone(item.zone)" :key="`flow-dir-${item.index}-${opt.value||'none'}`" :value="opt.value">{{ opt.label }}</option>
                                         </select>
-                                        <span v-if="showInoutEdgePicker(item.zone)" style="font-size:12px;color:#16a34a;font-weight:700">進線</span>
+                                        <span v-if="showInoutEdgePicker(item.zone)" :style="{fontSize:'12px',fontWeight:700,color:isInoutZone(item.zone)?'#16a34a':'#94a3b8'}">進線</span>
                                         <select
                                             v-if="showInoutEdgePicker(item.zone)"
                                             v-model="item.zone.in_edge"
+                                            :disabled="!isInoutZone(item.zone)"
                                             @change="drawRoi"
                                             class="stats-native-select"
                                             style="width:92px">
                                             <option v-for="opt in zoneEdgeOptions(item.zone)" :key="`in-edge-${item.index}-${opt.value}`" :value="opt.value">{{ opt.label }}</option>
                                         </select>
-                                        <span v-if="showInoutEdgePicker(item.zone)" style="font-size:12px;color:#dc2626;font-weight:700">出線</span>
+                                        <span v-if="showInoutEdgePicker(item.zone)" :style="{fontSize:'12px',fontWeight:700,color:isInoutZone(item.zone)?'#dc2626':'#94a3b8'}">出線</span>
                                         <select
                                             v-if="showInoutEdgePicker(item.zone)"
                                             v-model="item.zone.out_edge"
+                                            :disabled="!isInoutZone(item.zone)"
                                             @change="drawRoi"
                                             class="stats-native-select"
                                             style="width:92px">
                                             <option v-for="opt in zoneEdgeOptions(item.zone)" :key="`out-edge-${item.index}-${opt.value}`" :value="opt.value">{{ opt.label }}</option>
                                         </select>
+                                        <span v-if="showInoutEdgePicker(item.zone) && !isInoutZone(item.zone)" style="font-size:11px;color:#f59e0b">← 行車方向先選「進出(IN/OUT)」才能設，且才會產生 VD 報表的進/出流量</span>
                                         <span v-if="page==='speed_detection' && ['speed','speed_roi','speed_line_in','speed_line_out'].includes(String(item.zone.type||''))" style="font-size:12px;color:#64748b">車道編號</span>
                                         <el-input-number
                                             v-if="page==='speed_detection' && ['speed','speed_roi','speed_line_in','speed_line_out'].includes(String(item.zone.type||''))"
@@ -14111,10 +14114,12 @@ const app=createApp({
             return opts;
         };
         const isInoutZone=(zone)=>String(zone?.direction||'')==='INOUT';
-        // 只有「車流設定頁 + 車流 ROI + 方向選進出(INOUT)」才顯示進出線選擇器
+        // 車流設定頁的車流 ROI 一律顯示進出線選擇器,不再要求方向已是 INOUT。
+        // 原本藏起來會讓人以為沒這功能 — 框好 ROI 後方向預設是「直行」,
+        // 使用者不會知道要先改方向才看得到進出線設定。改成一直可見、
+        // 方向不是「進出(IN/OUT)」時 disable 並在旁邊說明原因。
         const showInoutEdgePicker=(zone)=>page.value==='traffic_flow_settings'
-            && ['flow_detection','detection'].includes(String(zone?.type||''))
-            && isInoutZone(zone);
+            && ['flow_detection','detection'].includes(String(zone?.type||''));
         // 邊索引正規化:'' / null → null(未指定,沿用整框進出)
         const normalizeEdgeIndex=(v,pointCount)=>{
             if(v===''||v===null||v===undefined)return null;
