@@ -7152,8 +7152,8 @@
                                         <td>{{ row.directionText }}</td>
                                         <td>{{ row.laneCount }}</td>
                                         <td>{{ row.totalFlow }}</td>
-                                        <td>{{ row.directionCounts?.IN || 0 }}</td>
-                                        <td>{{ row.directionCounts?.OUT || 0 }}</td>
+                                        <td>{{ (row.directionCounts?.IN || 0) + (row.directionCounts?.INOUT || 0) }}</td>
+                                        <td>{{ (row.directionCounts?.OUT || 0) + (row.directionCounts?.INOUT || 0) }}</td>
                                         <td>{{ row.avgSpeed==null?'-':row.avgSpeed.toFixed(1) }}</td>
                                         <td>{{ row.avgOccupancyPct==null?'-':row.avgOccupancyPct.toFixed(1) }}</td>
                                         <td>{{ formatQueueLengthCell(row.maxQueueLengthM,'-') }}</td>
@@ -12813,8 +12813,8 @@ const app=createApp({
                 {label:'方向',value:(row)=>String(row?.directionText||'-')},
                 {label:'車道數',value:(row)=>formatVdIntegerCell(row?.laneCount,'0')},
                 {label:'總流量',value:(row)=>formatVdIntegerCell(row?.totalFlow,'0')},
-                {label:'進(IN)',value:(row)=>String((row?.directionCounts||{}).IN||0)},
-                {label:'出(OUT)',value:(row)=>String((row?.directionCounts||{}).OUT||0)},
+                {label:'進(IN)',value:(row)=>String(((row?.directionCounts||{}).IN||0)+((row?.directionCounts||{}).INOUT||0))},
+                {label:'出(OUT)',value:(row)=>String(((row?.directionCounts||{}).OUT||0)+((row?.directionCounts||{}).INOUT||0))},
                 {label:'平均速度',value:(row)=>formatVdNumberCell(row?.avgSpeed,1,'-')},
                 {label:'平均占量(%)',value:(row)=>formatVdNumberCell(row?.avgOccupancyPct,1,'-')},
                 {label:'最大估計排隊長度(m)',value:(row)=>formatQueueLengthCell(row?.maxQueueLengthM,'-')},
@@ -13996,6 +13996,7 @@ const app=createApp({
         const speedZoneTypes=['speed','speed_roi','speed_line_in','speed_line_out'];
         const flowDirectionOptions=[
             {label:'未指定',value:''},
+            {label:'進出(IN/OUT)',value:'INOUT'},
             {label:'進場(IN)',value:'IN'},
             {label:'出場(OUT)',value:'OUT'},
             {label:'左轉',value:'left'},
@@ -14053,6 +14054,7 @@ const app=createApp({
             right:'右轉',
             IN:'IN',
             OUT:'OUT',
+            INOUT:'進出',
             N2S:'北向南',
             S2N:'南向北',
             E2W:'東向西',
@@ -14069,7 +14071,8 @@ const app=createApp({
                 E2W:'← 東向西',
                 W2E:'→ 西向東',
                 IN:'↘ IN',
-                OUT:'↗ OUT'
+                OUT:'↗ OUT',
+                INOUT:'⇅ 進出'
             };
             return map[k] || directionLabel(k);
         };

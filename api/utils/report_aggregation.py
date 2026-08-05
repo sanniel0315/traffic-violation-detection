@@ -103,6 +103,7 @@ def direction_label(value: str | None) -> str:
         "right": "右轉",
         "IN": "IN",
         "OUT": "OUT",
+        "INOUT": "進出",
         "N2S": "北向南",
         "S2N": "南向北",
         "E2W": "東向西",
@@ -113,7 +114,7 @@ def direction_label(value: str | None) -> str:
 def normalize_direction(value: str | None) -> str:
     raw = str(value or "").strip()
     upper = raw.upper()
-    if upper in {"IN", "OUT", "N2S", "S2N", "E2W", "W2E"}:
+    if upper in {"IN", "OUT", "INOUT", "N2S", "S2N", "E2W", "W2E"}:
         return upper
     lower = raw.lower()
     if "left" in lower or "左" in lower:
