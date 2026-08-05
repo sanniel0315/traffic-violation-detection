@@ -14291,7 +14291,14 @@ const app=createApp({
             return '';
         };
         const parseLaneNoFromAny=(z={})=>{
-            const candidates=[z?.lane_no, z?.lane_id, z?.laneNo, z?.lane, z?.name];
+            // 車速進出線不可以用「名稱」推導車道編號:新建 ROI 的預設名稱帶的是
+            // 建立流水號(車速進入線2 / 車速離開線3),進線與出線的建立順序必然不同,
+            // 用它推出來的 lane_no 也必然不同 → _find_trip_wire_pair 用相同 lane_no
+            // 配對進出線,就永遠配不成對、跨線測速安靜失效。這兩類一律由使用者指定。
+            const _t=String(z?.type||'');
+            const _lineType=(_t==='speed_line_in'||_t==='speed_line_out');
+            const candidates=[z?.lane_no, z?.lane_id, z?.laneNo, z?.lane];
+            if(!_lineType)candidates.push(z?.name);
             for(const raw of candidates){
                 if(raw===null || raw===undefined || raw==='')continue;
                 const m=String(raw).trim().match(/(\d+)/);
