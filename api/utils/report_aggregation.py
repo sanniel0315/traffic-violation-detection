@@ -104,6 +104,7 @@ def direction_label(value: str | None) -> str:
         "IN": "IN",
         "OUT": "OUT",
         "INOUT": "進出",
+        "EXIT": "出",
         "N2S": "北向南",
         "S2N": "南向北",
         "E2W": "東向西",
@@ -114,7 +115,7 @@ def direction_label(value: str | None) -> str:
 def normalize_direction(value: str | None) -> str:
     raw = str(value or "").strip()
     upper = raw.upper()
-    if upper in {"IN", "OUT", "INOUT", "N2S", "S2N", "E2W", "W2E"}:
+    if upper in {"IN", "OUT", "INOUT", "EXIT", "N2S", "S2N", "E2W", "W2E"}:
         return upper
     lower = raw.lower()
     if "left" in lower or "左" in lower:
@@ -601,6 +602,10 @@ def build_vd_report_rows(
         row = ensure_row(device_id, agg.bucket_start)
         direction = normalize_direction(agg.direction)
         row["directionCounts"][direction] = row["directionCounts"].get(direction, 0) + int(agg.total_flow or 0)
+        if direction == "EXIT":
+            # 出框事件:只計入 out_flow(directionCounts),不重複進總流量/小大車/車道/速度
+            # (進框 IN 已計過這批車;單向下 IN=EXIT=通過量、總=通過量)
+            continue
         row["totalFlow"] += int(agg.total_flow or 0)
         row["smallFlow"] += int(agg.small_vehicle_flow or 0)
         row["largeFlow"] += int(agg.large_vehicle_flow or 0)

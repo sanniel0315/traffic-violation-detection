@@ -7153,7 +7153,7 @@
                                         <td>{{ row.laneCount }}</td>
                                         <td>{{ row.totalFlow }}</td>
                                         <td>{{ (row.directionCounts?.IN || 0) + (row.directionCounts?.INOUT || 0) }}</td>
-                                        <td>{{ (row.directionCounts?.OUT || 0) + (row.directionCounts?.INOUT || 0) }}</td>
+                                        <td>{{ (row.directionCounts?.OUT || 0) + (row.directionCounts?.EXIT || 0) + (row.directionCounts?.INOUT || 0) }}</td>
                                         <td>{{ row.avgSpeed==null?'-':row.avgSpeed.toFixed(1) }}</td>
                                         <td>{{ row.avgOccupancyPct==null?'-':row.avgOccupancyPct.toFixed(1) }}</td>
                                         <td>{{ formatQueueLengthCell(row.maxQueueLengthM,'-') }}</td>
@@ -12481,9 +12481,11 @@ const app=createApp({
                     );
                 }
                 const row=buckets[key];
-                row.totalFlow+=1;
                 const dirKey=String(ld?.direction||'unknown');
                 row.directionCounts[dirKey]=(row.directionCounts[dirKey]||0)+1;
+                // EXIT(出框)只計入 directionCounts 供 OUT 欄,不進總流量/小大車/車道/速度(進框 IN 已計)
+                if(dirKey.toUpperCase()==='EXIT') return;
+                row.totalFlow+=1;
                 const speedVal=parseSpeedVal(evt);
                 if(Number.isFinite(speedVal)&&speedVal>0){
                     row.smsReciprocalSum += (1/speedVal);
@@ -12814,7 +12816,7 @@ const app=createApp({
                 {label:'車道數',value:(row)=>formatVdIntegerCell(row?.laneCount,'0')},
                 {label:'總流量',value:(row)=>formatVdIntegerCell(row?.totalFlow,'0')},
                 {label:'進(IN)',value:(row)=>String(((row?.directionCounts||{}).IN||0)+((row?.directionCounts||{}).INOUT||0))},
-                {label:'出(OUT)',value:(row)=>String(((row?.directionCounts||{}).OUT||0)+((row?.directionCounts||{}).INOUT||0))},
+                {label:'出(OUT)',value:(row)=>String(((row?.directionCounts||{}).OUT||0)+((row?.directionCounts||{}).EXIT||0)+((row?.directionCounts||{}).INOUT||0))},
                 {label:'平均速度',value:(row)=>formatVdNumberCell(row?.avgSpeed,1,'-')},
                 {label:'平均占量(%)',value:(row)=>formatVdNumberCell(row?.avgOccupancyPct,1,'-')},
                 {label:'最大估計排隊長度(m)',value:(row)=>formatQueueLengthCell(row?.maxQueueLengthM,'-')},
@@ -14055,6 +14057,7 @@ const app=createApp({
             IN:'IN',
             OUT:'OUT',
             INOUT:'進出',
+            EXIT:'出',
             N2S:'北向南',
             S2N:'南向北',
             E2W:'東向西',
@@ -14072,7 +14075,8 @@ const app=createApp({
                 W2E:'→ 西向東',
                 IN:'↘ IN',
                 OUT:'↗ OUT',
-                INOUT:'⇅ 進出'
+                INOUT:'⇅ 進出',
+                EXIT:'↗ 出'
             };
             return map[k] || directionLabel(k);
         };
