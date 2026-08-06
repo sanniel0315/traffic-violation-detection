@@ -8678,7 +8678,7 @@
                                             <el-tag v-if="item.zone.direction" size="small" type="success">{{ directionArrowLabel(item.zone.direction) }}</el-tag>
                                             <el-tag size="small" type="warning">目前值 {{ Number(item.zone.speed_limit||60) }} km/h (+{{ Number(item.zone.overspeed_kmh||10) }})</el-tag>
                                             <span style="font-size:12px;color:#64748b">車道編號</span>
-                                            <el-input-number v-model="item.zone.lane_no" :min="1" :step="1" size="small" style="width:110px"/>
+                                            <el-input-number v-model="item.zone.lane_no" :min="1" :step="1" size="small" style="width:110px"></el-input-number>
                                             <span style="font-size:12px;color:#64748b">方向(依車流車道)</span>
                                             <el-tag v-if="Number(item.zone.lane_no)>0 && !item.zone.direction" size="small" type="danger">未綁定車流方向</el-tag>
                                         </div>
@@ -8721,7 +8721,7 @@
                                             <el-tag v-if="speedLineDirectionLabel(item.zone)" size="small" type="primary">{{ speedLineDirectionLabel(item.zone) }}</el-tag>
                                             <el-tag v-if="zoneLaneNoLabel(item.zone)" size="small" type="info">{{ zoneLaneNoLabel(item.zone) }}</el-tag>
                                             <span style="font-size:12px;color:#64748b">車道編號</span>
-                                            <el-input-number v-model="item.zone.lane_no" :min="1" :step="1" size="small" style="width:110px"/>
+                                            <el-input-number v-model="item.zone.lane_no" :min="1" :step="1" size="small" style="width:110px"></el-input-number>
                                             <span style="font-size:12px;color:#64748b">方向(依車流車道)</span>
                                             <el-tag v-if="Number(item.zone.lane_no)>0 && !item.zone.direction" size="small" type="danger">未綁定車流方向</el-tag>
                                         </div>
@@ -8781,13 +8781,16 @@
                                             <el-checkbox v-for="opt in flowVehicleOptions" :key="`flow-vt-${item.index}-${opt.value}`" :label="opt.value">{{ opt.label }}</el-checkbox>
                                         </el-checkbox-group>
                                         <span v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')" style="font-size:12px;color:#64748b">車道編號</span>
+                                        <!-- 自訂元素(el-*)在 DOM 模板中絕不可自閉合:HTML parser 不認得,
+                                             會把後面所有兄弟節點都吞進去 —— 這裡曾因此讓「行車方向」
+                                             與進出線選擇器整組消失。一律寫成對的結束標籤。 -->
                                         <el-input-number
                                             v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')"
                                             v-model="item.zone.lane_no"
                                             :min="1"
                                             :step="1"
                                             size="small"
-                                            style="width:110px"/>
+                                            style="width:110px"></el-input-number>
                                         <span v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')" style="font-size:12px;color:#64748b">行車方向</span>
                                         <select
                                             v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')"
@@ -8825,7 +8828,7 @@
                                             :min="1"
                                             :step="1"
                                             size="small"
-                                            style="width:110px"/>
+                                            style="width:110px"></el-input-number>
                                         <span v-if="page==='speed_detection' && ['speed','speed_roi','speed_line_in','speed_line_out'].includes(String(item.zone.type||''))" style="font-size:12px;color:#64748b">方向(依車流車道)</span>
                                         <el-tag
                                             v-if="page==='speed_detection' && ['speed','speed_roi','speed_line_in','speed_line_out'].includes(String(item.zone.type||'')) && Number(item.zone.lane_no)>0 && !item.zone.direction"
