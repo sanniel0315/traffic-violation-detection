@@ -1947,11 +1947,27 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         not _src_lc_outer.startswith(("rtsp://", "http://", "https://"))
         or _src_lc_outer.endswith((".mp4", ".mkv", ".mov", ".avi", ".webm"))
     )
+    # 每解碼 1 幀前先 grab() 跳過幾幀。0=不跳(逐幀解碼,既有行為)。
+    # 影片 30fps 但 worker 只用 10fps → 設 2 可省下約 2/3 的解碼 CPU。
+    try:
+        _decode_skip = max(0, int(detection_config.get("decode_skip_frames", 0) or 0))
+    except (TypeError, ValueError):
+        _decode_skip = 0
 
     def _reader_loop():
         nonlocal cap
         while detection_services.get(camera_id, {}).get('running', False) and not _latest["stop"]:
             try:
+                # 跳幀解碼:worker 只用 MAX_INFER_FPS(10) 的幀,但這裡若逐幀 read()
+                # 會把 30fps 全部解碼,其中三分之二直接丟掉。grab() 只讀封包不解碼,
+                # 成本極低;用它跳過不需要的幀，只對要用的那幀 read() 解碼。
+                # 檔案來源仍每幀 sleep，播放時間軸不變。
+                if _decode_skip > 0:
+                    for _ in range(_decode_skip):
+                        if not cap.grab():
+                            break
+                        if _is_file_source:
+                            time.sleep(0.033)
                 ret, frm = cap.read()
             except Exception:
                 ret, frm = False, None
