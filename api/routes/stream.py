@@ -1758,6 +1758,12 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     # 信任門檻（DB 寫入與超速開單共用）：飽和上限、純 pixel 可信上限
     _speed_clamp_max = float(detection_config.get("speed_clamp_max", 150.0) or 150.0)
     _speed_pixel_trust_max = float(detection_config.get("speed_pixel_trust_max", 100.0) or 100.0)
+    # 最小 bbox 面積(px²)。0=不過濾。用來砍掉遠端把路面標線誤判成車的小框；
+    # 每台攝影機視角不同，門檻要各自設，所以放在 detection_config 而非全域預設。
+    try:
+        _min_bbox_area = float(detection_config.get("min_bbox_area_px", 0) or 0)
+    except (TypeError, ValueError):
+        _min_bbox_area = 0.0
     # 車速精度校正記錄：開啟後 trip-wire 跨線測速時，額外記一筆
     # 「實測(GT) vs 視覺估算」供離線比對誤差、反推 speed_kmh_per_pxps。
     _speed_calib_log = bool(detection_config.get("speed_calib_log"))
@@ -1940,7 +1946,19 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     def _process_post_yolo(infer_frame, detections, cur_ts):
         nonlocal next_track_id, detection_count
         vehicles = [d for d in detections if d['class_name'] in ['car', 'motorcycle', 'truck', 'bus', 'heavy_truck', 'light_truck']]
-        
+
+        # 最小 bbox 面積過濾：砍掉遠端把路面標線/接縫誤判成車的小框。
+        # 那些框又小又固定在同一座標(靜止物特徵)，實測某支五車道攝影機
+        # 有 33% 偵測是這種小框。門檻由 detection_config.min_bbox_area_px 指定，
+        # 預設 0 = 不過濾(維持既有行為，不影響沒設定的攝影機)。
+        if vehicles and _min_bbox_area > 0:
+            vehicles = [
+                v for v in vehicles
+                if ((v.get('bbox') or {}).get('x2', 0) - (v.get('bbox') or {}).get('x1', 0))
+                   * ((v.get('bbox') or {}).get('y2', 0) - (v.get('bbox') or {}).get('y1', 0))
+                   >= _min_bbox_area
+            ]
+
         # ROI 區域過濾：只保留中心點在偵測區域內的車輛
         if vehicles and det_zones:
             if det_zones:
