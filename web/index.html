@@ -15163,6 +15163,18 @@ const app=createApp({
         const getDirectCameraSourceUrl=(camera,key)=>withCacheBust(camera?.source||'', key);
         const shouldUseDirectMonitorVideo=(camera)=>!camera?.monitorSnapshotMode && resolveCameraStreamMode(camera)==='raw' && isMp4Camera(camera);
         const getMonitorMediaKind=(camera)=>shouldUseDirectMonitorVideo(camera)?'video':'image';
+        // 串流 URL 的 cache-busting tick。
+        // 原本是 `camera._zoomReloadTick || streamKey`，但 _zoomReloadTick 在關閉放大時
+        // 被設定後就永遠黏著、優先於 streamKey —— 若那次重連剛好失敗(MJPEG 長連線
+        // 剛被中斷、後端 generator 還沒回復)，之後按「重載串流」URL 也不會變，
+        // 瀏覽器不重新請求 → 該台永遠顯示無影像救不回來。
+        // 兩個都是 Date.now()，取較新的那個即可:關閉放大能強制 reload，
+        // 之後的重載串流也蓋得過去。
+        const monitorStreamTick=(camera)=>{
+            const z=Number(camera?._zoomReloadTick||0);
+            const s=Number(streamKey.value||0);
+            return Math.max(z,s)||Date.now();
+        };
         const getMonitorStreamUrl=(camera, opts={})=>{
             if(camera?.monitorSnapshotMode){
                 return `/api/stream/${camera.id}/snapshot?t=${camera.thumbKey||streamKey.value}`;
@@ -15171,14 +15183,13 @@ const app=createApp({
             const roiParam=route==='live-overlay'?`&roi=${overlayShowRoi.value?1:0}`:'';
             // 放大視窗 / 轉發場景要 1080p 清晰度 (q=high)，監控網格維持 720p 省頻寬
             const qParam=(route==='live-overlay' && opts.highQuality)?'&q=high':'';
-            const tick=camera?._zoomReloadTick||streamKey.value;
+            const tick=monitorStreamTick(camera);
             return `/api/stream/${camera.id}/${route}?t=${tick}${roiParam}${qParam}`;
         };
         const getMonitorMediaUrl=(camera, opts={})=>{
             if(getMonitorMediaKind(camera)==='video'){
-                // mp4 video src 用 _zoomReloadTick 優先，讓關閉放大時可強制 reload
-                const tick = camera?._zoomReloadTick || streamKey.value;
-                return getDirectCameraSourceUrl(camera, tick);
+                // mp4 video src 也走同一套 tick 規則，讓關閉放大時可強制 reload
+                return getDirectCameraSourceUrl(camera, monitorStreamTick(camera));
             }
             return getMonitorStreamUrl(camera, opts);
         };
@@ -15278,6 +15289,9 @@ const app=createApp({
                 c.monitorSnapshotMode=false;
                 c.lastFrameAt=Date.now();
                 c.thumbKey=Date.now();
+                // 清掉放大殘留的 tick,讓「重載串流」是可靠的救援手段
+                c._zoomPausedGrid=false;
+                c._zoomReloadTick=0;
             });
             streamKey.value=Date.now();
             monitorUpdatedAt.value=new Date().toLocaleTimeString('zh-TW');
