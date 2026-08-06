@@ -3319,6 +3319,14 @@
         
         /* 攝影機 */
         .camera-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 16px; }
+        /* 監控排版編輯模式：解鎖後方塊可拖曳互換 */
+        .camera-card.layout-editable { cursor: grab; outline: 2px dashed #f59e0b; outline-offset: -2px; }
+        .camera-card.layout-editable:active { cursor: grabbing; }
+        .camera-card.layout-dragging { opacity: .45; }
+        .camera-card.layout-dropzone { outline: 3px solid #2563eb; outline-offset: -3px; box-shadow: 0 0 0 4px rgba(37,99,235,.18); }
+        .layout-drag-badge { position: absolute; z-index: 5; top: 8px; left: 8px; display: inline-flex; align-items: center; gap: 4px;
+            background: #f59e0b; color: #fff; font-size: 12px; font-weight: 700; border-radius: 6px; padding: 2px 8px; pointer-events: none; }
+        .camera-card { position: relative; }
         .camera-card { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: box-shadow .25s ease, transform .25s ease, border-color .25s ease; border: 1px solid transparent; }
         .camera-card:hover { box-shadow: 0 12px 30px rgba(11,94,168,0.18); transform: translateY(-2px); border-color: var(--gov-primary-line); }
         .monitor-toolbar {
@@ -5043,12 +5051,34 @@
                             </el-button>
                         </div>
                         <div style="display:flex;align-items:center;gap:10px">
+                            <el-button
+                                v-if="canEditMonitorLayout"
+                                size="small"
+                                :type="monitorLayout.locked?'default':'warning'"
+                                plain
+                                @click="toggleMonitorLayoutLock">
+                                <svg class="text-icon" style="margin-right:4px"><use :href="monitorLayout.locked?'#i-lock':'#i-shuffle'"/></svg>{{ monitorLayout.locked ? '解鎖排版' : '完成並鎖定' }}
+                            </el-button>
+                            <span v-if="monitorLayoutEditable" style="font-size:12px;color:#f59e0b;font-weight:700">拖曳方塊可互換位置</span>
                             <span class="monitor-toolbar-label">更新 {{ monitorUpdatedAt || '-' }}</span>
                             <el-button size="small" plain @click="reloadMonitorStreams"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>重載串流</el-button>
                         </div>
                     </div>
                     <div class="camera-grid">
-                        <div class="camera-card" v-for="c in cameras" :key="c.id" :style="!c.enabled?'opacity:.6':''">
+                        <div class="camera-card"
+                            v-for="(c,ci) in sortedCameras"
+                            :key="c.id"
+                            :class="{'layout-editable':monitorLayoutEditable,'layout-dragging':monitorDragIndex===ci,'layout-dropzone':monitorDragOverIndex===ci}"
+                            :draggable="monitorLayoutEditable"
+                            @dragstart="onMonitorDragStart(ci,$event)"
+                            @dragover="onMonitorDragOver(ci,$event)"
+                            @dragleave="onMonitorDragLeave(ci)"
+                            @drop="onMonitorDrop(ci,$event)"
+                            @dragend="onMonitorDragEnd"
+                            :style="!c.enabled?'opacity:.6':''">
+                            <div v-if="monitorLayoutEditable" class="layout-drag-badge" title="拖曳可與其他方塊互換位置">
+                                <svg class="text-icon"><use href="#i-shuffle"/></svg>{{ ci+1 }}
+                            </div>
                             <div class="camera-preview" @click="openPreview(c)">
                                 <div v-if="!c.enabled" style="position:absolute;inset:0;background:rgba(15,23,42,.62);z-index:3;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700">
                                     攝影機已關閉
@@ -10082,6 +10112,113 @@ const app=createApp({
             }
         },{immediate:true});
         const cameras=ref([]);
+        // ---- 即時監控方塊排版（拖曳互換 + 鎖定，全系統共用一份，僅管理員可改）----
+        const monitorLayout=ref({order:[],locked:true,updated_at:null,updated_by:''});
+        const monitorDragIndex=ref(-1);      // 目前被拖曳的方塊在 sortedCameras 中的位置
+        const monitorDragOverIndex=ref(-1);  // 滑過的目標位置（用來畫提示框）
+        const canEditMonitorLayout=computed(()=>userRole.value==='admin');
+        const monitorLayoutEditable=computed(()=>canEditMonitorLayout.value && !monitorLayout.value.locked);
+        // 依儲存的順序排列;不在 order 裡的(新增的攝影機)接在後面,不會消失
+        const sortedCameras=computed(()=>{
+            const list=Array.isArray(cameras.value)?cameras.value.slice():[];
+            const order=Array.isArray(monitorLayout.value?.order)?monitorLayout.value.order:[];
+            if(!order.length)return list;
+            const rank=new Map();
+            order.forEach((id,i)=>rank.set(Number(id),i));
+            return list.sort((a,b)=>{
+                const ra=rank.has(Number(a?.id))?rank.get(Number(a?.id)):Number.MAX_SAFE_INTEGER;
+                const rb=rank.has(Number(b?.id))?rank.get(Number(b?.id)):Number.MAX_SAFE_INTEGER;
+                if(ra!==rb)return ra-rb;
+                return Number(a?.id||0)-Number(b?.id||0);   // 都沒排過的照 id 穩定排序
+            });
+        });
+        const loadMonitorLayout=async()=>{
+            try{
+                const r=await fetch('/api/system/monitor-layout');
+                if(!r.ok)return;
+                const d=await r.json();
+                if(d && typeof d==='object')monitorLayout.value={
+                    order:Array.isArray(d.order)?d.order.map(Number).filter(Number.isFinite):[],
+                    locked:d.locked!==false,
+                    updated_at:d.updated_at||null,
+                    updated_by:String(d.updated_by||''),
+                };
+            }catch(e){/* 讀不到就用預設(未排序+鎖定) */}
+        };
+        const saveMonitorLayout=async(payload)=>{
+            const r=await fetch('/api/system/monitor-layout',{
+                method:'PUT',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify(payload),
+            });
+            if(r.status===403)throw new Error('只有管理員可以調整監控排版');
+            if(!r.ok){
+                const d=await r.json().catch(()=>({}));
+                throw new Error(d?.detail||`HTTP ${r.status}`);
+            }
+            const d=await r.json();
+            monitorLayout.value={
+                order:Array.isArray(d.order)?d.order.map(Number).filter(Number.isFinite):[],
+                locked:d.locked!==false,
+                updated_at:d.updated_at||null,
+                updated_by:String(d.updated_by||''),
+            };
+        };
+        const toggleMonitorLayoutLock=async()=>{
+            if(!canEditMonitorLayout.value){
+                ElementPlus.ElMessage.warning('只有管理員可以調整監控排版');
+                return;
+            }
+            const next=!monitorLayout.value.locked;
+            try{
+                // 解鎖時把目前畫面順序一併存起來,之後拖曳才有基準
+                const payload=next?{locked:true}:{locked:false,order:sortedCameras.value.map(c=>Number(c.id))};
+                await saveMonitorLayout(payload);
+                ElementPlus.ElMessage.success(next?'排版已鎖定':'排版已解鎖，可拖曳方塊調整位置');
+            }catch(e){
+                ElementPlus.ElMessage.error(String(e?.message||e));
+            }
+        };
+        const onMonitorDragStart=(idx,ev)=>{
+            if(!monitorLayoutEditable.value)return;
+            monitorDragIndex.value=idx;
+            try{
+                ev.dataTransfer.effectAllowed='move';
+                ev.dataTransfer.setData('text/plain',String(idx));  // Firefox 需要有資料才會啟動拖曳
+            }catch(e){}
+        };
+        const onMonitorDragOver=(idx,ev)=>{
+            if(!monitorLayoutEditable.value)return;
+            ev.preventDefault();
+            try{ev.dataTransfer.dropEffect='move';}catch(e){}
+            monitorDragOverIndex.value=idx;
+        };
+        const onMonitorDragLeave=(idx)=>{
+            if(monitorDragOverIndex.value===idx)monitorDragOverIndex.value=-1;
+        };
+        const onMonitorDrop=async(idx,ev)=>{
+            if(!monitorLayoutEditable.value)return;
+            ev.preventDefault();
+            const from=monitorDragIndex.value;
+            monitorDragIndex.value=-1;
+            monitorDragOverIndex.value=-1;
+            if(from<0 || from===idx)return;
+            const arr=sortedCameras.value.map(c=>Number(c.id));
+            if(from>=arr.length || idx>=arr.length)return;
+            [arr[from],arr[idx]]=[arr[idx],arr[from]];   // 互換兩塊位置
+            const prev=monitorLayout.value.order.slice();
+            monitorLayout.value.order=arr;               // 先動畫面,失敗再回滾
+            try{
+                await saveMonitorLayout({order:arr});
+            }catch(e){
+                monitorLayout.value.order=prev;
+                ElementPlus.ElMessage.error(`排版儲存失敗: ${e?.message||e}`);
+            }
+        };
+        const onMonitorDragEnd=()=>{
+            monitorDragIndex.value=-1;
+            monitorDragOverIndex.value=-1;
+        };
         const detectionStatus=ref({});
         const congestionStatus=ref({});
         const lprTaskStatus=ref({});
@@ -18421,6 +18558,7 @@ const app=createApp({
             page.value=loginLandingPage();
             load();
             loadCameras();
+            loadMonitorLayout();   // 監控方塊排版(全系統共用,僅管理員可改)
             if(page.value==='monitor'){
                 ensureMonitorWatchdog();
             }
@@ -18479,7 +18617,10 @@ const app=createApp({
         return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,radarCameraId,radarTracks,radarStats,radarDotColor,radarClassZh,radarInsights,loadRadarTracks,visionEyeUrl,onVisionEyeError,trackHistory,parkingSources,parkingSource,parkingData,parkingSnapshotUrl,parkingRawSnapshotUrl,parkingImgEl,pmRect,pmLabel,pmDown,pmMove,pmUp,parkingShowVerify,parkingShowBoxes,parkingShowVehicles,parkingUseStream,vlmStatus,vlmResult,vlmQuerying,loadVlmStatus,triggerVlmLoad,askVlm,assistantOpen,toggleAssistant,assistantZoomImg,assistantPanelStyle,assistantDragStart,assistantSource,assistantMessages,assistantInput,assistantLoading,assistantSnapUrl,assistantSources,reloadAssistantSnap,sendAssistant,assistantPresets,assistantTTS,assistantListening,quickAsk,assistantVoiceInput,loadParkingSources,loadParkingOccupancy,openParkingEditor,downloadParkingSnapshot,openParkingLabel,parkingLiveRunning,parkingIntervalMs,parkingShowAdd,parkingAddForm,startParkingLive,stopParkingLive,addParkingSource,twipcamQuery,twipcamResults,twipcamSearching,searchTwipcam,pickTwipcam,parkingHistory,loadParkingHistory,parkingTrendPath,parkingCounting,parkingCountingMismatch,parkingCrossValidation,parkingCrossCalibrated,parkingCrossEscalated,parkingCrossHasArea,parkingCrossSuspect,parkingCrossTrend,loadParkingCounting,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewLocations,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,previewParkingZones,previewParkingZoneCount,parkingSubKindOptions,applyParkingSubKindToZone,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedPlateIsInferred,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,detailClipRetrying,detailClipReloadKey,onDetailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
-            load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneEdgeOptions,showInoutEdgePicker,isInoutZone,flowVehicleOptions,flowVehicleLabelMap,flowVehicleTypesLabel,addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneEdgeOptions,showInoutEdgePicker,isInoutZone,flowVehicleOptions,flowVehicleLabelMap,flowVehicleTypesLabel,
+            sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
+            toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory};
     }

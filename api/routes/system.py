@@ -2,7 +2,7 @@
 Jetson 硬體效能監測 API
 讀取 CPU/GPU/記憶體/溫度/磁碟 等即時資訊
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from datetime import datetime
 import os
@@ -11,7 +11,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 import threading
 import time
@@ -19,10 +19,12 @@ import socket
 import struct
 
 from api.routes.logs import add_log
+from api.routes.auth import get_admin_user, get_current_user
 
 router = APIRouter(prefix="/api/system", tags=["系統監測"])
 NTP_SETTINGS_PATH = "/workspace/config/system/ntp_settings.json"
 NX_SETTINGS_PATH = "/workspace/config/system/nx_settings.json"
+MONITOR_LAYOUT_PATH = "/workspace/config/system/monitor_layout.json"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FALLBACK_SYSTEM_CONFIG_DIR = PROJECT_ROOT / "config" / "system"
 TZ_TAIPEI = ZoneInfo("Asia/Taipei")
@@ -923,3 +925,88 @@ def restart_traffic_api():
     except Exception as e:
         add_log("error", f"重啟 traffic-api 失敗: {e}", "system")
         return {"ok": False, "error": str(e)}
+
+
+# ---- 即時監控畫面配置（攝影機方塊排列順序 + 鎖定）----
+# 全系統共用一份:所有使用者看到同一個排列。
+# 讀取開放給所有登入者，修改僅限管理員(get_admin_user)。
+
+
+class MonitorLayoutUpdate(BaseModel):
+    order: Optional[List[int]] = None   # 攝影機 id 由左至右、由上而下的排列
+    locked: Optional[bool] = None       # True=鎖定，前端停用拖曳
+
+
+def _default_monitor_layout() -> Dict[str, Any]:
+    return {"order": [], "locked": True, "updated_at": None, "updated_by": ""}
+
+
+def _read_monitor_layout() -> Dict[str, Any]:
+    data = _default_monitor_layout()
+    try:
+        raw = _load_settings_json(MONITOR_LAYOUT_PATH)
+    except (FileNotFoundError, ValueError, OSError):
+        return data
+    if not isinstance(raw, dict):
+        return data
+    order = raw.get("order")
+    if isinstance(order, list):
+        seen = set()
+        clean: List[int] = []
+        for v in order:
+            try:
+                cid = int(v)
+            except (TypeError, ValueError):
+                continue
+            if cid in seen:      # 去重，避免同一台出現兩次
+                continue
+            seen.add(cid)
+            clean.append(cid)
+        data["order"] = clean
+    data["locked"] = bool(raw.get("locked", True))
+    data["updated_at"] = raw.get("updated_at")
+    data["updated_by"] = str(raw.get("updated_by") or "")
+    return data
+
+
+@router.get("/monitor-layout")
+def get_monitor_layout(_user=Depends(get_current_user)):
+    """取得即時監控的方塊排列。所有登入者都能讀（否則畫面排不出來）。"""
+    return _read_monitor_layout()
+
+
+@router.put("/monitor-layout")
+def update_monitor_layout(
+    payload: MonitorLayoutUpdate,
+    admin=Depends(get_admin_user),
+):
+    """更新排列或鎖定狀態 —— 僅限管理員。
+
+    order 只存 id 順序，不存攝影機其他資料;新增的攝影機不在 order 裡，
+    前端會把它接在已排序的之後，不會消失。
+    """
+    current = _read_monitor_layout()
+    if payload.order is not None:
+        seen = set()
+        clean: List[int] = []
+        for v in payload.order:
+            try:
+                cid = int(v)
+            except (TypeError, ValueError):
+                continue
+            if cid in seen:
+                continue
+            seen.add(cid)
+            clean.append(cid)
+        current["order"] = clean
+    if payload.locked is not None:
+        current["locked"] = bool(payload.locked)
+    current["updated_at"] = datetime.now(TZ_TAIPEI).isoformat()
+    current["updated_by"] = str(getattr(admin, "username", "") or "")
+    _save_settings_json(MONITOR_LAYOUT_PATH, current)
+    add_log(
+        "info",
+        f"監控畫面配置已更新 (鎖定={current['locked']}, {len(current['order'])} 台) by {current['updated_by']}",
+        "system",
+    )
+    return current
