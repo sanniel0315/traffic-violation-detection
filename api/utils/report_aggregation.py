@@ -153,6 +153,29 @@ def is_vd_zone(zone: dict | None) -> bool:
     return zone_type in {"flow_detection", "detection", "lane_left", "lane_straight", "lane_right"}
 
 
+def _device_id_for(agg, camera_by_id: dict) -> str:
+    """報表「設備編號」一律以 camera_id 對應的『現行名稱』為準。
+
+    聚合表把 camera_name 當欄位存在每一列,那是寫入當下的名稱快照。
+    攝影機改名是客戶的正常操作,若拿快照當設備編號,每個歷史時間桶都會
+    帶著各自的舊名字,同一台攝影機就在報表裡分裂成好幾個設備。
+
+    唯一鍵本來就是 (bucket_start, bucket_size, camera_id, ...) 不含名稱,
+    資料層沒有重複,問題只在顯示層取名的優先順序 —— 先查現名即可根治。
+    查不到 id(攝影機已被刪除)才退回快照名稱,至少看得出是哪一台。
+    """
+    try:
+        cid = int(agg.camera_id)
+    except (TypeError, ValueError):
+        cid = None
+    if cid is not None:
+        live = str((camera_by_id.get(cid) or {}).get("camera_name") or "").strip()
+        if live:
+            return live
+    snapshot = str(getattr(agg, "camera_name", "") or "").strip()
+    return snapshot or f"cam_{getattr(agg, 'camera_id', '?')}"
+
+
 def _camera_meta(db: Session):
     by_id: dict[int, dict] = {}
     by_name: dict[str, dict] = {}
@@ -598,7 +621,7 @@ def build_vd_report_rows(
         return row["lanes"][lane_key]
 
     for agg in traffic_rows:
-        device_id = str(agg.camera_name or camera_by_id.get(int(agg.camera_id), {}).get("camera_name") or f"cam_{agg.camera_id}")
+        device_id = _device_id_for(agg, camera_by_id)
         row = ensure_row(device_id, agg.bucket_start)
         direction = normalize_direction(agg.direction)
         row["directionCounts"][direction] = row["directionCounts"].get(direction, 0) + int(agg.total_flow or 0)
@@ -637,7 +660,7 @@ def build_vd_report_rows(
             row["laneCount"] = max(int(row["laneCount"] or 0), lane_no)
 
     for agg in congestion_rows:
-        device_id = str(agg.camera_name or camera_by_id.get(int(agg.camera_id), {}).get("camera_name") or f"cam_{agg.camera_id}")
+        device_id = _device_id_for(agg, camera_by_id)
         row = ensure_row(device_id, agg.bucket_start)
         queue_count_weight = int(agg.sample_count or 0)
         if agg.is_overall:
