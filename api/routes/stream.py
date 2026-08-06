@@ -68,6 +68,35 @@ def _zone_edge_segment(zone: dict, edge_idx):
         return None
 
 
+def _scale_detections(detections, scale: float):
+    """把縮圖推論得到的 bbox 換算回原圖座標。
+
+    推論前把 frame 縮小可省下大量 CPU(memcpy + ultralytics 的 letterbox),
+    但下游全部以原圖座標運作(ROI 多邊形、違規 bbox、LPR 車牌裁切),
+    所以這裡必須換算回去，否則 ROI 判定會整個錯位。
+    """
+    if not detections or scale == 1.0:
+        return detections
+    for d in detections:
+        b = d.get("bbox")
+        if not isinstance(b, dict):
+            continue
+        for k in ("x1", "y1", "x2", "y2"):
+            v = b.get(k)
+            if v is None:
+                continue
+            try:
+                b[k] = int(round(float(v) * scale))
+            except (TypeError, ValueError):
+                pass
+        # width/height 若存在也要一起換算，否則面積過濾與車型判定會用到錯的值
+        if b.get("x1") is not None and b.get("x2") is not None:
+            b["width"] = b["x2"] - b["x1"]
+        if b.get("y1") is not None and b.get("y2") is not None:
+            b["height"] = b["y2"] - b["y1"]
+    return detections
+
+
 def _seg_intersect(p1, p2, q1, q2) -> bool:
     """線段 p1p2 是否與線段 q1q2 相交(標準 orientation 測試)。"""
     def _orient(a, b, c) -> int:
@@ -114,10 +143,17 @@ _NO_HELMET_EVALUATORS: Dict[int, "object"] = {}
 _VEHICLE_TRACK_SNAPSHOTS: Dict[int, list] = {}
 
 
-def _push_violation_ring(camera_id: int, frame):
-    """worker tick 呼叫，每 ~0.1s push 一張原解析度 frame 進 ring buffer。
-    保留原 1920x1080 (不縮)，避免 composite 兩次 downscale 模糊。
-    RAM cost: 30 frame × 6MB ≈ 180MB / cam × 4 cam = 720MB (Jetson 64GB OK)。"""
+def _push_violation_ring(camera_id: int, frame, max_width: int = 0):
+    """worker tick 呼叫，每 ~0.1s push 一張 frame 進 ring buffer。
+
+    預設保留原 1920x1080(不縮)，避免 composite 兩次 downscale 模糊。
+    RAM cost: 30 frame × 6MB ≈ 180MB / cam — 在 64GB 的機器沒問題，但小記憶體
+    機器(7.4GB)跑多台就會吃緊,且每次 push 都是一次 6.2MB memcpy。
+
+    max_width > 0 時等比縮到該寬度再存:記憶體與 memcpy 成本同步下降
+    (1920→1280 約省 55%)。由 detection_config.violation_ring_width 指定，
+    預設 0 = 不縮，維持既有行為。
+    """
     import time as _t
     now = _t.time()
     last = _violation_last_push.get(camera_id, 0.0)
@@ -125,12 +161,24 @@ def _push_violation_ring(camera_id: int, frame):
         return
     _violation_last_push[camera_id] = now
     try:
+        stored = frame
+        if max_width > 0:
+            h, w = frame.shape[:2]
+            if w > max_width:
+                scale = max_width / float(w)
+                # resize 已回傳新陣列，不必再 copy（省一次 memcpy）
+                stored = cv2.resize(frame, (max_width, max(1, int(h * scale))),
+                                    interpolation=cv2.INTER_AREA)
+            else:
+                stored = frame.copy()
+        else:
+            stored = frame.copy()
         with _violation_ring_lock:
             ring = _violation_frame_ring.get(camera_id)
             if ring is None:
                 ring = _vbuf_deque(maxlen=_VIOLATION_RING_MAXLEN)
                 _violation_frame_ring[camera_id] = ring
-            ring.append((now, frame.copy()))
+            ring.append((now, stored))
     except Exception:
         pass
 
@@ -1764,6 +1812,19 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         _min_bbox_area = float(detection_config.get("min_bbox_area_px", 0) or 0)
     except (TypeError, ValueError):
         _min_bbox_area = 0.0
+    # 推論輸入寬度。0=用原圖(既有行為)。
+    # ultralytics 內部本來就會 letterbox 到 640,但那個縮放是 CPU numpy 做的 —
+    # 先縮小再送進去,可同時省下 memcpy 與 letterbox 成本。bbox 會換算回原圖座標,
+    # 下游(ROI 判定/違規/LPR)拿到的一律是原圖座標,不受影響。
+    try:
+        _infer_width = int(detection_config.get("infer_width", 0) or 0)
+    except (TypeError, ValueError):
+        _infer_width = 0
+    # 違規 ring buffer 存圖寬度。0=原解析度(既有行為)。
+    try:
+        _ring_width = int(detection_config.get("violation_ring_width", 0) or 0)
+    except (TypeError, ValueError):
+        _ring_width = 0
     # 車速精度校正記錄：開啟後 trip-wire 跨線測速時，額外記一筆
     # 「實測(GT) vs 視覺估算」供離線比對誤差、反推 speed_kmh_per_pxps。
     _speed_calib_log = bool(detection_config.get("speed_calib_log"))
@@ -2887,17 +2948,31 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         # 之前 1e3330a 為拚 fps 移掉，但代價是 process SEGV 持續發生（faulthandler 抓到
         # ultralytics predictor.py preprocess 在 SEGV 時段）。
         # fps 影響：cam_1 13.3→7.5, cam_2 9.2→7.3 — 換穩定。
+        # 縮圖後再推論:省下 memcpy 與 ultralytics 內部的 CPU letterbox 成本。
+        # bbox 隨即換算回原圖座標,_shared_frames 仍存原圖,下游完全無感。
+        _det_input = infer_frame
+        _bbox_scale = 1.0
+        if _infer_width > 0:
+            _ih, _iw = infer_frame.shape[:2]
+            if _iw > _infer_width:
+                _s = _infer_width / float(_iw)
+                _det_input = cv2.resize(infer_frame,
+                                        (_infer_width, max(1, int(_ih * _s))),
+                                        interpolation=cv2.INTER_LINEAR)
+                _bbox_scale = 1.0 / _s
         with _shared_overlay_detector_lock:
-            detections = detector.detect(infer_frame)
+            detections = detector.detect(_det_input)
+        if _bbox_scale != 1.0:
+            detections = _scale_detections(detections, _bbox_scale)
         # 原子綁定：frame + bbox + ts 一起寫入
         _shared_frames[camera_id] = {
             "frame": infer_frame,
             "detections": detections,
             "ts": cur_ts,
         }
-        # push 進違規 ring buffer (限 10fps + 縮圖 1280x720，方案 C 100% 命中 4 frame)
+        # push 進違規 ring buffer (限 10fps；violation_ring_width>0 時等比縮圖存)
         try:
-            _push_violation_ring(camera_id, infer_frame)
+            _push_violation_ring(camera_id, infer_frame, _ring_width)
         except Exception:
             pass
         try:
