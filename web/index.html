@@ -14190,11 +14190,16 @@ const app=createApp({
         };
         const flowZoneTypes=['detection','flow_detection'];
         const speedZoneTypes=['speed','speed_roi','speed_line_in','speed_line_out'];
+        // 車流區的方向選項刻意「沒有」單獨的進場(IN)/出場(OUT):
+        // 一個 ROI 不會只有進沒有出,而選了單獨 IN/OUT 會踩到兩個坑 ——
+        //   1. 方向不是 INOUT → 進出轉場邏輯不跑,標好的進出線白標
+        //   2. 該框的一般流量事件被標成 direction='IN',報表端
+        //      `if direction in ("IN","EXIT"): continue` 會把它排除在 totalFlow 外
+        //      → 那個車道的流量從總流量整個消失(實測 lane2 的 29 筆全不見)
+        // 要做進出計數就選「進出(IN/OUT)」,再到 ROI 編輯器標哪條邊是進、哪條是出。
         const flowDirectionOptions=[
             {label:'未指定',value:''},
             {label:'進出(IN/OUT)',value:'INOUT'},
-            {label:'進場(IN)',value:'IN'},
-            {label:'出場(OUT)',value:'OUT'},
             {label:'左轉',value:'left'},
             {label:'直行',value:'straight'},
             {label:'右轉',value:'right'}
