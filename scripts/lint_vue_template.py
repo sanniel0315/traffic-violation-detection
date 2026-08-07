@@ -79,66 +79,160 @@ def lint(html_text: str) -> int:
     return fails
 
 
+# 不渲染 default slot 的元件:被吞掉的兄弟節點會真的消失。
+# el-input 是 2026-08-07 用瀏覽器實測補上的 —— roi_editor.html 的
+# <el-input v-model="item.zone.name" .../> 把整列的下拉、點數、
+# 甚至「儲存」「刪除」按鈕全吞掉,而舊清單沒有它,跑 lint 也抓不到。
+NO_SLOT = (
+    'el-input', 'el-input-number', 'el-switch', 'el-date-picker',
+    'el-time-picker', 'el-pagination', 'el-progress', 'el-slider',
+    'el-rate', 'el-color-picker', 'el-image', 'el-avatar',
+)
+
+
+def _scan_selfclosing(text):
+    """逐字掃出所有自閉合的自訂元素,回傳 [(tag, 位置, 標籤後方的內容)]。
+
+    不用 regex:惰性量詞會跨過標籤邊界配對(實際踩過:把 <el-option/>
+    關成 </el-select>,整份模板被改壞)。掃描器逐字讀,遇到 <el- 讀標籤名,
+    再往後掃到「該開始標籤自己的 >」(途中跳過引號內容),不可能跨標籤。
+    """
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        if text.startswith('<el-', i):
+            j = i + 1
+            while j < n and (text[j].isalnum() or text[j] == '-'):
+                j += 1
+            tag = text[i + 1:j]
+            k, quote = j, None
+            while k < n:
+                c = text[k]
+                if quote:
+                    if c == quote:
+                        quote = None
+                elif c in '"\'':
+                    quote = c
+                elif c == '>':
+                    break
+                k += 1
+            if k < n and text[i:k].rstrip().endswith('/'):
+                out.append((tag, i, text[k + 1:k + 400]))
+            i = k + 1 if k < n else n
+            continue
+        i += 1
+    return out
+
+
 def lint_selfclosing_custom(text):
     """自訂元素(el-*)自閉合且後面還有兄弟節點 → 那些兄弟會被吞掉。
 
     Vue DOM 模板由瀏覽器的 HTML parser 解析,對未知元素 <el-x/> 的斜線
     會被忽略、視為「開始標籤」,後續同層節點全部變成它的子節點。
-    Element Plus 元件渲染自己的內容、不會渲染這些被吞的節點 → 整段 UI 消失。
+    不渲染 default slot 的元件不會把它們畫出來 → 整段 UI 消失。
 
-    實際案例:車道編號的 <el-input-number/> 把後面的「行車方向」下拉與
-    進出線選擇器整組吞掉,使用者回報「看不到 IN/OUT 綁定」。
+    實際案例:
+    - 車道編號的 <el-input-number/> 吞掉「行車方向」下拉與進出線選擇器
+    - roi_editor.html 的 <el-input/> 吞掉整列,連儲存/刪除按鈕都不見
 
-    只有「後面還接著別的元素」才算問題;後面直接是父層結束標籤的無害。
-
-    注意:有 default slot 的元件(el-option / el-checkbox 等)即使被吞,
-    內容仍會透過 slot 渲染出來,實務上多半正常 —— 所以這裡只列高風險的
-    「不渲染 slot」元件,而且只警告不擋,避免大量誤報卡住 CI。
+    只有「後面還接著別的開始標籤」才算問題;後面直接是父層結束標籤的無害。
+    有 default slot 的元件(el-option / el-checkbox / el-button 等)即使被吞,
+    內容仍會透過 slot 渲染,實務上多半正常 —— 只警告不擋,避免誤報卡住 CI。
     """
-    # 這些元件不渲染 default slot，被吞的兄弟節點會真的消失
-    NO_SLOT = ('el-input-number', 'el-switch', 'el-date-picker',
-               'el-time-picker', 'el-pagination', 'el-progress')
-    lines = text.split('\n')
-    pat = re.compile(r'<(el-[a-z-]+)\b((?:[^<>])*?)/>')
     hits = 0
-    for i, line in enumerate(lines):
-        m = pat.search(line)
-        if not m or m.group(1) not in NO_SLOT:
+    for tag, pos, tail in _scan_selfclosing(text):
+        if tag not in NO_SLOT:
             continue
-        tail = '\n'.join(lines[i + 1:i + 3]).lstrip()
-        nxt = re.match(r'<(span|select|button|input|div|el-[a-z-]+)\b', tail)
-        if not nxt:
-            continue
+        # 跳過空白與註解,看下一個實質內容是不是「開始標籤」
+        t = tail.lstrip()
+        while t.startswith('<!--'):
+            end = t.find('-->')
+            if end < 0:
+                break
+            t = t[end + 3:].lstrip()
+        m = re.match(r'<(?!/)([a-z][a-z0-9-]*)', t)
+        if not m:
+            continue                      # 後面是 </parent> 或文字 → 無害
+        line = text.count('\n', 0, pos) + 1
         hits += 1
         if hits == 1:
             print('\n[SELF-CLOSING] 不渲染 slot 的自訂元素自閉合，'
                   '後面的兄弟節點會被吞掉而消失：')
-        print(f'       line {i+1} <{m.group(1)} .../>  後接 <{nxt.group(1)}>'
-              f'  → 改寫成 </{m.group(1)}>')
+        if hits <= 20:
+            print(f'       line {line} <{tag} .../>  後接 <{m.group(1)}>'
+                  f'  → 改寫成 </{tag}>')
+    if hits > 20:
+        print(f'       ...(還有 {hits - 20} 處)')
     return hits
 
 
-def main():
-    if len(sys.argv) < 2:
-        print('usage: lint_vue_template.py <url|path>', file=sys.stderr)
-        return 2
-    target = sys.argv[1]
-    if target.startswith('http://') or target.startswith('https://'):
+def discover_inline_template_pages(root='web'):
+    """找出所有「inline template」頁面 —— 有 createApp 且模板寫在 HTML 裡。
+
+    這類頁面才會踩到瀏覽器 HTML parser 的坑。以前 SOP 只要求檢查
+    index.html,結果 roi_editor.html 的自閉合 bug 藏了很久沒人發現
+    (整列的儲存/刪除按鈕都是隱形的)。
+    """
+    base = pathlib.Path(root)
+    if not base.is_dir():
+        return []
+    found = []
+    for f in sorted(base.glob('*.html')):
+        try:
+            s = f.read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            continue
+        if 'createApp' in s and '<div id="app"' in s:
+            found.append(f)
+    return found
+
+
+def lint_one(target):
+    """回傳 (fails, warns)。"""
+    if str(target).startswith(('http://', 'https://')):
         print(f'fetching {target}')
-        with urllib.request.urlopen(target, timeout=8) as r:
+        with urllib.request.urlopen(str(target), timeout=8) as r:
             text = r.read().decode('utf-8')
     else:
         text = pathlib.Path(target).read_text(encoding='utf-8')
     fails = lint(text)
     sc = lint_selfclosing_custom(text)
     if fails:
-        print(f'\n[FAIL] {fails} HTML structure error(s) — Vue mount likely fails')
-        return 1
-    if sc:
-        # 警告不擋:有些是刻意保留的既有寫法，逐一確認才動
-        print(f'\n[WARN] {sc} 處自閉合可能吞掉後面的節點，請確認該段 UI 有正常顯示')
-    print('[OK] HTML structure parses cleanly')
-    return 0
+        print(f'[FAIL] {fails} HTML structure error(s) — Vue mount likely fails')
+    elif sc:
+        print(f'[WARN] {sc} 處自閉合可能吞掉後面的節點，請確認該段 UI 有正常顯示')
+    else:
+        print('[OK] HTML structure parses cleanly')
+    return fails, sc
+
+
+def main():
+    args = sys.argv[1:]
+    if args and args[0] == '--all':
+        args = []
+    targets = args or discover_inline_template_pages()
+    if not targets:
+        print('usage: lint_vue_template.py <url|path> [more paths...]', file=sys.stderr)
+        print('       lint_vue_template.py --all    # 掃 web/ 下所有 inline-template 頁',
+              file=sys.stderr)
+        return 2
+
+    total_fail = total_warn = 0
+    results = []
+    for t in targets:
+        print(f'\n===== {t} =====')
+        f, w = lint_one(t)
+        total_fail += f
+        total_warn += w
+        results.append((str(t), f, w))
+
+    if len(results) > 1:
+        print('\n===== 總結 =====')
+        for name, f, w in results:
+            status = 'FAIL' if f else ('WARN' if w else 'OK')
+            print(f'  {status:<5} {name}   結構錯誤 {f}  自閉合風險 {w}')
+        print(f'  合計: 結構錯誤 {total_fail}, 自閉合風險 {total_warn}')
+    return 1 if total_fail else 0
 
 
 if __name__ == '__main__':

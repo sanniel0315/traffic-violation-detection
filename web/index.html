@@ -3519,6 +3519,10 @@
         .analysis-zone-name { font-size:13px; font-weight:600; color:#0f172a; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .analysis-zone-meta { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; margin-left:auto; }
         .analysis-speed-fields { width:100%; display:flex; align-items:center; gap:6px; justify-content:flex-start; margin-top:6px; padding-top:6px; border-top:1px dashed #dbe3ef; }
+        /* 車流區的編輯控制項自成一整行:原本全塞在 .analysis-zone-meta 裡跟 tag 混排,
+           meta 是 justify-content:flex-end + wrap，車型選項一多就換行成右對齊亂陣(跑版)。 */
+        .analysis-flow-fields { width:100%; display:flex; align-items:center; gap:6px 10px; flex-wrap:wrap; justify-content:flex-start; margin-top:6px; padding-top:6px; border-top:1px dashed #dbe3ef; }
+        .analysis-flow-fields .afx-group { display:flex; align-items:center; gap:6px; flex-shrink:0; }
         
         /* 違規詳情 */
         .detail-box { max-width: 1400px; display: flex; flex-direction: column; }
@@ -5107,7 +5111,7 @@
                                 <span v-if="detectionStatus[c.id]?.running" class="badge detection-badge"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:5px;vertical-align:middle"></span>偵測中</span>
                                 <button class="monitor-zoom-button" type="button" @click.stop="openMonitorZoom(c)" :title="`放大 ${c.name}`">⤢</button>
                                 <el-tag class="badge" style="left:12px;top:auto;bottom:12px;right:auto" size="small" type="info">啟動 {{ activeFeatureCount(c.id) }}/3</el-tag>
-                                <el-tag class="badge" style="right:12px;bottom:12px;top:auto;left:auto" size="small" :type="c.monitorSnapshotMode?'info':'warning'">{{ c.monitorSnapshotMode?'快照':'串流' }} / {{ resolveCameraStreamMode(c)==='overlay'?'疊加':'原始' }}</el-tag>
+                                <el-tag class="badge" style="right:12px;bottom:12px;top:auto;left:auto" size="small" :type="c.monitorSnapshotMode?'info':'warning'" :title="c._budgetSnapshot?'瀏覽器同時最多 6 條連線，即時串流已用滿，這台改 2 秒快照輪詢以保留連線給 API':(c.monitorSnapshotMode?'串流逾時，已自動降級為快照':'即時串流')">{{ c.monitorSnapshotMode?(c._budgetSnapshot?'快照(連線滿)':'快照'):'串流' }} / {{ resolveCameraStreamMode(c)==='overlay'?'疊加':'原始' }}</el-tag>
                             </div>
                             <div class="camera-info">
                                 <h4>{{ c.name }}</h4>
@@ -8776,16 +8780,14 @@
                                             type="info">未綁定</el-tag>
                                         <el-tag v-if="zoneLaneNoLabel(item.zone)" size="small" type="info">{{ zoneLaneNoLabel(item.zone) }}</el-tag>
                                         <el-tag v-if="(item.zone.lane_tags||[]).length" size="small" type="info">{{ laneTagsLabel(item.zone.lane_tags) }}</el-tag>
-                                        <el-tag
-                                            v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection') && (item.zone.vehicle_types||[]).length"
-                                            size="small"
-                                            type="warning">{{ flowVehicleTypesLabel(item.zone.vehicle_types) }}</el-tag>
                                         <el-tag v-if="item.zone.direction" size="small" type="success">{{ directionArrowLabel(item.zone.direction) }}</el-tag>
                                         <el-tag v-if="speedLineDirectionLabel(item.zone)" size="small" type="primary">{{ speedLineDirectionLabel(item.zone) }}</el-tag>
                                         <el-tag
                                             v-if="page==='speed_detection' && ['speed','speed_roi'].includes(String(item.zone.type||''))"
                                             size="small"
                                             type="warning">目前值 {{ Number(item.zone.speed_limit||60) }} km/h (+{{ Number(item.zone.overspeed_kmh||10) }})</el-tag>
+                                        </div>
+                                    <div class="analysis-flow-fields" v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')">
                                         <span v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')" style="font-size:12px;color:#64748b">左直右</span>
                                         <el-checkbox-group
                                             v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')"
@@ -8796,14 +8798,11 @@
                                             <el-checkbox label="straight">直行</el-checkbox>
                                             <el-checkbox label="right">右轉</el-checkbox>
                                         </el-checkbox-group>
-                                        <span v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')" style="font-size:12px;color:#64748b">車型</span>
-                                        <el-checkbox-group
-                                            v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')"
-                                            v-model="item.zone.vehicle_types"
-                                            size="small"
-                                            style="display:flex;align-items:center;gap:8px;white-space:nowrap">
-                                            <el-checkbox v-for="opt in flowVehicleOptions" :key="`flow-vt-${item.index}-${opt.value}`" :label="opt.value">{{ opt.label }}</el-checkbox>
-                                        </el-checkbox-group>
+                                        <!-- 車型勾選框已移除:使用者只要「流量」,不分車種。
+                                             查證後發現 vehicle_types 在後端完全不存在
+                                             (grep -rn vehicle_types --include=*.py 全專案 0 筆),
+                                             這組勾選框從來沒有生效過,移除不影響任何計數行為。
+                                             要看車種明細請用報表的 smallFlow / largeFlow。 -->
                                         <span v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')" style="font-size:12px;color:#64748b">車道編號</span>
                                         <!-- 自訂元素(el-*)在 DOM 模板中絕不可自閉合:HTML parser 不認得,
                                              會把後面所有兄弟節點都吞進去 —— 這裡曾因此讓「行車方向」
@@ -8824,27 +8823,17 @@
                                             style="width:110px">
                                             <option v-for="opt in directionOptionsForZone(item.zone)" :key="`flow-dir-${item.index}-${opt.value||'none'}`" :value="opt.value">{{ opt.label }}</option>
                                         </select>
-                                        <span v-if="showInoutEdgePicker(item.zone)" :style="{fontSize:'12px',fontWeight:700,color:isInoutZone(item.zone)?'#16a34a':'#94a3b8'}">進線</span>
-                                        <select
-                                            v-if="showInoutEdgePicker(item.zone)"
-                                            v-model="item.zone.in_edge"
-                                            :disabled="!isInoutZone(item.zone)"
-                                            @change="drawRoi"
-                                            class="stats-native-select"
-                                            style="width:92px">
-                                            <option v-for="opt in zoneEdgeOptions(item.zone)" :key="`in-edge-${item.index}-${opt.value}`" :value="opt.value">{{ opt.label }}</option>
-                                        </select>
-                                        <span v-if="showInoutEdgePicker(item.zone)" :style="{fontSize:'12px',fontWeight:700,color:isInoutZone(item.zone)?'#dc2626':'#94a3b8'}">出線</span>
-                                        <select
-                                            v-if="showInoutEdgePicker(item.zone)"
-                                            v-model="item.zone.out_edge"
-                                            :disabled="!isInoutZone(item.zone)"
-                                            @change="drawRoi"
-                                            class="stats-native-select"
-                                            style="width:92px">
-                                            <option v-for="opt in zoneEdgeOptions(item.zone)" :key="`out-edge-${item.index}-${opt.value}`" :value="opt.value">{{ opt.label }}</option>
-                                        </select>
-                                        <span v-if="showInoutEdgePicker(item.zone) && !isInoutZone(item.zone)" style="font-size:11px;color:#f59e0b">← 行車方向先選「進出(IN/OUT)」才能設，且才會產生 VD 報表的進/出流量</span>
+                                        <!-- 進出線改成在 ROI 編輯器直接點邊界標記（同一個 ROI，不另開區域）。
+                                             這裡只做唯讀顯示 —— 原本兩個下拉要人腦把「邊5」對到畫面位置，
+                                             既難用又把這一列擠爆。 -->
+                                        <span v-if="showInoutEdgePicker(item.zone)" class="afx-group">
+                                            <span style="font-size:12px;color:#64748b">進出線</span>
+                                            <el-tag v-if="zoneInoutLabel(item.zone)" size="small" type="warning">{{ zoneInoutLabel(item.zone) }}</el-tag>
+                                            <el-tag v-else size="small" type="info">未標記</el-tag>
+                                            <el-button size="small" plain @click="openRoiEditor(previewCamera.id)">在 ROI 上標記</el-button>
+                                        </span>
+                                    </div>
+                                    <div class="analysis-flow-fields" v-if="page==='speed_detection' && ['speed','speed_roi','speed_line_in','speed_line_out'].includes(String(item.zone.type||''))">
                                         <span v-if="page==='speed_detection' && ['speed','speed_roi','speed_line_in','speed_line_out'].includes(String(item.zone.type||''))" style="font-size:12px;color:#64748b">車道編號</span>
                                         <el-input-number
                                             v-if="page==='speed_detection' && ['speed','speed_roi','speed_line_in','speed_line_out'].includes(String(item.zone.type||''))"
@@ -14225,23 +14214,6 @@ const app=createApp({
             {label:'直行車道', value:'middle'},
             {label:'右轉車道', value:'right'}
         ];
-        const flowVehicleOptions=[
-            {label:'汽車', value:'car'},
-            {label:'機車', value:'motorcycle'},
-            {label:'公車', value:'bus'},
-            {label:'貨車', value:'truck'}
-        ];
-        const flowVehicleLabelMap={
-            car:'汽車',
-            motorcycle:'機車',
-            bus:'公車',
-            truck:'貨車'
-        };
-        const flowVehicleTypesLabel=(types=[])=>{
-            const arr=(Array.isArray(types)?types:[]).map(v=>String(v||'')).filter(Boolean);
-            if(!arr.length)return '';
-            return arr.map(v=>flowVehicleLabelMap[v]||v).join('/');
-        };
         const laneTagsLabel=(tags=[])=>{
             const map={left:'左轉',straight:'直行',right:'右轉',middle:'直行'};
             const arr=(Array.isArray(tags)?tags:[]).map(v=>String(v||'')).filter(Boolean);
@@ -14288,15 +14260,15 @@ const app=createApp({
         // ---- 車流 ROI 進出線 ----
         // 邊 i = points[i] → points[(i+1)%n]，UI 顯示為「邊1」起算(對應 index 0)。
         // canvas 會在每條邊中點畫同一組編號，使用者照號碼選即可。
-        const zoneEdgeOptions=(zone)=>{
-            const pts=Array.isArray(zone?.points)?zone.points:[];
-            const n=pts.length;
-            if(n<3)return [];
-            const opts=[{label:'未指定',value:''}];
-            for(let i=0;i<n;i++)opts.push({label:`邊${i+1}`,value:i});
-            return opts;
-        };
         const isInoutZone=(zone)=>String(zone?.direction||'')==='INOUT';
+        // 進出線現在在 ROI 編輯器上點邊界標記,這裡只做唯讀顯示
+        const zoneInoutLabel=(zone)=>{
+            const n=(zone?.points||[]).length;
+            const i=normalizeEdgeIndex(zone?.in_edge,n);
+            const o=normalizeEdgeIndex(zone?.out_edge,n);
+            if(i===null&&o===null)return isInoutZone(zone)?'整框進出':'';
+            return `進:${i===null?'—':'邊'+(i+1)} / 出:${o===null?'—':'邊'+(o+1)}`;
+        };
         // 車流設定頁的車流 ROI 一律顯示進出線選擇器,不再要求方向已是 INOUT。
         // 原本藏起來會讓人以為沒這功能 — 框好 ROI 後方向預設是「直行」,
         // 使用者不會知道要先改方向才看得到進出線設定。改成一直可見、
@@ -14838,6 +14810,8 @@ const app=createApp({
         // 事件/車速趨勢改由後端依時間桶聚合（GET /api/traffic/events/trend），
         // 取代舊的「抓最新 N 筆原始事件再前端分桶」——高流量相機一小時破 2000 筆會被
         // page_size 截斷成單一 bucket，導致每小時趨勢圖塌成 1 根。空桶在前端補 0。
+        let _trendInFlight=null;      // 進行中的 trend 請求(同參數共用,避免 watcher 連動打爆連線池)
+        let _trendInFlightKey='';
         const loadStatsTrend=async(showMessage=false)=>{
             const mode=statsTrendMode.value;
             const bucketMode=resolveTrendBucketMode();
@@ -14852,10 +14826,25 @@ const app=createApp({
             if(String(statsLane.value||'').trim())params.set('lane',String(statsLane.value).trim());
             if(String(statsDirection.value||'').trim())params.set('direction',String(statsDirection.value).trim());
             let apiBuckets=[];
+            // 同參數的請求做 in-flight 去重。
+            // statsTrendMode / statsPeriod / statsNowMs / statsTimeScale 這幾個 watcher
+            // 都會走到這裡,一次連動就噴出一整串請求 —— 實測抓到 7 秒內 10 次。
+            // trend 是重查詢(traffic_events 逾 700 萬筆,冷查 5 秒),10 個併發會把瀏覽器
+            // 對同一 origin 的 6 條連線全佔滿,/api/health 排不到 socket → 誤判 SERVICE OFFLINE。
+            const _key=params.toString();
             try{
-                const r=await fetch(`/api/traffic/events/trend?${params.toString()}`,{cache:'no-store'});
-                const d=r.ok?await r.json():{};
-                apiBuckets=Array.isArray(d.buckets)?d.buckets:[];
+                if(_trendInFlight && _trendInFlightKey===_key){
+                    apiBuckets=await _trendInFlight;          // 同一批直接共用結果,不重打
+                }else{
+                    _trendInFlightKey=_key;
+                    _trendInFlight=(async()=>{
+                        const r=await fetch(`/api/traffic/events/trend?${_key}`,{cache:'no-store'});
+                        const d=r.ok?await r.json():{};
+                        return Array.isArray(d.buckets)?d.buckets:[];
+                    })();
+                    try{ apiBuckets=await _trendInFlight; }
+                    finally{ if(_trendInFlightKey===_key){ _trendInFlight=null; _trendInFlightKey=''; } }
+                }
             }catch(e){ apiBuckets=[]; }
             const byTs={}; apiBuckets.forEach(b=>{ byTs[Math.floor(Number(b.ts)/1000)*1000*1]=b; });
             const p2=n=>String(n).padStart(2,'0');
@@ -15213,6 +15202,44 @@ const app=createApp({
         };
         const previewUsesVideo=computed(()=>false);
         const isPageVisible=()=>typeof document==='undefined' || document.visibilityState!=='hidden';
+        // ── 瀏覽器連線預算 ────────────────────────────────────────────────
+        // HTTP/1.1 對同一 origin 最多 6 條並行連線 (Chrome / Edge / Firefox 皆同)。
+        // 每路 MJPEG (multipart/x-mixed-replace) 是長連線，會「永久佔住」一條，
+        // 網格開滿 5-6 台 → 所有 XHR (含 /api/health) 排不到 socket → 8 秒逾時
+        // → 連 3 次 → 側欄跳「SERVICE OFFLINE」。但後端其實 4ms 就回應，
+        // 重啟服務完全沒用 —— 瓶頸在瀏覽器不在伺服器。
+        // 因此保留 2 條給 API，其餘給即時串流；超額的自動改快照輪詢
+        // (快照是一次性請求，拿完就把連線還回去)。
+        const BROWSER_CONN_LIMIT=6;
+        const API_CONN_RESERVE=2;
+        const MAX_LIVE_MJPEG=BROWSER_CONN_LIMIT-API_CONN_RESERVE;
+        const enforceStreamBudget=()=>{
+            const now=Date.now();
+            const zoomId=monitorZoomVisible.value?Number(monitorZoomCamera.value?.id||0):0;
+            // 放大視窗那一台一定要即時，先扣一條
+            let budget=MAX_LIVE_MJPEG-(zoomId?1:0);
+            sortedCameras.value.forEach(c=>{
+                if(!c?.enabled)return;
+                if(c.id===zoomId){ c._budgetSnapshot=false; return; }
+                if(getMonitorMediaKind(c)==='video')return;   // mp4 直連檔案，不佔 API 的連線池
+                if(budget>0){
+                    budget-=1;
+                    // 只還原「被預算擠掉」的，不去動因錯誤/逾時降級的那些
+                    if(c._budgetSnapshot){
+                        c._budgetSnapshot=false;
+                        c.monitorSnapshotMode=false;
+                        c.lastFrameAt=now;
+                    }
+                    return;
+                }
+                if(!c.monitorSnapshotMode){
+                    c.monitorSnapshotMode=true;
+                    c.thumbKey=now;
+                    c.snapshotTickAt=now;
+                }
+                c._budgetSnapshot=true;
+            });
+        };
         const applyMonitorModeToAll=()=>{
             cameras.value.forEach(c=>{
                 c.streamMode=monitorMode.value;
@@ -15221,14 +15248,17 @@ const app=createApp({
             });
             persistMonitorMode(monitorMode.value);
             persistCameraStreamModes(cameras.value);
+            enforceStreamBudget();
             streamKey.value=Date.now();
             monitorUpdatedAt.value=new Date().toLocaleTimeString('zh-TW');
         };
         const toggleCameraStreamMode=(camera)=>{
             camera.streamMode=camera.streamMode==='overlay'?'raw':'overlay';
             camera.monitorSnapshotMode=false;
+            camera._budgetSnapshot=false;
             camera.lastFrameAt=Date.now();
             persistCameraStreamModes(cameras.value);
+            enforceStreamBudget();
             streamKey.value=Date.now();
             monitorUpdatedAt.value=new Date().toLocaleTimeString('zh-TW');
         };
@@ -15292,7 +15322,9 @@ const app=createApp({
                 // 清掉放大殘留的 tick,讓「重載串流」是可靠的救援手段
                 c._zoomPausedGrid=false;
                 c._zoomReloadTick=0;
+                c._budgetSnapshot=false;
             });
+            enforceStreamBudget();
             streamKey.value=Date.now();
             monitorUpdatedAt.value=new Date().toLocaleTimeString('zh-TW');
         };
@@ -15307,6 +15339,8 @@ const app=createApp({
             });
             monitorZoomCamera.value=camera;
             monitorZoomVisible.value=true;
+            // 放大要多佔一條連線 → 重新分配預算(網格最尾端那台改走快照)
+            enforceStreamBudget();
         };
         const closeMonitorZoom=()=>{
             // 還原網格串流
@@ -15319,6 +15353,8 @@ const app=createApp({
                 }
             });
             monitorZoomVisible.value=false;
+            // 放大關掉，連線還回來 → 網格最尾端那台可以還原成即時串流
+            enforceStreamBudget();
         };
         const refreshMonitorZoom=()=>{
             if(!monitorZoomCamera.value)return;
@@ -15340,6 +15376,8 @@ const app=createApp({
             monitorWatchTimer=setInterval(()=>{
                 if(page.value!=='monitor' || !isPageVisible())return;
                 const now=Date.now();
+                // 每輪先重算連線預算：涵蓋進頁面、攝影機載入完、布局調整等所有入口
+                enforceStreamBudget();
                 cameras.value.forEach(c=>{
                     if(!c?.showStream)return;
                     if(getMonitorMediaKind(c)==='video')return;
@@ -15349,7 +15387,9 @@ const app=createApp({
                         c.snapshotTickAt=now;
                         return;
                     }
-                    if(c.monitorSnapshotMode && now-Number(c.snapshotTickAt||0)>5000){
+                    // 被連線預算擠掉的用 2 秒輪詢(接近即時)，因錯誤降級的維持 5 秒
+                    const _tick=c._budgetSnapshot?2000:5000;
+                    if(c.monitorSnapshotMode && now-Number(c.snapshotTickAt||0)>_tick){
                         c.thumbKey=now;
                         c.snapshotTickAt=now;
                     }
@@ -18703,7 +18743,7 @@ const app=createApp({
         return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,radarCameraId,radarTracks,radarStats,radarDotColor,radarClassZh,radarInsights,loadRadarTracks,visionEyeUrl,onVisionEyeError,trackHistory,parkingSources,parkingSource,parkingData,parkingSnapshotUrl,parkingRawSnapshotUrl,parkingImgEl,pmRect,pmLabel,pmDown,pmMove,pmUp,parkingShowVerify,parkingShowBoxes,parkingShowVehicles,parkingUseStream,vlmStatus,vlmResult,vlmQuerying,loadVlmStatus,triggerVlmLoad,askVlm,assistantOpen,toggleAssistant,assistantZoomImg,assistantPanelStyle,assistantDragStart,assistantSource,assistantMessages,assistantInput,assistantLoading,assistantSnapUrl,assistantSources,reloadAssistantSnap,sendAssistant,assistantPresets,assistantTTS,assistantListening,quickAsk,assistantVoiceInput,loadParkingSources,loadParkingOccupancy,openParkingEditor,downloadParkingSnapshot,openParkingLabel,parkingLiveRunning,parkingIntervalMs,parkingShowAdd,parkingAddForm,startParkingLive,stopParkingLive,addParkingSource,twipcamQuery,twipcamResults,twipcamSearching,searchTwipcam,pickTwipcam,parkingHistory,loadParkingHistory,parkingTrendPath,parkingCounting,parkingCountingMismatch,parkingCrossValidation,parkingCrossCalibrated,parkingCrossEscalated,parkingCrossHasArea,parkingCrossSuspect,parkingCrossTrend,loadParkingCounting,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewLocations,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,previewParkingZones,previewParkingZoneCount,parkingSubKindOptions,applyParkingSubKindToZone,directionLabel,directionArrowLabel,directionOptionsForZone,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedPlateIsInferred,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,detailClipRetrying,detailClipReloadKey,onDetailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
-            load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneEdgeOptions,showInoutEdgePicker,isInoutZone,flowVehicleOptions,flowVehicleLabelMap,flowVehicleTypesLabel,
+            load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,

@@ -88,8 +88,17 @@ def _vd_rows_to_records(rows: list, bucket: str) -> list:
             "avg_speed_kmh": round(row.get("avgSpeed") or 0, 1),
             "avg_occupancy_pct": round(row.get("avgOccupancyPct") or 0, 1),
             "direction_counts": row.get("directionCounts") or {},
-            "in_flow": int((row.get("directionCounts") or {}).get("IN", 0)) + int((row.get("directionCounts") or {}).get("INOUT", 0)),
-            "out_flow": int((row.get("directionCounts") or {}).get("OUT", 0)) + int((row.get("directionCounts") or {}).get("EXIT", 0)) + int((row.get("directionCounts") or {}).get("INOUT", 0)),
+            # 進出流量只算「轉場事件」:
+            #   IN            = 車輛進入 ROI
+            #   OUT / EXIT    = 車輛離開 ROI(EXIT 是內部用的名稱)
+            # 不可把 INOUT 加進來 —— INOUT 是該 ROI 的「一般流量計數」
+            # (見 stream.py 與 report_aggregation.py 的並存設計),
+            # 它已經計入 total_flow;再加到 in/out 就是重複計算。
+            # 87 實測:directionCounts={straight:67, IN:40, INOUT:40, EXIT:39},
+            # 舊公式會得到 in=80/out=79(灌水約 100%),正解是 in=40/out=39。
+            "in_flow": int((row.get("directionCounts") or {}).get("IN", 0)),
+            "out_flow": int((row.get("directionCounts") or {}).get("OUT", 0))
+                        + int((row.get("directionCounts") or {}).get("EXIT", 0)),
             "avg_queue_length_m": round(row.get("avgQueueLengthM") or 0, 1) if row.get("avgQueueLengthM") else None,
             "max_queue_length_m": round(row.get("maxQueueLengthM") or 0, 1) if row.get("maxQueueLengthM") else None,
             "queue_duration_sec": round(row.get("queueDurationSec") or 0, 1) if row.get("queueDurationSec") else None,

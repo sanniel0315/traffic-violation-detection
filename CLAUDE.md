@@ -47,17 +47,37 @@ balance 敏感，**任何 `<div>` open/close 不平衡會讓 `<div id="app">` �
 - `f226929` (NVR overlay 重做) 加 `v-if="x > 60"` HTML parser 把 `>` 當
   end-tag → Vue compile 整頁失敗白屏 → user 無法登入
 
-**改動 `web/index.html` 後 commit 前必跑這兩步**：
+⚠️ **這條規則適用於「所有 inline-template 頁」，不是只有 index.html。**
+`web/` 下同時有 `createApp` 與 `<div id="app">` 的頁面都算：
+`index.html`、`roi_editor.html`、`parking_editor.html`、`parking_label.html`、
+`nvr_playback.html`、`io_panel.html`、`lock_panel.html`、`lpr_verify.html`、
+`source-test.html`。
+2026-08-07 教訓：`roi_editor.html` 有 27 個自閉合 `<el-* />`，車流區列表每一列
+只剩 `#N` 標籤 —— 名稱框、下拉、點數、**連「儲存」「刪除」按鈕都是隱形的**。
+SOP 當時只寫 index.html，所以這個 bug 藏了很久沒被發現。
+
+**改動任何 inline-template 頁後 commit 前必跑這兩步**：
 
 ```bash
 # 1. 整檔 div balance（open 必須等於 close）
 python -c "import re,pathlib; s=pathlib.Path('web/index.html').read_text(encoding='utf-8'); print('open', len(re.findall(r'<div[\s>]', s)), 'close', s.count('</div>'))"
 # 預期: open 1089 close 1089 (數字可變但兩個必須相等)
 
-# 2. Vue template lint (Vue directive 內 unescaped >/<)
-python scripts/lint_vue_template.py web/index.html
-# 含 38 個 :class 內的 >/< 是 HTML5 spec 合法可忽略，但新加的條件
-# 寫 `x > 60` 要改 `60 < x` 或 `&gt;` entity
+# 2. Vue template lint —— 一次掃過所有 inline-template 頁
+python scripts/lint_vue_template.py --all
+# 或只掃改到的那幾頁: python scripts/lint_vue_template.py web/roi_editor.html
+#
+# 檢查兩件事:
+#   (a) Vue directive 內 unescaped >/<  → 新加的條件寫 `x > 60` 要改
+#       `60 < x` 或 `&gt;` entity
+#   (b) [SELF-CLOSING] 不渲染 slot 的元件自閉合會吞掉後面的兄弟節點
+#       (el-input / el-input-number / el-switch / el-date-picker …)
+#       一律改成成對閉合 <el-input ...></el-input>
+#
+# 🛑 要批次修自閉合「不要用 regex」——惰性量詞會跨過標籤邊界，
+#    把 <el-option/> 關成 </el-select>，整份模板會被改壞（已實際踩過）。
+#    用逐字元掃描：遇到 <el- 讀標籤名 → 掃到該開始標籤自己的 `>`（跳過引號內容）
+#    → 只在結尾是 `/>` 時改寫。改完驗每種標籤 open/close 數量對稱。
 ```
 
 **Vue template rules**（避免 HTML parser 截斷）：
