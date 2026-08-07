@@ -625,9 +625,12 @@ def build_vd_report_rows(
         row = ensure_row(device_id, agg.bucket_start)
         direction = normalize_direction(agg.direction)
         row["directionCounts"][direction] = row["directionCounts"].get(direction, 0) + int(agg.total_flow or 0)
-        if direction == "EXIT":
-            # 出框事件:只計入 out_flow(directionCounts),不重複進總流量/小大車/車道/速度
-            # (進框 IN 已計過這批車;單向下 IN=EXIT=通過量、總=通過量)
+        if direction in ("IN", "EXIT"):
+            # 進/出框事件只計入 directionCounts(進出流量),不進總流量。
+            # 總流量由該 zone 的一般流量事件(direction=INOUT)負責 —— 那條路徑
+            # 有 30 秒同車冷卻,語意跟其他車流區完全一致;轉場數則會漏掉
+            # 「第一次被偵測就已在框內」的車,拿它當總流量會低估。
+            # 兩條路徑各司其職,所以不會重複計數。
             continue
         row["totalFlow"] += int(agg.total_flow or 0)
         row["smallFlow"] += int(agg.small_vehicle_flow or 0)

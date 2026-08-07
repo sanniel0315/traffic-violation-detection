@@ -135,11 +135,22 @@ class VehicleDetector:
                 alias_compact = alias_norm.replace(" ", "")
                 if name == alias_norm or compact == alias_compact:
                     return canonical
-        # 第二輪：子字串比對（容忍 "pickup_truck" 之類的變體）
+        # 第二輪：以「詞」為單位比對（容忍 "pickup_truck" 之類的變體）。
+        # 不能用裸子字串——COCO 第 51 類是 'carrot'，"car" in "carrot" 會成立，
+        # 導致紅蘿蔔類被當成小客車：路面的白/黃色標線正好長得像，於是「地上標線
+        # 被辨識成小客車」。_normalize_label 已把 _ - 換成空白，所以
+        # "pickup_truck" → {"pickup","truck"} 仍能正確命中 truck。
+        tokens = set(name.split())
         for canonical, aliases in cls.CLASS_NAME_ALIASES.items():
             for alias in aliases:
                 alias_norm = cls._normalize_label(alias)
-                if alias_norm and alias_norm in name:
+                if not alias_norm:
+                    continue
+                if " " in alias_norm:
+                    # 多詞別名（如 "pickup truck"）仍用片語比對
+                    if alias_norm in name:
+                        return canonical
+                elif alias_norm in tokens:
                     return canonical
         return None
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """交通流事件 API"""
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -21,6 +21,29 @@ router = APIRouter(prefix="/api/traffic", tags=["交通流"])
 # 命中時直接回先前已重建好的完整結果,不去讀持久化聚合表(該表的 5m/1m 可能稀疏 → 會缺口)。
 _AGG_CACHE: dict[tuple, tuple] = {}
 _AGG_CACHE_TTL_SEC = 60.0
+
+# 趨勢查詢 cache。GROUP BY 的分桶鍵是 strftime 算出來的運算式,任何索引都用不上,
+# 必然 SCAN + TEMP B-TREE;traffic_events 已累積 230 萬筆,全表掃描實測閒置 4.4 秒、
+# 高負載下 17 秒。單一慢請求就會把瀏覽器僅剩的連線佔住,害 /api/health 排不到 socket
+# 逾時 → 前端誤判 SERVICE OFFLINE。所以這裡快取結果 + 限制掃描範圍雙管齊下。
+_TREND_CACHE: dict[tuple, tuple] = {}
+_TREND_CACHE_TTL_SEC = 60.0
+_TREND_CACHE_MAX = 64
+
+
+def _trend_cache_ttl(bucket_sec: int) -> float:
+    """快取存活時間隨桶大小放大。
+
+    1 小時桶畫的是 10~20 天的趨勢圖,5 分鐘的資料新鮮度差異在圖上看不出來,
+    但每次冷查要掃幾百萬列(實測 5.4 秒)。桶越大 → 圖越長期 → 可以快取越久。
+    小桶(秒/分級)是即時觀察用的,維持 60 秒。
+    """
+    bs = int(bucket_sec or 0)
+    if bs >= 3600:
+        return 300.0
+    if bs >= 300:
+        return 120.0
+    return _TREND_CACHE_TTL_SEC
 
 
 def _to_utc_naive(value: Optional[datetime]) -> Optional[datetime]:
@@ -73,6 +96,31 @@ def get_traffic_events_trend(
     bucket。回傳最新 max_buckets 個「非空」桶（空桶由前端補 0）；ts 為 UTC epoch 毫秒。"""
     start_time = _to_utc_naive(start_time)
     end_time = _to_utc_naive(end_time)
+
+    # 沒給起點時補一個隱含下界:end(或現在)往回推 max_buckets 個桶。
+    # 本來就只回「最新 max_buckets 個非空桶」,而前端也只畫 max_buckets/2 個桶,
+    # 所以這個下界不會少給任何前端畫得出來的資料,卻能讓 created_at 索引派上用場,
+    # 把全表掃描縮成範圍掃描。
+    if start_time is None:
+        _span = int(bucket_sec) * int(max_buckets)
+        _anchor = end_time or datetime.utcnow()
+        # 對齊到桶格線(至少 60 秒),否則 utcnow() 每次都不同 → cache key 每次都變、永遠 miss
+        _grid = max(int(bucket_sec), 60)
+        _anchor_epoch = (int(_anchor.replace(tzinfo=timezone.utc).timestamp()) // _grid) * _grid
+        _anchor = datetime.utcfromtimestamp(_anchor_epoch)
+        start_time = _anchor - timedelta(seconds=_span)
+
+    cache_key = (
+        int(bucket_sec), int(max_buckets), str(mode),
+        camera_id, lane, direction,
+        start_time.strftime("%Y-%m-%d %H:%M:%S"),
+        end_time.strftime("%Y-%m-%d %H:%M:%S") if end_time else None,
+    )
+    now_ts = time.time()
+    hit = _TREND_CACHE.get(cache_key)
+    if hit and (now_ts - hit[0]) < _trend_cache_ttl(bucket_sec):
+        return hit[1]
+
     try:
         db.execute(text("PRAGMA busy_timeout = 5000"))
     except Exception:
@@ -117,7 +165,12 @@ def get_traffic_events_trend(
         for r in rows if r[0] is not None
     ]
     buckets.sort(key=lambda b: b["ts"])
-    return {"bucket_sec": int(bucket_sec), "mode": mode, "buckets": buckets}
+    result = {"bucket_sec": int(bucket_sec), "mode": mode, "buckets": buckets}
+    if len(_TREND_CACHE) >= _TREND_CACHE_MAX:
+        for _k in sorted(_TREND_CACHE, key=lambda k: _TREND_CACHE[k][0])[:_TREND_CACHE_MAX // 2]:
+            _TREND_CACHE.pop(_k, None)
+    _TREND_CACHE[cache_key] = (now_ts, result)
+    return result
 
 
 @router.get("/vd-report")

@@ -51,8 +51,7 @@
                     v-for="opt in functionTypeOptions"
                     :key="opt.value"
                     :label="opt.label"
-                    :value="opt.value"
-                />
+                    :value="opt.value"></el-option>
             </el-select>
             <span>區域類型：</span>
             <el-select v-model="zoneType" style="width:180px">
@@ -61,38 +60,49 @@
                     :key="opt.value"
                     :label="opt.label"
                     :value="opt.value"
-                    :disabled="isZoneTypeDisabledInCreate(opt.value)"
-                />
+                    :disabled="isZoneTypeDisabledInCreate(opt.value)"></el-option>
             </el-select>
-            <el-input v-model="zoneName" placeholder="區域名稱" style="width:150px"/>
+            <el-input v-model="zoneName" placeholder="區域名稱" style="width:150px"></el-input>
             <el-select v-if="showDirectionByType(zoneType)" v-model="zoneDirection" placeholder="方向" style="width:140px">
-                <el-option v-for="opt in directionOptions" :key="`main-dir-${opt.value}`" :label="opt.label" :value="opt.value"/>
+                <el-option v-for="opt in directionOptions" :key="`main-dir-${opt.value}`" :label="opt.label" :value="opt.value"></el-option>
             </el-select>
             <el-select v-if="isFlowZoneType(zoneType)" v-model="zoneLaneTags" multiple collapse-tags collapse-tags-tooltip placeholder="車道(可複選)" style="width:220px">
-                <el-option v-for="opt in laneTagOptions" :key="`lane-tag-main-${opt.value}`" :label="opt.label" :value="opt.value"/>
+                <el-option v-for="opt in laneTagOptions" :key="`lane-tag-main-${opt.value}`" :label="opt.label" :value="opt.value"></el-option>
             </el-select>
             <span v-if="isFlowZoneType(zoneType)" style="font-size:12px;color:#64748b">車道編號</span>
-            <el-input-number v-if="isFlowZoneType(zoneType)" v-model="zoneLaneNo" :min="1" :step="1" size="small" style="width:120px"/>
+            <el-input-number v-if="isFlowZoneType(zoneType)" v-model="zoneLaneNo" :min="1" :step="1" size="small" style="width:120px"></el-input-number>
             <span v-if="isSpeedZoneType(zoneType)" style="font-size:12px;color:#64748b">速限(km/h)</span>
-            <el-input-number v-if="isSpeedZoneType(zoneType)" v-model="zoneSpeedLimit" :min="20" :max="180" :step="5" size="small" style="width:130px"/>
+            <el-input-number v-if="isSpeedZoneType(zoneType)" v-model="zoneSpeedLimit" :min="20" :max="180" :step="5" size="small" style="width:130px"></el-input-number>
             <span v-if="isSpeedZoneType(zoneType)" style="font-size:12px;color:#64748b">超速門檻</span>
-            <el-input-number v-if="isSpeedZoneType(zoneType)" v-model="zoneOverSpeedKmh" :min="1" :max="80" :step="1" size="small" style="width:130px"/>
+            <el-input-number v-if="isSpeedZoneType(zoneType)" v-model="zoneOverSpeedKmh" :min="1" :max="80" :step="1" size="small" style="width:130px"></el-input-number>
             <el-select v-if="isSpeedZoneType(zoneType)" v-model="zoneDirection" placeholder="方向" style="width:140px">
-                <el-option v-for="opt in directionOptions" :key="`main-speed-dir-${opt.value}`" :label="opt.label" :value="opt.value"/>
+                <el-option v-for="opt in directionOptions" :key="`main-speed-dir-${opt.value}`" :label="opt.label" :value="opt.value"></el-option>
             </el-select>
             <span v-if="isParkingZoneType(zoneType)" style="font-size:12px;color:#64748b">違規種類</span>
             <el-select v-if="isParkingZoneType(zoneType)" v-model="zoneSubKind" placeholder="違規種類" style="width:190px">
-                <el-option v-for="opt in parkingSubKinds" :key="`pk-sub-${opt.value}`" :label="opt.label" :value="opt.value"/>
+                <el-option v-for="opt in parkingSubKinds" :key="`pk-sub-${opt.value}`" :label="opt.label" :value="opt.value"></el-option>
             </el-select>
             <span v-if="isParkingZoneType(zoneType)" style="font-size:12px;color:#64748b">靜止門檻(秒)</span>
-            <el-input-number v-if="isParkingZoneType(zoneType)" v-model="zoneStopThreshold" :min="0" :step="1" :precision="1" size="small" style="width:130px" :placeholder="String(parkingSubKinds.find(o=>o.value===(zoneSubKind||'general'))?.threshold||0)"/>
+            <el-input-number v-if="isParkingZoneType(zoneType)" v-model="zoneStopThreshold" :min="0" :step="1" :precision="1" size="small" style="width:130px" :placeholder="String(parkingSubKinds.find(o=>o.value===(zoneSubKind||'general'))?.threshold||0)"></el-input-number>
         </div>
         <div class="toolbar">
             <el-button type="primary" size="large" @click="saveZone" :disabled="points.length < minPointsForCurrentType">💾 儲存區域</el-button>
             <el-button type="success" size="large" @click="saveAllEdits">✅ 儲存全部修改</el-button>
             <el-button @click="clearPoints">🗑️ 清除繪製</el-button>
             <el-button @click="undoPoint" :disabled="!points.length">↩️ 取消上一點</el-button>
+            <el-button
+                v-if="entryMode === 'traffic_flow_settings'"
+                :type="inoutMode ? 'warning' : 'default'"
+                @click="toggleInoutMode">{{ inoutMode ? '🚦 進出線標記中（點此結束）' : '🚦 標記進出線' }}</el-button>
             <span v-if="points.length" style="color:#409eff;font-weight:bold">已繪製 {{ points.length }} 個點（{{ isLineType(zoneType) ? '線段需2點' : '多邊形需3點' }}）</span>
+            <template v-if="inoutMode">
+                <span style="color:#b45309;font-weight:bold;margin-left:8px">目前要標：</span>
+                <el-radio-group v-model="inoutRole" size="small">
+                    <el-radio-button label="in">🟢 進線</el-radio-button>
+                    <el-radio-button label="out">🔴 出線</el-radio-button>
+                </el-radio-group>
+                <span style="color:#64748b;font-size:12px">同一個框點兩條不同的邊即可（再點同一條 = 取消）</span>
+            </template>
         </div>
         <div class="coord-box" v-if="points.length">
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
@@ -113,19 +123,20 @@
             <div class="zone-item" v-for="item in flowZones" :key="'flow-'+item.idx">
                 <div class="zone-color" :style="{background: colors[item.zone.type]}"></div>
                 <el-tag size="small" type="info">#{{ item.idx + 1 }}</el-tag>
-                <el-input v-model="item.zone.name" size="small" style="width:180px" placeholder="區域名稱"/>
+                <el-input v-model="item.zone.name" size="small" style="width:180px" placeholder="區域名稱"></el-input>
                 <el-select v-model="item.zone.type" size="small" style="width:150px">
-                    <el-option label="車流區" value="flow_detection"/>
+                    <el-option label="車流區" value="flow_detection"></el-option>
                 </el-select>
                 <el-select v-model="item.zone.direction" size="small" style="width:120px">
-                    <el-option v-for="opt in directionOptions" :key="`flow-dir-${item.idx}-${opt.value}`" :label="opt.label" :value="opt.value"/>
+                    <el-option v-for="opt in directionOptions" :key="`flow-dir-${item.idx}-${opt.value}`" :label="opt.label" :value="opt.value"></el-option>
                 </el-select>
                 <el-select v-model="item.zone.lane_tags" multiple collapse-tags collapse-tags-tooltip size="small" style="width:220px" placeholder="車道(可複選)">
-                    <el-option v-for="opt in laneTagOptions" :key="`flow-lane-${item.idx}-${opt.value}`" :label="opt.label" :value="opt.value"/>
+                    <el-option v-for="opt in laneTagOptions" :key="`flow-lane-${item.idx}-${opt.value}`" :label="opt.label" :value="opt.value"></el-option>
                 </el-select>
                 <span style="font-size:12px;color:#64748b">編號</span>
-                <el-input-number v-model="item.zone.lane_no" :min="1" :step="1" size="small" style="width:120px"/>
+                <el-input-number v-model="item.zone.lane_no" :min="1" :step="1" size="small" style="width:120px"></el-input-number>
                 <span style="color:#999">{{ item.zone.points.length }} 點</span>
+                <el-tag v-if="edgeLabelOf(item.zone)" size="small" type="warning">{{ edgeLabelOf(item.zone) }}</el-tag>
                 <el-button size="small" type="primary" @click="updateZone(item.idx)">儲存</el-button>
                 <el-button size="small" type="danger" @click="deleteZone(item.idx)">刪除</el-button>
             </div>
@@ -134,16 +145,16 @@
             <div class="zone-item" v-for="item in speedZones" :key="'speed-'+item.idx">
                 <div class="zone-color" :style="{background: colors[item.zone.type]}"></div>
                 <el-tag size="small" type="info">#{{ item.idx + 1 }}</el-tag>
-                <el-input v-model="item.zone.name" size="small" style="width:160px" placeholder="區域名稱"/>
+                <el-input v-model="item.zone.name" size="small" style="width:160px" placeholder="區域名稱"></el-input>
                 <el-select v-model="item.zone.type" size="small" style="width:150px">
-                    <el-option label="車速區" value="speed_roi"/>
+                    <el-option label="車速區" value="speed_roi"></el-option>
                 </el-select>
                 <span style="font-size:12px;color:#64748b">速限(km/h)</span>
-                <el-input-number v-model="item.zone.speed_limit" :min="20" :max="180" :step="5" size="small" style="width:130px"/>
+                <el-input-number v-model="item.zone.speed_limit" :min="20" :max="180" :step="5" size="small" style="width:130px"></el-input-number>
                 <span style="font-size:12px;color:#64748b">超速門檻</span>
-                <el-input-number v-model="item.zone.overspeed_kmh" :min="1" :max="80" :step="1" size="small" style="width:130px"/>
+                <el-input-number v-model="item.zone.overspeed_kmh" :min="1" :max="80" :step="1" size="small" style="width:130px"></el-input-number>
                 <el-select v-model="item.zone.direction" size="small" style="width:120px">
-                    <el-option v-for="opt in directionOptions" :key="`speed-dir-${item.idx}-${opt.value}`" :label="opt.label" :value="opt.value"/>
+                    <el-option v-for="opt in directionOptions" :key="`speed-dir-${item.idx}-${opt.value}`" :label="opt.label" :value="opt.value"></el-option>
                 </el-select>
                 <span style="color:#999">{{ item.zone.points.length }} 點</span>
                 <el-button size="small" type="primary" @click="updateZone(item.idx)">儲存</el-button>
@@ -155,15 +166,15 @@
             <div class="zone-item" v-for="item in otherZones" :key="'other-'+item.idx">
                 <div class="zone-color" :style="{background: colors[item.zone.type]}"></div>
                 <el-tag size="small" type="info">#{{ item.idx + 1 }}</el-tag>
-                <el-input v-model="item.zone.name" size="small" style="width:160px" placeholder="區域名稱"/>
+                <el-input v-model="item.zone.name" size="small" style="width:160px" placeholder="區域名稱"></el-input>
                 <el-select v-model="item.zone.type" size="small" style="width:150px">
-                    <el-option label="車流區" value="flow_detection"/>
-                    <el-option label="車速區" value="speed_roi"/>
-                    <el-option label="車速進入線" value="speed_line_in"/>
-                    <el-option label="車速離開線" value="speed_line_out"/>
+                    <el-option label="車流區" value="flow_detection"></el-option>
+                    <el-option label="車速區" value="speed_roi"></el-option>
+                    <el-option label="車速進入線" value="speed_line_in"></el-option>
+                    <el-option label="車速離開線" value="speed_line_out"></el-option>
                 </el-select>
                 <el-select v-model="item.zone.direction" size="small" style="width:120px">
-                    <el-option v-for="opt in directionOptions" :key="`other-dir-${item.idx}-${opt.value}`" :label="opt.label" :value="opt.value"/>
+                    <el-option v-for="opt in directionOptions" :key="`other-dir-${item.idx}-${opt.value}`" :label="opt.label" :value="opt.value"></el-option>
                 </el-select>
                 <span style="color:#999">{{ item.zone.points.length }} 點</span>
                 <el-button size="small" type="primary" @click="updateZone(item.idx)">儲存</el-button>
@@ -205,7 +216,8 @@ createApp({
             { label: '未指定', value: '' },
             { label: '左轉', value: 'left' },
             { label: '直行', value: 'straight' },
-            { label: '右轉', value: 'right' }
+            { label: '右轉', value: 'right' },
+            { label: '進出(IN/OUT)', value: 'INOUT' }
         ];
         const laneTagOptions = [
             { label: '左轉', value: 'left' },
@@ -376,6 +388,9 @@ createApp({
                     })(),
                     lane_no: normalizeLaneNo(z.lane_no ?? z.lane_id ?? z.laneNo ?? z.lane),
                     direction: z.direction || '',
+                    // 進/出線的邊索引:整數才留,其他一律 null(= 整框進出,維持舊行為)
+                    in_edge: normalizeEdgeIndex(z.in_edge, (z.points || []).length),
+                    out_edge: normalizeEdgeIndex(z.out_edge, (z.points || []).length),
                     speed_limit: Number(z.speed_limit || 60),
                     overspeed_kmh: Number(z.overspeed_kmh || z.speed_margin || 10)
                 };
@@ -579,12 +594,74 @@ createApp({
             return [zx, zy];
         };
         
+        // ── 同一個 ROI 的邊界標進/出線 ────────────────────────────────────
+        // 進出方向不另外開 ROI，就在既有多邊形的「某一條邊」上標 IN / OUT。
+        // 邊 i = points[i] → points[(i+1) % n]，索引從 0 起算（畫面標籤顯示 i+1）。
+        const inoutMode = ref(false);
+        const inoutRole = ref('in');     // 目前要標的角色:'in' 進線 / 'out' 出線
+        const isInoutZone = (z) => String(z?.direction || '').toUpperCase() === 'INOUT';
+        const normalizeEdgeIndex = (v, n) => {
+            if (v === '' || v === null || v === undefined) return null;
+            const i = Number(v);
+            return (Number.isInteger(i) && i >= 0 && i < Number(n || 0)) ? i : null;
+        };
+        // 區域清單顯示目前綁在哪條邊
+        const edgeLabelOf = (z) => {
+            const n = (z?.points || []).length;
+            const i = normalizeEdgeIndex(z?.in_edge, n);
+            const o = normalizeEdgeIndex(z?.out_edge, n);
+            if (i === null && o === null) return isInoutZone(z) ? '整框進出' : '';
+            return `進:${i === null ? '—' : '邊' + (i + 1)} / 出:${o === null ? '—' : '邊' + (o + 1)}`;
+        };
+        // 點到線段的距離（用來判斷點在哪一條邊上）
+        const distToSegment = (p, a, b) => {
+            const vx = b[0] - a[0], vy = b[1] - a[1];
+            const wx = p[0] - a[0], wy = p[1] - a[1];
+            const len2 = vx * vx + vy * vy;
+            let t = len2 > 0 ? (wx * vx + wy * vy) / len2 : 0;
+            t = Math.max(0, Math.min(1, t));
+            const dx = a[0] + t * vx - p[0], dy = a[1] + t * vy - p[1];
+            return Math.sqrt(dx * dx + dy * dy);
+        };
+        const drawZoneEdges = (ctx, zone, zPoints) => {
+            const n = zPoints.length;
+            const inIdx = normalizeEdgeIndex(zone.in_edge, n);
+            const outIdx = normalizeEdgeIndex(zone.out_edge, n);
+            for (let i = 0; i < n; i++) {
+                const a = zPoints[i], b = zPoints[(i + 1) % n];
+                const isIn = (i === inIdx), isOut = (i === outIdx);
+                if (isIn || isOut) {
+                    ctx.save();
+                    ctx.strokeStyle = isIn ? '#16a34a' : '#dc2626';
+                    ctx.lineWidth = 7;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(a[0], a[1]);
+                    ctx.lineTo(b[0], b[1]);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+                const label = isIn ? `${i + 1} 進` : (isOut ? `${i + 1} 出` : String(i + 1));
+                const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+                ctx.save();
+                ctx.font = 'bold 13px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                const w = ctx.measureText(label).width + 10;
+                ctx.fillStyle = isIn ? '#16a34a' : (isOut ? '#dc2626' : 'rgba(15,23,42,0.7)');
+                ctx.fillRect(mx - w / 2, my - 10, w, 20);
+                ctx.fillStyle = '#fff';
+                ctx.fillText(label, mx, my);
+                ctx.restore();
+            }
+        };
+
         const draw = () => {
             const canvas = canvasRef.value;
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
+
             // 畫已儲存的區域
             zones.value.forEach(zone => {
                 const zPoints = (zone.points || []).map(p => toCanvasPoint(p, zone));
@@ -616,6 +693,13 @@ createApp({
                     const speedTag = isSpeedZoneType(zone.type)
                         ? ` [${Number(zone.speed_limit || 0)}km/h +${Number(zone.overspeed_kmh || 0)}]` : '';
                     ctx.fillText(`${zone.name}${laneNoTag}${laneTag}${speedTag}`, zPoints[0][0] + 5, zPoints[0][1] - 5);
+                }
+
+                // 進出線:標記模式下所有車流 ROI 都顯示邊號方便點選,
+                // 平時只有已設成「進出(IN/OUT)」的才畫,避免畫面雜亂。
+                if (!zIsLine && zPoints.length > 2 && isFlowZoneType(zone.type)
+                    && (inoutMode.value || isInoutZone(zone))) {
+                    drawZoneEdges(ctx, zone, zPoints);
                 }
             });
             
@@ -657,15 +741,92 @@ createApp({
             }
         };
         
+        // 標記模式:點 ROI 的邊 → 該邊在「未指定 → 進線 → 出線 → 未指定」之間循環。
+        // 命中測試在 canvas 座標做(與畫出來的完全一致),不必換算回原圖。
+        const markInoutEdge = (cx, cy) => {
+            const cands = zones.value.filter(z => isFlowZoneType(z.type) && !isLineType(z.type)
+                                                  && (z.points || []).length >= 3);
+            // 進線與出線必須落在「同一個 ROI」的兩條邊上。
+            // 車道 ROI 常常彼此相鄰,若每次都在所有 ROI 裡找最近的邊,
+            // 進線會標在 A 框、出線標在 B 框 —— 畫面上看起來有一進一出,
+            // 實際上兩個框各半,計數完全不對。所以只要有框已經標了進或出,
+            // 就鎖定那個框,後續標記只在它的邊上找。
+            const marked = cands.filter(z => normalizeEdgeIndex(z.in_edge, (z.points || []).length) !== null
+                                          || normalizeEdgeIndex(z.out_edge, (z.points || []).length) !== null);
+            const pool = marked.length ? marked : cands;
+            let best = null;
+            pool.forEach((zone) => {
+                const zPoints = (zone.points || []).map(p => toCanvasPoint(p, zone));
+                for (let i = 0; i < zPoints.length; i++) {
+                    const d = distToSegment([cx, cy], zPoints[i], zPoints[(i + 1) % zPoints.length]);
+                    if (!best || d < best.d) best = { d, edge: i, zone };
+                }
+            });
+            if (!best || best.d > 24) {
+                ElementPlus.ElMessage.info(marked.length
+                    ? `請點在「${marked[0].name || '該車流 ROI'}」的邊線上（進出線要在同一個框）`
+                    : '請點在車流 ROI 的邊線上（誤差 24px 內）');
+                return;
+            }
+            // 同一個 ROI 標「一進一出」= 兩條不同的邊各給一個角色。
+            // 用明確的角色模式(現在在標進線還是出線),不要用單鍵循環 ——
+            // 循環的話點第二條邊會把第一條的角色搶走,永遠湊不出一進一出。
+            const z = best.zone;
+            const n = (z.points || []).length;
+            const inIdx = normalizeEdgeIndex(z.in_edge, n);
+            const outIdx = normalizeEdgeIndex(z.out_edge, n);
+            const role = inoutRole.value;            // 'in' | 'out'
+            const roleName = role === 'in' ? '進線' : '出線';
+            let msg;
+            if ((role === 'in' ? inIdx : outIdx) === best.edge) {
+                // 再點一次同一條邊 → 取消該角色
+                if (role === 'in') z.in_edge = null; else z.out_edge = null;
+                msg = `邊${best.edge + 1} 的${roleName}已取消`;
+            } else {
+                if (role === 'in') {
+                    z.in_edge = best.edge;
+                    if (outIdx === best.edge) z.out_edge = null;   // 同一條邊不能又進又出
+                } else {
+                    z.out_edge = best.edge;
+                    if (inIdx === best.edge) z.in_edge = null;
+                }
+                msg = `邊${best.edge + 1} 設為「${roleName}」`;
+                // 標完進線自動跳到標出線,一進一出兩次點擊就完成
+                if (role === 'in' && normalizeEdgeIndex(z.out_edge, n) === null) {
+                    inoutRole.value = 'out';
+                    msg += '，接著請點「出線」的那條邊';
+                }
+            }
+            // 標了邊就代表這個 ROI 要做進出計數,方向自動切成 INOUT,
+            // 免得使用者還要回主頁另外改一個下拉才生效。
+            if (z.in_edge !== null && z.in_edge !== undefined || z.out_edge !== null && z.out_edge !== undefined) {
+                if (!isInoutZone(z)) {
+                    z.direction = 'INOUT';
+                    msg += '，行車方向已自動設為「進出(IN/OUT)」';
+                }
+            }
+            zones.value = [...zones.value];
+            draw();
+            ElementPlus.ElMessage.success(msg + '（記得按「儲存全部修改」）');
+        };
+
         const addPoint = (e) => {
             const canvas = canvasRef.value;
             const rect = canvas.getBoundingClientRect();
             const x = Math.round(e.clientX - rect.left);
             const y = Math.round(e.clientY - rect.top);
+            if (inoutMode.value) { markInoutEdge(x, y); return; }
             const sx = Math.round(x * sourceSize.value.width / (canvas.width || 1));
             const sy = Math.round(y * sourceSize.value.height / (canvas.height || 1));
             points.value.push([sx, sy]);
             draw();
+        };
+        const toggleInoutMode = () => {
+            inoutMode.value = !inoutMode.value;
+            draw();
+            if (inoutMode.value) {
+                ElementPlus.ElMessage.info("進出線標記模式:先選要標「進線」還是「出線」,再點 ROI 的那條邊。此模式下不會新增繪製點。");
+            }
         };
         
         const undoPoint = () => {
@@ -679,7 +840,8 @@ createApp({
         };
         const validateZones = (zoneList, contextType = '', targetId = '') => {
             if (entryMode !== 'traffic_flow_settings') return true;
-            const dirAllow = new Set(['left', 'straight', 'right']);
+            // 'inout' = 同一個 ROI 用邊界標進/出線（後端 _normalize_event_direction 收 'INOUT'）
+            const dirAllow = new Set(['left', 'straight', 'right', 'inout']);
             const flowIssues = [];
             zoneList.forEach((z, i) => {
                 if (!isFlowZoneType(z?.type)) return;
@@ -882,6 +1044,7 @@ createApp({
             points, zones, functionType, functionTypeOptions, zoneType, zoneTypeOptions, zoneName, zoneLaneTags, zoneLaneNo, zoneDirection, zoneSpeedLimit, zoneOverSpeedKmh, directionOptions, laneTagOptions, flowZoneOptions, flowZones, speedZones, otherZones, pointsText, colors, typeNames, isLineType, minPointsForCurrentType, isFlowZoneType, isSpeedZoneType, showDirectionByType,
             isParkingZoneType, parkingSubKinds, zoneSubKind, zoneStopThreshold,
             isZoneTypeDisabledInCreate,
+            entryMode, inoutMode, inoutRole, toggleInoutMode, isInoutZone, edgeLabelOf,
             initCanvas, addPoint, undoPoint, clearPoints, saveZone, saveAllEdits, deleteZone, updateZone, copyPoints, goBack
         };
     }

@@ -2321,14 +2321,16 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 # 30s 對快速通過 ROI 仍是 1 車 1 筆；塞車中 30s 也只 1 筆 (ID swap
                 # 偵測會清狀態，新 track 視為新車重新算)。
                 _EVENT_LOG_COOLDOWN = 30.0
-                # INOUT「進出」框:改由下方「進框轉場」計數,一般迴圈要跳過這些框
+                # INOUT「進出」框:進出流量另外由下方「轉場」邏輯計數,
+                # 但這裡的一般流量計數「照算」—— 進出歸進出,原本的流量計數還是要。
+                # (舊版把 INOUT 框從一般迴圈排除,導致標了進出線之後該車道的
+                #  流量計數整個消失,只剩轉場數;而轉場數會漏掉「第一次被偵測時
+                #  就已經在框內」的車,設了 in_edge 之後更嚴格 → 總流量會塌掉。)
+                # 不會重複計數:報表端 IN/EXIT 只進 directionCounts,不進 totalFlow。
                 _inout_zones = [z for z in det_zones if _normalize_event_direction(z.get("direction")) == "INOUT"]
-                _inout_keys = {_zone_key(z) for z in _inout_zones}
                 for v in vehicles:
                     bbox = v.get("bbox", {}) or {}
                     hit_zones = _vehicle_hit_zones(v, det_zones)
-                    if _inout_keys:
-                        hit_zones = [z for z in hit_zones if _zone_key(z) not in _inout_keys]
                     if not hit_zones:
                         continue
                     pick_zone = hit_zones[0]
