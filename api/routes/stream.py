@@ -2327,6 +2327,21 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 #  流量計數整個消失,只剩轉場數;而轉場數會漏掉「第一次被偵測時
                 #  就已經在框內」的車,設了 in_edge 之後更嚴格 → 總流量會塌掉。)
                 # 不會重複計數:報表端 IN/EXIT 只進 directionCounts,不進 totalFlow。
+                #
+                # 防呆:只要標了進線或出線,這個框就是進出框,不管方向被設成什麼。
+                # 方向下拉曾提供單獨的「進場(IN)」「出場(OUT)」,使用者標完邊又去選了
+                # 「進場(IN)」→ 方向不是 INOUT → 轉場邏輯整個不跑(標的邊白標),
+                # 而且該框的一般流量事件被標成 direction='IN',報表端的
+                # `if direction in ("IN","EXIT"): continue` 會把它排除在 totalFlow 外
+                # → 那個車道的流量從總流量整個消失(實測 lane2 的 29 筆全不見)。
+                # 這裡把方向一併正規化成 INOUT,讓轉場計數與一般流量計數都回到正軌。
+                for _z in det_zones:
+                    if _z.get("in_edge") in (None, "") and _z.get("out_edge") in (None, ""):
+                        continue
+                    if _normalize_event_direction(_z.get("direction")) != "INOUT":
+                        print(f"⚠️ zone {_z.get('name')!r} 標了進出線但方向是 "
+                              f"{_z.get('direction')!r},已視為 INOUT", flush=True)
+                        _z["direction"] = "INOUT"
                 _inout_zones = [z for z in det_zones if _normalize_event_direction(z.get("direction")) == "INOUT"]
                 for v in vehicles:
                     bbox = v.get("bbox", {}) or {}
