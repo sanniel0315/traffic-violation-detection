@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 import cv2
 import time
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from api.models import CongestionSample, get_db, Camera, SessionLocal
 from api.utils.roi_scope import SCOPE_CONGESTION, SCOPE_TRAFFIC, select_zones
@@ -240,6 +240,14 @@ async def get_congestion_samples(
         query = query.filter(CongestionSample.camera_id == camera_id)
     start_time = _to_utc_naive(start_time)
     end_time = _to_utc_naive(end_time)
+    if start_time is None:
+        # 🛑 沒有下界的話會掃到整張表:實測不帶參數要 32.8 秒、回 80 MB JSON
+        # (limit 20 萬列全部序列化)。前端統計頁的日期範圍是條件式帶入的
+        # (`if(from)`),使用者把範圍清空就會走到這條 —— 一個請求佔住 worker
+        # 33 秒,配上瀏覽器每網域 6 條連線,整個系統看起來就像離線
+        # (見「SERVICE OFFLINE 真因=瀏覽器 6 連線被佔滿」那次事故)。
+        # 未指定就給最近 1 小時;要更早的資料請明確帶 start_time。
+        start_time = datetime.utcnow() - timedelta(hours=1)
     if start_time is not None:
         query = query.filter(CongestionSample.created_at >= start_time)
     if end_time is not None:
