@@ -6,12 +6,15 @@ import io
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from api.models import ApiKey, CongestionReportAgg, get_db
-from api.utils.api_key_auth import require_scope
+from api.utils.api_key_auth import require_scope, resolve_api_key
 from api.utils.report_aggregation import (
     BUCKET_SECONDS,
     build_vd_report_rows,
@@ -27,6 +30,55 @@ _BUCKET_INTERVALS = {"1m": timedelta(minutes=1), "5m": timedelta(minutes=5), "1h
 _MAX_RANGE = {"1m": timedelta(hours=24), "5m": timedelta(days=7), "1h": timedelta(days=90)}
 _MAX_RECORDS = 10000
 _DEVICE_ID = "jetson-nx-001"
+
+
+def _require_docs_token(request: Request, token: str, db: Session) -> None:
+    """文件頁的認證：?token= 或 X-API-Key header 皆可。
+
+    瀏覽器直接開文件網址沒辦法帶 header，所以要接受查詢字串；
+    但驗證邏輯與一般 API 呼叫共用 resolve_api_key，不另寫一套。
+    """
+    value = str(token or "").strip() or str(request.headers.get("X-API-Key") or "").strip()
+    if not resolve_api_key(value, db):
+        raise HTTPException(
+            status_code=401,
+            detail="需要有效的 API 金鑰（網址加 ?token=<金鑰> 或帶 X-API-Key header）",
+        )
+
+
+@router.get("/openapi.json", summary="對外 API 規格（只含 /api/v1/external/*）", include_in_schema=False)
+def external_openapi(request: Request,
+                     token: str = Query("", description="API 金鑰；也可改用 X-API-Key header"),
+                     db: Session = Depends(get_db)):
+    """只回對外那幾條的 OpenAPI 規格。
+
+    🛑 不要把完整規格給客戶 —— 那裡面有 173 條內部端點
+    （/api/auth/users、/api/io/do/{ch}、/api/frigate/restart …），
+    客戶只需要 /api/v1/external/* 這幾條。
+    瀏覽器開文件頁沒辦法帶 header，所以這裡也接受 ?token=。
+    """
+    _require_docs_token(request, token, db)
+    full = request.app.openapi()
+    paths = {p: v for p, v in (full.get("paths") or {}).items() if p.startswith("/api/v1/external")}
+    return {
+        "openapi": full.get("openapi", "3.1.0"),
+        "info": {
+            "title": "交通資料對外 API",
+            "version": str(full.get("info", {}).get("version", "1.0")),
+            "description": "VD 車流報表 / 壅塞報表 / 串流清單。所有端點需帶 X-API-Key。",
+        },
+        "paths": paths,
+        "components": full.get("components", {}),
+    }
+
+
+@router.get("/docs", summary="對外 API 文件（Swagger UI）", include_in_schema=False)
+def external_docs(request: Request,
+                  token: str = Query("", description="API 金鑰"),
+                  db: Session = Depends(get_db)):
+    _require_docs_token(request, token, db)
+    spec_url = f"/api/v1/external/openapi.json?token={quote(token)}" if token else "/api/v1/external/openapi.json"
+    return get_swagger_ui_html(openapi_url=spec_url, title="交通資料對外 API")
 
 
 def _meta(fmt: str = "json") -> dict:

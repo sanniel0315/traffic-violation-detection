@@ -8,8 +8,9 @@ warnings.filterwarnings('ignore')
 import faulthandler
 faulthandler.enable()
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -20,6 +21,7 @@ import threading
 from zoneinfo import ZoneInfo
 from api.models import init_db
 from api.routes import auth, frigate, lpr, lpr_stream, lpr_visual, violations, cameras, stream, traffic, nx
+from api.routes.auth import get_admin_user
 from api.routes import congestion
 from api.routes import logs, system
 from api.routes import external, api_key_admin
@@ -304,7 +306,16 @@ app = FastAPI(
     title="交通違規影像分析系統",
     description="Jetson NX AI 邊緣運算平台",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    # 🛑 關掉內建的文件路由,改用下面帶認證的版本。
+    # 原本 /docs /redoc /openapi.json 不需要任何憑證就能開,會把 173 條內部端點
+    # 全部列給任何連得到這台機器的人看(含 /api/auth/users、/api/io/do/{ch}、
+    # /api/frigate/restart …),而對外客戶其實只需要 5 條 /api/v1/external/*。
+    # 分兩層:完整文件要登入;客戶用 API token 看只含對外那幾條的文件
+    # (見 api/routes/external.py 的 /api/v1/external/docs)。
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 app.add_middleware(
@@ -325,6 +336,25 @@ async def no_cache_web_html(request: Request, call_next):
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
+
+
+# ── 帶認證的 API 文件 ────────────────────────────────────────────────
+# 完整文件(173 條內部端點)只給登入的管理者看。客戶要看的是
+# /api/v1/external/docs —— 那份只含對外 5 條,用 API token 認證。
+@app.get("/openapi.json", include_in_schema=False)
+def openapi_full(_admin=Depends(get_admin_user)):
+    return app.openapi()
+
+
+@app.get("/docs", include_in_schema=False)
+def docs_full(_admin=Depends(get_admin_user)):
+    return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} - Swagger UI")
+
+
+@app.get("/redoc", include_in_schema=False)
+def redoc_full(_admin=Depends(get_admin_user)):
+    return get_redoc_html(openapi_url="/openapi.json", title=f"{app.title} - ReDoc")
+
 
 # 註冊路由
 app.include_router(violations.router)
