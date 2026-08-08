@@ -54,8 +54,10 @@ cp .env.example .env    # 編輯
 編輯 `config/frigate/config.yml`：
 - `go2rtc.streams.*`：填**本站攝影機**的 RTSP（URL/帳密/IP）
 - `cameras.*`：對應的 detect/record 設定
-> 🛑 `config/frigate/config.yml` 是 git-tracked，CI deploy 會 `git reset --hard` 覆蓋；
-> 改完要 commit 進該站自己的分支/設定，否則會被蓋回。
+> ✅ `config/frigate/config.yml` 雖然 git-tracked，但 deploy 會在
+> `git reset --hard` 前後保留現場那份（`scripts/deploy_keep_runtime_config.sh`），
+> **改完不用 commit 也不會被蓋回**。repo 裡的版本只是新站的種子。
+> 反過來說：想從 git 把設定派到現場，得先在現場刪掉該檔再部署。
 
 ## 7. systemd 服務
 ```bash
@@ -120,10 +122,13 @@ push main 時，matrix 會在「每一台」對應 runner 各自 verify + 自我
 2. 把 label 加進 workflow 的 `matrix.site`：`site: [agx-orin, site2]`
 3. push → 兩站都會自動部署。
 
-> 🛑 **加自動部署前必解的雷**：deploy 的 `git reset --hard origin/main` 會把 `config/frigate/config.yml`
-> 還原成 origin 版（= 第一站的攝影機）。各站攝影機不同，所以第二站直接吃進 matrix 會被洗掉設定。
-> **在做「每站獨立 frigate 設定」之前，第二站請維持手動部署**：
-> `git pull && sudo systemctl restart traffic-api`（或 `scripts/restart_and_verify.sh`）。
+> ✅ **這顆雷已拆**（2026-08-08）：deploy 會在 `git reset --hard origin/main` 前後
+> 保留現場的執行期設定檔（frigate `config.yml`、`ui_settings.json`、`go2rtc.yaml`、
+> 功能開關、IO / NVR 設定），各站攝影機設定不同不再是自動部署的阻礙，
+> 第二站可以直接加進 `matrix.site`。
+> 機制在 `scripts/deploy_keep_runtime_config.sh`，回歸測試
+> `tests/test_deploy_keep_runtime_config.sh`（用真的 git repo 跑一次 reset --hard）。
+> 新增「程式會自己寫、又被 git 追蹤」的設定檔時，要加進該腳本的 `RUNTIME_CONFIGS`。
 
 > 對外網路不穩時 runner 會接不到 job / `git fetch` 失敗 → 手動 scp 改檔 + 重啟為 fallback。
 
