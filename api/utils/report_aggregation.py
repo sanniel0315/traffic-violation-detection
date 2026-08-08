@@ -204,7 +204,14 @@ def _camera_meta(db: Session):
             lane_no = int(lane_no) if str(lane_no).isdigit() else None
             if lane_no and lane_no > 0:
                 lane_set.add(lane_no)
-            direction = normalize_direction(zone.get("direction"))
+            # 車流 zone 的 `direction` 一個欄位同時扛兩種語意:轉向(left/straight/right)
+            # 或進出模式(INOUT)。一旦選了 INOUT,這個 zone 就沒有地方記「道路的行進方向」,
+            # 對外報表的 direction 只能回 INOUT —— 那不是行車方向。
+            # `travel_direction` 是額外欄位,專門放行進方向(N2S/S2N/straight…),
+            # 有設就優先採用;沒設才退回舊行為,完全向後相容。
+            direction = normalize_direction(zone.get("travel_direction"))
+            if direction in _TRANSITION_DIRECTIONS or direction == "unknown":
+                direction = normalize_direction(zone.get("direction"))
             if direction != "unknown":
                 direction_counts[direction] = direction_counts.get(direction, 0) + 1
         main_direction = "unknown"
