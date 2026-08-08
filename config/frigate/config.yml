@@ -35,18 +35,13 @@ cameras:
       enabled: true
       timestamp: true
     zones:
-      人行道 1:
-        coordinates: 21,381,410,432,29,1042
-        objects:
-        - car
-        - motorcycle
       車流區 1:
-        coordinates: 1459,173,1795,235,1912,1051,1059,1053,1005,606,1112,370,1334,235
+        coordinates: 1272,270,1598,354,1907,1066,1062,1053,1030,702,1096,459,1174,350
         objects:
         - car
         - motorcycle
       車流區 2:
-        coordinates: 1272,11,1400,178,1094,379,978,722,1010,1032,24,1038,37,318,678,86
+        coordinates: 787,360,1094,379,1002,738,464,715,598,512,739,382
         objects:
         - car
         - motorcycle
@@ -57,82 +52,6 @@ cameras:
         - motorcycle
       車速區 2:
         coordinates: 1350,13,24,190,18,1056,986,1072,974,672,1038,461,1248,235,1501,126
-        objects:
-        - car
-        - motorcycle
-  cam_3:
-    detect:
-      enabled: false
-      fps: 5
-      height: 1080
-      width: 1920
-    enabled: false
-    ffmpeg:
-      inputs:
-      - path: rtsp://127.0.0.1:8554/cam_3
-        roles:
-        - record
-    motion:
-      contour_area: 20
-      enabled: true
-      threshold: 25
-    objects:
-      filters:
-        car:
-          min_area: 5000
-          min_score: 0.5
-        motorcycle:
-          min_area: 1000
-          min_score: 0.5
-      track:
-      - car
-      - motorcycle
-      - bicycle
-      - person
-    record:
-      enabled: true
-    snapshots:
-      bounding_box: true
-      enabled: true
-      timestamp: true
-    zones:
-      車流區 1:
-        coordinates: 1034,190,1133,213,1114,1075,506,1032
-        objects:
-        - car
-        - motorcycle
-      車流區 2:
-        coordinates: 1173,222,1296,222,1896,886,1874,1038,1579,1075,1131,1046
-        objects:
-        - car
-        - motorcycle
-      車流區 3:
-        coordinates: 928,176,979,197,416,877,5,784,818,219
-        objects:
-        - car
-        - motorcycle
-      車流區 4:
-        coordinates: 859,155,907,174,8,768,22,440
-        objects:
-        - car
-        - motorcycle
-      車速區 1:
-        coordinates: 1173,170,1358,178,1915,936,1912,1064,1118,1070,1096,546,1114,267,1134,218
-        objects:
-        - car
-        - motorcycle
-      車速區 2:
-        coordinates: 997,146,1144,170,1099,288,1098,1067,374,1070
-        objects:
-        - car
-        - motorcycle
-      車速區 3:
-        coordinates: 910,155,958,170,342,1072,35,1067,34,754
-        objects:
-        - car
-        - motorcycle
-      車速區 4:
-        coordinates: 886,141,882,170,11,758,27,414,813,126
         objects:
         - car
         - motorcycle
