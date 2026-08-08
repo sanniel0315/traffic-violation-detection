@@ -15,9 +15,10 @@ jobs:
     # 每個站點 = 一台 Jetson + 一個有「唯一 label」的 self-hosted runner。
     # 新增站點：在新板註冊 runner 並給唯一 label(例 site2)，然後把該 label 加進下面 matrix.site 陣列。
     # matrix 會在「每一台」對應 runner 上各跑一次 verify + 自我部署(deploy 用 origin/main)。
-    # 🛑 注意: deploy 的 git reset --hard 會把 config/frigate/config.yml 還原成 origin 版,
-    #         各站攝影機設定不同 → 第二站若加進來自動部署前,需先做「每站獨立 frigate 設定」
-    #         (見 DEPLOY_NEW_SITE.md);在那之前第二站建議維持手動部署,只放現有 agx-orin 一站。
+    # ✅ 執行期設定檔(frigate config.yml / 功能開關 / IO / NVR)已由
+    #    scripts/deploy_keep_runtime_config.sh 在 reset --hard 前後保留,
+    #    各站設定不同不再是自動部署的阻礙 —— 現場跑的永遠贏,repo 版只當新站種子。
+    #    要從 git 派設定到現場,得先在現場刪掉該檔再部署。
     strategy:
       fail-fast: false
       matrix:
@@ -192,7 +193,27 @@ jobs:
           cd "$PROD"
           BEFORE=$(git rev-parse --short HEAD)
           git fetch origin main
+
+          # ── 執行期設定檔:reset --hard 不可以洗掉現場設定 ────────────────
+          # 詳見 scripts/deploy_keep_runtime_config.sh(有 tests 擋回歸)。
+          # 🛑 save 跑在 reset 之前 = 用的是「現場舊 commit 的腳本」。
+          #    引入這個機制的那一次部署,現場還沒有這支腳本 → 一定要容許它不存在,
+          #    否則 set -e 會讓部署整個失敗(第一次上這段時實際會踩到)。
+          #    那一次沒有保護,所以引入前要先確認現場設定已同步進 git;
+          #    之後每一次部署都有保護。
+          KEEP=""
+          if [ -f scripts/deploy_keep_runtime_config.sh ]; then
+            KEEP=$(bash scripts/deploy_keep_runtime_config.sh save)
+          else
+            echo "  (現場尚無保留腳本,本次略過;下次部署起生效)"
+          fi
+
           git reset --hard origin/main
+
+          if [ -n "$KEEP" ]; then
+            bash scripts/deploy_keep_runtime_config.sh restore "$KEEP"
+          fi
+
           AFTER=$(git rev-parse --short HEAD)
           echo "commit: $BEFORE → $AFTER"
 
