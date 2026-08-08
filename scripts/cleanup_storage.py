@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import os
 import time
 
@@ -133,13 +134,17 @@ def cleanup_congestion_samples(
     conn = sqlite3.connect(db_path, timeout=30)
     conn.execute("PRAGMA busy_timeout = 30000")
     try:
-        days = [
-            r[0] for r in conn.execute(
-                "SELECT DISTINCT substr(created_at,1,10) FROM congestion_samples "
-                "WHERE created_at < ? ORDER BY 1",
-                (cutoff_dt,),
-            ).fetchall()
-        ]
+        # 🛑 條件一律寫成 created_at >= 日 AND < 隔日,不要用 substr(created_at,1,10)=日。
+        # substr() 讓索引失效:實測 explain query plan 是 SCAN 整條 created_at 索引
+        # (4470 萬筆),範圍比較才是 SEARCH 索引定位。逐日刪就是逐日全掃 vs 逐日定位。
+        first = conn.execute("SELECT MIN(created_at) FROM congestion_samples").fetchone()[0]
+        days = []
+        if first:
+            day = datetime.date.fromisoformat(str(first)[:10])
+            last = datetime.date.fromisoformat(cutoff_dt[:10])
+            while day < last:
+                days.append(day.isoformat())
+                day += datetime.timedelta(days=1)
         covered = {
             r[0] for r in conn.execute(
                 "SELECT DISTINCT substr(bucket_start,1,10) FROM congestion_report_aggs "
@@ -149,22 +154,31 @@ def cleanup_congestion_samples(
         deleted = 0
         skipped = []
         for day in days:
+            nxt = (datetime.date.fromisoformat(day) + datetime.timedelta(days=1)).isoformat()
             if day not in covered:
-                skipped.append(day)
+                # 只有真的還有資料的日子才值得警告(整段沒資料的空日不用吵)
+                exists = conn.execute(
+                    "SELECT 1 FROM congestion_samples WHERE created_at >= ? AND created_at < ? LIMIT 1",
+                    (day, nxt),
+                ).fetchone()
+                if exists:
+                    skipped.append(day)
                 continue
             while True:
                 if dry_run:
                     n = conn.execute(
-                        "SELECT COUNT(*) FROM congestion_samples WHERE substr(created_at,1,10) = ?",
-                        (day,),
+                        "SELECT COUNT(*) FROM congestion_samples "
+                        "WHERE created_at >= ? AND created_at < ?",
+                        (day, nxt),
                     ).fetchone()[0]
                     deleted += n
                     break
                 cur = conn.execute(
                     "DELETE FROM congestion_samples WHERE id IN ("
-                    "  SELECT id FROM congestion_samples WHERE substr(created_at,1,10) = ? LIMIT ?"
+                    "  SELECT id FROM congestion_samples"
+                    "  WHERE created_at >= ? AND created_at < ? LIMIT ?"
                     ")",
-                    (day, int(batch)),
+                    (day, nxt, int(batch)),
                 )
                 conn.commit()
                 if not cur.rowcount:
