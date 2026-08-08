@@ -143,7 +143,12 @@ def _default_nx_settings() -> Dict[str, Any]:
         timeout_sec = max(3.0, min(120.0, float(os.getenv("NX_HTTP_TIMEOUT", "12"))))
     except Exception:
         timeout_sec = 12.0
+    enabled = str(os.getenv("NX_ENABLED", "true")).strip().lower() not in {"0", "false", "no", "off"}
     return {
+        # 各站是否有 NX 伺服器。關掉之後 NX 端點一律快速回應,不再對連不到的
+        # 主機做連線嘗試 —— 實測連不到時 /api/nx/devices 要卡 60 秒才回 502
+        # (多種認證策略各吃一次 12 秒逾時),而前端 NVR 頁一開就會呼叫它。
+        "enabled": enabled,
         "proxy_base_url": str(os.getenv("NX_PROXY_BASE_URL", "") or "").strip().rstrip("/"),
         "server_base_url": str(os.getenv("NX_SERVER_BASE_URL", "") or "").strip().rstrip("/"),
         "username": str(os.getenv("NX_USERNAME", "") or "").strip(),
@@ -171,6 +176,9 @@ def _normalize_nx_settings(raw: Any) -> Dict[str, Any]:
     data = _default_nx_settings()
     if not isinstance(raw, dict):
         return data
+    # 🛑 這個函式是「用預設值重建」,只有列在這裡的欄位會被保留 ——
+    # 新增設定欄位一定要同時改 _default_nx_settings 與這裡,否則存了會消失。
+    data["enabled"] = bool(raw.get("enabled", data["enabled"]))
     data["proxy_base_url"] = str(raw.get("proxy_base_url", data["proxy_base_url"]) or "").strip().rstrip("/")
     data["server_base_url"] = str(raw.get("server_base_url", data["server_base_url"]) or "").strip().rstrip("/")
     data["username"] = str(raw.get("username", data["username"]) or "").strip()

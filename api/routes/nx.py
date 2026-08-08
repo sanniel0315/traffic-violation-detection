@@ -87,6 +87,30 @@ def _nx_settings() -> Dict[str, Any]:
     return load_nx_settings()
 
 
+def _nx_enabled(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """本站有沒有 NX 伺服器。沒設任何位址也視為未啟用。"""
+    cfg = settings or _nx_settings()
+    if not bool(cfg.get("enabled", True)):
+        return False
+    return bool(str(cfg.get("proxy_base_url") or "").strip()
+                or str(cfg.get("server_base_url") or "").strip())
+
+
+def _require_nx(settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """未啟用就立刻回 503,不要對連不到的主機做連線嘗試。
+
+    實測:NX 主機不可達時 /api/nx/devices 要 60 秒才回 502(多種認證策略
+    各吃一次 12 秒逾時),而前端 NVR 頁一載入就呼叫它 → 整頁卡 60 秒。
+    """
+    cfg = settings or _nx_settings()
+    if not _nx_enabled(cfg):
+        raise HTTPException(
+            status_code=503,
+            detail="NX 未啟用（本站設定 enabled=false 或未設定伺服器位址）",
+        )
+    return cfg
+
+
 def _nx_proxy_base(settings: Optional[Dict[str, Any]] = None) -> str:
     cfg = settings or _nx_settings()
     return str(cfg.get("proxy_base_url", "") or "").strip().rstrip("/")
@@ -416,6 +440,11 @@ def _call_direct_nx_devices(settings: Optional[Dict[str, Any]] = None) -> List[D
 @router.get("/devices")
 def nx_devices():
     settings = _nx_settings()
+    if not _nx_enabled(settings):
+        # 這支是前端 NVR 頁一載入就會呼叫的,未啟用時回 200 + 空清單並標明原因,
+        # 讓畫面顯示「沒有裝置」而不是跳錯誤 toast —— 刻意關掉的功能不該報錯。
+        return {"ok": True, "enabled": False, "devices": [],
+                "message": "NX 未啟用（本站網路連不到 NX 伺服器）"}
     proxy_base = _nx_proxy_base(settings)
     if proxy_base:
         try:
@@ -448,6 +477,7 @@ def nx_stream(
 ):
     fmt = str(format or "mp4").strip().lower()
     settings = _nx_settings()
+    _require_nx(settings)
     proxy_base = _nx_proxy_base(settings)
     timeout = _nx_timeout(settings)
     verify = _nx_verify_ssl(settings)
@@ -524,6 +554,9 @@ def nx_stream(
 def _nx_authed_session(settings: Optional[Dict[str, Any]] = None):
     """建立 NX 已登入 session（含 Bearer token）"""
     settings = settings or _nx_settings()
+    # 未啟用就在這裡擋掉 —— recording-periods / motion-clip / motion-snapshot
+    # 都經過這裡,擋一處就全涵蓋,之後新增的呼叫者也自動受保護。
+    _require_nx(settings)
     base = _nx_server_base(settings)
     auth = _nx_auth(settings)
     if not base or not auth:
