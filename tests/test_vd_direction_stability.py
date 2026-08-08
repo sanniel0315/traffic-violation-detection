@@ -24,7 +24,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("AUTH_SECRET", "test-only-secret-not-for-production-use-01234567")
 
-from api.utils.report_aggregation import _TRANSITION_DIRECTIONS  # noqa: E402
+from api.utils.report_aggregation import _TRANSITION_DIRECTIONS, normalize_direction  # noqa: E402
 
 fails = []
 
@@ -37,17 +37,42 @@ def check(name, got, want):
 
 
 # ── 1. camera meta：真實方向要贏過平手的 INOUT ────────────────────────
-def meta_direction(zone_dirs):
-    """複製 _camera_meta 的挑選規則（不建 DB，只驗排序邏輯）。"""
-    counts = {}
-    for d in zone_dirs:
-        counts[d] = counts.get(d, 0) + 1
-    if not counts:
-        return "unknown"
-    return sorted(
-        counts.items(),
-        key=lambda item: (item[0] in _TRANSITION_DIRECTIONS, -int(item[1]), str(item[0])),
-    )[0][0]
+# 🛑 直接呼叫真正的 _camera_meta（配記憶體 DB），不要在測試裡「複製一份規則」——
+#    複製的話邏輯改了測試照樣綠，等於沒測到。
+from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+
+from api.models import Base, Camera  # noqa: E402
+from api.utils.report_aggregation import _camera_meta  # noqa: E402
+
+_engine = create_engine("sqlite://")
+Base.metadata.create_all(_engine)
+_Session = sessionmaker(bind=_engine)
+_seq = [0]
+
+
+def meta_direction(zones):
+    """建一台只有這些 zone 的相機，回傳 _camera_meta 算出來的代表方向。
+
+    zones 可以是字串（只給 direction）或 dict（可含 travel_direction）。
+    """
+    db = _Session()
+    try:
+        _seq[0] += 1
+        cam = Camera(
+            name=f"t{_seq[0]}",
+            zones=[
+                ({"type": "flow_detection", "lane_no": 1, "direction": z}
+                 if isinstance(z, str) else {"type": "flow_detection", "lane_no": 1, **z})
+                for z in zones
+            ],
+        )
+        db.add(cam)
+        db.commit()
+        by_id, _ = _camera_meta(db)
+        return by_id[int(cam.id)]["direction"]
+    finally:
+        db.close()
 
 
 print("camera meta 代表方向")
@@ -57,6 +82,22 @@ check("只有 INOUT 時才會是 INOUT", meta_direction(["INOUT"]), "INOUT")
 check("票數多的真實方向勝出", meta_direction(["left", "straight", "straight"]), "straight")
 check("真實方向即使票數少也贏過 INOUT", meta_direction(["INOUT", "INOUT", "INOUT", "left"]), "left")
 check("沒有 zone 時 unknown", meta_direction([]), "unknown")
+
+print("\n整支相機的 zone 全部綁 IN/OUT（使用者明確說一定會出現的情況）")
+all_inout = [{"direction": "INOUT"}, {"direction": "INOUT"}]
+check("沒設行進方向 → 只能回 INOUT（就是要修掉的狀況）", meta_direction(all_inout), "INOUT")
+check("設了行進方向 → 回真實方向",
+      meta_direction([{"direction": "INOUT", "travel_direction": "S2N"},
+                      {"direction": "INOUT", "travel_direction": "S2N"}]), "S2N")
+check("只有部分 zone 設行進方向,真實方向仍勝出",
+      meta_direction([{"direction": "INOUT"},
+                      {"direction": "INOUT", "travel_direction": "N2S"}]), "N2S")
+check("行進方向被誤填成 IN/OUT 時忽略,退回 direction",
+      meta_direction([{"direction": "INOUT", "travel_direction": "OUT"}]), "INOUT")
+check("行進方向留空不影響原本的 straight",
+      meta_direction([{"direction": "straight", "travel_direction": ""}]), "straight")
+check("行進方向可覆寫轉向欄位",
+      meta_direction([{"direction": "straight", "travel_direction": "N2S"}]), "N2S")
 
 # ── 2. build_vd_report_rows：逐桶代表方向 ─────────────────────────────
 def bucket_direction(meta_dir, direction_counts):
