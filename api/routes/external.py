@@ -16,6 +16,7 @@ from api.utils.report_aggregation import (
     BUCKET_SECONDS,
     build_vd_report_rows,
     normalize_bucket_size,
+    to_utc_naive,
 )
 
 router = APIRouter(prefix="/api/v1/external", tags=["External API"])
@@ -356,11 +357,21 @@ async def external_congestion_report(
     bucket = normalize_bucket_size(interval)
     _validate_time_range(start_time, end_time, bucket)
 
+    # 🛑 bucket_start 在 DB 是 naive UTC,查詢條件一定要先轉成 naive UTC。
+    # 直接綁 tz-aware 的 datetime,SQLite 方言只會把它格式化成字串、把 tzinfo 丟掉
+    # → 台北的牆上時間被當成 UTC,整個視窗往後位移 8 小時、查不到任何資料。
+    # 實測:同一小時 start_time=2026-08-08T16:00:00(naive) 回 7 筆,
+    #       start_time=2026-08-09T00:00:00+08:00(同一時刻) 回 0 筆 ——
+    # 而端點自己的說明就是叫人「查台北時間請帶 +08:00」。
+    # vd-report 沒這問題是因為 build_vd_report_rows 內部有做 to_utc_naive。
+    start_utc = to_utc_naive(start_time)
+    end_utc = to_utc_naive(end_time)
+
     # 同 vd-report：只讀聚合表，重建交給背景 job
     query = db.query(CongestionReportAgg).filter(
         CongestionReportAgg.bucket_size == bucket,
-        CongestionReportAgg.bucket_start >= start_time,
-        CongestionReportAgg.bucket_start < end_time,
+        CongestionReportAgg.bucket_start >= start_utc,
+        CongestionReportAgg.bucket_start < end_utc,
     )
     if detector_id:
         query = query.filter(CongestionReportAgg.camera_id == detector_id)
