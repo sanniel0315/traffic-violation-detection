@@ -120,6 +120,11 @@ def direction_label(value: str | None) -> str:
     }.get(str(value or "").strip(), "-")
 
 
+# 進出場的「假方向」—— 它們描述的是車輛進/出 ROI 這件事,不是道路的行車方向。
+# 選「這支相機的代表方向」時一律排在真實方向後面(straight/left/right/N2S…)。
+_TRANSITION_DIRECTIONS = frozenset({"IN", "OUT", "EXIT", "INOUT"})
+
+
 def normalize_direction(value: str | None) -> str:
     raw = str(value or "").strip()
     upper = raw.upper()
@@ -204,7 +209,14 @@ def _camera_meta(db: Session):
                 direction_counts[direction] = direction_counts.get(direction, 0) + 1
         main_direction = "unknown"
         if direction_counts:
-            main_direction = sorted(direction_counts.items(), key=lambda item: (-int(item[1]), str(item[0])))[0][0]
+            # 🛑 真實行車方向要贏過進出場的假方向。
+            # cam_2 有兩個 VD zone(車流區 1=straight、車流區 2=INOUT),各 1 票;
+            # 舊排序 (-票數, 名稱) 平手時按字母排 → 'INOUT' < 'straight' → 進出模式勝出,
+            # 對外 API 的 direction 就變成 INOUT —— 那不是行車方向。
+            main_direction = sorted(
+                direction_counts.items(),
+                key=lambda item: (item[0] in _TRANSITION_DIRECTIONS, -int(item[1]), str(item[0])),
+            )[0][0]
         meta = {
             "camera_id": int(cam.id),
             "camera_name": str(cam.name or f"cam_{cam.id}"),
@@ -744,11 +756,18 @@ def build_vd_report_rows(
                 row["directionCounts"].items(),
                 key=lambda item: (-int(item[1] or 0), item[0] == "unknown", str(item[0])),
             )
-            best = next((item[0] for item in ordered if item[0] != "unknown"), None)
+            # 只從「真實行車方向」裡挑代表值。桶內只有進出場事件時保留 camera meta
+            # 的方向 —— 否則同一支相機的 direction 會逐桶在 IN/EXIT/INOUT 之間跳,
+            # 對外每 20 秒輪詢一次就會拿到不穩定的欄位(實測 cam_2 連續 3 個 1m 桶
+            # 分別是 INOUT / EXIT / IN)。進出數量本來就在 in_flow/out_flow 裡,
+            # 不需要靠 direction 表達。
+            best = next(
+                (item[0] for item in ordered
+                 if item[0] != "unknown" and item[0] not in _TRANSITION_DIRECTIONS),
+                None,
+            )
             if best:
                 direction = best
-            elif direction == "unknown":
-                direction = ordered[0][0]
         row["direction"] = direction
         row["directionText"] = direction_label(direction)
         if row["_speed_weight_count"] > 0:

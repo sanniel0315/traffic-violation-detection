@@ -230,17 +230,22 @@ async def external_vd_report_latest(
 def _vd_csv_response(records: list, start_time, end_time, bucket):
     output = io.StringIO()
     writer = csv.writer(output)
+    # in_flow / out_flow 是「整框進出」的量,不分車道。
+    # 有車道的相機只會輸出逐車道列(沒有偵測器層級那一列),所以把值掛在
+    # 「該筆的第一條車道列」,其餘車道列留空 —— 這樣依 detector+time 分組加總
+    # 會拿到正確的一份;若複製到每條車道,下游一加總就變成 N 倍灌水。
     header = [
         "detector_id", "road_name", "time_start", "time_end", "direction",
         "lane_no", "flow", "small_vehicle_flow", "large_vehicle_flow",
         "avg_speed_kmh", "avg_occupancy_pct", "avg_queue_length_m", "max_queue_length_m",
         "queue_duration_sec", "max_queue_duration_sec",
+        "in_flow", "out_flow",
     ]
     writer.writerow(header)
     for rec in records:
         lanes = rec.get("lanes") or []
         if lanes:
-            for lane in lanes:
+            for idx, lane in enumerate(lanes):
                 writer.writerow([
                     rec["detector_id"], rec["road_name"], rec["time_start"], rec["time_end"],
                     rec["direction"], lane["lane_no"], lane["flow"],
@@ -248,6 +253,9 @@ def _vd_csv_response(records: list, start_time, end_time, bucket):
                     lane["avg_speed_kmh"], lane["avg_occupancy_pct"],
                     lane.get("avg_queue_length_m", ""), lane.get("max_queue_length_m", ""),
                     lane.get("queue_duration_sec", ""), lane.get("max_queue_duration_sec", ""),
+                    # 只掛第一條車道列,避免下游加總灌水(見 header 註解)
+                    rec.get("in_flow", 0) if idx == 0 else "",
+                    rec.get("out_flow", 0) if idx == 0 else "",
                 ])
         else:
             writer.writerow([
@@ -257,6 +265,7 @@ def _vd_csv_response(records: list, start_time, end_time, bucket):
                 rec["avg_speed_kmh"], rec["avg_occupancy_pct"],
                 rec.get("avg_queue_length_m", "") or "", rec.get("max_queue_length_m", "") or "",
                 rec.get("queue_duration_sec", "") or "", rec.get("max_queue_duration_sec", "") or "",
+                rec.get("in_flow", 0), rec.get("out_flow", 0),
             ])
 
     output.seek(0)
