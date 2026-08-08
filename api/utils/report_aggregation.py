@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+import os
 import time
 from typing import Iterable, Optional
 
@@ -38,6 +39,13 @@ def _is_sqlite_locked(exc: OperationalError) -> bool:
 
 
 def _set_busy_timeout(db: Session, timeout_ms: int = 5000) -> None:
+    # 維護腳本(例如補跑歷史聚合)可用 REPORT_AGG_BUSY_TIMEOUT_MS 拉長等鎖時間。
+    # 服務是邊跑邊寫的,回填只要撞一次鎖整段就中斷(實測 5 秒不夠,跑到第 5 個
+    # chunk 就 database is locked);但線上預設維持 5 秒 —— 背景 job 有
+    # _run_with_retry 會重試,等太久反而拖住請求。
+    override = os.getenv("REPORT_AGG_BUSY_TIMEOUT_MS", "").strip()
+    if override.isdigit() and int(override) > 0:
+        timeout_ms = int(override)
     try:
         db.execute(text(f"PRAGMA busy_timeout = {int(timeout_ms)}"))
     except Exception:
