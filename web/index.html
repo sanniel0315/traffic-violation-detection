@@ -4554,7 +4554,7 @@
                         密碼
                     </label>
                     <div class="login-pwd-wrap">
-                        <el-input v-model="loginForm.password" :type="showLoginPassword ? 'text' : 'password'" autocomplete="current-password" @keyup.enter="login" placeholder="••••••••" size="large"/>
+                        <el-input v-model="loginForm.password" :type="showLoginPassword ? 'text' : 'password'" autocomplete="current-password" @keyup.enter="login" placeholder="••••••••" size="large"></el-input>
                         <button type="button" class="login-pwd-toggle" @click="showLoginPassword = !showLoginPassword" :aria-label="showLoginPassword ? '隱藏密碼' : '顯示密碼'" :title="showLoginPassword ? '隱藏密碼' : '顯示密碼'">
                             <svg v-if="!showLoginPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
                             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-10-7-10-7a19.77 19.77 0 0 1 4.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 10 7 10 7a19.79 19.79 0 0 1-3.18 4.42"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
@@ -4735,7 +4735,7 @@
                             </div>
                             <div class="ds-page-hero-meta">
                                 <span>最後更新 <b>{{ currentTimeHHmm }}</b></span>
-                                <el-switch v-model="dashboardAutoRefresh" size="small" inline-prompt :active-text="$t('common_auto')" :inactive-text="$t('common_manual')"/>
+                                <el-switch v-model="dashboardAutoRefresh" size="small" inline-prompt :active-text="$t('common_auto')" :inactive-text="$t('common_manual')"></el-switch>
                                 <el-button size="small" plain @click="load"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>{{ $t('common_update') }}</el-button>
                             </div>
                         </div>
@@ -5237,12 +5237,12 @@
                             <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>從</span>
-                                    <el-date-picker v-model="filters.dateFrom" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-date-picker v-model="filters.dateFrom" type="date" placeholder="選擇日期" size="small"></el-date-picker>
                                     <el-time-picker v-model="filters.timeFrom" placeholder="時間" size="small" style="width:120px"/>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>到</span>
-                                    <el-date-picker v-model="filters.dateTo" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-date-picker v-model="filters.dateTo" type="date" placeholder="選擇日期" size="small"></el-date-picker>
                                     <el-time-picker v-model="filters.timeTo" placeholder="時間" size="small" style="width:120px"/>
                                 </div>
                             </div>
@@ -5359,7 +5359,7 @@
                         <div class="card-header">
                             <span><svg class="text-icon" style="color:var(--gov-ok)"><use href="#i-check"/></svg>辨識成果（車牌 / 車速 / 車種）</span>
                             <div style="display:flex;gap:8px;align-items:center">
-                                <el-input v-model="recognitionQuery" size="small" style="width:180px" placeholder="搜尋車牌 / 車種 / 事件"/>
+                                <el-input v-model="recognitionQuery" size="small" style="width:180px" placeholder="搜尋車牌 / 車種 / 事件"></el-input>
                                 <el-input-number v-model="recognitionResultLimit" :min="10" :max="200" :step="10" size="small" />
                             </div>
                         </div>
@@ -5464,12 +5464,12 @@
                             <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>從</span>
-                                    <el-date-picker v-model="reviewDateFrom" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-date-picker v-model="reviewDateFrom" type="date" placeholder="選擇日期" size="small"></el-date-picker>
                                     <el-time-picker v-model="reviewTimeFrom" placeholder="時間" size="small" style="width:120px"/>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>到</span>
-                                    <el-date-picker v-model="reviewDateTo" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-date-picker v-model="reviewDateTo" type="date" placeholder="選擇日期" size="small"></el-date-picker>
                                     <el-time-picker v-model="reviewTimeTo" placeholder="時間" size="small" style="width:120px"/>
                                 </div>
                             </div>
@@ -5957,7 +5957,7 @@
                             <!-- TwiPcam 公開 cam 搜尋 (11095 台) -->
                             <div style="font-weight:600;color:var(--gov-primary);margin-bottom:8px">由 TwiPcam 開放 API 加入 (11095 台公開影像)</div>
                             <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-                                <el-input size="small" v-model="twipcamQuery" placeholder="關鍵字搜尋 (例: 百齡橋, tpe-005, 國道, 士林...)" style="flex:1" @keyup.enter="searchTwipcam"/>
+                                <el-input size="small" v-model="twipcamQuery" placeholder="關鍵字搜尋 (例: 百齡橋, tpe-005, 國道, 士林...)" style="flex:1" @keyup.enter="searchTwipcam"></el-input>
                                 <el-button size="small" type="primary" :loading="twipcamSearching" @click="searchTwipcam">搜尋</el-button>
                             </div>
                             <div v-if="twipcamResults.length" style="max-height:240px;overflow-y:auto;background:#fff;border:1px solid var(--gov-border);border-radius:4px">
@@ -6296,7 +6296,7 @@
                             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">
                                 <div>
                                     <div style="font-size:12px;color:#64748b;margin-bottom:6px">Nx Server IP</div>
-                                    <el-input v-model="nxSettings.host" placeholder="10.26.4.123"/>
+                                    <el-input v-model="nxSettings.host" placeholder="10.26.4.123"></el-input>
                                     <div v-if="nxSettingsMode==='proxy'" style="font-size:12px;color:#b45309;margin-top:6px">目前由外部 Nx proxy 提供串流；在這裡儲存會切換成直接連線模式。</div>
                                     <div v-else style="font-size:12px;color:#94a3b8;margin-top:6px">後端會代你轉發到 Nx Server。預設用 HTTPS:7001。</div>
                                 </div>
@@ -6307,7 +6307,7 @@
                                 <div>
                                     <div style="font-size:12px;color:#64748b;margin-bottom:6px">密碼</div>
                                     <div class="login-pwd-wrap">
-                                        <el-input v-model="nxSettings.password" :type="showNxPassword?'text':'password'" autocomplete="new-password" placeholder="password"/>
+                                        <el-input v-model="nxSettings.password" :type="showNxPassword?'text':'password'" autocomplete="new-password" placeholder="password"></el-input>
                                         <button type="button" class="login-pwd-toggle" @click="showNxPassword=!showNxPassword" :title="showNxPassword?'隱藏':'顯示'">
                                             <svg v-if="!showNxPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
                                             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-10-7-10-7a19.77 19.77 0 0 1 4.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 10 7 10 7a19.79 19.79 0 0 1-3.18 4.42"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
@@ -6391,7 +6391,7 @@
                                 <el-form-item label="帳號"><el-input v-model="mqttSettings.username" size="small" style="width:140px"/></el-form-item>
                                 <el-form-item label="密碼">
                                     <div class="login-pwd-wrap" style="width:140px">
-                                        <el-input v-model="mqttSettings.password" :type="showMqttPassword?'text':'password'" size="small"/>
+                                        <el-input v-model="mqttSettings.password" :type="showMqttPassword?'text':'password'" size="small"></el-input>
                                         <button type="button" class="login-pwd-toggle pwd-toggle-sm" @click="showMqttPassword=!showMqttPassword" :title="showMqttPassword?'隱藏':'顯示'">
                                             <svg v-if="!showMqttPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
                                             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-10-7-10-7a19.77 19.77 0 0 1 4.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 10 7 10 7a19.79 19.79 0 0 1-3.18 4.42"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
@@ -6440,7 +6440,7 @@
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-list"/></svg>即時訊息日誌</span>
                             <div style="display:flex;gap:8px;align-items:center">
-                                <el-switch v-model="mqttLogAutoRefresh" active-text="自動刷新 2s"/>
+                                <el-switch v-model="mqttLogAutoRefresh" active-text="自動刷新 2s"></el-switch>
                                 <el-button size="small" @click="loadMqttMessages">重新載入</el-button>
                                 <el-button size="small" type="warning" @click="clearMqttMessages">清空</el-button>
                             </div>
@@ -6649,7 +6649,7 @@
                                 <el-button type="primary" :loading="statsLoading" :disabled="statsLoading" @click="loadStats(true)">確認</el-button>
                                 <div style="display:flex;align-items:center;gap:6px">
                                     <span style="font-size:12px;color:#64748b">自動更新</span>
-                                    <el-switch v-model="statsAutoRefresh" size="small"/>
+                                    <el-switch v-model="statsAutoRefresh" size="small"></el-switch>
                                     <select v-model="statsRefreshSeconds" class="stats-native-select" style="width:90px">
                                         <option :value="15">15s</option>
                                         <option :value="30">30s</option>
@@ -6905,12 +6905,12 @@
                             <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>從</span>
-                                    <el-date-picker v-model="repeatDateFrom" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-date-picker v-model="repeatDateFrom" type="date" placeholder="選擇日期" size="small"></el-date-picker>
                                     <el-time-picker v-model="repeatTimeFrom" placeholder="時間" size="small" style="width:120px"/>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>到</span>
-                                    <el-date-picker v-model="repeatDateTo" type="date" placeholder="選擇日期" size="small"/>
+                                    <el-date-picker v-model="repeatDateTo" type="date" placeholder="選擇日期" size="small"></el-date-picker>
                                     <el-time-picker v-model="repeatTimeTo" placeholder="時間" size="small" style="width:120px"/>
                                 </div>
                             </div>
@@ -6922,7 +6922,7 @@
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
                                     <span>累犯次數</span>
-                                    <el-input-number v-model="repeatThreshold" :min="0" size="small" style="width:100px"/>
+                                    <el-input-number v-model="repeatThreshold" :min="0" size="small" style="width:100px"></el-input-number>
                                     <span>次以上</span>
                                 </div>
                                 <div style="display:flex;align-items:center;gap:8px">
@@ -7041,7 +7041,7 @@
                         <div class="card-header"><span><svg class="text-icon"><use href="#i-file"/></svg>一般報表</span></div>
                         <div class="card-body">
                             <div style="display:flex;gap:16px;margin-bottom:20px">
-                                <el-date-picker v-model="reportDateRange" type="daterange" start-placeholder="開始" end-placeholder="結束"/>
+                                <el-date-picker v-model="reportDateRange" type="daterange" start-placeholder="開始" end-placeholder="結束"></el-date-picker>
                                 <el-select v-model="reportType" placeholder="報表類型" style="width:150px">
                                     <el-option label="日報表" value="daily"/>
                                     <el-option label="週報表" value="weekly"/>
@@ -7143,7 +7143,7 @@
                                         size="small"
                                         style="width:190px"/>
                                 </div>
-                                <el-input-number v-model="vdFilter.minTotalFlow" :min="0" :step="1" size="small" style="width:150px" placeholder="最小總流量"/>
+                                <el-input-number v-model="vdFilter.minTotalFlow" :min="0" :step="1" size="small" style="width:150px" placeholder="最小總流量"></el-input-number>
                                 <el-button size="small" type="primary" :loading="vdLoading" :disabled="vdLoading" @click="applyVdReportFilters">查詢</el-button>
                                 <el-button size="small" :disabled="vdLoading" @click="resetVdReportFilters">清除</el-button>
                             </div>
@@ -8306,7 +8306,7 @@
                         <div class="card-header">
                             <span><svg class="text-icon" style="color:var(--gov-ok)"><use href="#i-check"/></svg>辨識成果（車牌 / 車速 / 車種）</span>
                             <div style="display:flex;gap:8px;align-items:center">
-                                <el-input v-model="recognitionQuery" size="small" style="width:180px" placeholder="搜尋車牌 / 車種 / 事件"/>
+                                <el-input v-model="recognitionQuery" size="small" style="width:180px" placeholder="搜尋車牌 / 車種 / 事件"></el-input>
                                 <el-input-number v-model="recognitionResultLimit" :min="10" :max="200" :step="10" size="small" />
                             </div>
                         </div>
@@ -8719,7 +8719,7 @@
                                                 :max="220"
                                                 :step="1"
                                                 size="small"
-                                                style="width:120px"/>
+                                                style="width:120px"></el-input-number>
                                             <span style="font-size:12px;color:#64748b">超速門檻</span>
                                             <el-input-number
                                                 v-model="item.zone.overspeed_kmh"
@@ -8875,7 +8875,7 @@
                                             :max="220"
                                             :step="1"
                                             size="small"
-                                            style="width:120px"/>
+                                            style="width:120px"></el-input-number>
                                         <span style="font-size:12px;color:#64748b">超速門檻</span>
                                         <el-input-number
                                             v-model="item.zone.overspeed_kmh"
@@ -8883,19 +8883,19 @@
                                             :max="120"
                                             :step="1"
                                             size="small"
-                                            style="width:120px"/>
+                                            style="width:120px"></el-input-number>
                                         <span style="font-size:12px;color:#64748b;margin-left:12px">校正寬(m)</span>
                                         <el-input-number
                                             v-model="item.zone.calibration_width_m"
                                             :min="0.5" :max="50" :step="0.5" :precision="1"
                                             size="small" style="width:120px"
-                                            placeholder="3.5"/>
+                                            placeholder="3.5"></el-input-number>
                                         <span style="font-size:12px;color:#64748b">校正長(m)</span>
                                         <el-input-number
                                             v-model="item.zone.calibration_length_m"
                                             :min="1" :max="200" :step="1" :precision="1"
                                             size="small" style="width:120px"
-                                            placeholder="10"/>
+                                            placeholder="10"></el-input-number>
                                         <el-tag v-if="item.zone.points && item.zone.points.length===4 && item.zone.calibration_width_m && item.zone.calibration_length_m"
                                                 size="small" type="success">✓ Homography 校正啟用</el-tag>
                                         <el-tag v-else-if="item.zone.points && item.zone.points.length===4"
@@ -8921,7 +8921,7 @@
                                         <el-input-number
                                             v-model="item.zone.line_distance_m"
                                             :min="1" :max="200" :step="0.5" :precision="1"
-                                            size="small" style="width:130px" placeholder="10"/>
+                                            size="small" style="width:130px" placeholder="10"></el-input-number>
                                         <span style="font-size:12px;color:#64748b">車道編號（要跟對應的 speed_line_out 一致）</span>
                                         <el-tag v-if="item.zone.points && item.zone.points.length===2 && item.zone.line_distance_m"
                                                 size="small" type="success">✓ Trip wire 啟動（in 線）</el-tag>
@@ -9089,7 +9089,7 @@
                                     </div>
                                     <div style="display:flex;gap:6px;align-items:center">
                                         <span style="font-size:12px;color:#64748b">車道編號</span>
-                                        <el-input-number v-model="item.zone.lane_no" :min="1" :step="1" size="small" style="width:110px"/>
+                                        <el-input-number v-model="item.zone.lane_no" :min="1" :step="1" size="small" style="width:110px"></el-input-number>
                                         <span style="font-size:12px;color:#64748b">行車方向</span>
                                         <select v-model="item.zone.direction" class="stats-native-select" style="width:110px">
                                             <option v-for="opt in directionOptionsForZone(item.zone)" :key="`cong-dir-${item.index}-${opt.value||'none'}`" :value="opt.value">{{ opt.label }}</option>
@@ -9350,7 +9350,7 @@
                     <el-col :span="12"><el-form-item label="帳號"><el-input v-model="cameraForm.username"/></el-form-item></el-col>
                     <el-col :span="12"><el-form-item label="密碼">
                         <div class="login-pwd-wrap">
-                            <el-input v-model="cameraForm.password" :type="showCameraFormPassword?'text':'password'"/>
+                            <el-input v-model="cameraForm.password" :type="showCameraFormPassword?'text':'password'"></el-input>
                             <button type="button" class="login-pwd-toggle" @click="showCameraFormPassword=!showCameraFormPassword" :title="showCameraFormPassword?'隱藏':'顯示'">
                                 <svg v-if="!showCameraFormPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
                                 <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-10-7-10-7a19.77 19.77 0 0 1 4.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 10 7 10 7a19.79 19.79 0 0 1-3.18 4.42"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
@@ -9532,7 +9532,7 @@
                 <el-col :span="12"><el-form-item label="帳號"><el-input v-model="frigateCameraForm.username" placeholder="admin"/></el-form-item></el-col>
                 <el-col :span="12"><el-form-item label="密碼">
                     <div class="login-pwd-wrap">
-                        <el-input v-model="frigateCameraForm.password" :type="showFrigateCameraFormPassword?'text':'password'"/>
+                        <el-input v-model="frigateCameraForm.password" :type="showFrigateCameraFormPassword?'text':'password'"></el-input>
                         <button type="button" class="login-pwd-toggle" @click="showFrigateCameraFormPassword=!showFrigateCameraFormPassword" :title="showFrigateCameraFormPassword?'隱藏':'顯示'">
                             <svg v-if="!showFrigateCameraFormPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
                             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-10-7-10-7a19.77 19.77 0 0 1 4.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 10 7 10 7a19.79 19.79 0 0 1-3.18 4.42"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
@@ -9651,7 +9651,7 @@
             <el-button v-for="p in assistantPresets" :key="p" size="small" plain round :disabled="assistantLoading || !assistantSource" @click="quickAsk(p)" style="margin:0">{{ p }}</el-button>
         </div>
         <div style="display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--gov-border);align-items:flex-end;margin-top:8px">
-            <el-input v-model="assistantInput" type="textarea" :rows="2" resize="none" placeholder="點上方快捷、打字、或按「語音」說…(Enter 送出)" :disabled="assistantLoading" @keydown.enter.exact.prevent="sendAssistant" style="flex:1"/>
+            <el-input v-model="assistantInput" type="textarea" :rows="2" resize="none" placeholder="點上方快捷、打字、或按「語音」說…(Enter 送出)" :disabled="assistantLoading" @keydown.enter.exact.prevent="sendAssistant" style="flex:1"></el-input>
             <div style="display:flex;flex-direction:column;gap:4px">
                 <el-button size="small" :type="assistantListening ? 'danger' : 'info'" plain :disabled="!assistantSource" @click="assistantVoiceInput">{{ assistantListening ? '聽取中' : '語音' }}</el-button>
                 <el-button type="primary" size="small" :loading="assistantLoading" :disabled="!assistantSource" @click="sendAssistant">送出</el-button>
