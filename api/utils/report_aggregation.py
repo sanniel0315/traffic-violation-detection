@@ -467,6 +467,15 @@ def refresh_lpr_aggregates(
     return len(insert_rows)
 
 
+# 分段長度。congestion / lpr 兩支聚合是 `query.all()` 把整個範圍載成 ORM 物件,
+# 範圍一大就 OOM(壅塞樣本單日約 50 萬列)。平常背景 job 只跑 1 小時沒事,但只要
+# 落後(服務停機、機器重開、回填歷史)範圍就會暴增 —— 2026-05~06 那 41 天壅塞聚合
+# 從來沒產生過,就是首次全量聚合一次拉 1100 萬列直接掛掉。
+# 在這一層切段,記憶體上限與範圍長度無關,聚合邏輯本身完全不用動。
+# 🛑 段長必須是所有 bucket 的整數倍,否則 bucket 會被切斷 → 1 小時(60/300/3600 都整除)。
+_AGG_CHUNK_SEC = 3600
+
+
 def refresh_report_aggregates_for_range(
     db: Session,
     start_time: datetime,
@@ -479,11 +488,22 @@ def refresh_report_aggregates_for_range(
     end = to_utc_naive(end_time)
     if start is None or end is None or end < start:
         return {}
+    sizes = {normalize_bucket_size(item) for item in bucket_sizes}
     result: dict[str, int] = {}
-    for bucket_size in {normalize_bucket_size(item) for item in bucket_sizes}:
-        result[f"traffic_{bucket_size}"] = refresh_traffic_aggregates(db, start, end, bucket_size, camera_id=camera_id)
-        result[f"congestion_{bucket_size}"] = refresh_congestion_aggregates(db, start, end, bucket_size, camera_id=camera_id)
-    result["lpr_1h"] = refresh_lpr_aggregates(db, start, end, "1h", camera_id=camera_id)
+
+    def _add(key: str, count: int) -> None:
+        result[key] = result.get(key, 0) + count
+
+    # 對齊到整點:1h 是最大的 bucket,對齊它就同時對齊 1m / 5m,段與段之間不會重疊。
+    chunk_start = bucket_floor(start, "1h")
+    while chunk_start < end:
+        chunk_end = min(chunk_start + timedelta(seconds=_AGG_CHUNK_SEC), end)
+        for bucket_size in sizes:
+            _add(f"traffic_{bucket_size}", refresh_traffic_aggregates(db, chunk_start, chunk_end, bucket_size, camera_id=camera_id))
+            _add(f"congestion_{bucket_size}", refresh_congestion_aggregates(db, chunk_start, chunk_end, bucket_size, camera_id=camera_id))
+        _add("lpr_1h", refresh_lpr_aggregates(db, chunk_start, chunk_end, "1h", camera_id=camera_id))
+        db.commit()          # 每段各自落地,回填中斷不用整段重來
+        chunk_start = chunk_end
     db.commit()
     return result
 

@@ -6,6 +6,9 @@
   NVMe 塞到 100% 導致 SQLite 偶發 database or disk is full。
 - /tmp/event_snapshots（事件快照 cache，在 eMMC 上，UI 縮圖用）每天新增 ~1.3 萬檔、
   從不清 → eMMC 一路爬滿（實測 6G / 27 萬檔）。此 cache 短保留 3 天即可。
+- congestion_samples（DB 資料列）每天 ~50 萬列、從不清 → 實測 4470 萬列 / DB 19 GB，
+  是唯一失控成長的表。報表讀的是聚合表，原始樣本只有近期查詢用得到 → 短保留 30 天。
+  🛑 只刪「聚合表已覆蓋」的日期，聚合沒跑成功的那幾天一律跳過（見函式註解）。
 
 用法（專案根目錄執行）：
     python3 scripts/cleanup_storage.py --dry-run   # 只列統計不刪
@@ -104,6 +107,77 @@ def cleanup_camera_media(
     return deleted, freed
 
 
+def cleanup_congestion_samples(
+    db_path: str, keep_days: int, dry_run: bool, batch: int = 20000
+) -> tuple[int, int]:
+    """壅塞原始樣本短保留 —— 報表讀的是聚合表，原始樣本只在近期查詢用得到。
+
+    congestion_samples 每天新增約 50 萬列、從不清理（實測 4470 萬列 / DB 19 GB），
+    是 DB 唯一的失控成長來源。traffic_events 不在這裡清：api/routes/traffic.py 與
+    analytics.py 直接讀原始表，刪了歷史查詢會少資料。
+
+    🛑 安全連鎖：某一天在 congestion_report_aggs 沒有 1h 聚合就「不刪那天」。
+    原始樣本刪掉而聚合又沒跑成功 = 那段時間永久消失。2026-05-08~06-15 就是
+    聚合從沒跑成功（首次全量聚合 OOM），當時若照天數硬刪，41 天壅塞歷史會全滅。
+
+    分批刪除（預設 2 萬列一批）避免長時間鎖表 —— 服務是邊跑邊清的，
+    一次 DELETE 2600 萬列會把寫入卡到 timeout（VD 報表 0/500 就是撞鎖來的）。
+
+    回傳 (刪除列數, 跳過的天數)。
+    """
+    import sqlite3
+
+    cutoff = time.time() - keep_days * 86400
+    cutoff_dt = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(cutoff))  # DB 存 UTC naive
+
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute("PRAGMA busy_timeout = 30000")
+    try:
+        days = [
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT substr(created_at,1,10) FROM congestion_samples "
+                "WHERE created_at < ? ORDER BY 1",
+                (cutoff_dt,),
+            ).fetchall()
+        ]
+        covered = {
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT substr(bucket_start,1,10) FROM congestion_report_aggs "
+                "WHERE bucket_size = '1h'"
+            ).fetchall()
+        }
+        deleted = 0
+        skipped = []
+        for day in days:
+            if day not in covered:
+                skipped.append(day)
+                continue
+            while True:
+                if dry_run:
+                    n = conn.execute(
+                        "SELECT COUNT(*) FROM congestion_samples WHERE substr(created_at,1,10) = ?",
+                        (day,),
+                    ).fetchone()[0]
+                    deleted += n
+                    break
+                cur = conn.execute(
+                    "DELETE FROM congestion_samples WHERE id IN ("
+                    "  SELECT id FROM congestion_samples WHERE substr(created_at,1,10) = ? LIMIT ?"
+                    ")",
+                    (day, int(batch)),
+                )
+                conn.commit()
+                if not cur.rowcount:
+                    break
+                deleted += cur.rowcount
+        if skipped:
+            print(f"  ⚠️ 跳過 {len(skipped)} 天（聚合表沒有覆蓋，刪了會永久丟資料）: "
+                  f"{skipped[0]}~{skipped[-1]}")
+        return deleted, len(skipped)
+    finally:
+        conn.close()
+
+
 def _parse_camera_days(items: list[str]) -> dict[int, int]:
     """解析 --camera-days 參數，格式 '8:3' = camera_id 8 保留 3 天"""
     result: dict[int, int] = {}
@@ -132,6 +206,10 @@ def main() -> int:
     parser.add_argument(
         "--event-snapshot-days", type=int, default=3,
         help="事件快照 cache 保留天數（預設 3；設 0 停用）",
+    )
+    parser.add_argument(
+        "--congestion-sample-days", type=int, default=30,
+        help="壅塞原始樣本保留天數（預設 30；設 0 停用）。只刪聚合表已覆蓋的日期",
     )
     parser.add_argument("--dry-run", action="store_true", help="只統計不刪除")
     args = parser.parse_args()
@@ -174,6 +252,14 @@ def main() -> int:
         total_freed += freed
         total_errors += errors
         print(f"  {esd}（保留 {args.event_snapshot_days} 天）: {deleted} 檔 / {freed / 1e9:.1f} GB" + (f" / {errors} 錯誤" if errors else ""))
+
+    # 壅塞原始樣本（DB 資料列，唯一失控成長的表；報表讀聚合表不受影響）
+    if args.congestion_sample_days >= 1 and os.path.exists(args.db):
+        rows, skipped_days = cleanup_congestion_samples(
+            args.db, args.congestion_sample_days, args.dry_run
+        )
+        note = f" / 跳過 {skipped_days} 天" if skipped_days else ""
+        print(f"  congestion_samples（保留 {args.congestion_sample_days} 天）: {rows} 列{note}")
 
     print(f"✅ 合計: {total_deleted} 檔 / {total_freed / 1e9:.1f} GB" + (f" / {total_errors} 錯誤" if total_errors else ""))
     return 0
