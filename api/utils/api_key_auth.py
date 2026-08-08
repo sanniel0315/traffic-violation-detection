@@ -51,6 +51,26 @@ def _check_rate_limit(key_id, limit: int = 60) -> None:
     window.append(now)
 
 
+def resolve_api_key(value: str, db: Session):
+    """驗證一個金鑰字串，通過回傳 key 物件，失敗回 None。
+
+    header(X-API-Key)與文件頁的 ?token= 共用這一份判斷 —— 兩套各寫一次
+    遲早會走樣（例如一邊記得檢查 expires_at、另一邊忘了）。
+    """
+    value = str(value or "").strip()
+    if not value:
+        return None
+    if _STATIC_API_KEY and secrets.compare_digest(value, _STATIC_API_KEY):
+        return _STATIC_KEY_OBJ
+    now = datetime.now(timezone.utc)
+    for candidate in db.query(ApiKey).filter(ApiKey.enabled == True).all():  # noqa: E712
+        if candidate.expires_at and candidate.expires_at < now:
+            continue
+        if verify_password(value, candidate.key_hash):
+            return candidate
+    return None
+
+
 async def get_api_key(
     x_api_key: Optional[str] = Depends(_api_key_scheme),
     db: Session = Depends(get_db),
