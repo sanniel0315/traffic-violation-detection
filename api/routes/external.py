@@ -142,7 +142,11 @@ def _meta(fmt: str = "json") -> dict:
 
 @router.get("/realtime", summary="即時 VD 車流報表（滾動視窗，每次查都是新數字）")
 def external_realtime(
-    window_sec: int = Query(60, ge=10, le=600, description="往回推幾秒的滾動視窗"),
+    mode: str = Query(
+        "window", pattern="^(window|minute)$",
+        description="window=往回推 window_sec 秒的滾動視窗;minute=從當前整分累積到現在(跨分歸零)",
+    ),
+    window_sec: int = Query(60, ge=10, le=600, description="滾動視窗長度(mode=window 時有效)"),
     detector_id: Optional[int] = Query(None, description="攝影機 camera_id;留空=全部"),
     api_key: ApiKey = Depends(require_scope("vd_report")),
     db: Session = Depends(get_db),
@@ -158,8 +162,18 @@ def external_realtime(
     資料直接讀原始表、不經聚合,所以沒有聚合延遲。
     """
     now = datetime.now(timezone.utc).replace(microsecond=0)
-    span = timedelta(seconds=int(window_sec))
-    since = (now - span).replace(tzinfo=None)
+    if mode == "minute":
+        # 分鐘內累積:起點釘在當前整分,終點是「現在」。
+        # 同一分鐘內連續查詢,起點不動、終點往前 → 數字只會往上累加;
+        # 跨到下一分鐘就自動歸零重算。整分那一刻累積為 0(這一分鐘才剛開始),
+        # 而分鐘結束時的累積值,會等於 /vd-report 該分鐘桶的值。
+        start = now.replace(second=0)
+        span = now - start
+    else:
+        span = timedelta(seconds=int(window_sec))
+        start = now - span
+    since = start.replace(tzinfo=None)
+    elapsed = max(int(span.total_seconds()), 0)
 
     camera_by_id, _ = _camera_meta(db)
     large_case = " OR ".join(
@@ -203,8 +217,8 @@ def external_realtime(
             rows[cam] = {
                 "deviceId": str(meta.get("camera_name") or f"cam_{cam}"),
                 "roadName": str(meta.get("road_name") or "未知"),
-                "timeKey": int((now - span).timestamp() * 1000),
-                "timeText": (now - span).astimezone(TZ_TAIPEI).strftime("%Y-%m-%d %H:%M:%S"),
+                "timeKey": int(start.timestamp() * 1000),
+                "timeText": start.astimezone(TZ_TAIPEI).strftime("%Y-%m-%d %H:%M:%S"),
                 "direction": normalize_direction(meta.get("direction")),
                 "directionText": direction_label(normalize_direction(meta.get("direction"))),
                 "directionCounts": {}, "totalFlow": 0, "smallFlow": 0, "largeFlow": 0,
@@ -306,14 +320,19 @@ def external_realtime(
     records = _vd_rows_to_records(out_rows, "1m", span=span)
     # 即時特有:換算每小時車流率,呼叫端不必知道視窗多長就能直接顯示
     for rec in records:
-        rec["flow_per_hour"] = round(rec["total_flow"] * 3600.0 / int(window_sec), 1)
+        # 用實際經過秒數換算 —— mode=minute 時經過秒數會一直變,
+        # 用 window_sec 算會得到錯的車流率。分鐘剛開始(elapsed 很小)時
+        # 這個外推值抖動很大,呼叫端要顯示的話建議等 elapsed 夠大再用。
+        rec["flow_per_hour"] = (round(rec["total_flow"] * 3600.0 / elapsed, 1)
+                                if elapsed > 0 else None)
 
     return {
         "status": "success",
         "data": {
-            "mode": "realtime",
-            "window_sec": int(window_sec),
-            "period": {"start": (now - span).astimezone(TZ_TAIPEI).isoformat(),
+            "mode": mode,
+            "window_sec": int(window_sec) if mode == "window" else None,
+            "elapsed_sec": elapsed,
+            "period": {"start": start.astimezone(TZ_TAIPEI).isoformat(),
                        "end": now.astimezone(TZ_TAIPEI).isoformat()},
             "stats": _vd_stats(records),
             "records": records,

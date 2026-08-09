@@ -84,6 +84,24 @@ check("『有畫才給』的判斷收斂在共用函式裡", 'if row.get("inoutE
 check("共用函式支援自訂視窗長度（即時用）", "span or _BUCKET_INTERVALS" in conv, True)
 check("共用函式不再無條件輸出 in_flow", conv.count('"in_flow"'), 1)
 
+# ── 5. mode=minute：分鐘內累積（使用者 2026-08-09 要求） ──────────────
+# 需求：每 20 秒查一次，要拿到「這一分鐘從整分到現在的累積」，跨分歸零。
+#   18:49:14 → 起點 18:49:00 經過 14 秒
+#   18:49:54 → 起點 18:49:00 經過 54 秒（同一起點，只增不減）
+#   18:50:15 → 起點 18:50:00 經過 15 秒（跨分歸零）
+# 🛑 與滑動視窗(mode=window)是不同語意，不可混用：
+#    滑動視窗的起點會跟著移動，累積模式的起點釘在整分。
+print("\nmode=minute 分鐘內累積")
+check("有 mode 參數且限定兩種值", 'pattern="^(window|minute)$"' in rt, True)
+check("minute 模式起點釘在整分", 'start = now.replace(second=0)' in rt, True)
+check("window 模式維持往回推", "start = now - span" in rt, True)
+check("回應標明經過秒數", '"elapsed_sec": elapsed' in rt, True)
+check("每小時車流率用實際經過秒數換算，不是 window_sec",
+      "rec[\"total_flow\"] * 3600.0 / elapsed" in rt, True)
+check("經過 0 秒時不做除法（整分那一刻）", "if elapsed > 0 else None" in rt, True)
+check("window_sec 只在 window 模式回報",
+      'int(window_sec) if mode == "window" else None' in rt, True)
+
 print()
 if fails:
     print(f"FAIL {len(fails)} 項: {fails}")
