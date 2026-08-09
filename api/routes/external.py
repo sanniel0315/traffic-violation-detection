@@ -13,10 +13,11 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from api.models import ApiKey, CongestionReportAgg, get_db
+from api.models import AggregationJobState, ApiKey, CongestionReportAgg, get_db
 from api.utils.api_key_auth import require_scope, resolve_api_key
 from api.utils.report_aggregation import (
     BUCKET_SECONDS,
+    INCREMENTAL_JOB_NAME,
     build_vd_report_rows,
     normalize_bucket_size,
     to_utc_naive,
@@ -79,6 +80,25 @@ def external_docs(request: Request,
     _require_docs_token(request, token, db)
     spec_url = f"/api/v1/external/openapi.json?token={quote(token)}" if token else "/api/v1/external/openapi.json"
     return get_swagger_ui_html(openapi_url=spec_url, title="交通資料對外 API")
+
+
+def _aggregation_watermark(db: Session):
+    """背景聚合 job 已經處理到哪個時刻（UTC, tz-aware）；沒有紀錄回 None。
+
+    比這個時刻新的桶,聚合表裡的數字還不是最終值。
+    """
+    try:
+        state = (
+            db.query(AggregationJobState)
+            .filter(AggregationJobState.job_name == INCREMENTAL_JOB_NAME)
+            .first()
+        )
+    except Exception:
+        return None
+    value = getattr(state, "last_processed_at", None) if state else None
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 def _meta(fmt: str = "json") -> dict:
@@ -263,6 +283,18 @@ async def external_vd_report_latest(
     # 對齊到桶邊界 → 排除當下還在累積的桶(end 為 exclusive 上界)
     epoch = int(now.timestamp())
     end = datetime.fromtimestamp(epoch - (epoch % step), tz=timezone.utc)
+
+    # 🛑 再往回退到「聚合已經算完」的位置。
+    # 報表讀的是聚合表,而聚合是背景每 60 秒跑一次 —— 桶雖然在時間上結束了,
+    # 聚合還沒輪到它,這時查出來是 0。實測 11:47 那個桶:API 回 0,原始資料
+    # 其實有 5 台和 4 台;等下一輪聚合跑過就自己修正成 5 和 4。
+    # 對呼叫端來說 0 和「真的沒車」長得一模一樣,分不出來 —— 所以乾脆不要送
+    # 還沒算完的桶,寧可最新資料晚一兩分鐘,也不要給一個會變的數字。
+    watermark = _aggregation_watermark(db)
+    if watermark is not None:
+        w_epoch = int(watermark.timestamp())
+        end = min(end, datetime.fromtimestamp(w_epoch - (w_epoch % step), tz=timezone.utc))
+
     start = end - timedelta(seconds=step * minutes)
 
     rows = build_vd_report_rows(db, start, end, bucket, camera_id=detector_id)
@@ -273,6 +305,9 @@ async def external_vd_report_latest(
         "interval": bucket,
         "period": {"start": start.astimezone(TZ_TAIPEI).isoformat(),
                    "end": end.astimezone(TZ_TAIPEI).isoformat()},
+        # 資料已聚合到哪個時刻 —— period.end 不會超過它。呼叫端可用它判斷
+        # 新鮮度(正常落後一個聚合週期以內;明顯落後代表背景 job 有問題)。
+        "aggregated_through": end.astimezone(TZ_TAIPEI).isoformat(),
         "stats": stats,
     }
     if include_records:
