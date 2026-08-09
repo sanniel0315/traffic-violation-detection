@@ -238,12 +238,20 @@ def external_realtime(
                 "flow": 0, "smallFlow": 0, "largeFlow": 0, "avgSpeed": None,
                 "avgOccupancyPct": None, "avgQueueLengthM": None, "maxQueueLengthM": None,
                 "queueDurationSec": None, "maxQueueDurationSec": None,
+                "_sp_sum": 0.0, "_sp_n": 0, "_oc_sum": 0.0, "_oc_n": 0,
             })
             lane["flow"] += n
             lane["largeFlow"] += large
             lane["smallFlow"] += n - large
+            # 🛑 SQL 是 GROUP BY (camera, lane, direction),同一條車道會有多組,
+            # 直接指派等於被最後一組蓋掉;要用事件數加權累加,和偵測器層一致。
+            # 佔用率原本整個漏掉,車道層永遠是 null —— 但原始事件是有值的。
             if r[4] is not None:
-                lane["avgSpeed"] = round(float(r[4]), 1)
+                lane["_sp_sum"] += float(r[4]) * n
+                lane["_sp_n"] += n
+            if r[5] is not None:
+                lane["_oc_sum"] += float(r[5]) * n
+                lane["_oc_n"] += n
             d["laneCount"] = max(int(d["laneCount"] or 0), lane_no)
 
     for r in cong_rows:
@@ -278,6 +286,14 @@ def external_realtime(
         if d["_oc_n"]:
             occ = d["_oc_sum"] / d["_oc_n"]
             d["avgOccupancyPct"] = occ * 100.0 if occ <= 1 else occ
+        for lane in d["lanes"].values():
+            if lane["_sp_n"]:
+                lane["avgSpeed"] = lane["_sp_sum"] / lane["_sp_n"]
+            if lane["_oc_n"]:
+                occ_l = lane["_oc_sum"] / lane["_oc_n"]
+                lane["avgOccupancyPct"] = occ_l * 100.0 if occ_l <= 1 else occ_l
+            for key in ("_sp_sum", "_sp_n", "_oc_sum", "_oc_n"):
+                lane.pop(key, None)
         for key in ("_sp_sum", "_sp_n", "_oc_sum", "_oc_n"):
             d.pop(key, None)
         out_rows.append(d)
