@@ -18,6 +18,7 @@ from api.models import AggregationJobState, ApiKey, CongestionReportAgg, get_db
 from api.utils.api_key_auth import require_scope, resolve_api_key
 from api.utils.report_aggregation import (
     BUCKET_SECONDS,
+    _LARGE_LABELS,
     INCREMENTAL_JOB_NAME,
     _camera_meta,
     direction_label,
@@ -132,7 +133,11 @@ def _meta(fmt: str = "json") -> dict:
 #      traffic_events     滾動 60 秒  364 ms → 0.3 ms
 #      congestion_samples 滾動 60 秒 5663 ms → 0.5 ms
 #    差一萬倍。沒釘住的話,20 秒打一次會把系統拖垮。
-_RT_LARGE = ("truck", "bus", "trailer", "tractor")
+# 🛑 大車判定一律用 report_aggregation._LARGE_LABELS,不可以在這裡另定一套。
+# 曾經自己寫成 ("truck","bus","trailer","tractor") —— 那個 "truck" 用 LIKE 比對
+# 會把 light_truck(小貨車)一起吃進大車,同一分鐘即時與報表的 small/large 就對不起來
+# (實測 國8 即時 7/5、報表 8/4;total_flow 相同但分法不同)。
+# 專案規則:未細分的 truck 視為小車(保守估計,避免誤算為大車)。
 
 
 @router.get("/realtime", summary="即時 VD 車流報表（滾動視窗，每次查都是新數字）")
@@ -158,7 +163,7 @@ def external_realtime(
 
     camera_by_id, _ = _camera_meta(db)
     large_case = " OR ".join(
-        "LOWER(COALESCE(label,'')) LIKE '%%%s%%'" % lbl for lbl in _RT_LARGE
+        "LOWER(COALESCE(label,'')) LIKE '%%%s%%'" % lbl for lbl in _LARGE_LABELS
     )
     cam_filter = " AND camera_id = :cam" if detector_id is not None else ""
     params = {"since": since.isoformat(sep=" ")}
