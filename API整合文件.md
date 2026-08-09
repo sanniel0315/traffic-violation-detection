@@ -16,7 +16,65 @@
 
 ---
 
-## 定期輪詢（建議做法）
+## 即時查詢（每 20 秒輪詢用這支）
+
+要「每次查都是最新狀況」，用即時端點。它回的是**現在往回推 N 秒的滾動視窗**，
+每次呼叫視窗都不同，所以**每 20 秒查都是新數字**；資料直接讀原始表，沒有聚合延遲。
+
+```
+GET /api/v1/external/realtime?window_sec=60
+```
+
+| 參數 | 預設 | 範圍 | 說明 |
+|------|------|------|------|
+| `window_sec` | 60 | 10～600 | 往回推幾秒 |
+| `detector_id` | 全部 | — | 指定攝影機 |
+
+回應：
+
+```json
+{
+  "status": "success",
+  "data": {
+    "server_time": "2026-08-09T12:46:35+08:00",
+    "window_sec": 60,
+    "window_start": "2026-08-09T12:45:35+08:00",
+    "detectors": [
+      {
+        "detector_id": "台62基隆段隧道口", "camera_id": 2,
+        "direction": "straight", "direction_label": "直行",
+        "flow": 16, "flow_per_hour": 960.0,
+        "small_vehicle_flow": 16, "large_vehicle_flow": 0,
+        "avg_speed_kmh": null, "max_speed_kmh": null, "avg_occupancy_pct": 72.0,
+        "vehicles_in_area": 3.0, "stopped_vehicles": 0.0,
+        "queue_length_m": 0.0, "queue_duration_sec": 0.0,
+        "congestion_sample_at": "2026-08-09T12:46:34+08:00",
+        "lanes": [ { "lane_no": 2, "flow": 16 } ],
+        "in_flow": 5, "out_flow": 2
+      }
+    ]
+  }
+}
+```
+
+| 欄位 | 說明 |
+|------|------|
+| `flow` | 視窗內通過的車數 |
+| `flow_per_hour` | 換算每小時車流率（視窗越短抖動越大） |
+| `avg_occupancy_pct` | 目前佔用率 |
+| `vehicles_in_area` / `stopped_vehicles` | 區域內車數／靜止車數 |
+| `queue_length_m` / `queue_duration_sec` | 目前排隊長度／持續時間 |
+| `in_flow` / `out_flow` | **只有畫了進出線的攝影機才有這兩個欄位** |
+
+> **沒畫進出線的攝影機不會輸出 `in_flow` / `out_flow`**（不是給 0）。
+> 給 0 的話，「沒有車進出」和「這支根本不做進出計數」無法分辨。
+> 判斷方式：欄位存在 = 有做進出計數。
+
+實測單次 23～29 毫秒，連打 20 次共 592 毫秒。20 秒輪詢完全無壓力。
+
+---
+
+## 定期報表輪詢（要統計區間才用這支）
 
 要持續取得最新車流，用 `vd-report/latest`，不必自己算時間區間：
 

@@ -11,6 +11,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import StreamingResponse
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from api.models import AggregationJobState, ApiKey, CongestionReportAgg, get_db
@@ -18,6 +19,9 @@ from api.utils.api_key_auth import require_scope, resolve_api_key
 from api.utils.report_aggregation import (
     BUCKET_SECONDS,
     INCREMENTAL_JOB_NAME,
+    _camera_meta,
+    direction_label,
+    normalize_direction,
     build_vd_report_rows,
     normalize_bucket_size,
     to_utc_naive,
@@ -107,6 +111,181 @@ def _meta(fmt: str = "json") -> dict:
         "api_version": "1.0",
         "device_id": _DEVICE_ID,
         "format": fmt,
+    }
+
+
+# ── 即時資料查詢 ────────────────────────────────────────────────────
+# 報表端點回的是「已結束的統計區間」,最小 1 分鐘桶 → 每 20 秒輪詢會拿到同一份。
+# 這支不同:回「現在往回推 N 秒」的滾動視窗,每次呼叫的視窗都不一樣,
+# 所以每 20 秒查都是新數字。資料直接讀原始表,不經聚合,沒有聚合延遲。
+#
+# 🛑 查詢一定要用 INDEXED BY 釘住 created_at 索引。
+#    SQLite planner 在有低選擇性條件時會挑錯索引,現場實測:
+#      traffic_events     滾動 60 秒  364 ms → 0.3 ms
+#      congestion_samples 滾動 60 秒 5663 ms → 0.5 ms
+#    差一萬倍。沒釘住的話,20 秒打一次會把系統拖垮。
+_RT_LARGE = ("truck", "bus", "trailer", "tractor")
+
+
+@router.get("/realtime", summary="即時車流狀態（滾動視窗，每次查都是新數字）")
+def external_realtime(
+    window_sec: int = Query(60, ge=10, le=600, description="往回推幾秒的滾動視窗"),
+    detector_id: Optional[int] = Query(None, description="攝影機 camera_id;留空=全部"),
+    api_key: ApiKey = Depends(require_scope("vd_report")),
+    db: Session = Depends(get_db),
+):
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(seconds=int(window_sec))).replace(tzinfo=None)
+    since_s = since.isoformat(sep=" ")
+
+    camera_by_id, _ = _camera_meta(db)
+
+    large_case = " OR ".join(
+        "LOWER(COALESCE(label,'')) LIKE '%%%s%%'" % lbl for lbl in _RT_LARGE
+    )
+    cam_filter = " AND camera_id = :cam" if detector_id is not None else ""
+    params = {"since": since_s}
+    if detector_id is not None:
+        params["cam"] = int(detector_id)
+
+    # 車流:視窗內的事件數、車速、佔用率、大型車、方向分佈
+    rows = db.execute(text(f"""
+        SELECT camera_id,
+               COALESCE(lane_no, 0)                       AS lane_no,
+               UPPER(COALESCE(direction, ''))             AS direction,
+               COUNT(*)                                   AS n,
+               AVG(CASE WHEN speed_kmh > 0 THEN speed_kmh END)     AS avg_speed,
+               MAX(CASE WHEN speed_kmh > 0 THEN speed_kmh END)     AS max_speed,
+               AVG(CASE WHEN occupancy >= 0 THEN occupancy END)    AS avg_occ,
+               SUM(CASE WHEN ({large_case}) THEN 1 ELSE 0 END)     AS large_n
+        FROM traffic_events INDEXED BY ix_traffic_events_created_at
+        WHERE created_at >= :since{cam_filter}
+        GROUP BY camera_id, lane_no, direction
+    """), params).fetchall()
+
+    # 壅塞:視窗內每台相機的最新一筆整體狀態
+    cong = db.execute(text(f"""
+        SELECT camera_id,
+               MAX(created_at)                AS latest,
+               AVG(vehicle_count)             AS avg_vehicles,
+               AVG(stopped_vehicle_count)     AS avg_stopped,
+               AVG(occupancy)                 AS avg_occ,
+               MAX(estimated_queue_length_m)  AS max_queue,
+               MAX(queue_duration_sec)        AS max_queue_dur
+        FROM congestion_samples INDEXED BY ix_congestion_samples_created_at
+        WHERE created_at >= :since AND is_overall = 1{cam_filter}
+        GROUP BY camera_id
+    """), params).fetchall()
+    cong_by_cam = {int(r[0]): r for r in cong if r[0] is not None}
+
+    per_cam: dict[int, dict] = {}
+    for r in rows:
+        if r[0] is None:
+            continue
+        cam = int(r[0])
+        meta = camera_by_id.get(cam, {})
+        d = per_cam.setdefault(cam, {
+            "detector_id": str(meta.get("camera_name") or f"cam_{cam}"),
+            "camera_id": cam,
+            "road_name": str(meta.get("road_name") or "未知"),
+            "direction": normalize_direction(meta.get("direction")),
+            "flow": 0, "small_vehicle_flow": 0, "large_vehicle_flow": 0,
+            "_speed_sum": 0.0, "_speed_n": 0, "_occ_sum": 0.0, "_occ_n": 0,
+            "max_speed_kmh": None,
+            "_in": 0, "_out": 0,
+            "_inout": bool(meta.get("inout_enabled")),
+            "lanes": {},
+        })
+        n, large = int(r[3] or 0), int(r[7] or 0)
+        direction = str(r[2] or "")
+        if direction == "IN":
+            d["_in"] += n
+            continue
+        if direction in ("OUT", "EXIT"):
+            d["_out"] += n
+            continue
+        d["flow"] += n
+        d["large_vehicle_flow"] += large
+        d["small_vehicle_flow"] += n - large
+        if r[4] is not None:
+            d["_speed_sum"] += float(r[4]) * n
+            d["_speed_n"] += n
+        if r[5] is not None:
+            d["max_speed_kmh"] = max(d["max_speed_kmh"] or 0.0, float(r[5]))
+        if r[6] is not None:
+            d["_occ_sum"] += float(r[6]) * n
+            d["_occ_n"] += n
+        lane_no = int(r[1] or 0)
+        if lane_no > 0:
+            d["lanes"][lane_no] = d["lanes"].get(lane_no, 0) + n
+
+    # 只有車流事件的相機才會出現在上面;把有壅塞資料但視窗內沒車的也補進來
+    for cam, meta in camera_by_id.items():
+        if not meta.get("vd_eligible"):
+            continue
+        if detector_id is not None and cam != int(detector_id):
+            continue
+        per_cam.setdefault(cam, {
+            "detector_id": str(meta.get("camera_name") or f"cam_{cam}"),
+            "camera_id": cam,
+            "road_name": str(meta.get("road_name") or "未知"),
+            "direction": normalize_direction(meta.get("direction")),
+            "flow": 0, "small_vehicle_flow": 0, "large_vehicle_flow": 0,
+            "_speed_sum": 0.0, "_speed_n": 0, "_occ_sum": 0.0, "_occ_n": 0,
+            "max_speed_kmh": None, "_in": 0, "_out": 0,
+            "_inout": bool(meta.get("inout_enabled")), "lanes": {},
+        })
+
+    detectors = []
+    for cam, d in sorted(per_cam.items()):
+        c = cong_by_cam.get(cam)
+        rec = {
+            "detector_id": d["detector_id"],
+            "camera_id": cam,
+            "road_name": d["road_name"],
+            "direction": d["direction"],
+            "direction_label": direction_label(d["direction"]),
+            "flow": d["flow"],
+            # 換算成每小時車流率,方便直接顯示;視窗越短抖動越大
+            "flow_per_hour": round(d["flow"] * 3600.0 / int(window_sec), 1),
+            "small_vehicle_flow": d["small_vehicle_flow"],
+            "large_vehicle_flow": d["large_vehicle_flow"],
+            "avg_speed_kmh": round(d["_speed_sum"] / d["_speed_n"], 1) if d["_speed_n"] else None,
+            "max_speed_kmh": round(d["max_speed_kmh"], 1) if d["max_speed_kmh"] else None,
+            "avg_occupancy_pct": None,
+            "vehicles_in_area": round(float(c[2]), 1) if c and c[2] is not None else None,
+            "stopped_vehicles": round(float(c[3]), 1) if c and c[3] is not None else None,
+            "queue_length_m": round(float(c[5]), 1) if c and c[5] is not None else None,
+            "queue_duration_sec": round(float(c[6]), 1) if c and c[6] is not None else None,
+            "congestion_sample_at": (
+                datetime.fromisoformat(str(c[1])).replace(tzinfo=timezone.utc)
+                .astimezone(TZ_TAIPEI).isoformat() if c and c[1] else None
+            ),
+            "lanes": [{"lane_no": k, "flow": v} for k, v in sorted(d["lanes"].items())],
+        }
+        occ = None
+        if d["_occ_n"]:
+            occ = d["_occ_sum"] / d["_occ_n"]
+        elif c and c[4] is not None:
+            occ = float(c[4])
+        if occ is not None:
+            rec["avg_occupancy_pct"] = round(occ * 100.0 if occ <= 1 else occ, 1)
+        # 🛑 只有畫了進出線的相機才給 in/out —— 沒畫的給 0 會讓呼叫端
+        # 分不出「沒有車進出」和「這支根本不算進出」。
+        if d["_inout"]:
+            rec["in_flow"] = d["_in"]
+            rec["out_flow"] = d["_out"]
+        detectors.append(rec)
+
+    return {
+        "status": "success",
+        "data": {
+            "server_time": now.astimezone(TZ_TAIPEI).isoformat(),
+            "window_sec": int(window_sec),
+            "window_start": (now - timedelta(seconds=int(window_sec))).astimezone(TZ_TAIPEI).isoformat(),
+            "detectors": detectors,
+        },
+        "meta": _meta(),
     }
 
 

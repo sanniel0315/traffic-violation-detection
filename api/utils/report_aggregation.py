@@ -231,6 +231,13 @@ def _camera_meta(db: Session):
             "lane_count": len(lane_set),
             "direction": main_direction,
             "vd_eligible": any(is_vd_zone(zone) for zone in zones),
+            # 這支相機有沒有畫進出線(zone 方向設成 INOUT)。
+            # 沒畫的相機不該回 in_flow / out_flow —— 回 0 的話,
+            # 「沒有車進出」和「這支根本不算進出」長得一模一樣,呼叫端分不出來。
+            "inout_enabled": any(
+                is_vd_zone(zone) and normalize_direction(zone.get("direction")) in _TRANSITION_DIRECTIONS
+                for zone in zones
+            ),
         }
         by_id[int(cam.id)] = meta
         by_name[str(meta["camera_name"])] = meta

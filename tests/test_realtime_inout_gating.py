@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""即時查詢端點：滾動視窗、以及「沒畫進出線就不給 in/out」。
+
+兩個需求（使用者 2026-08-09）：
+1. **每 20 秒查要有不同數據** —— 報表端點最小是 1 分鐘桶，20 秒輪詢會連拿三次
+   同一份。即時端點改回「現在往回推 N 秒」的滾動視窗，每次呼叫視窗都不同。
+2. **有畫 in/out 才給** —— 沒設進出線的相機回 `in_flow: 0` 的話，
+   「沒有車進出」和「這支根本不算進出」長得一模一樣，呼叫端分不出來。
+   所以沒畫的相機不輸出這兩個欄位。
+
+🛑 查詢一定要 `INDEXED BY` 釘住 created_at 索引。SQLite planner 在有低選擇性
+   條件（`camera_id IS NOT NULL`、`is_overall=1`）時會挑錯索引，現場實測：
+     traffic_events     滾動 60 秒   364 ms → 0.3 ms
+     congestion_samples 滾動 60 秒  5663 ms → 0.5 ms
+   差一萬倍；沒釘住的話 20 秒輪詢會把系統拖垮。
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ.setdefault("AUTH_SECRET", "test-only-secret-not-for-production-use-01234567")
+
+from api.utils.report_aggregation import _TRANSITION_DIRECTIONS, is_vd_zone, normalize_direction  # noqa: E402
+
+fails = []
+
+
+def check(name, got, want):
+    ok = got == want
+    print(("  PASS  " if ok else "  FAIL  ") + f"{name}  got={got!r} want={want!r}")
+    if not ok:
+        fails.append(name)
+
+
+# ── 1. inout_enabled 判定（_camera_meta 用的規則） ───────────────────
+def inout_enabled(zones):
+    return any(
+        is_vd_zone(z) and normalize_direction(z.get("direction")) in _TRANSITION_DIRECTIONS
+        for z in zones
+    )
+
+
+FLOW = "flow_detection"
+print("哪些相機該給 in/out")
+check("有一個 INOUT zone → 給",
+      inout_enabled([{"type": FLOW, "direction": "INOUT"}]), True)
+check("只有 straight zone → 不給",
+      inout_enabled([{"type": FLOW, "direction": "straight"}]), False)
+check("混合(一個 straight 一個 INOUT) → 給",
+      inout_enabled([{"type": FLOW, "direction": "straight"}, {"type": FLOW, "direction": "INOUT"}]), True)
+check("完全沒有 zone → 不給", inout_enabled([]), False)
+check("非 VD zone 的 INOUT 不算",
+      inout_enabled([{"type": "parking", "direction": "INOUT"}]), False)
+check("方向留空 → 不給",
+      inout_enabled([{"type": FLOW, "direction": ""}]), False)
+
+# ── 2. 端點的 SQL 必須釘住索引 ───────────────────────────────────────
+src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "api", "routes", "external.py"), encoding="utf-8").read()
+rt = src.split("def external_realtime(", 1)[1].split("\n@router", 1)[0]
+print("\n即時端點的查詢必須釘住 created_at 索引")
+check("traffic_events 有 INDEXED BY",
+      "traffic_events INDEXED BY ix_traffic_events_created_at" in rt, True)
+check("congestion_samples 有 INDEXED BY",
+      "congestion_samples INDEXED BY ix_congestion_samples_created_at" in rt, True)
+check("視窗有上限(避免有人傳超大值)", "le=600" in rt, True)
+check("視窗有下限", "ge=10" in rt, True)
+
+# ── 3. 進出流量的歸屬規則不可與 total 混算 ───────────────────────────
+print("\n進出事件不可計入一般車流")
+check("IN 事件 continue 掉不進 flow", 'if direction == "IN":' in rt, True)
+check("OUT/EXIT 事件 continue 掉不進 flow", 'if direction in ("OUT", "EXIT"):' in rt, True)
+check("只有 _inout 為真才輸出欄位", 'if d["_inout"]:' in rt, True)
+
+print()
+if fails:
+    print(f"FAIL {len(fails)} 項: {fails}")
+    sys.exit(1)
+print("ALL PASS")
+sys.exit(0)
