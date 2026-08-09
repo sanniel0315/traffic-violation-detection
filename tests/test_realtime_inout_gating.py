@@ -68,9 +68,21 @@ check("視窗有下限", "ge=10" in rt, True)
 
 # ── 3. 進出流量的歸屬規則不可與 total 混算 ───────────────────────────
 print("\n進出事件不可計入一般車流")
-check("IN 事件 continue 掉不進 flow", 'if direction == "IN":' in rt, True)
-check("OUT/EXIT 事件 continue 掉不進 flow", 'if direction in ("OUT", "EXIT"):' in rt, True)
-check("只有 _inout 為真才輸出欄位", 'if d["_inout"]:' in rt, True)
+check("IN/OUT/EXIT 事件不進 totalFlow",
+      'if direction in ("IN", "EXIT", "OUT"):' in rt, True)
+
+# ── 4. 即時與報表必須是同一種記錄格式（不可分岔成兩套） ──────────────
+# 客戶同時要打即時與報表，欄位名稱不一致等於逼他寫兩套解析。
+print("\n即時與報表共用同一個輸出函式")
+check("realtime 用 _vd_rows_to_records 產生記錄", "_vd_rows_to_records(out_rows" in rt, True)
+check("realtime 用 _vd_stats 產生摘要", "_vd_stats(records)" in rt, True)
+check("realtime 帶出 inoutEnabled 交給共用函式判斷", '"inoutEnabled": bool(' in rt, True)
+check("對外時間不帶微秒", "replace(microsecond=0)" in rt, True)
+
+conv = src.split("def _vd_rows_to_records(", 1)[1].split("\ndef ", 1)[0]
+check("『有畫才給』的判斷收斂在共用函式裡", 'if row.get("inoutEnabled"):' in conv, True)
+check("共用函式支援自訂視窗長度（即時用）", "span or _BUCKET_INTERVALS" in conv, True)
+check("共用函式不再無條件輸出 in_flow", conv.count('"in_flow"'), 1)
 
 print()
 if fails:
