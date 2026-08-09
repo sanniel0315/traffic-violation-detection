@@ -140,7 +140,7 @@ def _meta(fmt: str = "json") -> dict:
 # 專案規則:未細分的 truck 視為小車(保守估計,避免誤算為大車)。
 
 
-@router.get("/realtime", summary="即時 VD 車流報表（滾動視窗，每次查都是新數字）")
+@router.get("/realtime", summary="即時 VD 車流報表（mode=minute 分鐘內累積 / mode=window 滾動視窗）")
 def external_realtime(
     mode: str = Query(
         "window", pattern="^(window|minute)$",
@@ -151,15 +151,29 @@ def external_realtime(
     api_key: ApiKey = Depends(require_scope("vd_report")),
     db: Session = Depends(get_db),
 ):
-    """即時版的 VD 車流報表。
+    """即時 VD 車流報表 —— 兩種取樣方式，記錄格式與 /vd-report 完全相同。
 
-    與 /vd-report 的差別只有「時間怎麼取」:
-      vd-report  → 已結束的固定桶(最小 1 分鐘),60 秒內誰查都是同一份
-      realtime   → 現在往回推 window_sec 秒的滾動視窗,每次查都不同
-    **記錄格式完全相同**(共用 _vd_rows_to_records / _vd_stats),
-    客戶只要寫一套解析,兩支都能吃。
+    **mode=minute（分鐘內累積）** — 起點釘在當前整分，終點是「現在」，跨分歸零。
+    分鐘內任何時間查，拿到的都是「從整分到當下的累積」：
 
-    資料直接讀原始表、不經聚合,所以沒有聚合延遲。
+        18:49:14  起點 18:49:00  經過 14 秒  累積  2
+        18:49:54  起點 18:49:00  經過 54 秒  累積 18   ← 同一起點，只增不減
+        18:50:15  起點 18:50:00  經過 15 秒  累積  6   ← 跨分歸零
+
+    分鐘結束時的累積值，等於 /vd-report 該分鐘桶的值（已實測，含大車 0 不符）。
+    統計單位是一分鐘、又想在分鐘內看到進度時用這個。
+
+    **mode=window（滾動視窗，預設）** — 每次往回看 window_sec 秒，起點終點一起移動。
+    適合畫面顯示，數字較平滑。⚠️ 視窗互相重疊，直接加總會重複計算，不可拿來存檔。
+
+    共通：
+    - 資料直接讀原始表、不經聚合，沒有聚合延遲。
+    - `elapsed_sec` 是本次涵蓋的秒數；`flow_per_hour` 依它換算成每小時車流率。
+    - `in_flow` / `out_flow` **只有畫了進出線的攝影機才有這兩個欄位**（不是給 0）。
+    - `status`：active = 正常運作，disabled = 該攝影機停用（數值恆 0，不是沒有車）。
+    - 沒測速的攝影機 `avg_speed_kmh` 為 null（不是 0 —— 0 代表車速真的是 0）。
+
+    要存檔請改用 /vd-report/latest：那是不重疊的固定分鐘桶，一分鐘只有一個答案。
     """
     now = datetime.now(timezone.utc).replace(microsecond=0)
     if mode == "minute":
