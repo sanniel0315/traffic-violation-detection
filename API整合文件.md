@@ -44,7 +44,10 @@ GET /api/v1/external/realtime?window_sec=60
     "mode": "realtime",
     "window_sec": 60,
     "period": { "start": "2026-08-09T14:52:58+08:00", "end": "2026-08-09T14:53:58+08:00" },
-    "stats": { "overall": { "total_flow": 81, "in_flow": 12, "out_flow": 10, "...": "..." } },
+    "stats": {
+      "record_count": 4, "bucket_count": 1, "detector_count": 4,
+      "overall": { "total_flow": 81, "in_flow": 12, "out_flow": 10, "...": "..." }
+    },
     "records": [
       {
         "detector_id": "台62基隆段隧道口",
