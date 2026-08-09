@@ -1,6 +1,6 @@
 # 對外報表 API 文件
 
-> 版本：1.0 | 更新日期：2026-04-07
+> 版本：1.1 | 更新日期：2026-08-09
 
 ## 概述
 
@@ -9,7 +9,39 @@
 - **Base URL：** `http://{host}:8000/api/v1/external`
 - **認證方式：** API Key（`X-API-Key` Header）
 - **輸出格式：** JSON / CSV
-- **Swagger UI：** `http://{host}:8000/docs`
+- **Swagger UI：** `http://{host}:8000/api/v1/external/docs?token={API_KEY}`
+  （瀏覽器開文件頁沒辦法帶 Header，所以用 `?token=`；程式呼叫請用 Header）
+
+> `http://{host}:8000/docs` 是**內部**完整文件，需管理者登入，對外不提供。
+
+---
+
+## 定期輪詢（建議做法）
+
+要持續取得最新車流，用 `vd-report/latest`，不必自己算時間區間：
+
+```
+GET /api/v1/external/vd-report/latest?minutes=5&interval=1m
+```
+
+| 參數 | 預設 | 說明 |
+|------|------|------|
+| `minutes` | 5 | 回最近幾個**已結束**的時間桶 |
+| `interval` | `1m` | 桶大小：`1m` / `5m` / `1h` |
+| `detector_id` | 全部 | 指定攝影機 |
+| `include_records` | true | false = 只回統計摘要 |
+
+**三個實作要點**（照做可避免拿到錯誤數字）：
+
+1. **`minutes` 給 3～5，並依 `time_start` 去重 upsert。**
+   聚合是背景每 60 秒跑一次，**最新的桶可能還沒算完**。多抓幾個桶、
+   重複的以新值覆蓋，晚到的數字會自己補正。只抓最新一桶會偏低。
+2. **桶大小的參數名是 `interval`，不是 `bucket_size`。**
+   傳錯會被忽略並套用預設值，看起來像「查不到資料」。
+3. **時間帶時區或不帶都可以。** 不帶視為 UTC；帶 `+08:00` 為台北時間，
+   兩者指到同一時刻會得到同一批資料。
+
+輪詢頻率 20 秒沒有問題（實測單次回應約 40 毫秒）。速率限制預設 120 次/分。
 
 ---
 
@@ -114,7 +146,7 @@ GET /api/v1/external/vd-report
 
 ```bash
 curl -H "X-API-Key: tvd_xxxxxxxx" \
-  "http://10.26.4.102:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00&interval=5m"
+  "http://{host}:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00&interval=5m"
 ```
 
 #### JSON 回應範例
@@ -186,7 +218,10 @@ curl -H "X-API-Key: tvd_xxxxxxxx" \
 | `time_end` | string | 時間區間結束 |
 | `direction` | string | 行車方向代碼 |
 | `direction_label` | string | 行車方向中文 |
-| `total_flow` | int | 總車流量 |
+| `total_flow` | int | 總車流量（**不含**進出場事件，見下方說明） |
+| `in_flow` | int | 進場車數（車輛駛入偵測框） |
+| `out_flow` | int | 出場車數（車輛駛離偵測框） |
+| `direction_counts` | object | 各方向原始計數，供需要自行拆分時使用 |
 | `small_vehicle_flow` | int | 小型車流量（小客車、機車） |
 | `large_vehicle_flow` | int | 大型車流量（公車、貨車） |
 | `avg_speed_kmh` | float | 平均車速 (km/h) |
@@ -198,6 +233,21 @@ curl -H "X-API-Key: tvd_xxxxxxxx" \
 | `lanes[].avg_queue_length_m` | float | 平均排隊長度 (公尺) |
 | `lanes[].max_queue_length_m` | float | 最大排隊長度 (公尺) |
 
+#### 🛑 `total_flow` 與 `in_flow` / `out_flow` 的關係
+
+進出場是**另一條計數路徑**，兩者不可相加：
+
+| 事件 | 計入 `total_flow` | 計入 `in_flow` / `out_flow` |
+|------|------------------|---------------------------|
+| 一般通過偵測框 | ✅ | ❌ |
+| 駛入偵測框 | ❌ | ✅ `in_flow` |
+| 駛離偵測框 | ❌ | ✅ `out_flow` |
+
+`total_flow` 已是該時段的完整車流量，**再加上 `in_flow`／`out_flow` 會重複計算**
+（實測某 5 分鐘桶：正確為 `in=40 / out=39`，相加的錯誤算法會得到 `in=80 / out=79`）。
+
+未設定進出線的攝影機，`in_flow` 與 `out_flow` 恆為 0，不影響 `total_flow`。
+
 #### CSV 格式
 
 每一筆展平為一行（per lane），欄位順序：
@@ -205,8 +255,13 @@ curl -H "X-API-Key: tvd_xxxxxxxx" \
 ```
 detector_id, road_name, time_start, time_end, direction,
 lane_no, flow, small_vehicle_flow, large_vehicle_flow,
-avg_speed_kmh, avg_occupancy_pct, avg_queue_length_m, max_queue_length_m
+avg_speed_kmh, avg_occupancy_pct, avg_queue_length_m, max_queue_length_m,
+queue_duration_sec, max_queue_duration_sec, in_flow, out_flow
 ```
+
+> `in_flow` / `out_flow` 是**整框進出**的量、不分車道，因此只出現在該筆的
+> **第一條車道列**，其餘車道列留空。依 `detector_id + time_start` 分組加總
+> 即得正確值；若複製到每條車道，加總會變成車道數的倍數。
 
 ---
 
@@ -232,7 +287,7 @@ GET /api/v1/external/congestion-report
 
 ```bash
 curl -H "X-API-Key: tvd_xxxxxxxx" \
-  "http://10.26.4.102:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
+  "http://{host}:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
 ```
 
 #### JSON 回應範例
@@ -418,7 +473,7 @@ DELETE /api/auth/api-keys/{id}
 import requests
 
 API_KEY = "tvd_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-BASE = "http://10.26.4.102:8000/api/v1/external"
+BASE = "http://{host}:8000/api/v1/external"
 
 # VD 報表 (JSON)
 resp = requests.get(f"{BASE}/vd-report", headers={"X-API-Key": API_KEY}, params={
@@ -444,13 +499,13 @@ with open("congestion.csv", "w") as f:
 ```bash
 # VD 報表 JSON
 curl -H "X-API-Key: tvd_xxx..." \
-  "http://10.26.4.102:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
+  "http://{host}:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
 
 # VD 報表 CSV 下載
 curl -H "X-API-Key: tvd_xxx..." -o vd_report.csv \
-  "http://10.26.4.102:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00&format=csv"
+  "http://{host}:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00&format=csv"
 
 # 壅塞報表
 curl -H "X-API-Key: tvd_xxx..." \
-  "http://10.26.4.102:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
+  "http://{host}:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
 ```
