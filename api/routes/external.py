@@ -65,13 +65,21 @@ def external_openapi(request: Request,
     _require_docs_token(request, token, db)
     full = request.app.openapi()
     paths = {p: v for p, v in (full.get("paths") or {}).items() if p.startswith("/api/v1/external")}
+    # servers 要帶上本次請求的主機 —— 匯入 Postman / 其他工具時才知道要打哪台。
+    # 沒有這段的話匯入後每一條都要手動補 baseUrl。
+    base = str(request.base_url).rstrip("/")
     return {
         "openapi": full.get("openapi", "3.1.0"),
         "info": {
             "title": "交通資料對外 API",
             "version": str(full.get("info", {}).get("version", "1.0")),
-            "description": "VD 車流報表 / 壅塞報表 / 串流清單。所有端點需帶 X-API-Key。",
+            "description": (
+                "VD 車流報表 / 壅塞報表 / 串流清單。所有端點需帶 X-API-Key header。\n"
+                "即時查詢用 /realtime（滾動視窗，每次查都是新數字）；"
+                "要不重疊的固定統計區間用 /vd-report/latest。"
+            ),
         },
+        "servers": [{"url": base, "description": "本機"}],
         "paths": paths,
         "components": full.get("components", {}),
     }
@@ -200,6 +208,7 @@ def external_realtime(
                 "queueDurationSec": None, "maxQueueDurationSec": None,
                 "laneCount": int(meta.get("lane_count") or 0),
                 "inoutEnabled": bool(meta.get("inout_enabled")),
+                "status": "active" if meta.get("enabled", True) else "disabled",
                 "lanes": {},
                 "_sp_sum": 0.0, "_sp_n": 0, "_oc_sum": 0.0, "_oc_n": 0,
             }
@@ -337,6 +346,8 @@ def _vd_rows_to_records(rows: list, bucket: str, span: timedelta | None = None) 
         records.append({
             "detector_id": row.get("deviceId", ""),
             "road_name": row.get("roadName", ""),
+            # active = 正常運作;disabled = 該攝影機被停用(數值恆 0,不是沒有車)
+            "status": row.get("status", "active"),
             "time_start": time_start,
             "time_end": time_end,
             "direction": row.get("direction", ""),
