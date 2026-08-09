@@ -231,6 +231,9 @@ def _camera_meta(db: Session):
             "lane_count": len(lane_set),
             "direction": main_direction,
             "vd_eligible": any(is_vd_zone(zone) for zone in zones),
+            # 攝影機停用時各項數值恆為 0。對外要標明是「停用」而不是「沒有車」——
+            # 兩者在數字上長得一模一樣,呼叫端分不出來。
+            "enabled": bool(getattr(cam, "enabled", True)),
             # 這支相機有沒有畫進出線(zone 方向設成 INOUT)。
             # 沒畫的相機不該回 in_flow / out_flow —— 回 0 的話,
             # 「沒有車進出」和「這支根本不算進出」長得一模一樣,呼叫端分不出來。
@@ -652,6 +655,7 @@ def build_vd_report_rows(
                 # 這支相機有沒有畫進出線 —— 沒畫的不輸出 in_flow/out_flow,
                 # 給 0 的話呼叫端分不出「沒車進出」和「根本不算進出」。
                 "inoutEnabled": bool(meta.get("inout_enabled")),
+                "status": "active" if meta.get("enabled", True) else "disabled",
                 "lanes": {},
                 "_speed_weight_sum": 0.0,
                 "_speed_weight_count": 0,
@@ -760,7 +764,12 @@ def build_vd_report_rows(
     device_ids = {device_id for device_id, _ in buckets.keys()}
     if selected_device_id:
         device_ids.add(selected_device_id)
-    elif not device_ids:
+    else:
+        # 有畫車流區的攝影機一律列出(沒資料就補 0),名單才固定 ——
+        # 呼叫端不必去猜「這次少一台是壞了還是本來就沒有」。
+        # 停用中的相機數值恆 0,靠 record 的 status 欄位分辨,不是把它藏起來。
+        # (舊寫法只在 device_ids 全空時才補,於是有資料的時段就會漏掉停用的相機,
+        #  同一支相機在 realtime 看得到、在報表看不到 —— 兩支名單對不起來。)
         for meta in camera_by_id.values():
             if meta.get("vd_eligible"):
                 device_ids.add(str(meta["camera_name"]))

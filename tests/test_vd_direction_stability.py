@@ -165,6 +165,33 @@ check("沒畫進出線 → total_flow 照常", rec2["total_flow"], 4)
 check("沒畫進出線 → direction_counts 照常給", rec2["direction_counts"],
       {"straight": 1, "IN": 3, "INOUT": 3, "EXIT": 2})
 
+# ── 5. 偵測器名單固定 + 狀態標示（2026-08-09 使用者要求） ─────────────
+# 兩個實際問題：
+#   a) realtime 有 4 台、vd-report 只有 3 台 —— 報表端的名單原本只在
+#      「完全沒資料」時才補齊，於是停用的相機在有資料的時段就消失，
+#      同一台在兩支端點看得到/看不到，呼叫端會以為系統壞了。
+#   b) 停用相機的數值恆 0，與「真的沒有車」長得一模一樣 → 用 status 分辨。
+print("\n偵測器名單固定 + 狀態標示")
+row_disabled = dict(row, status="disabled", totalFlow=0, smallFlow=0, largeFlow=0,
+                    directionCounts={})
+rec_d = _vd_rows_to_records([row_disabled], "1m")[0]
+check("停用相機標成 disabled", rec_d["status"], "disabled")
+check("停用相機仍然出現在記錄裡（不是藏起來）", rec_d["detector_id"], "台62基隆段隧道口")
+check("停用相機的流量是 0", rec_d["total_flow"], 0)
+
+rec_a = _vd_rows_to_records([dict(row, status="active")], "1m")[0]
+check("正常相機標成 active", rec_a["status"], "active")
+check("沒帶 status 時預設 active",
+      _vd_rows_to_records([{k: v for k, v in row.items() if k != "status"}], "1m")[0]["status"],
+      "active")
+
+# 名單來源：有畫車流區(vd_eligible)就要列出，與是否啟用無關
+agg_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "api", "utils", "report_aggregation.py"), encoding="utf-8").read()
+pick = agg_src.split("device_ids = {device_id", 1)[1].split("current = start", 1)[0]
+check("名單不再只在『完全沒資料』時才補齊", "elif not device_ids:" in pick, False)
+check("有畫車流區的一律列出", 'if meta.get("vd_eligible"):' in pick, True)
+
 print()
 if fails:
     print(f"FAIL {len(fails)} 項: {fails}")
