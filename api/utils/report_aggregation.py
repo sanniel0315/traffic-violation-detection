@@ -649,6 +649,9 @@ def build_vd_report_rows(
                 "queueDurationSec": None,
                 "maxQueueDurationSec": None,
                 "laneCount": int(meta.get("lane_count") or 0),
+                # 這支相機有沒有畫進出線 —— 沒畫的不輸出 in_flow/out_flow,
+                # 給 0 的話呼叫端分不出「沒車進出」和「根本不算進出」。
+                "inoutEnabled": bool(meta.get("inout_enabled")),
                 "lanes": {},
                 "_speed_weight_sum": 0.0,
                 "_speed_weight_count": 0,

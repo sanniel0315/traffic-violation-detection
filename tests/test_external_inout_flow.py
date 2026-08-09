@@ -35,6 +35,9 @@ def row(direction_counts, total=0, **kw):
         "totalFlow": total, "smallFlow": 0, "largeFlow": 0,
         "avgSpeed": 0, "avgOccupancyPct": 0,
         "directionCounts": direction_counts, "laneCount": 1, "lanes": {},
+        # 有畫進出線的相機才會輸出 in_flow/out_flow(2026-08-09 起)。
+        # 預設 True 讓既有案例維持原本要驗的重點:進出流量怎麼算。
+        "inoutEnabled": kw.pop("inout_enabled", True),
     }
     base.update(kw)
     return base

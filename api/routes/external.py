@@ -127,163 +127,166 @@ def _meta(fmt: str = "json") -> dict:
 _RT_LARGE = ("truck", "bus", "trailer", "tractor")
 
 
-@router.get("/realtime", summary="即時車流狀態（滾動視窗，每次查都是新數字）")
+@router.get("/realtime", summary="即時 VD 車流報表（滾動視窗，每次查都是新數字）")
 def external_realtime(
     window_sec: int = Query(60, ge=10, le=600, description="往回推幾秒的滾動視窗"),
     detector_id: Optional[int] = Query(None, description="攝影機 camera_id;留空=全部"),
     api_key: ApiKey = Depends(require_scope("vd_report")),
     db: Session = Depends(get_db),
 ):
-    now = datetime.now(timezone.utc)
-    since = (now - timedelta(seconds=int(window_sec))).replace(tzinfo=None)
-    since_s = since.isoformat(sep=" ")
+    """即時版的 VD 車流報表。
+
+    與 /vd-report 的差別只有「時間怎麼取」:
+      vd-report  → 已結束的固定桶(最小 1 分鐘),60 秒內誰查都是同一份
+      realtime   → 現在往回推 window_sec 秒的滾動視窗,每次查都不同
+    **記錄格式完全相同**(共用 _vd_rows_to_records / _vd_stats),
+    客戶只要寫一套解析,兩支都能吃。
+
+    資料直接讀原始表、不經聚合,所以沒有聚合延遲。
+    """
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    span = timedelta(seconds=int(window_sec))
+    since = (now - span).replace(tzinfo=None)
 
     camera_by_id, _ = _camera_meta(db)
-
     large_case = " OR ".join(
         "LOWER(COALESCE(label,'')) LIKE '%%%s%%'" % lbl for lbl in _RT_LARGE
     )
     cam_filter = " AND camera_id = :cam" if detector_id is not None else ""
-    params = {"since": since_s}
+    params = {"since": since.isoformat(sep=" ")}
     if detector_id is not None:
         params["cam"] = int(detector_id)
 
-    # 車流:視窗內的事件數、車速、佔用率、大型車、方向分佈
-    rows = db.execute(text(f"""
-        SELECT camera_id,
-               COALESCE(lane_no, 0)                       AS lane_no,
-               UPPER(COALESCE(direction, ''))             AS direction,
-               COUNT(*)                                   AS n,
-               AVG(CASE WHEN speed_kmh > 0 THEN speed_kmh END)     AS avg_speed,
-               MAX(CASE WHEN speed_kmh > 0 THEN speed_kmh END)     AS max_speed,
-               AVG(CASE WHEN occupancy >= 0 THEN occupancy END)    AS avg_occ,
-               SUM(CASE WHEN ({large_case}) THEN 1 ELSE 0 END)     AS large_n
+    flow_rows = db.execute(text(f"""
+        SELECT camera_id, COALESCE(lane_no, 0) AS lane_no,
+               UPPER(COALESCE(direction, '')) AS direction,
+               COUNT(*) AS n,
+               AVG(CASE WHEN speed_kmh > 0 THEN speed_kmh END) AS avg_speed,
+               AVG(CASE WHEN occupancy >= 0 THEN occupancy END) AS avg_occ,
+               SUM(CASE WHEN ({large_case}) THEN 1 ELSE 0 END) AS large_n
         FROM traffic_events INDEXED BY ix_traffic_events_created_at
         WHERE created_at >= :since{cam_filter}
         GROUP BY camera_id, lane_no, direction
     """), params).fetchall()
 
-    # 壅塞:視窗內每台相機的最新一筆整體狀態
-    cong = db.execute(text(f"""
-        SELECT camera_id,
-               MAX(created_at)                AS latest,
-               AVG(vehicle_count)             AS avg_vehicles,
-               AVG(stopped_vehicle_count)     AS avg_stopped,
-               AVG(occupancy)                 AS avg_occ,
-               MAX(estimated_queue_length_m)  AS max_queue,
-               MAX(queue_duration_sec)        AS max_queue_dur
+    cong_rows = db.execute(text(f"""
+        SELECT camera_id, COALESCE(lane_no, 0) AS lane_no, is_overall,
+               AVG(estimated_queue_length_m) AS avg_q,
+               MAX(estimated_queue_length_m) AS max_q,
+               SUM(CASE WHEN queue_active = 1 THEN COALESCE(sample_interval_sec, 0) ELSE 0 END) AS q_dur,
+               MAX(queue_duration_sec) AS max_q_dur,
+               AVG(occupancy) AS avg_occ
         FROM congestion_samples INDEXED BY ix_congestion_samples_created_at
-        WHERE created_at >= :since AND is_overall = 1{cam_filter}
-        GROUP BY camera_id
+        WHERE created_at >= :since{cam_filter}
+        GROUP BY camera_id, lane_no, is_overall
     """), params).fetchall()
-    cong_by_cam = {int(r[0]): r for r in cong if r[0] is not None}
 
-    per_cam: dict[int, dict] = {}
-    for r in rows:
+    # 組成與 build_vd_report_rows 相同結構的 row,才能共用輸出函式
+    rows: dict[int, dict] = {}
+
+    def ensure(cam: int) -> dict:
+        if cam not in rows:
+            meta = camera_by_id.get(cam, {})
+            rows[cam] = {
+                "deviceId": str(meta.get("camera_name") or f"cam_{cam}"),
+                "roadName": str(meta.get("road_name") or "未知"),
+                "timeKey": int((now - span).timestamp() * 1000),
+                "timeText": (now - span).astimezone(TZ_TAIPEI).strftime("%Y-%m-%d %H:%M:%S"),
+                "direction": normalize_direction(meta.get("direction")),
+                "directionText": direction_label(normalize_direction(meta.get("direction"))),
+                "directionCounts": {}, "totalFlow": 0, "smallFlow": 0, "largeFlow": 0,
+                "avgSpeed": None, "avgOccupancyPct": None,
+                "avgQueueLengthM": None, "maxQueueLengthM": None,
+                "queueDurationSec": None, "maxQueueDurationSec": None,
+                "laneCount": int(meta.get("lane_count") or 0),
+                "inoutEnabled": bool(meta.get("inout_enabled")),
+                "lanes": {},
+                "_sp_sum": 0.0, "_sp_n": 0, "_oc_sum": 0.0, "_oc_n": 0,
+            }
+        return rows[cam]
+
+    for r in flow_rows:
         if r[0] is None:
             continue
-        cam = int(r[0])
-        meta = camera_by_id.get(cam, {})
-        d = per_cam.setdefault(cam, {
-            "detector_id": str(meta.get("camera_name") or f"cam_{cam}"),
-            "camera_id": cam,
-            "road_name": str(meta.get("road_name") or "未知"),
-            "direction": normalize_direction(meta.get("direction")),
-            "flow": 0, "small_vehicle_flow": 0, "large_vehicle_flow": 0,
-            "_speed_sum": 0.0, "_speed_n": 0, "_occ_sum": 0.0, "_occ_n": 0,
-            "max_speed_kmh": None,
-            "_in": 0, "_out": 0,
-            "_inout": bool(meta.get("inout_enabled")),
-            "lanes": {},
-        })
-        n, large = int(r[3] or 0), int(r[7] or 0)
-        direction = str(r[2] or "")
-        if direction == "IN":
-            d["_in"] += n
-            continue
-        if direction in ("OUT", "EXIT"):
-            d["_out"] += n
-            continue
-        d["flow"] += n
-        d["large_vehicle_flow"] += large
-        d["small_vehicle_flow"] += n - large
+        d = ensure(int(r[0]))
+        n, large = int(r[3] or 0), int(r[6] or 0)
+        direction = normalize_direction(r[2])
+        d["directionCounts"][direction] = d["directionCounts"].get(direction, 0) + n
+        if direction in ("IN", "EXIT", "OUT"):
+            continue          # 進出場事件只進 directionCounts,不進總流量
+        d["totalFlow"] += n
+        d["largeFlow"] += large
+        d["smallFlow"] += n - large
         if r[4] is not None:
-            d["_speed_sum"] += float(r[4]) * n
-            d["_speed_n"] += n
+            d["_sp_sum"] += float(r[4]) * n
+            d["_sp_n"] += n
         if r[5] is not None:
-            d["max_speed_kmh"] = max(d["max_speed_kmh"] or 0.0, float(r[5]))
-        if r[6] is not None:
-            d["_occ_sum"] += float(r[6]) * n
-            d["_occ_n"] += n
+            d["_oc_sum"] += float(r[5]) * n
+            d["_oc_n"] += n
         lane_no = int(r[1] or 0)
         if lane_no > 0:
-            d["lanes"][lane_no] = d["lanes"].get(lane_no, 0) + n
+            lane = d["lanes"].setdefault(lane_no, {
+                "flow": 0, "smallFlow": 0, "largeFlow": 0, "avgSpeed": None,
+                "avgOccupancyPct": None, "avgQueueLengthM": None, "maxQueueLengthM": None,
+                "queueDurationSec": None, "maxQueueDurationSec": None,
+            })
+            lane["flow"] += n
+            lane["largeFlow"] += large
+            lane["smallFlow"] += n - large
+            if r[4] is not None:
+                lane["avgSpeed"] = round(float(r[4]), 1)
+            d["laneCount"] = max(int(d["laneCount"] or 0), lane_no)
 
-    # 只有車流事件的相機才會出現在上面;把有壅塞資料但視窗內沒車的也補進來
+    for r in cong_rows:
+        if r[0] is None:
+            continue
+        d = ensure(int(r[0]))
+        lane_no, is_overall = int(r[1] or 0), bool(r[2])
+        target = d if is_overall else d["lanes"].get(lane_no)
+        if target is None:
+            continue
+        if r[3] is not None:
+            target["avgQueueLengthM"] = round(float(r[3]), 1) or None
+        if r[4] is not None:
+            target["maxQueueLengthM"] = round(float(r[4]), 1) or None
+        if r[5] is not None:
+            target["queueDurationSec"] = round(float(r[5]), 1) or None
+        if r[6] is not None:
+            target["maxQueueDurationSec"] = round(float(r[6]), 1) or None
+        if is_overall and r[7] is not None and not d["_oc_n"]:
+            occ = float(r[7])
+            d["avgOccupancyPct"] = round(occ * 100.0 if occ <= 1 else occ, 1)
+
+    # 視窗內完全沒有事件的相機也要出現(值為 0),否則呼叫端會以為那台不見了
     for cam, meta in camera_by_id.items():
-        if not meta.get("vd_eligible"):
-            continue
-        if detector_id is not None and cam != int(detector_id):
-            continue
-        per_cam.setdefault(cam, {
-            "detector_id": str(meta.get("camera_name") or f"cam_{cam}"),
-            "camera_id": cam,
-            "road_name": str(meta.get("road_name") or "未知"),
-            "direction": normalize_direction(meta.get("direction")),
-            "flow": 0, "small_vehicle_flow": 0, "large_vehicle_flow": 0,
-            "_speed_sum": 0.0, "_speed_n": 0, "_occ_sum": 0.0, "_occ_n": 0,
-            "max_speed_kmh": None, "_in": 0, "_out": 0,
-            "_inout": bool(meta.get("inout_enabled")), "lanes": {},
-        })
+        if meta.get("vd_eligible") and (detector_id is None or cam == int(detector_id)):
+            ensure(cam)
 
-    detectors = []
-    for cam, d in sorted(per_cam.items()):
-        c = cong_by_cam.get(cam)
-        rec = {
-            "detector_id": d["detector_id"],
-            "camera_id": cam,
-            "road_name": d["road_name"],
-            "direction": d["direction"],
-            "direction_label": direction_label(d["direction"]),
-            "flow": d["flow"],
-            # 換算成每小時車流率,方便直接顯示;視窗越短抖動越大
-            "flow_per_hour": round(d["flow"] * 3600.0 / int(window_sec), 1),
-            "small_vehicle_flow": d["small_vehicle_flow"],
-            "large_vehicle_flow": d["large_vehicle_flow"],
-            "avg_speed_kmh": round(d["_speed_sum"] / d["_speed_n"], 1) if d["_speed_n"] else None,
-            "max_speed_kmh": round(d["max_speed_kmh"], 1) if d["max_speed_kmh"] else None,
-            "avg_occupancy_pct": None,
-            "vehicles_in_area": round(float(c[2]), 1) if c and c[2] is not None else None,
-            "stopped_vehicles": round(float(c[3]), 1) if c and c[3] is not None else None,
-            "queue_length_m": round(float(c[5]), 1) if c and c[5] is not None else None,
-            "queue_duration_sec": round(float(c[6]), 1) if c and c[6] is not None else None,
-            "congestion_sample_at": (
-                datetime.fromisoformat(str(c[1])).replace(tzinfo=timezone.utc)
-                .astimezone(TZ_TAIPEI).isoformat() if c and c[1] else None
-            ),
-            "lanes": [{"lane_no": k, "flow": v} for k, v in sorted(d["lanes"].items())],
-        }
-        occ = None
-        if d["_occ_n"]:
-            occ = d["_occ_sum"] / d["_occ_n"]
-        elif c and c[4] is not None:
-            occ = float(c[4])
-        if occ is not None:
-            rec["avg_occupancy_pct"] = round(occ * 100.0 if occ <= 1 else occ, 1)
-        # 🛑 只有畫了進出線的相機才給 in/out —— 沒畫的給 0 會讓呼叫端
-        # 分不出「沒有車進出」和「這支根本不算進出」。
-        if d["_inout"]:
-            rec["in_flow"] = d["_in"]
-            rec["out_flow"] = d["_out"]
-        detectors.append(rec)
+    out_rows = []
+    for cam, d in sorted(rows.items()):
+        if d["_sp_n"]:
+            d["avgSpeed"] = d["_sp_sum"] / d["_sp_n"]
+        if d["_oc_n"]:
+            occ = d["_oc_sum"] / d["_oc_n"]
+            d["avgOccupancyPct"] = occ * 100.0 if occ <= 1 else occ
+        for key in ("_sp_sum", "_sp_n", "_oc_sum", "_oc_n"):
+            d.pop(key, None)
+        out_rows.append(d)
+
+    records = _vd_rows_to_records(out_rows, "1m", span=span)
+    # 即時特有:換算每小時車流率,呼叫端不必知道視窗多長就能直接顯示
+    for rec in records:
+        rec["flow_per_hour"] = round(rec["total_flow"] * 3600.0 / int(window_sec), 1)
 
     return {
         "status": "success",
         "data": {
-            "server_time": now.astimezone(TZ_TAIPEI).isoformat(),
+            "mode": "realtime",
             "window_sec": int(window_sec),
-            "window_start": (now - timedelta(seconds=int(window_sec))).astimezone(TZ_TAIPEI).isoformat(),
-            "detectors": detectors,
+            "period": {"start": (now - span).astimezone(TZ_TAIPEI).isoformat(),
+                       "end": now.astimezone(TZ_TAIPEI).isoformat()},
+            "stats": _vd_stats(records),
+            "records": records,
         },
         "meta": _meta(),
     }
@@ -303,9 +306,13 @@ def _validate_time_range(start_time: datetime, end_time: datetime, bucket_size: 
         })
 
 
-def _vd_rows_to_records(rows: list, bucket: str) -> list:
-    """把 build_vd_report_rows 的原始列轉成對外 JSON 記錄(vd-report / latest 共用)。"""
-    bucket_delta = _BUCKET_INTERVALS.get(bucket, timedelta(minutes=5))
+def _vd_rows_to_records(rows: list, bucket: str, span: timedelta | None = None) -> list:
+    """把 build_vd_report_rows 的原始列轉成對外 JSON 記錄。
+
+    vd-report / vd-report-latest / realtime 三支共用這裡 —— 客戶只要寫一套解析。
+    span:即時查詢用的滾動視窗長度;不給就用 bucket 對應的固定長度。
+    """
+    bucket_delta = span or _BUCKET_INTERVALS.get(bucket, timedelta(minutes=5))
     records = []
     for row in rows:
         ts = row.get("timeKey")
@@ -348,9 +355,6 @@ def _vd_rows_to_records(rows: list, bucket: str) -> list:
             # 它已經計入 total_flow;再加到 in/out 就是重複計算。
             # 87 實測:directionCounts={straight:67, IN:40, INOUT:40, EXIT:39},
             # 舊公式會得到 in=80/out=79(灌水約 100%),正解是 in=40/out=39。
-            "in_flow": int((row.get("directionCounts") or {}).get("IN", 0)),
-            "out_flow": int((row.get("directionCounts") or {}).get("OUT", 0))
-                        + int((row.get("directionCounts") or {}).get("EXIT", 0)),
             "avg_queue_length_m": round(row.get("avgQueueLengthM") or 0, 1) if row.get("avgQueueLengthM") else None,
             "max_queue_length_m": round(row.get("maxQueueLengthM") or 0, 1) if row.get("maxQueueLengthM") else None,
             "queue_duration_sec": round(row.get("queueDurationSec") or 0, 1) if row.get("queueDurationSec") else None,
@@ -358,6 +362,13 @@ def _vd_rows_to_records(rows: list, bucket: str) -> list:
             "lane_count": row.get("laneCount", 0),
             "lanes": lanes,
         })
+        # 🛑 只有畫了進出線的相機才輸出 in_flow / out_flow。
+        # 沒畫的給 0,呼叫端分不出「沒有車進出」和「這支根本不做進出計數」;
+        # 用「欄位在不在」表達最清楚。
+        if row.get("inoutEnabled"):
+            dc = row.get("directionCounts") or {}
+            records[-1]["in_flow"] = int(dc.get("IN", 0))
+            records[-1]["out_flow"] = int(dc.get("OUT", 0)) + int(dc.get("EXIT", 0))
     return records
 
 

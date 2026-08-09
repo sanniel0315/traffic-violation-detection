@@ -16,10 +16,17 @@
 
 ---
 
-## 即時查詢（每 20 秒輪詢用這支）
+## 即時 VD 報表（每 20 秒輪詢用這支）
 
-要「每次查都是最新狀況」，用即時端點。它回的是**現在往回推 N 秒的滾動視窗**，
-每次呼叫視窗都不同，所以**每 20 秒查都是新數字**；資料直接讀原始表，沒有聚合延遲。
+**與 `/vd-report` 是同一種記錄格式**，差別只在「時間怎麼取」：
+
+| | 時間 | 同一分鐘內重複查 |
+|---|---|---|
+| `/vd-report`、`/vd-report/latest` | 已結束的**固定桶**（最小 1 分鐘） | 得到同一份 |
+| **`/realtime`** | **現在往回推 N 秒的滾動視窗** | **每次都是新數字** |
+
+`records[]` 的欄位完全相同（18 個共同欄位），客戶**只要寫一套解析**，兩支都能吃。
+即時版另外多一個 `flow_per_hour`。
 
 ```
 GET /api/v1/external/realtime?window_sec=60
@@ -30,47 +37,39 @@ GET /api/v1/external/realtime?window_sec=60
 | `window_sec` | 60 | 10～600 | 往回推幾秒 |
 | `detector_id` | 全部 | — | 指定攝影機 |
 
-回應：
-
 ```json
 {
   "status": "success",
   "data": {
-    "server_time": "2026-08-09T12:46:35+08:00",
+    "mode": "realtime",
     "window_sec": 60,
-    "window_start": "2026-08-09T12:45:35+08:00",
-    "detectors": [
+    "period": { "start": "2026-08-09T14:52:58+08:00", "end": "2026-08-09T14:53:58+08:00" },
+    "stats": { "overall": { "total_flow": 81, "in_flow": 12, "out_flow": 10, "...": "..." } },
+    "records": [
       {
-        "detector_id": "台62基隆段隧道口", "camera_id": 2,
+        "detector_id": "台62基隆段隧道口",
+        "time_start": "2026-08-09T14:52:58+08:00",
+        "time_end":   "2026-08-09T14:53:58+08:00",
         "direction": "straight", "direction_label": "直行",
-        "flow": 16, "flow_per_hour": 960.0,
-        "small_vehicle_flow": 16, "large_vehicle_flow": 0,
-        "avg_speed_kmh": null, "max_speed_kmh": null, "avg_occupancy_pct": 72.0,
-        "vehicles_in_area": 3.0, "stopped_vehicles": 0.0,
-        "queue_length_m": 0.0, "queue_duration_sec": 0.0,
-        "congestion_sample_at": "2026-08-09T12:46:34+08:00",
-        "lanes": [ { "lane_no": 2, "flow": 16 } ],
-        "in_flow": 5, "out_flow": 2
+        "total_flow": 29, "flow_per_hour": 1740.0,
+        "small_vehicle_flow": 29, "large_vehicle_flow": 0,
+        "avg_speed_kmh": 0, "avg_occupancy_pct": 33.8,
+        "avg_queue_length_m": null, "max_queue_length_m": null,
+        "lane_count": 2,
+        "lanes": [ { "lane_no": 1, "flow": 17 }, { "lane_no": 2, "flow": 12 } ],
+        "in_flow": 12, "out_flow": 10
       }
     ]
   }
 }
 ```
 
-| 欄位 | 說明 |
-|------|------|
-| `flow` | 視窗內通過的車數 |
-| `flow_per_hour` | 換算每小時車流率（視窗越短抖動越大） |
-| `avg_occupancy_pct` | 目前佔用率 |
-| `vehicles_in_area` / `stopped_vehicles` | 區域內車數／靜止車數 |
-| `queue_length_m` / `queue_duration_sec` | 目前排隊長度／持續時間 |
-| `in_flow` / `out_flow` | **只有畫了進出線的攝影機才有這兩個欄位** |
+資料直接讀原始表、不經聚合，**沒有聚合延遲**。
+實測單次 23～34 毫秒，連打 20 次共 592 毫秒；20 秒輪詢完全無壓力。
 
-> **沒畫進出線的攝影機不會輸出 `in_flow` / `out_flow`**（不是給 0）。
-> 給 0 的話，「沒有車進出」和「這支根本不做進出計數」無法分辨。
-> 判斷方式：欄位存在 = 有做進出計數。
-
-實測單次 23～29 毫秒，連打 20 次共 592 毫秒。20 秒輪詢完全無壓力。
+`time_start` / `time_end` 就是滾動視窗的兩端，會隨每次呼叫移動。
+⚠️ 因此**即時資料不適合當歷史紀錄存檔**（相鄰兩次查詢的視窗會重疊、同一台車被算兩次）。
+要存檔請用下面的報表端點，那是不重疊的固定桶。
 
 ---
 

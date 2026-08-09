@@ -145,6 +145,7 @@ row = {
     "avgQueueLengthM": None, "maxQueueLengthM": None,
     "queueDurationSec": None, "maxQueueDurationSec": None,
     "laneCount": 1, "lanes": {},
+    "inoutEnabled": True,   # 有畫進出線才會輸出 in_flow/out_flow
 }
 rec = _vd_rows_to_records([row], "1m")[0]
 print("\n流量數字不得被方向修正影響")
@@ -154,6 +155,15 @@ check("total_flow 不含 IN/EXIT", rec["total_flow"], 4)
 check("direction_counts 原封不動", rec["direction_counts"],
       {"straight": 1, "IN": 3, "INOUT": 3, "EXIT": 2})
 check("direction 是行車方向", rec["direction"], "straight")
+
+# 沒畫進出線的相機:同一批 directionCounts,但不該輸出 in/out 欄位
+no_io = dict(row, inoutEnabled=False)
+rec2 = _vd_rows_to_records([no_io], "1m")[0]
+check("沒畫進出線 → 不輸出 in_flow", "in_flow" in rec2, False)
+check("沒畫進出線 → 不輸出 out_flow", "out_flow" in rec2, False)
+check("沒畫進出線 → total_flow 照常", rec2["total_flow"], 4)
+check("沒畫進出線 → direction_counts 照常給", rec2["direction_counts"],
+      {"straight": 1, "IN": 3, "INOUT": 3, "EXIT": 2})
 
 print()
 if fails:
