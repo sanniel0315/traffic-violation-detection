@@ -414,7 +414,13 @@ def _vd_stats(records: list) -> dict:
         by_detector.setdefault(r["detector_id"], []).append(r)
     peak = max(records, key=lambda r: r["total_flow"], default=None)
     return {
-        "bucket_count": len(records),
+        # 🛑 這三個要分清楚,以前只有一個 bucket_count 而且數的是 len(records)
+        # (= 偵測器 x 時間桶的組合數),名稱與內容對不上:
+        #   realtime 4 台 x 1 個視窗 → 顯示 bucket_count 4,但根本沒有「桶」
+        #   vd-report 4 台 x 3 桶     → 顯示 bucket_count 12,實際只有 3 個桶
+        "record_count": len(records),
+        "bucket_count": len({r["time_start"] for r in records}),
+        "detector_count": len({r["detector_id"] for r in records}),
         "overall": summarize(records),
         "by_detector": [
             {"detector_id": did, "road_name": recs[0]["road_name"], **summarize(recs)}
@@ -618,7 +624,13 @@ def _congestion_stats(records: list) -> dict:
         by_detector.setdefault(r["detector_id"], []).append(r)
     peak = max(records, key=lambda r: r["max_occupancy_pct"], default=None)
     return {
-        "bucket_count": len(records),
+        # 🛑 這三個要分清楚,以前只有一個 bucket_count 而且數的是 len(records)
+        # (= 偵測器 x 時間桶的組合數),名稱與內容對不上:
+        #   realtime 4 台 x 1 個視窗 → 顯示 bucket_count 4,但根本沒有「桶」
+        #   vd-report 4 台 x 3 桶     → 顯示 bucket_count 12,實際只有 3 個桶
+        "record_count": len(records),
+        "bucket_count": len({r["time_start"] for r in records}),
+        "detector_count": len({r["detector_id"] for r in records}),
         "overall": summarize(records),
         "by_detector": [
             {"detector_id": did, "camera_name": recs[0]["camera_name"], **summarize(recs)}
