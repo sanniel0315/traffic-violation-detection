@@ -315,6 +315,17 @@ def _validate_time_range(start_time: datetime, end_time: datetime, bucket_size: 
         })
 
 
+def _num(value, digits: int = 1):
+    """有量到才給數字，沒量到給 null。
+
+    🛑 不可以用 `value or 0` —— 那會把「沒有測速」變成「時速 0」。
+    對交控中心來說 0 km/h 是「完全停止＝嚴重壅塞」，與「這支沒裝測速」
+    是天差地遠的兩件事。實測 cam_2 近 10 分鐘 329 個事件的 speed_kmh
+    全是 NULL（=0 的 0 筆），API 卻回 0。占用率同理。
+    """
+    return None if value is None else round(float(value), digits)
+
+
 def _vd_rows_to_records(rows: list, bucket: str, span: timedelta | None = None) -> list:
     """把 build_vd_report_rows 的原始列轉成對外 JSON 記錄。
 
@@ -335,8 +346,8 @@ def _vd_rows_to_records(rows: list, bucket: str, span: timedelta | None = None) 
                 "flow": ld.get("flow", 0),
                 "small_vehicle_flow": ld.get("smallFlow", 0),
                 "large_vehicle_flow": ld.get("largeFlow", 0),
-                "avg_speed_kmh": round(ld.get("avgSpeed") or 0, 1),
-                "avg_occupancy_pct": round(ld.get("avgOccupancyPct") or 0, 1),
+                "avg_speed_kmh": _num(ld.get("avgSpeed")),
+                "avg_occupancy_pct": _num(ld.get("avgOccupancyPct")),
                 "avg_queue_length_m": round(ld.get("avgQueueLengthM") or 0, 1) if ld.get("avgQueueLengthM") else None,
                 "max_queue_length_m": round(ld.get("maxQueueLengthM") or 0, 1) if ld.get("maxQueueLengthM") else None,
                 "queue_duration_sec": round(ld.get("queueDurationSec") or 0, 1) if ld.get("queueDurationSec") else None,
@@ -355,8 +366,8 @@ def _vd_rows_to_records(rows: list, bucket: str, span: timedelta | None = None) 
             "total_flow": row.get("totalFlow", 0),
             "small_vehicle_flow": row.get("smallFlow", 0),
             "large_vehicle_flow": row.get("largeFlow", 0),
-            "avg_speed_kmh": round(row.get("avgSpeed") or 0, 1),
-            "avg_occupancy_pct": round(row.get("avgOccupancyPct") or 0, 1),
+            "avg_speed_kmh": _num(row.get("avgSpeed")),
+            "avg_occupancy_pct": _num(row.get("avgOccupancyPct")),
             "direction_counts": row.get("directionCounts") or {},
             # 進出流量只算「轉場事件」:
             #   IN            = 車輛進入 ROI
