@@ -8623,6 +8623,21 @@
                     <div class="card">
                         <div class="card-header"><span>ℹ️ 系統資訊</span></div>
                         <div class="card-body">
+                            <!-- 設備編號(規範 C 識別碼設定):每台終端控制器的個別通訊識別碼。
+                                 .env 的 DEVICE_ID 優先,未設定則由板載網卡 MAC 自動產生。 -->
+                            <div class="hw-info-row">
+                                <span style="color:#666">設備編號</span>
+                                <span style="font-weight:700;color:var(--gov-primary)">
+                                    {{ deviceIdentity.device_id || '-' }}
+                                    <el-tag size="small" :type="deviceIdentity.source==='configured' ? 'success' : 'info'" style="margin-left:6px">
+                                        {{ deviceIdentity.source==='configured' ? '軟體設定' : 'MAC 自動' }}
+                                    </el-tag>
+                                </span>
+                            </div>
+                            <div class="hw-info-row" v-if="deviceIdentity.physical_macs?.length">
+                                <span style="color:#666">板載網卡 MAC</span>
+                                <span style="font-family:monospace;font-size:12px">{{ deviceIdentity.physical_macs[0] }}</span>
+                            </div>
                             <div class="hw-info-row"><span style="color:#666">裝置型號</span><span style="font-weight:600">{{ hwStatus.model || '-' }}</span></div>
                             <div class="hw-info-row"><span style="color:#666">運行時間</span><span style="font-weight:600">{{ hwStatus.uptime?.display || '-' }}</span></div>
                             <div class="hw-info-row"><span style="color:#666">CPU 核心</span><span>{{ hwStatus.cpu?.cores || 0 }} 核心 · {{ hwStatus.cpu?.freq_mhz || 0 }} MHz</span></div>
@@ -9994,12 +10009,20 @@ const app=createApp({
         };
         // 預設登入導到統計分析頁。先前卡 1 分鐘的問題已由 statsTimeScale default
         // 6h -> 1h + statsAutoRefresh default false 等修補解決，重新作為 landing。
+        // 支援 ?page=xxx 深層連結（例：/web/?page=hwmonitor 直接開硬體監測）。
+        // 只接受純小寫字母與底線，避免被塞奇怪的值；不合法視為沒帶。
+        const _deepLinkPage=(()=>{
+            const q=String(new URLSearchParams(location.search).get('page')||'').trim();
+            return /^[a-z_]+$/.test(q) ? q : '';
+        })();
         const loginLandingPage=()=>{
+            // 網址帶了 ?page= 就以它為準 —— 深層連結不該被登入落地頁蓋掉。
+            if(_deepLinkPage) return _deepLinkPage;
             if(hasPerm('statistics')) return 'statistics';
             if(canViewDashboard.value) return 'dashboard';
             return firstAllowedPage();
         };
-        const page=ref('dashboard');
+        const page=ref(_deepLinkPage || 'dashboard');
         const currentTime=ref('');
         const menuOpen=reactive({query:true,analysis:true});
         const selectedArea=ref('all');
@@ -13810,6 +13833,7 @@ const app=createApp({
             };
         });
         const locations=ref([]);
+        const deviceIdentity=ref({});
         const hwStatus=reactive({model:'',cpu:{},gpu:{},memory:{},temperatures:[],max_temp:0,temp_level:'normal',disk:{},uptime:{},power:{}});
         const hwAutoRefresh=ref(true);
         const nxSettings=reactive({
@@ -18197,13 +18221,17 @@ const app=createApp({
             hwReqController=controller;
             const timeoutId=setTimeout(()=>controller.abort(),5000);
             try{
+                try{
+                    const dr=await fetch(`${apiBase}/api/system/device-id`,{credentials:'include'});
+                    if(dr.ok)deviceIdentity.value=await dr.json();
+                }catch(e){/* 設備編號取不到不影響硬體監測 */}
                 const r=await fetch(`${apiBase}/api/system/status?_=${Date.now()}`,{
                     signal:controller.signal,
                     cache:'no-store'
                 });
                 if(!r.ok)throw new Error(`HTTP ${r.status}`);
                 const d=await r.json();
-                Object.assign(hwStatus,d);
+                Object.assign(hwStatus,deviceIdentity,d);
             }catch(e){
                 if(e?.name!=='AbortError'){
                     console.error('hw status error',e);

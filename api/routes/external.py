@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from api.models import AggregationJobState, ApiKey, CongestionReportAgg, get_db
 from api.utils.api_key_auth import require_scope, resolve_api_key
+from api.utils.device_id import get_device_id
 from api.utils.report_aggregation import (
     BUCKET_SECONDS,
     _LARGE_LABELS,
@@ -35,7 +36,9 @@ TZ_TAIPEI = timezone(timedelta(hours=8))
 _BUCKET_INTERVALS = {"1m": timedelta(minutes=1), "5m": timedelta(minutes=5), "1h": timedelta(hours=1)}
 _MAX_RANGE = {"1m": timedelta(hours=24), "5m": timedelta(days=7), "1h": timedelta(days=90)}
 _MAX_RECORDS = 10000
-_DEVICE_ID = "jetson-nx-001"
+# 設備編號:規範(C)識別碼設定 —— .env 的 DEVICE_ID 優先,未設定則由板載網卡 MAC
+# 自動產生(末 2 bytes = 16 位元,與 DIP 開關等價)。詳見 api/utils/device_id.py。
+# 用函式而不是模組層常數:.env 改了重啟服務即生效,不必改程式碼。
 
 
 # 對外規格的回應範例。FastAPI 對「回 dict 又沒宣告 response_model」的端點
@@ -340,7 +343,7 @@ def _meta(fmt: str = "json") -> dict:
     return {
         "request_time": datetime.now(TZ_TAIPEI).isoformat(),
         "api_version": "1.0",
-        "device_id": _DEVICE_ID,
+        "device_id": get_device_id(),
         "format": fmt,
     }
 
@@ -1191,7 +1194,7 @@ def external_streams(
         "meta": _meta(),
         "status": "success",
         "data": {
-            "device_id": _DEVICE_ID,
+            "device_id": get_device_id(),
             "host": host,
             "ports": {"rtsp": rtsp_port, "http": http_port},
             "stream_count": len(streams),
