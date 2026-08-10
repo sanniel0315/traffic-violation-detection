@@ -53,7 +53,7 @@ sudo systemctl enable --now traffic-cleanup.timer
 echo "  已 enable: traffic-ocr / traffic-io / traffic-frigate / traffic-api / traffic-cleanup.timer(每日02:30快照清理,保留30天)"
 
 # 6) journald 半年保存 — 需要大容量碟(20G上限,eMMC裝不下),只在有 TRAFFIC_STORAGE_ROOT 時做
-echo "==> [6/6] journald 半年保存"
+echo "==> [6/7] journald 半年保存"
 if [ -n "${TRAFFIC_STORAGE_ROOT:-}" ]; then
   JDIR="$(dirname "$TRAFFIC_STORAGE_ROOT")/journal"   # 例: /mnt/nvme/traffic → /mnt/nvme/journal
   if [ ! -L /var/log/journal ]; then
@@ -67,6 +67,20 @@ if [ -n "${TRAFFIC_STORAGE_ROOT:-}" ]; then
   echo "  journal → $JDIR (20G / 6 個月)"
 else
   echo "  !! 未設 TRAFFIC_STORAGE_ROOT，跳過（journal 半年約需 16G+，eMMC 放不下）"
+fi
+
+# 7) 校時 — 現場網段內的 NTP。現場常常沒有外網,不設就只能靠 RTC 慢慢漂,報表時戳會歪。
+echo "==> [7/7] NTP 校時來源"
+if [ -n "${FIELD_NTP:-}" ]; then
+  sudo mkdir -p /etc/systemd/timesyncd.conf.d
+  sed "s|__FIELD_NTP__|$FIELD_NTP|" deploy/timesyncd/field-ntp.conf.template \
+    | sudo tee /etc/systemd/timesyncd.conf.d/field-ntp.conf >/dev/null
+  sudo systemctl restart systemd-timesyncd
+  echo "  NTP → $FIELD_NTP (外網 fallback 保留)"
+  echo "  驗證: timedatectl show-timesync --property=ServerName --property=ServerAddress"
+else
+  echo "  !! 未設 FIELD_NTP，沿用系統預設(外網 NTP)。現場若沒外網會校不到時,"
+  echo "     請改用: FIELD_NTP=<現場NTP位址> bash scripts/setup_new_site.sh"
 fi
 
 cat <<'NEXT'

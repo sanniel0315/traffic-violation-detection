@@ -1,0 +1,6 @@
+# systemd-timesyncd 校時來源 — 由 scripts/setup_new_site.sh 以 FIELD_NTP 產生。
+# 現場網段內的 NTP 優先，外網 fallback 只在維運線通的時候才用得到。
+# 現場若沒有外網，光靠 FallbackNTP 會校不到時，報表時戳會慢慢漂。
+[Time]
+NTP=__FIELD_NTP__
+FallbackNTP=time.google.com time.cloudflare.com
