@@ -48,7 +48,9 @@ TRAFFIC_STORAGE_ROOT=/mnt/nvme/traffic bash scripts/init_dirs.sh
 ```bash
 cp .env.example .env    # 編輯
 ```
-重點：`FRIGATE_RTSP_PASSWORD`、`EXTERNAL_API_KEY`（**換新隨機值**，別跟舊站共用）、`TZ`。
+重點：`FRIGATE_RTSP_PASSWORD`、`EXTERNAL_API_KEY`（**換新隨機值**，別跟舊站共用）、`TZ`、
+`STREAM_HOST`（客戶連得到的主機位址，見 §A-2 —— **雙網路的站一定要設**，
+不設會讓對外串流網址指向錯的網卡且無錯誤訊息）。
 
 ## 6. Frigate / 攝影機（本站專屬）
 編輯 `config/frigate/config.yml`：
@@ -140,15 +142,66 @@ push main 時，matrix 會在「每一台」對應 runner 各自 verify + 自我
 > tailscaled 憑證、nmcli 連線、systemd watchdog），**不進版控**、機器各自管；本節只記
 > 機制、位置與排查方式，方便任何一台上的 Claude Code / 運維人員接手。真正的 auth key 不寫在此。
 
-### A. 現場網路（eth1 固定 IP，零設定拔主口即用）
-- 現場網口 = **eth1 = `enP5p3s0`**（物理亮燈那口）；測試環境主口 = `enP5p5s0`。
-- nmcli 連線 `eth1-test` 已配完整（**不用再下任何設定命令**）：
-  - IP `10.42.38.35/20`、閘道 `10.42.32.254`、`ipv4.route-metric 4000`（實際 default metric 顯示 24000，高於主口 100 → 平時主口優先、eth1 備援不搶路由）。
-- **現場上線步驟**：
-  1. eth1(`enP5p3s0`) 接現場 10.42.x 網路
-  2. 拔線或 `sudo nmcli con down <enP5p5s0 連線>` 停掉測試主口 → eth1 自動變唯一預設路由
-  3. 驗證：`ping 10.42.32.254` + 相機/服務正常；此後管理走 `10.42.38.35`
-- 測試環境 `ping 10.42.32.254` 不通是正常（eth1 沒接到現場網段）。
+### A. 現場網路（雙網路並存：4G 上網 + 現場網段）
+
+現場會同時接**兩條網路**，用途不同、互不搶路由：
+
+| 網卡 | 網路 | 用途 |
+|---|---|---|
+| `enP5p4s0` | 4G / 可上網（DHCP） | 維護通道（Tailscale、CI 部署、對外連線） |
+| `enP5p5s0` | 現場網段 `10.42.x` | **客戶連線走這條** |
+
+nmcli 連線 `field-net` 已配好（**不用再下設定命令**，開機自動套用）：
+
+```
+ipv4.addresses   10.42.38.35/20          遮罩 255.255.240.0
+ipv4.routes      10.0.0.0/8 → 10.42.32.254
+ipv4.never-default  yes
+connection.autoconnect  yes
+```
+
+**🛑 兩個關鍵設計，改動前先看懂：**
+
+1. **`never-default: yes`** —— 現場那條永遠不會變成預設路由，上網固定走 4G。
+   若現場網路才是唯一對外出口，才需要拿掉這個設定。
+
+2. **閘道寫在 `ipv4.routes` 的下一跳，不是 `ipv4.gateway`** ——
+   同時設 `ipv4.gateway` 與 `never-default=yes` 時，NetworkManager 會把
+   gateway **直接丟掉**（`nmcli con show` 顯示 `--`），閘道等於沒設。
+   寫成明確路由的下一跳才會生效。
+
+驗證方式（看核心實際決策，不要只看設定檔）：
+```bash
+ip route get 10.42.32.254   # → dev enP5p5s0
+ip route get 10.26.4.123    # → dev enP5p5s0 via 10.42.32.254
+ip route get 8.8.8.8        # → dev enP5p4s0 via <4G 閘道>
+```
+
+`10.42.32.0/20` 內是直連；範圍外的 `10.x` 靠 `10.0.0.0/8` 那條走現場閘道。
+若現場有非 `10.x` 的網段，要另外加路由。
+
+> 未接到現場網路時 `ping 10.42.32.254` 不通是正常的（ARP 顯示 `INCOMPLETE`），
+> 實體層 `carrier=1`、協商 1000 Mbps 即代表線與網口沒問題。
+
+### A-2. 對外串流位址（`STREAM_HOST`，一定要設）
+
+`/api/v1/external/streams` 回傳的 RTSP／HLS 網址是用主機 IP 組出來的，
+而程式是靠「往外網的路由」推測本機 IP —— 配合上面的 `never-default`，
+**推出來的必然是 4G 那張網卡**，客戶從 `10.42.x` 連不到，
+而且不會有任何錯誤訊息。
+
+所以 `.env` 必須明確指定：
+
+```env
+STREAM_HOST=10.42.38.35
+```
+
+`.env` 有 gitignore，`git reset --hard` 不會動它，設一次即可。
+驗證：`curl -H "X-API-Key: <key>" http://10.42.38.35:8000/api/v1/external/streams`
+回傳的 `host` 應為 `10.42.38.35`。
+
+> 網頁介面**不受影響** —— 它用相對路徑走 traffic-api 代理，
+> 瀏覽器用連進來的位址取影像，主機 IP 怎麼變都看得到。
 
 ### B. 遠端連線（Tailscale mesh VPN，穿 CGNAT / 隔離網）
 - 本機 Tailscale：機器名 `field-jetson`、tailnet IP **`100.92.17.87`**、tailnet 帳號 `sannielshi@`、已開 `--ssh`、`tailscaled` 開機自啟+自動重連。
