@@ -203,6 +203,40 @@ STREAM_HOST=10.42.38.35
 > 網頁介面**不受影響** —— 它用相對路徑走 traffic-api 代理，
 > 瀏覽器用連進來的位址取影像，主機 IP 怎麼變都看得到。
 
+### A-3. 校時（現場沒外網也要對得到時）
+
+現場網段內有 NTP 伺服器，走 `10.0.0.0/8` 那條靜態路由就通得到，
+**不依賴 4G**。維運線斷了照樣校時，報表時戳不會漂。
+
+| 站點 | NTP 位址 |
+|---|---|
+| R34 動態號誌 | `10.41.0.111` |
+
+新站台一次帶進去：
+
+```bash
+FIELD_NTP=10.41.0.111 TRAFFIC_STORAGE_ROOT=/mnt/nvme/traffic bash scripts/setup_new_site.sh
+```
+
+已經裝好的機器只要補這一步：
+
+```bash
+sudo mkdir -p /etc/systemd/timesyncd.conf.d
+sed "s|__FIELD_NTP__|10.41.0.111|" deploy/timesyncd/field-ntp.conf.template \
+  | sudo tee /etc/systemd/timesyncd.conf.d/field-ntp.conf
+sudo systemctl restart systemd-timesyncd
+```
+
+驗證（`ServerAddress` 要是現場那台，不是外網）：
+
+```bash
+timedatectl show-timesync --property=ServerName --property=ServerAddress
+timedatectl | grep -E "synchronized|Local time"
+```
+
+> 外網 NTP 保留在 `FallbackNTP`，維運線通的時候仍可用，
+> 但**現場 NTP 優先** —— 不設的話沒有外網就完全校不到時。
+
 ### B. 遠端連線（Tailscale mesh VPN，穿 CGNAT / 隔離網）
 - 本機 Tailscale：機器名 `field-jetson`、tailnet IP **`100.92.17.87`**、tailnet 帳號 `sannielshi@`、已開 `--ssh`、`tailscaled` 開機自啟+自動重連。
 - **系統登入用戶是 `ubuntu`**；`sannielshi@` 只是 Tailscale 帳號，別拿來當 ssh user。
