@@ -229,6 +229,10 @@ def _camera_meta(db: Session):
             "camera_name": str(cam.name or f"cam_{cam.id}"),
             "road_name": str(cam.location or "").strip() or "未知",
             "lane_count": len(lane_set),
+            # 車道「編號」清單,不只數量 —— 沒有車的時段也要能把車道列出來(值填 0)。
+            # 只存數量的話,lane_count 說有 4 條、lanes 卻是空陣列,
+            # 呼叫端照 lane_count 跑迴圈讀 lanes[i] 會直接爆掉。
+            "lane_nos": sorted(lane_set),
             "direction": main_direction,
             "vd_eligible": any(is_vd_zone(zone) for zone in zones),
             # 攝影機停用時各項數值恆為 0。對外要標明是「停用」而不是「沒有車」——
@@ -664,6 +668,7 @@ def build_vd_report_rows(
                 "_queue_sum": 0.0,
                 "_queue_count": 0,
             }
+            prefill_lanes(buckets[key], meta)
         return buckets[key]
 
     def ensure_lane(row: dict, lane_no: int) -> dict:
@@ -687,6 +692,11 @@ def build_vd_report_rows(
                 "_queue_count": 0,
             }
         return row["lanes"][lane_key]
+
+    def prefill_lanes(row: dict, meta: dict) -> None:
+        """把該相機設定好的車道先建出來(值 0),沒有車的時段也不會回空陣列。"""
+        for lane_no in (meta.get("lane_nos") or []):
+            ensure_lane(row, int(lane_no))
 
     for agg in traffic_rows:
         device_id = _device_id_for(agg, camera_by_id)

@@ -192,6 +192,23 @@ pick = agg_src.split("device_ids = {device_id", 1)[1].split("current = start", 1
 check("名單不再只在『完全沒資料』時才補齊", "elif not device_ids:" in pick, False)
 check("有畫車流區的一律列出", 'if meta.get("vd_eligible"):' in pick, True)
 
+# ── 6. lane_count 與 lanes 長度必須一致 ──────────────────────────────
+# 回歸案例（2026-08-09 使用者發現）：沒有車的時段回 lane_count: 4 但 lanes: []。
+# 呼叫端照 lane_count 跑迴圈讀 lanes[i] 會直接爆掉。
+# 治法：把該相機設定好的車道先建出來（值 0），不是等有事件才建。
+print("\nlane_count 與 lanes 必須對得起來")
+lane_meta = agg_src.split("def _camera_meta(", 1)[1].split("\ndef ", 1)[0]
+check("meta 帶出車道編號清單而不只數量", '"lane_nos": sorted(lane_set)' in lane_meta, True)
+
+rows_src = agg_src.split("def build_vd_report_rows(", 1)[1]
+check("報表建 row 時先補齊車道", "prefill_lanes(buckets[key], meta)" in rows_src, True)
+check("補齊用的是 meta 的車道編號", 'meta.get("lane_nos")' in rows_src, True)
+
+ext_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "api", "routes", "external.py"), encoding="utf-8").read()
+rt_src = ext_src.split("def external_realtime(", 1)[1].split("\n@router", 1)[0]
+check("即時端點也先補齊車道", 'for ln in (meta.get("lane_nos") or [])' in rt_src, True)
+
 print()
 if fails:
     print(f"FAIL {len(fails)} 項: {fails}")
