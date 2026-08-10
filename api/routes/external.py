@@ -461,8 +461,12 @@ def _vd_stats(records: list) -> dict:
         flow = sum(r["total_flow"] for r in recs)
         small = sum(r["small_vehicle_flow"] for r in recs)
         large = sum(r["large_vehicle_flow"] for r in recs)
-        in_f = sum(r.get("in_flow", 0) for r in recs)
-        out_f = sum(r.get("out_flow", 0) for r in recs)
+        # 只有「該組裡真的有畫進出線的相機」才給進出量。
+        # 用 .get(...,0) 一律回 0 的話,records[] 遵守「有畫才給」、
+        # by_detector 卻每台都回 0 —— 同一份回應兩套規則,使用者無所適從。
+        has_io = any("in_flow" in r for r in recs)
+        in_f = sum(r.get("in_flow", 0) for r in recs) if has_io else None
+        out_f = sum(r.get("out_flow", 0) for r in recs) if has_io else None
         # 車流加權平均;速度與佔有率各自獨立分母 — 塞車分鐘速度為 None 但佔有率有值,
         # 共用分母會讓佔有率被灌爆超過 100%。
         spd_w = sum(r["total_flow"] for r in recs if r["total_flow"] and r["avg_speed_kmh"])
@@ -472,8 +476,7 @@ def _vd_stats(records: list) -> dict:
         qmax = [r["max_queue_length_m"] for r in recs if r["max_queue_length_m"] is not None]
         return {
             "total_flow": flow,
-            "in_flow": in_f,
-            "out_flow": out_f,
+            **({"in_flow": in_f, "out_flow": out_f} if has_io else {}),
             "small_vehicle_flow": small,
             "large_vehicle_flow": large,
             "avg_speed_kmh": round(spd / spd_w, 1) if spd_w else None,
