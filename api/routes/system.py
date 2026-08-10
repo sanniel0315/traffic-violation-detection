@@ -197,6 +197,17 @@ def _normalize_nx_settings(raw: Any) -> Dict[str, Any]:
     return data
 
 
+@router.get("/device-id", summary="終端控制器識別碼（設備編號）")
+def get_device_identity():
+    """規範 (C) 識別碼設定 —— 每台終端控制器的個別通訊識別碼。
+
+    以軟體控制:`.env` 的 DEVICE_ID 優先;未設定時由板載網卡 MAC 自動產生
+    唯一預設值(末 2 bytes = 16 位元,與 16 位元 DIP 開關等價)。
+    """
+    from api.utils.device_id import device_id_info
+    return device_id_info()
+
+
 def load_nx_settings() -> Dict[str, Any]:
     try:
         return _normalize_nx_settings(_load_settings_json(NX_SETTINGS_PATH))
