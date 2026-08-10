@@ -63,6 +63,7 @@
 | 現場 IP | `10.42.38.35/20` |
 | 板載實體 MAC 範圍 | `74:fe:48:be:6b:2e` ~ `74:fe:48:be:6b:31` |
 | 設備識別碼查詢 API | `GET /api/system/device-id` |
+| **本案配置設備編號** | **`R34_動態號誌VD`** |
 
 ---
 
@@ -111,10 +112,10 @@ curl -s localhost:8000/api/system/device-id
 
 **測試步驟**
 
-1. 於 `.env` 設定：
+1. 於 `.env` 設定本案配置之設備編號：
 
 ```dotenv
-DEVICE_ID=VD-0301
+DEVICE_ID=R34_動態號誌VD
 ```
 
 2. 依系統標準程序重新啟動服務。
@@ -128,7 +129,7 @@ curl -s localhost:8000/api/system/device-id
 
 ```json
 {
-  "device_id": "VD-0301",
+  "device_id": "R34_動態號誌VD",
   "source": "configured",
   "source_label": "軟體設定（.env DEVICE_ID）",
   "mac_based_default": "TVD-6B2E",
@@ -143,7 +144,7 @@ curl -s localhost:8000/api/system/device-id
 
 **驗證結果**
 
-- `device_id` 已由預設值 `TVD-6B2E` 改為指定值 `VD-0301`。
+- `device_id` 已由預設值 `TVD-6B2E` 改為本案指定值 `R34_動態號誌VD`。
 - `source` 已由 `mac` 改為 `configured`。
 - 系統可明確辨識設備編號之來源。
 - 軟體設定值優先於 MAC 預設值。
@@ -173,12 +174,12 @@ curl -s localhost:8000/api/system/device-id
 meta.device_id
 ```
 
-應與目前設定之 `DEVICE_ID` 完全一致，例如：
+應與目前設定之 `DEVICE_ID` 完全一致：
 
 ```json
 {
   "meta": {
-    "device_id": "VD-0301"
+    "device_id": "R34_動態號誌VD"
   }
 }
 ```
@@ -188,7 +189,7 @@ meta.device_id
 - `meta.device_id = DEVICE_ID`：PASS
 - 不一致或未輸出：FAIL
 
-**實機結果**（2026-08-10 11:45，現場主機，當時為 MAC 預設模式）
+**實機結果**（2026-08-10 14:25，現場主機，已配置正式設備編號）
 
 ```bash
 curl -s -H "X-API-Key: ****" "localhost:8000/api/v1/external/realtime?mode=minute"
@@ -197,22 +198,21 @@ curl -s -H "X-API-Key: ****" "localhost:8000/api/v1/external/realtime?mode=minut
 ```json
 {
   "meta": {
-    "request_time": "2026-08-10T11:45:18.210509+08:00",
+    "request_time": "2026-08-10T14:25:56.134350+08:00",
     "api_version": "1.0",
-    "device_id": "TVD-6B2E",
+    "device_id": "R34_動態號誌VD",
     "format": "json"
   }
 }
 ```
 
-同一時間 `GET /api/system/device-id` 回傳 `TVD-6B2E`，兩者一致。
+同一時間 `GET /api/system/device-id` 回傳 `R34_動態號誌VD`，兩者一致。
 
 **判定：PASS**
 
-> 上述抽驗於未指定 `DEVICE_ID` 之預設狀態下取得，證明對外 API 之 `meta.device_id`
-> 係取自系統目前實際採用之設備編號（同一來源），而非另行寫死之常數。
-> 業主指定 `DEVICE_ID` 後，對外 API 亦將同步帶出該指定值；
-> 建議於現場驗收時，依實際配置之設備編號再抽驗一筆並留存截圖。
+> 對外 API 之 `meta.device_id` 與系統設定值取自同一來源，非另行寫死之常數。
+> 先前於未設定 `DEVICE_ID` 之預設狀態下抽驗時回傳 `TVD-6B2E`，
+> 設定後即同步變更為 `R34_動態號誌VD`，可證明兩者連動。
 
 ---
 
@@ -225,7 +225,7 @@ curl -s -H "X-API-Key: ****" "localhost:8000/api/v1/external/realtime?mode=minut
 
 | 終端控制器 | `DEVICE_ID` | 預期 API 回傳 |
 |---|---|---|
-| Controller-01 | `VD-0301` | `VD-0301` |
+| Controller-01（本案） | `R34_動態號誌VD` | `R34_動態號誌VD` |
 | Controller-02 | `VD-0302` | `VD-0302` |
 | Controller-03 | `VD-0303` | `VD-0303` |
 
@@ -248,7 +248,8 @@ curl -s -H "X-API-Key: ****" "localhost:8000/api/v1/external/realtime?mode=minut
 1. `ip -br link`：確認板載網卡及 MAC 位址。
 2. `nmcli -f DEVICE,TYPE,STATE,CONNECTION device status`：確認現場使用之網路介面與連線狀態。
 3. `GET /api/system/device-id`（未指定 `DEVICE_ID`）：回傳 `TVD-6B2E`，`source=mac`。
-4. 指定 `DEVICE_ID=VD-0301` 後：回傳 `VD-0301`，`source=configured`。
+4. 設定 `DEVICE_ID=R34_動態號誌VD` 後：回傳 `R34_動態號誌VD`，`source=configured`。
+5. 對外 API `/api/v1/external/realtime` 之 `meta.device_id` 同步帶出 `R34_動態號誌VD`。
 
 由上述實機結果可確認：
 
@@ -265,7 +266,7 @@ curl -s -H "X-API-Key: ****" "localhost:8000/api/v1/external/realtime?mode=minut
 |---|---|---|---|
 | 每一終端控制器具有通訊識別碼 | 系統提供 `DEVICE_ID` | `GET /api/system/device-id` | PASS |
 | 可使用 DIP SWITCH 16 位元**或軟體控制** | 本系統採 `.env DEVICE_ID` 軟體設定 | UT-ID-002 | PASS |
-| 設備編號可由人員指定 | 修改 `DEVICE_ID` 後重新啟動服務 | `TVD-6B2E` → `VD-0301` | PASS |
+| 設備編號可由人員指定 | 修改 `DEVICE_ID` 後重新啟動服務 | `TVD-6B2E` → `R34_動態號誌VD` | PASS |
 | 設定值可被系統識別 | API 回傳 `source=configured` | API 查詢 | PASS |
 | 各終端設備之編號應個別化 | 每台設備配置不同 `DEVICE_ID` | 設備編號清冊／多機抽驗 | 部署驗收確認 |
 | 對外通訊攜帶設備編號 | `/api/v1/external/*` 之 `meta.device_id` | UT-ID-003 對外 API 抽驗 | PASS |
@@ -279,7 +280,7 @@ curl -s -H "X-API-Key: ****" "localhost:8000/api/v1/external/realtime?mode=minut
 實機測試已證明：
 
 - 未設定時，系統可由板載實體網卡產生預設識別碼 `TVD-6B2E`。
-- 設定 `.env` 之 `DEVICE_ID=VD-0301` 後，設備編號可成功改為 `VD-0301`。
+- 設定 `.env` 之 `DEVICE_ID=R34_動態號誌VD` 後，設備編號可成功改為 `R34_動態號誌VD`。
 - API 明確回傳 `source=configured`，證明目前設備編號為軟體設定值。
 
 ### Unit Test 判定
@@ -321,10 +322,10 @@ nmcli -f DEVICE,TYPE,STATE,CONNECTION device status
 curl -s localhost:8000/api/system/device-id
 ```
 
-正式指定設備編號：
+正式指定設備編號（本案配置值）：
 
 ```dotenv
-DEVICE_ID=VD-0301
+DEVICE_ID=R34_動態號誌VD
 ```
 
 重新啟動服務後，再次執行：
@@ -333,7 +334,7 @@ DEVICE_ID=VD-0301
 curl -s localhost:8000/api/system/device-id
 ```
 
-預期 `device_id` 為 `VD-0301`，且 `source` 為 `configured`。
+預期 `device_id` 為 `R34_動態號誌VD`，且 `source` 為 `configured`。
 
 ---
 
