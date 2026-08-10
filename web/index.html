@@ -7186,8 +7186,8 @@
                                         <td>{{ row.directionText }}</td>
                                         <td>{{ row.laneCount }}</td>
                                         <td>{{ row.totalFlow }}</td>
-                                        <td>{{ (row.directionCounts?.IN || 0) + (row.directionCounts?.INOUT || 0) }}</td>
-                                        <td>{{ (row.directionCounts?.OUT || 0) + (row.directionCounts?.EXIT || 0) + (row.directionCounts?.INOUT || 0) }}</td>
+                                        <td>{{ row.directionCounts?.IN || 0 }}</td>
+                                        <td>{{ (row.directionCounts?.OUT || 0) + (row.directionCounts?.EXIT || 0) }}</td>
                                         <td>{{ row.avgSpeed==null?'-':row.avgSpeed.toFixed(1) }}</td>
                                         <td>{{ row.avgOccupancyPct==null?'-':row.avgOccupancyPct.toFixed(1) }}</td>
                                         <td>{{ formatQueueLengthCell(row.maxQueueLengthM,'-') }}</td>
@@ -13020,8 +13020,11 @@ const app=createApp({
                 {label:'方向',value:(row)=>String(row?.directionText||'-')},
                 {label:'車道數',value:(row)=>formatVdIntegerCell(row?.laneCount,'0')},
                 {label:'總流量',value:(row)=>formatVdIntegerCell(row?.totalFlow,'0')},
-                {label:'進(IN)',value:(row)=>String(((row?.directionCounts||{}).IN||0)+((row?.directionCounts||{}).INOUT||0))},
-                {label:'出(OUT)',value:(row)=>String(((row?.directionCounts||{}).OUT||0)+((row?.directionCounts||{}).EXIT||0)+((row?.directionCounts||{}).INOUT||0))},
+                // 🛑 不可以加 INOUT —— 它是該 ROI 的『一般流量計數』,已經計入 totalFlow;
+                // 再加進進出就是重複計算。實測 cam_2 近 3 小時 IN=652、INOUT=652,
+                // 舊公式得到 1304,整整灌水一倍。對外 API 的 in_flow/out_flow 是正解。
+                {label:'進(IN)',value:(row)=>String((row?.directionCounts||{}).IN||0)},
+                {label:'出(OUT)',value:(row)=>String(((row?.directionCounts||{}).OUT||0)+((row?.directionCounts||{}).EXIT||0))},
                 {label:'平均速度',value:(row)=>formatVdNumberCell(row?.avgSpeed,1,'-')},
                 {label:'平均占量(%)',value:(row)=>formatVdNumberCell(row?.avgOccupancyPct,1,'-')},
                 {label:'最大估計排隊長度(m)',value:(row)=>formatQueueLengthCell(row?.maxQueueLengthM,'-')},
