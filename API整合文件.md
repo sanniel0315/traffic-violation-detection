@@ -23,27 +23,27 @@
 | | 時間 | 同一分鐘內重複查 |
 |---|---|---|
 | `/vd-report`、`/vd-report/latest` | 已結束的**固定桶**（最小 1 分鐘） | 得到同一份 |
-| **`/realtime`** | **現在往回推 N 秒的滾動視窗** | **每次都是新數字** |
+| **`/realtime`（預設）** | **從當前整分累積到現在** | **累積值持續增加，跨分歸零** |
 
 `records[]` 的欄位完全相同（18 個共同欄位），客戶**只要寫一套解析**，兩支都能吃。
 即時版另外多一個 `flow_per_hour`。
 
 ```
-GET /api/v1/external/realtime?window_sec=60
+GET /api/v1/external/realtime
 ```
 
 | 參數 | 預設 | 範圍 | 說明 |
 |------|------|------|------|
-| `mode` | `window` | `window` / `minute` | 見下方兩種模式 |
+| `mode` | **`minute`** | `minute` / `window` | 見下方兩種模式 |
 | `window_sec` | 60 | 10～600 | 往回推幾秒（`mode=window` 時有效） |
 | `detector_id` | 全部 | — | 指定攝影機 |
 
 #### 兩種模式
 
-**`mode=window`（滾動視窗）** —— 每次都往回看 `window_sec` 秒，起點終點一起移動。
+**`mode=window`（滾動視窗，需明確指定）** —— 每次都往回看 `window_sec` 秒，起點終點一起移動。
 適合畫面即時顯示。⚠️ 視窗會重疊，**不可拿來存檔加總**。
 
-**`mode=minute`（分鐘內累積）** —— 起點釘在**當前整分**，終點是「現在」，跨分自動歸零：
+**`mode=minute`（分鐘內累積，預設）** —— 起點釘在**當前整分**，終點是「現在」，跨分自動歸零：
 
 ```
 18:49:14   起點 18:49:00   經過 14 秒   累積  2
@@ -62,8 +62,8 @@ GET /api/v1/external/realtime?window_sec=60
 {
   "status": "success",
   "data": {
-    "mode": "realtime",
-    "window_sec": 60,
+    "mode": "minute",
+    "elapsed_sec": 38,
     "period": { "start": "2026-08-09T14:52:58+08:00", "end": "2026-08-09T14:53:58+08:00" },
     "stats": {
       "record_count": 4, "bucket_count": 1, "detector_count": 4,
@@ -91,9 +91,10 @@ GET /api/v1/external/realtime?window_sec=60
 資料直接讀原始表、不經聚合，**沒有聚合延遲**。
 實測單次 23～34 毫秒，連打 20 次共 592 毫秒；20 秒輪詢完全無壓力。
 
-`time_start` / `time_end` 就是滾動視窗的兩端，會隨每次呼叫移動。
-⚠️ 因此**即時資料不適合當歷史紀錄存檔**（相鄰兩次查詢的視窗會重疊、同一台車被算兩次）。
-要存檔請用下面的報表端點，那是不重疊的固定桶。
+`time_start` 是該分鐘的整分起點，`time_end` 是你查詢的時刻。
+⚠️ 同一分鐘內多次查詢會得到同一個 `time_start`、不同的累積值。
+要存檔請以 `detector_id + time_start` 做 upsert（覆蓋而非累加），
+或直接改用下面的報表端點（不重疊的固定桶）。
 
 ---
 
@@ -150,7 +151,7 @@ GET /api/v1/external/vd-report/latest?minutes=5&interval=1m
 所有對外 API 端點皆需在 HTTP Header 帶入 API Key：
 
 ```
-X-API-Key: {Key}xxxxxxxxxxxxxxxxxxxxxxxx
+X-API-Key: {Key}
 ```
 
 ### 錯誤回應
@@ -640,7 +641,7 @@ DELETE /api/auth/api-keys/{id}
 ```python
 import requests
 
-API_KEY = "{Key}xxxxxxxxxxxxxxxxxxxxxxxx"
+API_KEY = "{Key}"
 BASE = "http://{IP}:8000/api/v1/external"
 
 # VD 報表 (JSON)
@@ -666,14 +667,14 @@ with open("congestion.csv", "w") as f:
 
 ```bash
 # VD 報表 JSON
-curl -H "X-API-Key: tvd_xxx..." \
+curl -H "X-API-Key: {Key}" \
   "http://{IP}:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
 
 # VD 報表 CSV 下載
-curl -H "X-API-Key: tvd_xxx..." -o vd_report.csv \
+curl -H "X-API-Key: {Key}" -o vd_report.csv \
   "http://{IP}:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00&format=csv"
 
 # 壅塞報表
-curl -H "X-API-Key: tvd_xxx..." \
+curl -H "X-API-Key: {Key}" \
   "http://{IP}:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
 ```

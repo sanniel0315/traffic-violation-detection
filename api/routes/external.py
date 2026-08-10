@@ -362,11 +362,16 @@ def _meta(fmt: str = "json") -> dict:
 # 專案規則:未細分的 truck 視為小車(保守估計,避免誤算為大車)。
 
 
-@router.get("/realtime", summary="即時 VD 車流報表（mode=minute 分鐘內累積 / mode=window 滾動視窗）")
+@router.get("/realtime", summary="即時 VD 車流報表（預設 mode=minute 分鐘內累積；mode=window 為滾動視窗）")
 def external_realtime(
     mode: str = Query(
-        "window", pattern="^(window|minute)$",
-        description="window=往回推 window_sec 秒的滾動視窗;minute=從當前整分累積到現在(跨分歸零)",
+        # 預設 minute:客戶要的是「這一分鐘到目前為止的累積」。
+        # 🛑 不要把預設改回 window —— 匯入 OpenAPI 的工具(Postman 等)query 參數
+        # 預設是沒勾選的,呼叫端一旦忘了帶 mode,會靜默拿到另一種語意的數字
+        # (滾動視窗會與前一次重疊,拿去存檔就重複計算)。預設值必須是最常用、
+        # 且拿錯也最不會出事的那個。
+        "minute", pattern="^(window|minute)$",
+        description="minute=從當前整分累積到現在(跨分歸零,預設);window=往回推 window_sec 秒的滾動視窗",
     ),
     window_sec: int = Query(60, ge=10, le=600, description="滾動視窗長度(mode=window 時有效)"),
     detector_id: Optional[int] = Query(None, description="攝影機 camera_id;留空=全部"),
