@@ -38,6 +38,196 @@ _MAX_RECORDS = 10000
 _DEVICE_ID = "jetson-nx-001"
 
 
+# 對外規格的回應範例。FastAPI 對「回 dict 又沒宣告 response_model」的端點
+# 只會產生空的 200 schema,匯入 Postman / Swagger 後看得到怎麼打、
+# 卻看不到會拿到什麼 —— 客戶得先打一次才知道欄位長相。
+# 這裡的數字取自現場實際回應(2026-08-10),欄位齊全可直接對照。
+_SPEC_EXAMPLES = {
+    "/api/v1/external/realtime": {
+        "status": "success",
+        "data": {
+            "mode": "minute",
+            "window_sec": None,
+            "elapsed_sec": 16,
+            "period": {"start": "2026-08-10T09:26:00+08:00",
+                       "end": "2026-08-10T09:26:16+08:00"},
+            "stats": {
+                "record_count": 4, "bucket_count": 1, "detector_count": 4,
+                "overall": {
+                    "total_flow": 20, "in_flow": 5, "out_flow": 3,
+                    "small_vehicle_flow": 17, "large_vehicle_flow": 3,
+                    "avg_speed_kmh": 26.2, "avg_occupancy_pct": 29.6,
+                    "max_queue_length_m": 11.5,
+                },
+                "by_detector": [
+                    {"detector_id": "台62基隆段隧道口", "road_name": "台62線基隆段",
+                     "total_flow": 17, "in_flow": 5, "out_flow": 3,
+                     "small_vehicle_flow": 14, "large_vehicle_flow": 3,
+                     "avg_speed_kmh": None, "avg_occupancy_pct": 29.6,
+                     "max_queue_length_m": 11.5},
+                ],
+                "peak_bucket": {"time_start": "2026-08-10T09:26:00+08:00",
+                                "detector_id": "台62基隆段隧道口", "total_flow": 17},
+            },
+            "records": [{
+                "detector_id": "台62基隆段隧道口",
+                "road_name": "台62線基隆段",
+                "status": "active",
+                "time_start": "2026-08-10T09:26:00+08:00",
+                "time_end": "2026-08-10T09:26:16+08:00",
+                "direction": "straight", "direction_label": "直行",
+                "total_flow": 17, "flow_per_hour": 1020.0,
+                "small_vehicle_flow": 14, "large_vehicle_flow": 3,
+                "avg_speed_kmh": None, "avg_occupancy_pct": 29.6,
+                "direction_counts": {"straight": 12, "INOUT": 5, "IN": 5, "EXIT": 3},
+                "avg_queue_length_m": 0.8, "max_queue_length_m": 11.5,
+                "queue_duration_sec": 3.0, "max_queue_duration_sec": 1.0,
+                "lane_count": 2,
+                "lanes": [
+                    {"lane_no": 1, "flow": 12, "small_vehicle_flow": 12,
+                     "large_vehicle_flow": 0, "avg_speed_kmh": None,
+                     "avg_occupancy_pct": 25.4, "avg_queue_length_m": None,
+                     "max_queue_length_m": None, "queue_duration_sec": None,
+                     "max_queue_duration_sec": None},
+                    {"lane_no": 2, "flow": 5, "small_vehicle_flow": 2,
+                     "large_vehicle_flow": 3, "avg_speed_kmh": None,
+                     "avg_occupancy_pct": 37.4, "avg_queue_length_m": 0.8,
+                     "max_queue_length_m": 11.5, "queue_duration_sec": 3.0,
+                     "max_queue_duration_sec": 1.0},
+                ],
+                "in_flow": 5, "out_flow": 3,
+            }],
+        },
+        "meta": {"request_time": "2026-08-10T09:26:16+08:00", "api_version": "1.0",
+                 "device_id": "jetson-nx-001", "format": "json"},
+    },
+    "/api/v1/external/vd-report/latest": {
+        "status": "success",
+        "data": {
+            "interval": "1m",
+            "period": {"start": "2026-08-10T09:26:00+08:00",
+                       "end": "2026-08-10T09:28:00+08:00"},
+            # 資料已聚合到哪個時刻;period.end 不會超過它,可用來判斷新鮮度
+            "aggregated_through": "2026-08-10T09:28:00+08:00",
+            "stats": {
+                "record_count": 8, "bucket_count": 2, "detector_count": 4,
+                "overall": {"total_flow": 96, "in_flow": 15, "out_flow": 14,
+                            "small_vehicle_flow": 82, "large_vehicle_flow": 14,
+                            "avg_speed_kmh": 28.4, "avg_occupancy_pct": 24.1,
+                            "max_queue_length_m": 32.0},
+                "by_detector": [{"detector_id": "台62基隆段隧道口",
+                                 "road_name": "台62線基隆段", "total_flow": 44,
+                                 "in_flow": 15, "out_flow": 14,
+                                 "small_vehicle_flow": 40, "large_vehicle_flow": 4,
+                                 "avg_speed_kmh": None, "avg_occupancy_pct": 30.5,
+                                 "max_queue_length_m": 11.5}],
+                "peak_bucket": {"time_start": "2026-08-10T09:26:00+08:00",
+                                "detector_id": "國8", "total_flow": 29},
+            },
+            "records": [{
+                "detector_id": "台62基隆段隧道口", "road_name": "台62線基隆段",
+                "status": "active",
+                "time_start": "2026-08-10T09:26:00+08:00",
+                "time_end": "2026-08-10T09:27:00+08:00",
+                "direction": "straight", "direction_label": "直行",
+                "total_flow": 23, "small_vehicle_flow": 20, "large_vehicle_flow": 3,
+                "avg_speed_kmh": None, "avg_occupancy_pct": 31.2,
+                "direction_counts": {"straight": 15, "INOUT": 8, "IN": 8, "EXIT": 7},
+                "avg_queue_length_m": 0.8, "max_queue_length_m": 11.5,
+                "queue_duration_sec": 3.0, "max_queue_duration_sec": 1.0,
+                "lane_count": 2,
+                "lanes": [{"lane_no": 1, "flow": 15}, {"lane_no": 2, "flow": 8}],
+                "in_flow": 8, "out_flow": 7,
+            }],
+        },
+    },
+    "/api/v1/external/vd-report": {
+        "status": "success",
+        "data": {
+            "interval": "1h",
+            "period": {"start": "2026-08-10T08:00:00+08:00",
+                       "end": "2026-08-10T09:00:00+08:00"},
+            "records": [{
+                "detector_id": "台62基隆段隧道口", "road_name": "台62線基隆段",
+                "status": "active",
+                "time_start": "2026-08-10T09:26:00+08:00",
+                "time_end": "2026-08-10T09:27:00+08:00",
+                "direction": "straight", "direction_label": "直行",
+                "total_flow": 23, "small_vehicle_flow": 20, "large_vehicle_flow": 3,
+                "avg_speed_kmh": None, "avg_occupancy_pct": 31.2,
+                "direction_counts": {"straight": 15, "INOUT": 8, "IN": 8, "EXIT": 7},
+                "avg_queue_length_m": 0.8, "max_queue_length_m": 11.5,
+                "queue_duration_sec": 3.0, "max_queue_duration_sec": 1.0,
+                "lane_count": 2,
+                "lanes": [{"lane_no": 1, "flow": 15}, {"lane_no": 2, "flow": 8}],
+                "in_flow": 8, "out_flow": 7,
+            }],
+        },
+    },
+    "/api/v1/external/congestion-report/latest": {
+        "status": "success",
+        "data": {
+            "interval": "1m",
+            "period": {"start": "2026-08-10T09:26:00+08:00",
+                       "end": "2026-08-10T09:28:00+08:00"},
+            "stats": {
+                "record_count": 6, "bucket_count": 2, "detector_count": 3,
+                "overall": {"avg_occupancy_pct": 24.1, "max_occupancy_pct": 62.0,
+                            "avg_vehicle_count": 1.9, "avg_stopped_vehicle_count": 0.4,
+                            "avg_queue_length_m": 12.5, "max_queue_length_m": 32.0},
+                "by_detector": [], "peak_bucket": None,
+            },
+            "records": [{
+                "detector_id": "2", "camera_name": "台62基隆段隧道口",
+                "time_start": "2026-08-10T09:26:00+08:00",
+                "time_end": "2026-08-10T09:27:00+08:00",
+                "zone_name": "車流區 1", "lane_no": 1, "direction": "straight",
+                "avg_occupancy_pct": 31.2, "max_occupancy_pct": 62.0,
+                "avg_vehicle_count": 1.9, "avg_stopped_vehicle_count": 0.4,
+                "avg_queue_length_m": 12.5, "max_queue_length_m": 32.0,
+                "queue_active_duration_sec": 8.0, "sample_count": 30,
+            }],
+        },
+    },
+    "/api/v1/external/congestion-report": {
+        "status": "success",
+        "data": {
+            "interval": "1h",
+            "period": {"start": "2026-08-10T08:00:00+08:00",
+                       "end": "2026-08-10T09:00:00+08:00"},
+            "records": [{
+                "detector_id": "2", "camera_name": "台62基隆段隧道口",
+                "time_start": "2026-08-10T08:00:00+08:00",
+                "time_end": "2026-08-10T09:00:00+08:00",
+                "zone_name": "車流區 1", "lane_no": 1, "direction": "straight",
+                "avg_occupancy_pct": 28.7, "max_occupancy_pct": 74.0,
+                "avg_vehicle_count": 2.1, "avg_stopped_vehicle_count": 0.3,
+                "avg_queue_length_m": 14.8, "max_queue_length_m": 45.5,
+                "queue_active_duration_sec": 126.0, "sample_count": 1800,
+            }],
+        },
+    },
+    "/api/v1/external/streams": {
+        "status": "success",
+        "data": {
+            "device_id": "jetson-nx-001", "host": "192.168.0.102",
+            "ports": {"rtsp": 8554, "http": 1984}, "stream_count": 1,
+            "streams": [{
+                "stream_id": "cam_2", "camera_id": 2, "name": "台62基隆段隧道口",
+                "location": "", "online": True, "codec": "h264", "profile": "Main",
+                "resolution": "1920x1080", "fps": 30.0, "bytes_received": 544435123,
+                "urls": {
+                    "rtsp": "rtsp://192.168.0.102:8554/cam_2",
+                    "hls": "http://192.168.0.102:1984/api/stream.m3u8?src=cam_2",
+                    "mjpeg": "http://192.168.0.102:1984/api/stream.mjpeg?src=cam_2",
+                    "webrtc_signal": "http://192.168.0.102:1984/api/ws?src=cam_2",
+                },
+            }],
+        },
+    },
+}
+
+
 def _require_docs_token(request: Request, token: str, db: Session) -> None:
     """文件頁的認證：?token= 或 X-API-Key header 皆可。
 
@@ -69,20 +259,52 @@ def external_openapi(request: Request,
     # servers 要帶上本次請求的主機 —— 匯入 Postman / 其他工具時才知道要打哪台。
     # 沒有這段的話匯入後每一條都要手動補 baseUrl。
     base = str(request.base_url).rstrip("/")
+
+    # 🛑 components 不可以整包照抄 —— 完整規格裡有 46 個內部模型
+    # (LoginRequest / UserPasswordUpdateRequest / DOCommand …),
+    # 全給客戶等於把內部資料結構一起交出去。只留對外真的會用到的:
+    # 錯誤模型 + 安全定義。
+    full_components = full.get("components") or {}
+    keep_schemas = {
+        name: schema
+        for name, schema in (full_components.get("schemas") or {}).items()
+        if name in ("HTTPValidationError", "ValidationError")
+    }
+
+    # FastAPI 對「回 dict 又沒宣告 response_model」的端點只會產生空的 200 schema,
+    # 匯入 Postman 後看得到怎麼打、卻看不到會拿到什麼。補上實際回應範例。
+    for path, item in paths.items():
+        example = _SPEC_EXAMPLES.get(path)
+        if not example:
+            continue
+        media = (((item.get("get") or {}).get("responses") or {})
+                 .get("200", {}).get("content", {}).get("application/json"))
+        if media is not None:
+            media["example"] = example
+
     return {
         "openapi": full.get("openapi", "3.1.0"),
         "info": {
             "title": "交通資料對外 API",
             "version": str(full.get("info", {}).get("version", "1.0")),
             "description": (
-                "VD 車流報表 / 壅塞報表 / 串流清單。所有端點需帶 X-API-Key header。\n"
-                "即時查詢用 /realtime（滾動視窗，每次查都是新數字）；"
-                "要不重疊的固定統計區間用 /vd-report/latest。"
+                "VD 車流報表 / 壅塞報表 / 串流清單。所有端點需帶 X-API-Key header。\n\n"
+                "即時查詢用 /realtime：\n"
+                "  mode=minute — 從當前整分累積到現在，跨分歸零\n"
+                "  mode=window — 往回推 window_sec 秒的滾動視窗\n"
+                "要不重疊的固定統計區間（適合存檔）用 /vd-report/latest。\n\n"
+                "判讀注意：total_flow 不可與 in_flow/out_flow 相加（會重複計算）；"
+                "沒有畫進出線的偵測器不會有 in_flow/out_flow 這兩個欄位；"
+                "null 代表沒有量到，與 0 的意義不同。"
             ),
         },
-        "servers": [{"url": base, "description": "本機"}],
+        "servers": [{"url": base, "description": "本系統"}],
+        "security": [{"APIKeyHeader": []}],
         "paths": paths,
-        "components": full.get("components", {}),
+        "components": {
+            "schemas": keep_schemas,
+            "securitySchemes": full_components.get("securitySchemes") or {},
+        },
     }
 
 
