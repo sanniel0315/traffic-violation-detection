@@ -465,6 +465,74 @@ queue_active_duration_sec, sample_count
 
 ---
 
+### 3. 壅塞報表（快捷）
+
+免自己算時間，回最近 N 個已結束的時間桶 + 統計摘要。
+
+```
+GET /api/v1/external/congestion-report/latest?minutes=5&interval=1m
+```
+
+| 參數 | 預設 | 說明 |
+|------|------|------|
+| `minutes` | 5 | 回最近幾個已結束的桶 |
+| `interval` | `1m` | 桶大小：`1m` / `5m` / `1h` |
+| `detector_id` | 全部 | 指定攝影機 |
+| `include_records` | true | false = 只回統計摘要 |
+
+回應結構同「壅塞報表」，另含 `stats`（`record_count` / `bucket_count` /
+`detector_count` / `overall` / `by_detector` / `peak_bucket`）。
+
+---
+
+### 4. 影像串流清單
+
+取得各攝影機的即時串流網址。
+
+```
+GET /api/v1/external/streams
+```
+
+```json
+{
+  "status": "success",
+  "data": {
+    "device_id": "jetson-nx-001",
+    "host": "192.168.0.102",
+    "ports": { "rtsp": 8554, "http": 1984 },
+    "stream_count": 4,
+    "streams": [
+      {
+        "stream_id": "cam_2",
+        "camera_id": 2,
+        "name": "台62基隆段隧道口",
+        "online": true,
+        "codec": "h264",
+        "resolution": "1920x1080",
+        "fps": 30.0,
+        "urls": {
+          "rtsp":  "rtsp://{host}:8554/cam_2",
+          "hls":   "http://{host}:1984/api/stream.m3u8?src=cam_2",
+          "mjpeg": "http://{host}:1984/api/stream.mjpeg?src=cam_2",
+          "webrtc_signal": "http://{host}:1984/api/ws?src=cam_2"
+        }
+      }
+    ]
+  }
+}
+```
+
+| 欄位 | 說明 |
+|------|------|
+| `stream_id` / `camera_id` | 串流代號／攝影機編號 |
+| `online` | 該串流目前是否可用 |
+| `codec` / `resolution` / `fps` | 編碼、解析度、幀率（依攝影機本機設定） |
+| `urls.rtsp` / `hls` / `mjpeg` / `webrtc_signal` | 四種取流方式 |
+
+> 影像為 H.264 直通（passthrough），不重新編碼。
+
+---
+
 ## API Key 管理
 
 > 以下端點需 admin 登入 session，非 API Key 認證。
