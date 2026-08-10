@@ -242,7 +242,14 @@ def external_realtime(
                 "laneCount": int(meta.get("lane_count") or 0),
                 "inoutEnabled": bool(meta.get("inout_enabled")),
                 "status": "active" if meta.get("enabled", True) else "disabled",
-                "lanes": {},
+                # 設定好的車道先建出來(值 0) —— 沒有車的時段若回空陣列,
+                # 呼叫端照 lane_count 跑迴圈讀 lanes[i] 會爆掉。
+                "lanes": {int(ln): {
+                    "flow": 0, "smallFlow": 0, "largeFlow": 0, "avgSpeed": None,
+                    "avgOccupancyPct": None, "avgQueueLengthM": None, "maxQueueLengthM": None,
+                    "queueDurationSec": None, "maxQueueDurationSec": None,
+                    "_sp_sum": 0.0, "_sp_n": 0, "_oc_sum": 0.0, "_oc_n": 0,
+                } for ln in (meta.get("lane_nos") or [])},
                 "_sp_sum": 0.0, "_sp_n": 0, "_oc_sum": 0.0, "_oc_n": 0,
             }
         return rows[cam]
