@@ -6,13 +6,13 @@
 
 交通影像分析系統提供對外 REST API，供政府/交通局系統及內部系統取得 VD 車流報表與壅塞報表資料。
 
-- **Base URL：** `http://{host}:8000/api/v1/external`
+- **Base URL：** `http://{IP}:8000/api/v1/external`
 - **認證方式：** API Key（`X-API-Key` Header）
 - **輸出格式：** JSON / CSV
-- **Swagger UI：** `http://{host}:8000/api/v1/external/docs?token={API_KEY}`
+- **Swagger UI：** `http://{IP}:8000/api/v1/external/docs?token={API_KEY}`
   （瀏覽器開文件頁沒辦法帶 Header，所以用 `?token=`；程式呼叫請用 Header）
 
-> `http://{host}:8000/docs` 是**內部**完整文件，需管理者登入，對外不提供。
+> `http://{IP}:8000/docs` 是**內部**完整文件，需管理者登入，對外不提供。
 
 ---
 
@@ -150,7 +150,7 @@ GET /api/v1/external/vd-report/latest?minutes=5&interval=1m
 所有對外 API 端點皆需在 HTTP Header 帶入 API Key：
 
 ```
-X-API-Key: tvd_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+X-API-Key: {Key}xxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 ### 錯誤回應
@@ -168,7 +168,7 @@ X-API-Key: tvd_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 在 `.env` 設定固定 API Key，不需透過管理端點建立：
 
 ```env
-EXTERNAL_API_KEY=tvd_hwacom_traffic_2026
+EXTERNAL_API_KEY={Key}
 ```
 
 此 Key 擁有所有報表權限（`vd_report` + `congestion_report`），速率限制 120 req/min。
@@ -245,8 +245,8 @@ GET /api/v1/external/vd-report
 #### 請求範例
 
 ```bash
-curl -H "X-API-Key: tvd_xxxxxxxx" \
-  "http://{host}:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00&interval=5m"
+curl -H "X-API-Key: {Key}" \
+  "http://{IP}:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00&interval=5m"
 ```
 
 #### JSON 回應範例
@@ -386,8 +386,8 @@ GET /api/v1/external/congestion-report
 #### 請求範例
 
 ```bash
-curl -H "X-API-Key: tvd_xxxxxxxx" \
-  "http://{host}:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
+curl -H "X-API-Key: {Key}" \
+  "http://{IP}:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
 ```
 
 #### JSON 回應範例
@@ -511,10 +511,10 @@ GET /api/v1/external/streams
         "resolution": "1920x1080",
         "fps": 30.0,
         "urls": {
-          "rtsp":  "rtsp://{host}:8554/cam_2",
-          "hls":   "http://{host}:1984/api/stream.m3u8?src=cam_2",
-          "mjpeg": "http://{host}:1984/api/stream.mjpeg?src=cam_2",
-          "webrtc_signal": "http://{host}:1984/api/ws?src=cam_2"
+          "rtsp":  "rtsp://{IP}:8554/cam_2",
+          "hls":   "http://{IP}:1984/api/stream.m3u8?src=cam_2",
+          "mjpeg": "http://{IP}:1984/api/stream.mjpeg?src=cam_2",
+          "webrtc_signal": "http://{IP}:1984/api/ws?src=cam_2"
         }
       }
     ]
@@ -640,8 +640,8 @@ DELETE /api/auth/api-keys/{id}
 ```python
 import requests
 
-API_KEY = "tvd_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-BASE = "http://{host}:8000/api/v1/external"
+API_KEY = "{Key}xxxxxxxxxxxxxxxxxxxxxxxx"
+BASE = "http://{IP}:8000/api/v1/external"
 
 # VD 報表 (JSON)
 resp = requests.get(f"{BASE}/vd-report", headers={"X-API-Key": API_KEY}, params={
@@ -667,13 +667,13 @@ with open("congestion.csv", "w") as f:
 ```bash
 # VD 報表 JSON
 curl -H "X-API-Key: tvd_xxx..." \
-  "http://{host}:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
+  "http://{IP}:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
 
 # VD 報表 CSV 下載
 curl -H "X-API-Key: tvd_xxx..." -o vd_report.csv \
-  "http://{host}:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00&format=csv"
+  "http://{IP}:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00&format=csv"
 
 # 壅塞報表
 curl -H "X-API-Key: tvd_xxx..." \
-  "http://{host}:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
+  "http://{IP}:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
 ```
