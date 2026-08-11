@@ -1,0 +1,15 @@
+[Unit]
+Description=ngrok SSH tunnel (維運遠端通道; 免費方案位址會變,啟動後推 ntfy 通知)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+EnvironmentFile=-/etc/default/ngrok-ssh
+ExecStart=/usr/local/bin/ngrok-ssh-tunnel.sh
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
