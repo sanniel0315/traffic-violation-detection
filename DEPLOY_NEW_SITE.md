@@ -245,6 +245,69 @@ timedatectl | grep -E "synchronized|Local time"
   - Cowork / Claude Code 桌面版：SSH host 填 `ubuntu@100.92.17.87` 或 `ubuntu@field-jetson`
 - **關鍵特性**：Tailscale 是疊在底層網路上的 overlay，兩端不用同網段、你的電腦也不用能直連現場 10.42.x；只要**現場那條 eth port 能通外網**，主機就自動回 tailnet，`100.92.17.87` 就連得進（不隨底層 IP 變）。純內網不通外網才需改插行動網卡。
 
+### B-2. 備援遠端通道（ngrok，Tailscale 被擋時用）
+
+🛑 **2026-08-11 R34 現場實測：維運線把 Tailscale 擋死了。** 症狀與判定過程：
+
+| 測試 | 結果 |
+|---|---|
+| `ping 8.8.8.8` | 通（10ms）—— 所以「有網路」是假象 |
+| `https://www.google.com` | `200` |
+| `https://login.tailscale.com` | `302`（**同網域其他主機是通的**） |
+| `https://controlplane.tailscale.com` | **0 bytes，10 個後端 IP 全逾時** |
+| TLS 不帶 SNI 連同一個 IP | 握手成功、收得到憑證 |
+| TLS 帶 `controlplane.tailscale.com` | 連測三次全部 `Terminated` |
+| MTU 1400 / 1200 | 都通 → 排除 MTU |
+
+差別只在 ClientHello 的 SNI ⇒ **針對性封鎖，Jetson 端無解**。
+
+**同一條線還攔截 port 22 的 SSH**：`ssh-keyscan github.com` 拿到的 ed25519
+指紋與 GitHub 官方不符（中間人）。改走官方 443 埠即正常，已寫進 `~/.ssh/config`：
+
+```
+Host github.com
+    Hostname ssh.github.com
+    Port 443
+    User git
+```
+
+不改這個，`git pull` 與 **GitHub Actions 的自動部署都會失敗**。
+
+#### ngrok SSH 通道（已上線，開機自啟）
+
+檔案在 `deploy/remote-access/`，安裝：
+
+```bash
+sudo install -m755 deploy/remote-access/ngrok-ssh-tunnel.sh /usr/local/bin/
+sudo install -m644 deploy/remote-access/ngrok-ssh.service   /etc/systemd/system/
+sudo install -m644 deploy/remote-access/ngrok-ssh.env.example /etc/default/ngrok-ssh
+sudo systemctl daemon-reload && sudo systemctl enable --now ngrok-ssh
+```
+
+前提：`ngrok config add-authtoken <token>`（存 `~/.config/ngrok/ngrok.yml`，
+與 `frm-ngrok` 共用；實測兩個 agent 可並存）。
+
+**連線方式**：
+
+```bash
+ssh -p <PORT> ubuntu@0.tcp.jp.ngrok.io
+```
+
+🛑 **免費方案的 TCP 位址每次重啟都會變**，所以服務啟動後會把新網址推到
+ntfy（topic 同 `field-link-monitor`），標題「現場機 SSH 通道」，
+內容就是可直接貼上的完整指令。**沒收到通知＝找不到機器**，
+所以 ntfy 一定要先確認手機收得到。
+
+當下網址也可以在機器上直接查：
+
+```bash
+grep -o 'url=tcp://[^ ]*' /tmp/ngrok-ssh.log | tail -1
+```
+
+> 網址從 ngrok 自己的 logfmt 日誌取，不走 `127.0.0.1:4040` API ——
+> 這台同時有 `frm-ngrok`，API 埠會被搶而浮動；這版 ngrok（3.39）
+> 也不支援 `--web-addr` 指定埠。
+
 ### C. 上線監控 watchdog + 手機通知（ntfy）
 - `/usr/local/bin/field-link-monitor.sh` + `field-link-monitor.service`（systemd 開機自啟）：
   探測網路（gstatic 204）+ tailscale 狀態，**上線那刻推一則 ntfy 心跳（附 Tailscale IP）**，斷線時補跑 `tailscale up`。狀態機 offline / net_no_ts / online 只在轉態時動作。
