@@ -245,6 +245,74 @@ timedatectl | grep -E "synchronized|Local time"
   - Cowork / Claude Code 桌面版：SSH host 填 `ubuntu@100.92.17.87` 或 `ubuntu@field-jetson`
 - **關鍵特性**：Tailscale 是疊在底層網路上的 overlay，兩端不用同網段、你的電腦也不用能直連現場 10.42.x；只要**現場那條 eth port 能通外網**，主機就自動回 tailnet，`100.92.17.87` 就連得進（不隨底層 IP 變）。純內網不通外網才需改插行動網卡。
 
+### B-1. 主要遠端通道：Cloudflare Tunnel（固定網址，R34 現場實裝）
+
+**連法 —— 一行，位址永久固定、不隨重開機改變：**
+
+```bash
+ssh field-jetson
+```
+
+| | |
+|---|---|
+| 對外主機名 | `ssh.name-car-box.com` |
+| 隧道名稱 | `field-jetson`（Cloudflare Zero Trust → Networks → Tunnels） |
+| 現場機服務 | `cloudflared.service`，開機自啟、斷線自動重連 |
+| 設定檔 | `/etc/cloudflared/config.yml`，ingress → `ssh://localhost:22` |
+
+#### 現場機安裝步驟
+
+```bash
+curl -4 -sSL -o /tmp/cloudflared \
+  https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64
+sudo install -m755 /tmp/cloudflared /usr/local/bin/cloudflared
+
+cloudflared tunnel login          # 印出授權網址,在瀏覽器選一個網域按 Authorize
+cloudflared tunnel create field-jetson
+cloudflared tunnel route dns field-jetson ssh.<你的網域>
+
+TID=<上一步印出的 tunnel id>
+sudo mkdir -p /etc/cloudflared
+sudo cp ~/.cloudflared/$TID.json /etc/cloudflared/ && sudo chmod 600 /etc/cloudflared/$TID.json
+sudo tee /etc/cloudflared/config.yml >/dev/null <<CFG
+tunnel: $TID
+credentials-file: /etc/cloudflared/$TID.json
+ingress:
+  - hostname: ssh.<你的網域>
+    service: ssh://localhost:22
+  - service: http_status:404
+CFG
+sudo cloudflared --config /etc/cloudflared/config.yml service install
+sudo systemctl enable --now cloudflared
+```
+
+> `cloudflared tunnel login` 的授權頁**不是** Zero Trust 的隧道列表 ——
+> 是列出你名下**網域**、每個旁邊有 `Authorize` 按鈕的那一頁。
+> 授權成功後 `~/.cloudflared/cert.pem` 才會出現。
+
+#### 你的電腦端（一次設定，之後都用 `ssh field-jetson`）
+
+裝 cloudflared 後，`~/.ssh/config` 加：
+
+```
+Host field-jetson
+    HostName ssh.<你的網域>
+    User ubuntu
+    ProxyCommand cloudflared access ssh --hostname %h
+```
+
+🛑 **Windows 的 PowerShell/OpenSSH 會檢查私鑰檔權限**，多一個群組讀得到就直接
+拒用金鑰（Git Bash 不檢查，所以會出現「這邊能連、那邊不能」的怪現象）。修法：
+
+```powershell
+icacls C:\Users\<你>\.ssh\id_ed25519 /inheritance:r /grant:r "<你>:R"
+```
+
+#### 安全性
+
+`ssh.<你的網域>` 目前是公開的 —— 知道名稱就連得到 SSH 登入畫面（仍需金鑰才進得去）。
+要再收緊就在 Zero Trust 加 Access 政策限定帳號，代價是連線前要先在瀏覽器驗證一次。
+
 ### B-2. 備援遠端通道（ngrok，Tailscale 被擋時用）
 
 🛑 **2026-08-11 R34 現場實測：維運線把 Tailscale 擋死了。** 症狀與判定過程：
