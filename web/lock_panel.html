@@ -109,48 +109,48 @@
 
     <div class="page-body">
 
-      <!-- CARD 1: 即時狀態 -->
-      <div class="card">
+      <!-- CARD 1: 即時狀態 — 每顆鎖一張卡,開鎖/加卡都綁在該顆的 addr 上 -->
+      <div class="card" v-if="!lock.enabled">
+        <div class="card-title"><span>即時狀態 (E-1507)</span></div>
+        <div class="muted-note">電子鎖未啟用（未設定 LOCK_MODBUS_ADDR）。</div>
+      </div>
+      <div class="card" v-for="L in locks" :key="L.addr">
         <div class="card-title">
-          <span>即時狀態 (E-1507)</span>
+          <span>{{ L.name || ('電子鎖 #' + L.addr) }}</span>
           <span style="display:flex;align-items:center;gap:10px;">
-            <button v-if="lock.connected" @click="unlockLock"
+            <button v-if="L.connected" @click="unlockLock(L)"
                     style="font-size:12px;font-weight:600;cursor:pointer;border:none;background:var(--gov-ok,#1f9d55);color:#fff;border-radius:6px;padding:5px 12px;">
               遠端開鎖
             </button>
-            <button v-if="lock.connected" :disabled="adding" @click="addCard"
+            <button v-if="L.connected" :disabled="adding" @click="addCard(L)"
                     style="font-size:12px;font-weight:600;cursor:pointer;border:none;background:var(--gov-primary);color:#fff;border-radius:6px;padding:5px 12px;">
               + 新增卡片
             </button>
-            <span v-if="lock.enabled" class="event-badge"
-                  :class="lock.connected ? 'badge-primary' : 'badge-warning'">
-              {{ lock.connected ? ('連線 · addr ' + lock.addr) : '未連線' }}
+            <span class="event-badge" :class="L.connected ? 'badge-primary' : 'badge-warning'">
+              {{ L.connected ? ('連線 · addr ' + L.addr) : ('未連線 · addr ' + L.addr) }}
             </span>
           </span>
         </div>
 
-        <div v-if="!lock.enabled" class="muted-note">
-          電子鎖未啟用（未設定 LOCK_MODBUS_ADDR）。
-        </div>
-        <div v-else-if="!lock.connected" style="font-size:13px;color:#f59e0b;">
-          電子鎖未連線
+        <div v-if="!L.connected" style="font-size:13px;color:#f59e0b;">
+          未連線 — 尚未接上匯流排、斷電、或位址設錯。
         </div>
         <template v-else>
           <!-- 門磁 -->
           <div class="relay-row">
             <div class="relay-left">
-              <div class="relay-dot" :style="doorClosed ? 'background:#22c55e;' : 'background:#f59e0b;'"></div>
+              <div class="relay-dot" :style="isDoorClosed(L) ? 'background:#22c55e;' : 'background:#f59e0b;'"></div>
               <div><div class="relay-name">門磁</div><div class="relay-label">門開關感應</div></div>
             </div>
-            <span class="event-badge" :class="doorClosed ? 'badge-action' : 'badge-warning'">{{ st.door && st.door.label }}</span>
+            <span class="event-badge" :class="isDoorClosed(L) ? 'badge-action' : 'badge-warning'">{{ L.status.door && L.status.door.label }}</span>
           </div>
           <!-- 鎖定狀態(0x0020,轉鑰匙上鎖/解鎖) -->
           <div class="relay-row">
             <div class="relay-left">
-              <div class="relay-dot" :style="handleIn ? 'background:#22c55e;' : 'background:#f59e0b;'"></div>
+              <div class="relay-dot" :style="isHandleIn(L) ? 'background:#22c55e;' : 'background:#f59e0b;'"></div>
               <div><div class="relay-name">鎖定狀態</div><div class="relay-label">轉鑰匙上鎖/解鎖</div></div>
             </div>
-            <span class="event-badge" :class="handleIn ? 'badge-action' : 'badge-warning'">{{ st.handle && st.handle.label }}</span>
+            <span class="event-badge" :class="isHandleIn(L) ? 'badge-action' : 'badge-warning'">{{ L.status.handle && L.status.handle.label }}</span>
           </div>
         </template>
       </div>
@@ -170,7 +170,7 @@
             <div class="relay-left">
               <div>
                 <div class="relay-name">{{ c.holder_name || '(未命名)' }}</div>
-                <div class="relay-label">卡號 {{ c.card_no }} · {{ formatTime(c.added_at) }}</div>
+                <div class="relay-label">卡號 {{ c.card_no }}<span v-if="multi && c.lock_addr"> · 鎖#{{ c.lock_addr }}</span> · {{ formatTime(c.added_at) }}</div>
               </div>
             </div>
             <span style="display:flex;gap:8px;">
@@ -199,6 +199,7 @@
         <div v-else class="event-list">
           <div v-for="(e, idx) in events" :key="e.id || idx" class="event-entry" :class="{'alarm-row': e.event_type==='alarm'}">
             <span class="event-time">{{ formatTime(e.time) }}</span>
+            <span v-if="multi && e.addr" class="event-badge badge-primary">#{{ e.addr }}</span>
             <span class="event-badge" :class="evBadge(e)">{{ e.label }}</span>
             <span class="event-ctx">{{ e.card_no ? ('卡號 ' + e.card_no) : doorNote(e) }}</span>
           </div>
@@ -224,8 +225,11 @@
         let flashTimer = null;
 
         const st = computed(() => lock.value.status || {});
-        const doorClosed = computed(() => !!st.value.door?.closed);
-        const handleIn = computed(() => !!st.value.handle?.in_place);
+        // 多鎖:locks[] 每顆一筆。門磁/鎖定狀態改成傳入該顆再取,不能再用單一 computed。
+        const locks = computed(() => lock.value.locks || []);
+        const multi = computed(() => locks.value.length > 1);
+        const isDoorClosed = (L) => !!(L && L.status && L.status.door && L.status.door.closed);
+        const isHandleIn = (L) => !!(L && L.status && L.status.handle && L.status.handle.in_place);
 
         function formatTime(iso) {
           if (!iso) return '--:--:--';
@@ -266,12 +270,13 @@
         async function fetchCards() {
           try { cards.value = (await (await fetch('/api/lock/cards')).json()).items || []; } catch (e) {}
         }
-        async function addCard() {
+        async function addCard(L) {
           if (adding.value) return;
           adding.value = true;
-          ElementPlus.ElMessage({ message: '加卡模式開啟,請在約 10 秒內到鎖上刷新卡…', type: 'info', duration: 11000 });
+          const a = L && L.addr;
+          ElementPlus.ElMessage({ message: '鎖#' + a + ' 加卡模式開啟,請在約 10 秒內到「這顆鎖」上刷新卡…', type: 'info', duration: 11000 });
           try {
-            const d = await (await fetch('/api/lock/add-card', { method: 'POST' })).json();
+            const d = await (await fetch('/api/lock/add-card?addr=' + a, { method: 'POST' })).json();
             if (d.ok && d.card_no) ElementPlus.ElMessage.success(d.msg || ('加卡成功 ' + d.card_no));
             else if (d.ok) ElementPlus.ElMessage.warning(d.msg || '未偵測到新卡');
             else ElementPlus.ElMessage.error(d.msg || '加卡失敗');
@@ -293,14 +298,21 @@
           fetchCards();
         }
         async function clearCards() {
+          const list = locks.value.length ? locks.value : [{ addr: lock.value.addr }];
+          const who = list.map(L => '#' + L.addr).join('、');
           try {
-            await ElementPlus.ElMessageBox.confirm('確定清空鎖內所有卡片?此動作刪除鎖內全部白名單卡片,無法復原。', '清空所有卡片', { type: 'warning', confirmButtonText: '確定清空', cancelButtonText: '取消' });
+            await ElementPlus.ElMessageBox.confirm('確定清空 ' + who + ' 鎖內所有卡片?此動作刪除鎖內全部白名單卡片,無法復原。', '清空所有卡片', { type: 'warning', confirmButtonText: '確定清空', cancelButtonText: '取消' });
           } catch (e) { return; }
-          try {
-            const d = await (await fetch('/api/lock/clear-cards', { method: 'POST' })).json();
-            if (d.ok) ElementPlus.ElMessage.success(d.msg || '已清空');
-            else ElementPlus.ElMessage.error(d.msg || '清空失敗');
-          } catch (e) { ElementPlus.ElMessage.error('清空失敗'); }
+          // 卡片白名單是「每顆鎖各自」的,按鈕寫「所有」就要每顆都清,不能只清第一顆。
+          const failed = [];
+          for (const L of list) {
+            try {
+              const d = await (await fetch('/api/lock/clear-cards?addr=' + L.addr, { method: 'POST' })).json();
+              if (!d.ok) failed.push('#' + L.addr + ' ' + (d.msg || ''));
+            } catch (e) { failed.push('#' + L.addr + ' 無回應'); }
+          }
+          if (failed.length) ElementPlus.ElMessage.error('部分清空失敗:' + failed.join('; '));
+          else ElementPlus.ElMessage.success('已清空 ' + who + ' 的卡片');
           fetchCards();
         }
         async function editCard(c) {
@@ -317,14 +329,15 @@
           } catch (e) { ElementPlus.ElMessage.error('更新失敗'); }
           fetchCards();
         }
-        async function unlockLock() {
+        async function unlockLock(L) {
+          const a = L && L.addr;
           try {
-            await ElementPlus.ElMessageBox.confirm('確定遠端開鎖？門會打開。', '遠端開鎖', {
+            await ElementPlus.ElMessageBox.confirm('確定遠端開鎖「' + (L.name || ('鎖#' + a)) + '」？門會打開。', '遠端開鎖', {
               confirmButtonText: '確定開鎖', cancelButtonText: '取消', type: 'warning'
             });
           } catch (e) { return; }   // 使用者取消
           try {
-            const d = await (await fetch('/api/lock/unlock', { method: 'POST' })).json();
+            const d = await (await fetch('/api/lock/unlock?addr=' + a, { method: 'POST' })).json();
             if (d.ok) ElementPlus.ElMessage.success(d.msg || '已遠端開鎖');
             else ElementPlus.ElMessage.error(d.msg || '開鎖失敗');
           } catch (e) { ElementPlus.ElMessage.error('遠端開鎖失敗'); }
@@ -372,7 +385,7 @@
           if (ws.value) ws.value.close();
         });
 
-        return { lock, st, doorClosed, handleIn, events, total, cards, flash, adding, addMsg, addCard, deleteCard, clearCards, editCard, unlockLock, formatTime, doorNote, evBadge };
+        return { lock, st, locks, multi, isDoorClosed, isHandleIn, events, total, cards, flash, adding, addMsg, addCard, deleteCard, clearCards, editCard, unlockLock, formatTime, doorNote, evBadge };
       }
     }).mount('#app');
   </script>

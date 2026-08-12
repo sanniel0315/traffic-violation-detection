@@ -10,8 +10,22 @@ E-1507 電子鎖透過 Modbus RTU 接 Jetson THS2 RS-485，提供即時狀態顯
 |------|------|
 | 鎖型號 | E-1507 (LEEKA)，Modbus RTU，9600 8N1 |
 | 接線 | Jetson 40-pin THS2 RS-485（`/dev/ttyTHS2`），與 PD3R3 IO 模組**同一條匯流排** |
-| 位址 | 鎖 **addr=2**（出廠 1，已用 FC06 寫 0x2000=2 改），PD3R3 addr=1，不衝突 |
-| 啟用 | 環境變數 `LOCK_MODBUS_ADDR=2`（在 traffic-io 的 `.env`）；未設則停用、零影響 |
+| 位址 | PD3R3 IO=**1**、鎖①=**2**、鎖②=**3**（都出廠 1，用 FC06 寫 0x2000 改開）|
+| 啟用 | 環境變數 `LOCK_MODBUS_ADDR`（traffic-io 的 `.env`）；單鎖 `=2`，雙鎖 `=2,3`；未設則停用、零影響 |
+
+### 多鎖（同一條 485 掛兩顆）
+
+- 每顆鎖一份獨立狀態（`_LockState`）：連線、門磁、告警旗標、邊沿偵測全部各自算，**一顆斷線不影響另一顆**。
+- 事件共用一條 deque，每筆帶 `addr`（DB `lock_events.lock_addr`）；前端事件列表會標 `#2` / `#3`。
+- **卡片白名單是每顆鎖各自的** —— 要兩顆都能刷，兩顆都要加卡。卡片庫的 `lock_addr` 記錄該卡加在哪顆。
+- 🛑 **新鎖出廠位址是 1，和 PD3R3 撞號**。Modbus 寫入是位址導向的，`old=1` 改位址會**同時寫到 PD3R3 的 0x2000**。所以匯流排上必須只剩那顆要改的鎖（PD3R3 拔掉/未接）才能做，API 預設擋下，要帶 `force=1`。
+- 加鎖流程：`GET /api/lock/scan` 看它現在在哪個位址 → `POST /api/lock/set-addr` 改開 → `.env` 加進 `LOCK_MODBUS_ADDR` → 重啟 traffic-io。
+
+### 讀不到的鎖要退避（`LOCK_RETRY_SEC`，預設 5 秒）
+
+serial timeout 是 0.3 秒。一顆沒接的鎖若每個 150ms tick 都去讀，光 timeout 就把迴圈週期拖到 350ms+，
+**連帶讓「有接的那顆」漏掉只保持 ~150ms 的刷卡動作** —— 一顆沒接拖垮另一顆。
+所以讀失敗的鎖會退避到 `LOCK_RETRY_SEC` 後才重試，期間只走慢輪詢做失聯判定。
 
 ### THS2 換向限制與對策（重要）
 THS2 板載 RS-485 轉換器 TX→RX 換向慢，會吃掉「多暫存器長回應」的前段（只剩尾端 ~3 byte）。對策：
@@ -61,7 +75,9 @@ THS2 板載 RS-485 轉換器 TX→RX 換向慢，會吃掉「多暫存器長回�
 
 | 端點 | 說明 |
 |------|------|
-| `GET /api/lock/status` | 即時狀態快照（門磁/手柄/鑰匙/動作 + 連線/位址） |
+| `GET /api/lock/status` | 即時狀態快照；`locks[]` 每顆一筆，頂層 addr/connected/status 是第一顆（相容單鎖呼叫端） |
+| `GET /api/lock/scan?lo&hi` | 掃描 485 上哪些位址會回應（唯讀，不用停 traffic-io） |
+| `POST /api/lock/set-addr` | 改鎖位址（FC06 寫 0x2000）；撞號會擋，`old` 撞 PD3R3 需 `force` |
 | `GET /api/lock/events?page&page_size` | 刷卡/開鎖歷史（DB，分頁，最新在前） |
 | `WS /api/lock/live` | 即時推送刷卡/開鎖事件 |
 | `POST /api/lock/add-card` | 加卡(學習式)：鎖進入加卡模式，隨後鎖上刷卡錄入 |
@@ -100,7 +116,8 @@ THS2 板載 RS-485 轉換器 TX→RX 換向慢，會吃掉「多暫存器長回�
 
 | 變數 | 預設 | 說明 |
 |------|------|------|
-| `LOCK_MODBUS_ADDR` | 0(停用) | 鎖 Modbus 位址，設 2 啟用 |
+| `LOCK_MODBUS_ADDR` | 0(停用) | 鎖 Modbus 位址；單鎖 `2`，多鎖逗號分隔 `2,3` |
+| `LOCK_RETRY_SEC` | 5 | 讀不到的鎖隔多久重試（避免一顆沒接拖垮另一顆，見 §1）|
 
 ---
 

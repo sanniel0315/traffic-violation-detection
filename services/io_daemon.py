@@ -23,6 +23,8 @@ os.environ.pop("IO_DAEMON_URL", None)  # daemon 本身不要走 client mode
 os.environ["IO_DAEMON_HOST"] = "1"
 
 import time
+from typing import Optional
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 import uvicorn
@@ -107,37 +109,56 @@ def get_lock_events(since: int = 0):
 
 
 @app.post("/lock/add_card")
-def lock_add_card():
-    """讓電子鎖進入加卡模式 (寫 0x2005=0x0033),隨後在鎖上刷卡學習錄入。"""
-    return io.add_lock_card()
+def lock_add_card(addr: Optional[int] = None):
+    """讓電子鎖進入加卡模式 (寫 0x2005=0x0033),隨後在鎖上刷卡學習錄入。addr 省略=第一顆。"""
+    return io.add_lock_card(addr)
 
 
 @app.post("/lock/remove_card")
-def lock_remove_card():
+def lock_remove_card(addr: Optional[int] = None):
     """讓電子鎖進入刪卡模式 (寫 0x2005=0x0055),隨後在鎖上刷要刪除的卡。"""
-    return io.remove_lock_card()
+    return io.remove_lock_card(addr)
 
 
 class CardNoBody(BaseModel):
     card_no: str
+    addr: Optional[int] = None
 
 
 @app.post("/lock/delete_card")
 def lock_delete_card(body: CardNoBody):
     """已知卡號直接刪卡 (FC10 寫 0x0047-0x0049),不需現場刷卡。"""
-    return io.delete_lock_card_by_no(body.card_no)
+    return io.delete_lock_card_by_no(body.card_no, body.addr)
 
 
 @app.post("/lock/unlock")
-def lock_unlock():
+def lock_unlock(addr: Optional[int] = None):
     """遠端開鎖 (寫 0x2004=0x0033)。"""
-    return io.unlock_lock()
+    return io.unlock_lock(addr)
 
 
 @app.post("/lock/clear_cards")
-def lock_clear_cards():
+def lock_clear_cards(addr: Optional[int] = None):
     """清空鎖內所有卡片 (寫 0x2006=0x0011)。"""
-    return io.clear_all_lock_cards()
+    return io.clear_all_lock_cards(addr)
+
+
+@app.get("/lock/scan")
+def lock_scan(lo: int = 1, hi: int = 16):
+    """掃描 RS-485 上哪些位址會回應 (唯讀)。要掛第二顆鎖時先確認現在的位址。"""
+    return io.scan_lock_bus(lo, hi)
+
+
+class SetAddrBody(BaseModel):
+    old: int
+    new: int
+    force: bool = False
+
+
+@app.post("/lock/set_addr")
+def lock_set_addr(body: SetAddrBody):
+    """改鎖的 Modbus 位址 (FC06 寫 0x2000)。撞號會擋下;old 撞 PD3R3 位址需 force。"""
+    return io.set_lock_addr(body.old, body.new, body.force)
 
 
 @app.get("/health")
