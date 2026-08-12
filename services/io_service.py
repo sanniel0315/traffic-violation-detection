@@ -658,8 +658,10 @@ class IOService:
             self._lock_status = {
                 "handle": {"raw": handle, "in_place": handle == 0,
                            "label": "已上鎖" if handle == 0 else "已解鎖"},
-                "door":   {"raw": door, "closed": door == 0,
-                           "label": "門磁閉合(門關)" if door == 0 else "門磁斷開(門開)"},
+                # 門磁是 NO(常開)接點:門關→磁鐵靠近→接點閉合→raw=1;門開→raw=0。
+                # 與協議文件寫的 0=門關 相反,現場實測以此為準 (2026-08-12)。
+                "door":   {"raw": door, "closed": door == 1,
+                           "label": "門磁閉合(門關)" if door == 1 else "門磁斷開(門開)"},
                 "key":    {"raw": key, "in_place": key == 0,
                            "label": "鑰匙在位" if key == 0 else "鑰匙不在位"},
                 "action": {"raw": act, "label": _LOCK_ACTION_NAMES.get(act, f"未知({act})")},
