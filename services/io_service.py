@@ -51,23 +51,32 @@ _DAEMON_URL = os.getenv("IO_DAEMON_URL", "").rstrip("/")
 
 # ── E-1507 電子鎖 (同一條 RS-485 上的另一個 Modbus 從機) ──────────────
 # 設定 LOCK_MODBUS_ADDR(1-247,需與 PD3R3 的 IO_ADDR 不同) 才會啟用;未設=停用,零影響。
-def _parse_lock_addrs(raw: str) -> list:
-    """LOCK_MODBUS_ADDR 支援多個鎖:"2" 或 "2,3"(同一條 485 上掛兩顆,位址不可重複)。"""
-    out = []
+def _parse_lock_addrs(raw: str) -> tuple:
+    """LOCK_MODBUS_ADDR 支援多個鎖 + 每顆的名稱:
+        "2"                 單鎖
+        "2,3"               雙鎖(位址不可重複)
+        "2:後門,3:前門"      雙鎖並命名(名稱會顯示在面板與開鎖紀錄上)
+    名稱省略時用「電子鎖 #位址」。回傳 (位址清單, {位址: 名稱})。"""
+    addrs, names = [], {}
     for part in str(raw or "").replace(";", ",").split(","):
         part = part.strip()
         if not part:
             continue
+        name = ""
+        if ":" in part:
+            part, name = part.split(":", 1)
+            part, name = part.strip(), name.strip()
         try:
             a = int(part)
         except ValueError:
             continue
-        if 1 <= a <= 247 and a not in out:
-            out.append(a)
-    return out
+        if 1 <= a <= 247 and a not in addrs:
+            addrs.append(a)
+            names[a] = name or f"電子鎖 #{a}"
+    return addrs, names
 
 
-LOCK_ADDRS = _parse_lock_addrs(os.getenv("LOCK_MODBUS_ADDR", "0"))   # 空 = 停用
+LOCK_ADDRS, LOCK_NAMES = _parse_lock_addrs(os.getenv("LOCK_MODBUS_ADDR", "0"))   # 空 = 停用
 LOCK_ADDR = LOCK_ADDRS[0] if LOCK_ADDRS else 0   # 預設鎖(單鎖相容:未指定 addr 的操作走這顆)
 LOCK_SERIAL_PORT = os.getenv("LOCK_SERIAL_PORT", "").strip()  # 設了=鎖走獨立 USB-485(如 /dev/ttyUSB0,可完整讀 0xC000 卡號);空=走 THS2 io_module(讀不到卡號)
 LOCK_ENABLED = bool(LOCK_ADDRS)
@@ -97,12 +106,13 @@ class _LockState:
     """單顆鎖的執行期狀態。多鎖時每個 Modbus 位址一份,斷線/告警/邊沿偵測都各自獨立
     —— 一顆鎖斷線不會把另一顆的狀態或告警帶壞。"""
 
-    __slots__ = ("addr", "connected", "status", "err", "prev_action", "prev_states",
+    __slots__ = ("addr", "name", "connected", "status", "err", "prev_action", "prev_states",
                  "door_open_since", "door_alarmed", "offline_since", "offline_alarmed",
                  "next_probe")
 
-    def __init__(self, addr: int):
+    def __init__(self, addr: int, name: str = ""):
         self.addr = addr
+        self.name = name or LOCK_NAMES.get(addr) or f"電子鎖 #{addr}"
         self.connected = False
         self.status: dict = {}
         self.err = ""
@@ -760,12 +770,17 @@ class IOService:
             return next(iter(self._locks.values()), None)
         return self._locks.get(int(addr))
 
+    def lock_names(self) -> dict:
+        """{位址: 名稱} —— 給紀錄列表把 lock_addr 換成「後門/前門」這種看得懂的名字。
+        client mode 也讀得到:名稱來自 LOCK_MODBUS_ADDR,traffic-api 與 daemon 共用同一份 .env。"""
+        return dict(LOCK_NAMES)
+
     def lock_status_block(self) -> dict:
         """status()["lock"] 的內容。locks 是每顆鎖一筆;
         另外攤平第一顆到頂層 (addr/connected/error/status),讓只認單鎖的舊呼叫端不會壞。"""
         locks = [{
             "addr":      lk.addr,
-            "name":      f"電子鎖 #{lk.addr}",
+            "name":      lk.name,
             "connected": lk.connected,
             "error":     lk.err,
             "status":    lk.status,
@@ -817,6 +832,7 @@ class IOService:
         evt = {
             "seq":     self._lock_event_seq,
             "addr":    lk.addr,
+            "name":    lk.name,      # 給 WS 即時橫幅顯示是哪一道門(DB 不存,列表用 addr 對名稱)
             "event_type": event_type,
             "action":  action_code,
             "label":   label,
@@ -828,7 +844,7 @@ class IOService:
         }
         self.lock_events.append(evt)
         _log("warning" if event_type == "alarm" else "info",
-             f"電子鎖#{lk.addr}[{event_type}]: {label}")
+             f"{lk.name}[{event_type}]: {label}")
 
     def _detect_state_events(self, lk: "_LockState") -> None:
         """偵測門磁(門開/關)+鎖定狀態(0x0020,轉鑰匙帶動上鎖/解鎖)變化 → 事件;

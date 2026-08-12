@@ -130,20 +130,31 @@ def clear_cards(addr: Optional[int] = None, db: Session = Depends(get_db)):
 def lock_events(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
+    addr: Optional[int] = Query(None, description="只看某一顆鎖(如 2=後門);省略=全部"),
+    event_type: Optional[str] = Query(None, description="只看某類事件:swipe/door/lock/alarm/unlock"),
     db: Session = Depends(get_db),
 ):
-    """刷卡/開鎖歷史記錄 (DB 持久化, 最新在前, 分頁)。"""
-    q = db.query(LockEvent).order_by(desc(LockEvent.created_at))
+    """刷卡/開鎖歷史記錄 (DB 持久化, 最新在前, 分頁)。
+    多鎖時用 addr 分類 —— 在 DB 層篩,total 與分頁才會跟著對(不能只在前端濾)。"""
+    q = db.query(LockEvent)
+    if addr is not None:
+        q = q.filter(LockEvent.lock_addr == addr)
+    if event_type:
+        q = q.filter(LockEvent.event_type == event_type)
+    q = q.order_by(desc(LockEvent.created_at))
     total = q.count()
     rows = q.offset((page - 1) * page_size).limit(page_size).all()
+    names = get_service().lock_names()
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
+        "filter": {"addr": addr, "event_type": event_type},
         "items": [
             {
                 "id": r.id,
                 "addr": r.lock_addr,
+                "lock_name": names.get(r.lock_addr) or (f"電子鎖 #{r.lock_addr}" if r.lock_addr else ""),
                 "event_type": r.event_type,
                 "action": r.action_code,
                 "label": r.action_label,

@@ -86,6 +86,11 @@
     .pulse-dot { width:9px; height:9px; border-radius:50%; background:#22c55e; box-shadow:0 0 0 0 rgba(34,197,94,0.6); animation:pulse 1.2s infinite; }
     @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(34,197,94,0.55);} 70%{box-shadow:0 0 0 8px rgba(34,197,94,0);} 100%{box-shadow:0 0 0 0 rgba(34,197,94,0);} }
     .muted-note { font-size:12.5px; color:var(--gov-mute-2); line-height:1.6; }
+    /* 紀錄分類切換 (多鎖才顯示) */
+    .filter-bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+    .filter-btn { font-size:12px; cursor:pointer; border:1px solid var(--gov-border); background:#fff;
+                  color:var(--gov-text); border-radius:14px; padding:4px 14px; line-height:1.6; }
+    .filter-btn.filter-on { border-color:var(--gov-primary); background:var(--gov-primary); color:#fff; font-weight:600; }
     /* el-message / el-message-box 對齊主系統公務風格 (lock_panel 獨立 iframe 缺主頁美化) */
     .el-message { border-radius:8px !important; border:1px solid var(--gov-border) !important; box-shadow:0 8px 24px rgba(11,30,60,0.12) !important; }
     .el-message--success { border-left:4px solid var(--gov-ok) !important; }
@@ -181,16 +186,24 @@
         </div>
       </div>
 
-      <!-- CARD 2: 刷卡 / 開鎖事件記錄 -->
+      <!-- CARD 2: 刷卡 / 開鎖事件記錄 (多鎖時可依門分類) -->
       <div class="card">
         <div class="card-title">
           <span>刷卡 / 開鎖記錄</span>
           <span class="muted-note">共 {{ total }} 筆</span>
         </div>
 
+        <div v-if="multi" class="filter-bar">
+          <button class="filter-btn" :class="{'filter-on': filterAddr === null}" @click="setFilter(null)">全部</button>
+          <button v-for="L in locks" :key="'f' + L.addr" class="filter-btn"
+                  :class="{'filter-on': filterAddr === L.addr}" @click="setFilter(L.addr)">
+            {{ L.name }}
+          </button>
+        </div>
+
         <div v-if="flash" class="flash-banner">
           <span class="pulse-dot"></span>
-          剛偵測到開鎖：{{ flash.label }}（{{ formatTime(flash.time) }}）
+          剛偵測到開鎖：<b v-if="flash.name">{{ flash.name }}</b> {{ flash.label }}（{{ formatTime(flash.time) }}）
         </div>
 
         <div v-if="events.length === 0" class="event-empty">
@@ -199,7 +212,7 @@
         <div v-else class="event-list">
           <div v-for="(e, idx) in events" :key="e.id || idx" class="event-entry" :class="{'alarm-row': e.event_type==='alarm'}">
             <span class="event-time">{{ formatTime(e.time) }}</span>
-            <span v-if="multi && e.addr" class="event-badge badge-primary">#{{ e.addr }}</span>
+            <span v-if="multi && e.addr" class="event-badge badge-primary">{{ e.lock_name || nameOf(e.addr) }}</span>
             <span class="event-badge" :class="evBadge(e)">{{ e.label }}</span>
             <span class="event-ctx">{{ e.card_no ? ('卡號 ' + e.card_no) : doorNote(e) }}</span>
           </div>
@@ -255,12 +268,24 @@
         async function fetchStatus() {
           try { lock.value = await (await fetch('/api/lock/status')).json(); } catch (e) {}
         }
+        // 紀錄分類:哪一顆鎖(null=全部)。在後端用 addr 篩,total 與分頁才會跟著對。
+        const filterAddr = ref(null);
         async function fetchHistory() {
           try {
-            const d = await (await fetch('/api/lock/events?page_size=100')).json();
+            const qs = '/api/lock/events?page_size=100'
+              + (filterAddr.value === null ? '' : '&addr=' + filterAddr.value);
+            const d = await (await fetch(qs)).json();
             events.value = d.items || [];
             total.value = d.total || 0;
           } catch (e) {}
+        }
+        function setFilter(a) {
+          filterAddr.value = a;
+          fetchHistory();
+        }
+        function nameOf(addr) {
+          const L = locks.value.find(x => x.addr === addr);
+          return (L && L.name) || (addr ? ('電子鎖 #' + addr) : '');
         }
 
         const adding = ref(false);
@@ -385,7 +410,7 @@
           if (ws.value) ws.value.close();
         });
 
-        return { lock, st, locks, multi, isDoorClosed, isHandleIn, events, total, cards, flash, adding, addMsg, addCard, deleteCard, clearCards, editCard, unlockLock, formatTime, doorNote, evBadge };
+        return { lock, st, locks, multi, isDoorClosed, isHandleIn, events, total, cards, flash, adding, addMsg, addCard, deleteCard, clearCards, editCard, unlockLock, formatTime, doorNote, evBadge, filterAddr, setFilter, nameOf };
       }
     }).mount('#app');
   </script>
