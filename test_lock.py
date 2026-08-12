@@ -98,7 +98,7 @@ s._lock_status = {}
 s._lock_prev_action = 0
 s._poll_lock_states(action=0)
 check("raw0 鎖定=已上鎖", s._lock_status["handle"]["label"] == "已上鎖")
-check("raw0 門磁閉合", s._lock_status["door"]["label"] == "門磁閉合(門關)")
+check("raw0 門磁斷開(NO接點=門開)", s._lock_status["door"]["label"] == "門磁斷開(門開)")
 check("action0 無", s._lock_status["action"]["label"] == "無")
 
 
@@ -110,7 +110,7 @@ class _Mod1:
 s._mod = _Mod1()
 s._poll_lock_states(action=1)
 check("raw1 鎖定=已解鎖", s._lock_status["handle"]["label"] == "已解鎖")
-check("raw1 門磁斷開", s._lock_status["door"]["label"] == "門磁斷開(門開)")
+check("raw1 門磁閉合(NO接點=門關)", s._lock_status["door"]["label"] == "門磁閉合(門關)")
 check("action1 刷卡", s._lock_status["action"]["label"] == "刷卡")
 
 print("=== 6. 失效卡/未授權刷卡(0xD000)解析 ===")
