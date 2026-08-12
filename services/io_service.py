@@ -17,7 +17,18 @@ Lamp states:
   正常/閒置(自動/遠端) : red=OFF  green=ON  white=OFF
   正常/閒置(手動)      : red=OFF  green=ON  white=ON  (恆亮)
   遠端下載中           : red=OFF  green=ON  white=BLINK 2.5Hz
-  通訊故障             : red=ON   green=OFF white=OFF
+  通訊故障             : red=ON   green=ON  white=照常顯示操作模式(但不閃「下載中」)
+  重啟中(DI1 Reset)    : 三顆全滅 (表達「系統沒在跑」,見 _do_reset)
+
+紅/綠 各自獨立,不互相壓制:
+  紅 = 通訊故障(只看現場網路)   綠 = 運作狀況(系統在跑就亮)
+  ⚠ 2026-08-12 拆開:原本綠燈寫成 not fault(紅的反相)。斷網時偵測/錄影/
+    電子鎖/報表都照常運作,熄綠燈等於謊報系統沒在運作。
+
+白燈 = 操作模式(自動滅/手動亮),下載中改閃爍:
+  · 「操作模式」與通訊故障無關 → 斷網照常顯示
+  · 🛑「下載中閃爍」斷網時不可以亮 —— 遠端下載要靠網路,斷網根本下載不了,
+    閃燈是假訊號。故障期間白燈退回顯示操作模式。
 """
 from __future__ import annotations
 
@@ -405,7 +416,7 @@ class IOService:
         self._apply_do()
 
     def _blink_white_loop(self) -> None:
-        """下載期間白燈 ~2.5Hz 閃爍；通訊故障時讓 _apply_do 接管 (不寫白燈避開覆蓋)。
+        """下載期間白燈 ~2.5Hz 閃爍。通訊故障不再壓制白燈 (三顆燈各自獨立)。
 
         安全兜底：閃爍超過 IO_DOWNLOAD_BLINK_MAX_S 秒仍未收到結束信號就自動復位。
         避免結束信號丟失 (traffic-api 在 config_sync 進行中重啟/crash、daemon POST
@@ -423,6 +434,8 @@ class IOService:
                 self.set_downloading(False)
                 break
             on = not on
+            # 🛑 斷網時不閃:遠端下載靠網路,斷網下載不了,閃「下載中」是假訊號。
+            #    故障期間白燈交給 _apply_do 顯示操作模式,這裡不寫避免互相覆蓋。
             if self._comm_ok:
                 try:
                     self._mod.set_relay(DO_WHITE, on)
@@ -439,17 +452,23 @@ class IOService:
             return
         try:
             fault = not self._comm_ok
+            # DO0 通訊故障:只看網路,不被其他狀態影響。
             self._mod.set_relay(DO_RED,   fault)
             self._do_state[DO_RED] = fault
-            self._mod.set_relay(DO_GREEN, not fault)
-            self._do_state[DO_GREEN] = not fault
-            # 下載中 → 由 _blink_white_loop 控制白燈，這裡不要動白燈（除非故障）
-            if fault:
-                # 故障壓過閃爍：強制白燈滅，覆蓋 blink loop 上次寫的狀態
-                self._mod.set_relay(DO_WHITE, False)
-                self._do_state[DO_WHITE] = False
-            elif not self._downloading:
-                # 非下載 + 非故障 → 白燈 = 手動模式
+            # DO1 運作狀況:系統在跑就亮,與通訊故障脫鉤。
+            # 🛑 不可寫成 not fault —— 網路斷線時偵測/錄影/電子鎖/報表都照常運作,
+            #    把綠燈熄掉是謊報「系統沒在運作」。真正該滅綠燈的只有「系統沒在跑」,
+            #    那個情境由 _do_reset(重啟中全滅) 負責。
+            self._mod.set_relay(DO_GREEN, True)
+            self._do_state[DO_GREEN] = True
+            # DO2 操作模式:自動=滅 手動=亮;遠端下載中改為 2.5Hz 閃爍。
+            # 「操作模式」與通訊故障脫鉤 —— 斷網時仍要看得出現在是自動還是手動。
+            # 🛑 但「下載中閃爍」不可以在斷網時亮:遠端下載要靠網路,斷網根本下載不了,
+            #    閃燈是假訊號。故障期間白燈退回顯示操作模式(由這裡寫),
+            #    blink loop 在故障時不寫白燈,兩邊不會互相覆蓋。
+            if self._downloading and not fault:
+                pass          # 交給 _blink_white_loop 閃爍
+            else:
                 white = (not self._auto_mode)
                 self._mod.set_relay(DO_WHITE, white)
                 self._do_state[DO_WHITE] = white
