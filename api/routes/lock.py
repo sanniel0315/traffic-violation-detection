@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -23,21 +24,41 @@ router = APIRouter(prefix="/api/lock", tags=["lock"])
 
 @router.get("/status")
 def lock_status():
-    """電子鎖即時狀態 (從 IO daemon 透傳的 lock 區塊)。"""
+    """電子鎖即時狀態 (從 IO daemon 透傳的 lock 區塊)。
+    多鎖時 locks[] 每顆一筆;頂層 addr/connected/status 是第一顆(相容單鎖呼叫端)。"""
     full = get_service().status()
-    return full.get("lock", {"enabled": False, "connected": False, "status": {}})
+    return full.get("lock", {"enabled": False, "connected": False, "locks": [], "status": {}})
+
+
+@router.get("/scan")
+def scan_bus(lo: int = 1, hi: int = 16):
+    """掃描 RS-485 上哪些位址會回應 (唯讀)。加第二顆鎖前先確認它現在的位址。"""
+    return get_service().scan_lock_bus(lo, hi)
+
+
+class SetAddr(BaseModel):
+    old: int
+    new: int
+    force: bool = False
+
+
+@router.post("/set-addr")
+def set_addr(body: SetAddr):
+    """改鎖的 Modbus 位址 (FC06 寫 0x2000)。新鎖出廠是 1,同匯流排要掛兩顆必須先改開。"""
+    return get_service().set_lock_addr(body.old, body.new, body.force)
 
 
 @router.post("/add-card")
-def add_card():
-    """讓電子鎖進入加卡模式,使用者隨後在鎖上刷要新增的卡即學習錄入。"""
-    return get_service().add_lock_card()
+def add_card(addr: Optional[int] = None):
+    """讓電子鎖進入加卡模式,使用者隨後在鎖上刷要新增的卡即學習錄入。
+    卡片白名單是「每顆鎖各自」的,兩顆都要能刷就兩顆都加。"""
+    return get_service().add_lock_card(addr)
 
 
 @router.post("/remove-card")
-def remove_card():
+def remove_card(addr: Optional[int] = None):
     """讓電子鎖進入刪卡模式,使用者隨後在鎖上刷要刪除的卡即移除。"""
-    return get_service().remove_lock_card()
+    return get_service().remove_lock_card(addr)
 
 
 @router.get("/cards")
@@ -49,6 +70,7 @@ def list_cards(db: Session = Depends(get_db)):
             .order_by(LockCard.added_at.desc()).all())
     return {"items": [
         {"id": r.id, "card_no": r.card_no, "holder_name": r.holder_name, "dept": r.dept,
+         "lock_addr": r.lock_addr,     # 卡片白名單是每顆鎖各自的,要標出屬於哪一顆
          "added_at": r.added_at.replace(tzinfo=timezone.utc).isoformat() if r.added_at else None}
         for r in rows
     ]}
@@ -73,13 +95,14 @@ def update_card(card_id: int, body: CardUpdate, db: Session = Depends(get_db)):
 
 
 @router.delete("/cards/{card_id}")
-def delete_card(card_id: int, db: Session = Depends(get_db)):
-    """從記錄內刪除卡片:用卡號 FC10 直接刪鎖內該卡(不需現場刷),並標記庫為停用。"""
+def delete_card(card_id: int, addr: Optional[int] = None, db: Session = Depends(get_db)):
+    """從記錄內刪除卡片:用卡號 FC10 直接刪鎖內該卡(不需現場刷),並標記庫為停用。
+    addr 省略 = 從卡片當初登錄的那顆鎖刪。"""
     from api.models import LockCard
     r = db.query(LockCard).filter(LockCard.id == card_id).first()
     if not r:
         return {"ok": False, "msg": "卡片不存在"}
-    res = get_service().delete_lock_card_by_no(r.card_no)
+    res = get_service().delete_lock_card_by_no(r.card_no, addr or r.lock_addr)
     if res.get("ok"):
         r.active = False
         db.commit()
@@ -87,15 +110,15 @@ def delete_card(card_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/unlock")
-def unlock():
-    """遠端開鎖。"""
-    return get_service().unlock_lock()
+def unlock(addr: Optional[int] = None):
+    """遠端開鎖。多鎖時要指定 addr,省略則開第一顆。"""
+    return get_service().unlock_lock(addr)
 
 
 @router.post("/clear-cards")
-def clear_cards(db: Session = Depends(get_db)):
+def clear_cards(addr: Optional[int] = None, db: Session = Depends(get_db)):
     """清空鎖內所有卡片 + 卡片庫全部停用。"""
-    res = get_service().clear_all_lock_cards()
+    res = get_service().clear_all_lock_cards(addr)
     if res.get("ok"):
         from api.models import LockCard
         db.query(LockCard).filter(LockCard.active == True).update({"active": False})

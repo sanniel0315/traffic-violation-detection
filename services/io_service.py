@@ -28,7 +28,7 @@ import time
 from collections import deque
 from typing import Callable, Optional
 
-from services.io_module import IOModule, get_module
+from services.io_module import IO_ADDR as _IO_ADDR, IOModule, get_module
 
 def _log(level: str, msg: str) -> None:
     try:
@@ -51,9 +51,26 @@ _DAEMON_URL = os.getenv("IO_DAEMON_URL", "").rstrip("/")
 
 # ── E-1507 電子鎖 (同一條 RS-485 上的另一個 Modbus 從機) ──────────────
 # 設定 LOCK_MODBUS_ADDR(1-247,需與 PD3R3 的 IO_ADDR 不同) 才會啟用;未設=停用,零影響。
-LOCK_ADDR = int(os.getenv("LOCK_MODBUS_ADDR", "0"))   # 0 = 停用
+def _parse_lock_addrs(raw: str) -> list:
+    """LOCK_MODBUS_ADDR 支援多個鎖:"2" 或 "2,3"(同一條 485 上掛兩顆,位址不可重複)。"""
+    out = []
+    for part in str(raw or "").replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            a = int(part)
+        except ValueError:
+            continue
+        if 1 <= a <= 247 and a not in out:
+            out.append(a)
+    return out
+
+
+LOCK_ADDRS = _parse_lock_addrs(os.getenv("LOCK_MODBUS_ADDR", "0"))   # 空 = 停用
+LOCK_ADDR = LOCK_ADDRS[0] if LOCK_ADDRS else 0   # 預設鎖(單鎖相容:未指定 addr 的操作走這顆)
 LOCK_SERIAL_PORT = os.getenv("LOCK_SERIAL_PORT", "").strip()  # 設了=鎖走獨立 USB-485(如 /dev/ttyUSB0,可完整讀 0xC000 卡號);空=走 THS2 io_module(讀不到卡號)
-LOCK_ENABLED = 1 <= LOCK_ADDR <= 247
+LOCK_ENABLED = bool(LOCK_ADDRS)
 # 狀態寄存器: 0x0020 手柄 / 0x0021 門磁 / 0x0022 鑰匙 / 0x0023 鎖具動作
 # ⚠ THS2 板載 RS-485 轉換器換向太慢,會吃掉「多暫存器長回應」的前段(實測不管讀
 # 幾個,只剩最後 3 byte)。改用 count=1 逐個讀:7-byte 短回應能完整收到、CRC 自驗通過。
@@ -74,7 +91,32 @@ _LOCK_REG_CARD_LO = 0x0045    # 加卡寄存器3 (最近加的卡號低 16bit)
 _LOCK_REG_DEL_CARD = 0x0047   # 刪卡寄存器1 (FC10 連寫 0x0047-0x0049: 工號+卡號,直接刪不用刷卡)
 _LOCK_REG_UNLOCK = 0x2004     # 485 開鎖:寫 0x0033 遠端開鎖
 _LOCK_UNLOCK_VAL = 0x0033
+
+
+class _LockState:
+    """單顆鎖的執行期狀態。多鎖時每個 Modbus 位址一份,斷線/告警/邊沿偵測都各自獨立
+    —— 一顆鎖斷線不會把另一顆的狀態或告警帶壞。"""
+
+    __slots__ = ("addr", "connected", "status", "err", "prev_action", "prev_states",
+                 "door_open_since", "door_alarmed", "offline_since", "offline_alarmed",
+                 "next_probe")
+
+    def __init__(self, addr: int):
+        self.addr = addr
+        self.connected = False
+        self.status: dict = {}
+        self.err = ""
+        self.next_probe = 0.0                # 讀不到時的重試退避時間點 (見 _lock_loop)
+        self.prev_action: Optional[int] = None
+        self.prev_states: dict = {}          # 門磁/手柄上次狀態(邊沿偵測)
+        self.door_open_since: Optional[float] = None
+        self.door_alarmed = False
+        self.offline_since: Optional[float] = None
+        self.offline_alarmed = False
+
+
 _DOOR_OPEN_ALARM_SEC = float(os.getenv("LOCK_DOOR_ALARM_SEC", "30"))  # 箱門開超過 N 秒觸發告警
+_LOCK_RETRY_SEC = float(os.getenv("LOCK_RETRY_SEC", "5"))  # 讀不到的鎖隔多久才重試(見 _lock_loop 退避說明)
 _LOCK_OFFLINE_ALARM_SEC = float(os.getenv("LOCK_OFFLINE_ALARM_SEC", "60"))  # 斷電/失聯超過 N 秒觸發警報(斷電期間鑰匙機械開門記不到,至少留斷電時段紀錄供查核)
 
 
@@ -115,20 +157,13 @@ class IOService:
         # Monotonic sequence number for WS tracking — deque maxlen 會讓 len() 飽和，
         # 超過 50 個事件後 len() 不再變大，需要獨立 seq 才能正確判斷新事件。
         self._di_event_seq = 0
-        # E-1507 電子鎖狀態 cache (由 _lock_loop 每 ~1s 更新;未啟用則恆 None)
+        # E-1507 電子鎖狀態 cache (由 _lock_loop 每 ~1s 更新;每個位址一份,互不影響)
         self._lock_enabled = LOCK_ENABLED
-        self._lock_connected = False
-        self._lock_status: dict = {}
-        self._lock_err = ""
+        self._locks: dict = {a: _LockState(a) for a in LOCK_ADDRS}
         # 電子鎖刷卡/開鎖事件 (仿 DI events;動作暫存器高頻邊沿偵測 → deque,client 拉去寫 DB)
+        # 多鎖共用一條 deque,每筆事件帶 addr 區分是哪一顆。
         self.lock_events: deque = deque(maxlen=100)
         self._lock_event_seq = 0
-        self._lock_prev_action: Optional[int] = None
-        self._lock_prev_states: dict = {}        # 門磁/手柄/鑰匙上次狀態(邊沿偵測)
-        self._door_open_since: Optional[float] = None
-        self._door_alarmed = False
-        self._offline_since: Optional[float] = None
-        self._offline_alarmed = False
         self._lock_dev = None                       # USB-485 獨立 PD3R3(LOCK_SERIAL_PORT);None=走 THS2
         self._lock_serial_lock = threading.Lock()   # 序列化 USB-485 鎖存取
 
@@ -306,9 +341,11 @@ class IOService:
         _log("info", "IO 模組關閉")
 
     # ── client-mode HTTP helpers ──────────────────────────────────────
-    def _daemon_post(self, path: str, json_body: dict, timeout: float = 2.0) -> None:
+    def _daemon_post(self, path: str, json_body: dict, timeout: float = 2.0,
+                     params: Optional[dict] = None) -> None:
         try:
-            self._session.post(f"{self._daemon_url}{path}", json=json_body, timeout=timeout)
+            self._session.post(f"{self._daemon_url}{path}", json=json_body,
+                               params=params, timeout=timeout)
         except Exception as e:
             print(f"[io_svc] daemon {path} unreachable: {e}", flush=True)
 
@@ -541,46 +578,116 @@ class IOService:
                 pass
             self._lock_dev = None
 
-    def _lock_read(self, reg: int, count: int = 1):
+    def _lock_read(self, reg: int, count: int = 1, addr: Optional[int] = None):
+        """addr 省略 = 預設鎖 (LOCK_ADDR);掃描/多鎖時傳入指定從機位址。"""
+        a = LOCK_ADDR if addr is None else addr
         dev = self._get_lock_dev()
         if dev is not None:
             with self._lock_serial_lock:
                 try:
-                    return dev.read_holding_at(LOCK_ADDR, reg, count)
+                    return dev.read_holding_at(a, reg, count)
                 except Exception:
                     self._close_lock_dev()
                     raise
-        return self._mod.read_holding(LOCK_ADDR, reg, count)
+        return self._mod.read_holding(a, reg, count)
 
-    def _lock_write(self, reg: int, value: int):
+    def _lock_write(self, reg: int, value: int, addr: Optional[int] = None):
+        a = LOCK_ADDR if addr is None else addr
         dev = self._get_lock_dev()
         if dev is not None:
             with self._lock_serial_lock:
                 try:
-                    dev.write_holding_at(LOCK_ADDR, reg, value)
+                    dev.write_holding_at(a, reg, value)
                     return
                 except Exception:
                     self._close_lock_dev()
                     raise
-        self._mod.write_holding(LOCK_ADDR, reg, value)
+        self._mod.write_holding(a, reg, value)
 
-    def _lock_write_multi(self, reg: int, values: list):
+    def _lock_write_multi(self, reg: int, values: list, addr: Optional[int] = None):
+        a = LOCK_ADDR if addr is None else addr
         dev = self._get_lock_dev()
         if dev is not None:
             with self._lock_serial_lock:
                 try:
-                    dev.write_multi_holding_at(LOCK_ADDR, reg, values)
+                    dev.write_multi_holding_at(a, reg, values)
                     return
                 except Exception:
                     self._close_lock_dev()
                     raise
-        self._mod.write_holding_multi(LOCK_ADDR, reg, values)
+        self._mod.write_holding_multi(a, reg, values)
 
-    def _read_lock_swipe_record(self):
+    # ── 匯流排掃描 / 改位址 (要掛第二個鎖時用) ──────────────────────────
+    def scan_lock_bus(self, lo: int = 1, hi: int = 16) -> dict:
+        """掃描 RS-485 上 lo~hi 哪些位址會回應。唯讀,不寫任何暫存器。
+        判別是不是 E-1507:讀 0x0023 動作暫存器,鎖 idle 回 0xfa(250)。
+        服務照常運作 —— 走既有 IOModule._lock 與鎖 poll 序列化,不用停 traffic-io。"""
+        if self._daemon_url:
+            try:
+                r = self._session.get(f"{self._daemon_url}/lock/scan",
+                                      params={"lo": lo, "hi": hi}, timeout=90)
+                return r.json()
+            except Exception as e:
+                return {"ok": False, "msg": f"掃描失敗(daemon 無回應): {e}"}
+        found = []
+        for a in range(max(1, int(lo)), min(247, int(hi)) + 1):
+            try:
+                door = self._lock_read(_LOCK_REG_DOOR, 1, addr=a)[0]
+                act = self._lock_read(_LOCK_REG_ACTION, 1, addr=a)[0]
+            except Exception:
+                continue
+            found.append({
+                "addr": a, "door_raw": door, "action_raw": act,
+                "is_lock": act == 0xfa or 0 <= act <= 5,
+                "note": "PD3R3 IO 模組" if a == _IO_ADDR else "",
+            })
+        return {"ok": True, "io_addr": _IO_ADDR, "lock_addrs": LOCK_ADDRS, "found": found}
+
+    def set_lock_addr(self, old: int, new: int, force: bool = False) -> dict:
+        """把位址 old 的鎖改成 new (FC06 寫 0x2000)。新鎖出廠位址是 1。
+
+        🛑 Modbus 寫入是「位址導向」的:匯流排上**任何**位址等於 old 的裝置都會被寫到。
+        PD3R3 IO 模組是 addr=1,所以 old=1 時匯流排上必須只剩那顆要改的鎖
+        (先把 PD3R3 的 A/B 拔掉),否則 PD3R3 的 0x2000 會被一起寫。
+        本函式對 old=IO_ADDR 會擋下,要做請帶 force=1 由呼叫端明示。"""
+        if self._daemon_url:
+            try:
+                r = self._session.post(f"{self._daemon_url}/lock/set_addr",
+                                       json={"old": old, "new": new, "force": force}, timeout=15)
+                return r.json()
+            except Exception as e:
+                return {"ok": False, "msg": f"改位址失敗(daemon 無回應): {e}"}
+        old, new = int(old), int(new)
+        if not (1 <= new <= 247):
+            return {"ok": False, "msg": f"新位址要在 1~247: {new}"}
+        if old == new:
+            return {"ok": False, "msg": "新舊位址相同,不用改"}
+        if new == _IO_ADDR:
+            return {"ok": False, "msg": f"新位址 {new} 與 PD3R3 IO 模組相同,會撞號"}
+        if old == _IO_ADDR and not force:
+            return {"ok": False, "msg": (
+                f"舊位址 {old} 與 PD3R3 IO 模組相同 —— 這個寫入會同時打到 PD3R3 的 0x2000。"
+                "確認匯流排上 PD3R3 已離線/拔除後,帶 force=1 再執行")}
+        # 目標位址已經有人回應 → 撞號,擋下
+        try:
+            self._lock_read(_LOCK_REG_DOOR, 1, addr=new)
+            return {"ok": False, "msg": f"位址 {new} 已經有裝置在回應,換一個位址"}
+        except Exception:
+            pass
+        try:
+            self._lock_write(0x2000, new, addr=old)
+            time.sleep(0.5)
+            self._lock_read(_LOCK_REG_DOOR, 1, addr=new)   # 讀得到才算成功
+        except Exception as e:
+            return {"ok": False, "msg": f"寫了 0x2000={new} 但新位址讀不到,改位址可能沒生效: {e}"}
+        _log("info", f"電子鎖位址 {old} → {new}")
+        return {"ok": True, "msg": f"位址已改 {old} → {new}(新位址讀得到,已生效)"}
+
+    def _read_lock_swipe_record(self, addr: Optional[int] = None):
         """USB-485 連讀 0xC000 一條開鎖記錄(19byte完整),出隊一條。
         回傳 {rem,way,emp,card,t} 或 None(空記錄/讀失敗)。"""
         try:
-            regs = self._lock_read(0xC000, 7)
+            regs = self._lock_read(0xC000, 7, addr=addr)
         except Exception:
             return None
         if not regs or len(regs) < 7:
@@ -595,11 +702,11 @@ class IOService:
                  f"{regs[5] & 0xFF:02d}:{regs[6] >> 8:02d}:{regs[6] & 0xFF:02d}",
         }
 
-    def _read_lock_fail_record(self):
+    def _read_lock_fail_record(self, addr: Optional[int] = None):
         """USB-485 連讀 0xD000 一條開鎖失敗記錄(連讀6),出隊一條。失效卡/未授權刷卡記在此。
         回傳 {way,card,t} 或 None(空/非卡片失敗/讀失敗)。"""
         try:
-            regs = self._lock_read(0xD000, 6)
+            regs = self._lock_read(0xD000, 6, addr=addr)
         except Exception:
             return None
         if not regs or len(regs) < 6:
@@ -614,20 +721,20 @@ class IOService:
                  f"{regs[4] & 0xFF:02d}:{regs[5] >> 8:02d}:{regs[5] & 0xFF:02d}",
         }
 
-    def _drain_lock_records(self, limit: int = 200):
+    def _drain_lock_records(self, addr: Optional[int] = None, limit: int = 200):
         """啟動清空 0xC000(成功)+0xD000(失敗)積壓(歷史不 fire,避免 flood)。"""
         n = 0
         for _ in range(limit):
-            if self._read_lock_swipe_record() is None:
+            if self._read_lock_swipe_record(addr) is None:
                 break
             n += 1
         nf = 0
         for _ in range(limit):
-            if self._read_lock_fail_record() is None:
+            if self._read_lock_fail_record(addr) is None:
                 break
             nf += 1
         if n or nf:
-            print(f"[io_svc] 鎖清空啟動前積壓:成功 {n} 失敗 {nf}", flush=True)
+            print(f"[io_svc] 鎖#{addr or LOCK_ADDR} 清空啟動前積壓:成功 {n} 失敗 {nf}", flush=True)
 
     def _lookup_card_holder(self, card_no: str):
         """查卡片庫該卡號持有人(daemon 直讀 sqlite,找不到回 None)。"""
@@ -647,15 +754,42 @@ class IOService:
         """電子鎖事件單調遞增序號 (WS / client poller 判斷新事件用)。"""
         return self._lock_event_seq
 
-    def _poll_lock_states(self, action: Optional[int] = None) -> None:
-        """讀門磁/手柄/鑰匙(慢變)+帶入已知 action,重建 _lock_status。失敗標斷線不拋出。
+    def _pick_lock(self, addr: Optional[int] = None) -> Optional["_LockState"]:
+        """取指定位址的鎖;addr 省略 = 第一顆(單鎖時的既有行為)。找不到回 None。"""
+        if addr is None:
+            return next(iter(self._locks.values()), None)
+        return self._locks.get(int(addr))
+
+    def lock_status_block(self) -> dict:
+        """status()["lock"] 的內容。locks 是每顆鎖一筆;
+        另外攤平第一顆到頂層 (addr/connected/error/status),讓只認單鎖的舊呼叫端不會壞。"""
+        locks = [{
+            "addr":      lk.addr,
+            "name":      f"電子鎖 #{lk.addr}",
+            "connected": lk.connected,
+            "error":     lk.err,
+            "status":    lk.status,
+        } for lk in self._locks.values()]
+        first = locks[0] if locks else {}
+        return {
+            "enabled":   self._lock_enabled,
+            "addrs":     LOCK_ADDRS,
+            "locks":     locks,
+            "addr":      first.get("addr"),
+            "connected": first.get("connected", False),
+            "error":     first.get("error", ""),
+            "status":    first.get("status", {}),
+        }
+
+    def _poll_lock_states(self, lk: "_LockState", action: Optional[int] = None) -> None:
+        """讀該顆鎖的門磁/手柄/鑰匙(慢變)+帶入已知 action,重建 lk.status。失敗標斷線不拋出。
         逐個 count=1 讀(THS2 換向限制,長回應會被吃前段);每個 7-byte 回應 CRC 自驗。"""
         try:
-            handle = self._lock_read(_LOCK_REG_HANDLE)[0]
-            door   = self._lock_read(_LOCK_REG_DOOR)[0]
-            key    = self._lock_read(_LOCK_REG_KEY)[0]
-            act = action if action is not None else (self._lock_prev_action or 0)
-            self._lock_status = {
+            handle = self._lock_read(_LOCK_REG_HANDLE, addr=lk.addr)[0]
+            door   = self._lock_read(_LOCK_REG_DOOR, addr=lk.addr)[0]
+            key    = self._lock_read(_LOCK_REG_KEY, addr=lk.addr)[0]
+            act = action if action is not None else (lk.prev_action or 0)
+            lk.status = {
                 "handle": {"raw": handle, "in_place": handle == 0,
                            "label": "已上鎖" if handle == 0 else "已解鎖"},
                 # 門磁是 NO(常開)接點:門關→磁鐵靠近→接點閉合→raw=1;門開→raw=0。
@@ -666,21 +800,23 @@ class IOService:
                            "label": "鑰匙在位" if key == 0 else "鑰匙不在位"},
                 "action": {"raw": act, "label": _LOCK_ACTION_NAMES.get(act, f"未知({act})")},
             }
-            self._lock_connected = True
-            self._lock_err = ""
+            lk.connected = True
+            lk.err = ""
         except Exception as e:
-            self._lock_connected = False
-            self._lock_err = str(e)
+            lk.connected = False
+            lk.err = str(e)
 
-    def _fire_lock_event(self, event_type: str, label: str, action_code=None, card_no=None) -> None:
+    def _fire_lock_event(self, lk: "_LockState", event_type: str, label: str,
+                         action_code=None, card_no=None) -> None:
         """建鎖事件進 deque (client 端拉去寫 DB + 推 WS)。
         event_type: swipe(刷卡)/door(門磁)/lock(上鎖/解鎖)/alarm(警報)/unlock(遠端開鎖)/info。
-        card_no: USB-485 刷卡讀到的卡號(client 端比對卡片庫填持有人)。"""
+        card_no: USB-485 刷卡讀到的卡號(client 端比對卡片庫填持有人)。
+        多鎖共用 deque,evt["addr"] 標明是哪一顆(DB lock_addr 欄位)。"""
         self._lock_event_seq += 1
-        st = self._lock_status or {}
+        st = lk.status or {}
         evt = {
             "seq":     self._lock_event_seq,
-            "addr":    LOCK_ADDR,
+            "addr":    lk.addr,
             "event_type": event_type,
             "action":  action_code,
             "label":   label,
@@ -691,47 +827,49 @@ class IOService:
             "time":    datetime.datetime.now().isoformat(),
         }
         self.lock_events.append(evt)
-        _log("warning" if event_type == "alarm" else "info", f"電子鎖[{event_type}]: {label}")
+        _log("warning" if event_type == "alarm" else "info",
+             f"電子鎖#{lk.addr}[{event_type}]: {label}")
 
-    def _detect_state_events(self) -> None:
+    def _detect_state_events(self, lk: "_LockState") -> None:
         """偵測門磁(門開/關)+鎖定狀態(0x0020,轉鑰匙帶動上鎖/解鎖)變化 → 事件;
         門開超過閾值 → 箱門未關告警。鑰匙 0x0022 恒0 不處理。"""
-        st = self._lock_status or {}
+        st = lk.status or {}
         door = st.get("door", {}).get("closed")
         handle = st.get("handle", {}).get("in_place")  # 0x0020: True=上鎖(raw0) False=解鎖(raw1)
-        prev = self._lock_prev_states
+        prev = lk.prev_states
         if door is not None and prev.get("door") is not None and door != prev["door"]:
-            self._fire_lock_event("door", "門關" if door else "門開")
+            self._fire_lock_event(lk, "door", "門關" if door else "門開")
         if handle is not None and prev.get("handle") is not None and handle != prev["handle"]:
-            self._fire_lock_event("lock", "上鎖" if handle else "解鎖")
-        self._lock_prev_states = {"door": door, "handle": handle}
+            self._fire_lock_event(lk, "lock", "上鎖" if handle else "解鎖")
+        lk.prev_states = {"door": door, "handle": handle}
         # 箱門未關告警 (門開超過閾值,只觸發一次,門關後重置)
         if door is False:
-            if self._door_open_since is None:
-                self._door_open_since = time.time()
-            elif not self._door_alarmed and (time.time() - self._door_open_since) >= _DOOR_OPEN_ALARM_SEC:
-                self._fire_lock_event("alarm", f"箱門未關 (>{int(_DOOR_OPEN_ALARM_SEC)}秒)")
-                self._door_alarmed = True
+            if lk.door_open_since is None:
+                lk.door_open_since = time.time()
+            elif not lk.door_alarmed and (time.time() - lk.door_open_since) >= _DOOR_OPEN_ALARM_SEC:
+                self._fire_lock_event(lk, "alarm", f"箱門未關 (>{int(_DOOR_OPEN_ALARM_SEC)}秒)")
+                lk.door_alarmed = True
         elif door is True:
-            self._door_open_since = None
-            self._door_alarmed = False
+            lk.door_open_since = None
+            lk.door_alarmed = False
 
-    def _detect_offline(self) -> None:
+    def _detect_offline(self, lk: "_LockState") -> None:
         """斷電/失聯告警:鎖持續讀不到(connected=false)超過閾值 → 告警一次;恢復連線記一筆。
-        斷電期間鑰匙機械開門鎖無電記不到,此告警至少留下斷電時段供事後查核。"""
-        if not self._lock_connected:
-            if self._offline_since is None:
-                self._offline_since = time.time()
-            elif not self._offline_alarmed and (time.time() - self._offline_since) >= _LOCK_OFFLINE_ALARM_SEC:
-                self._fire_lock_event("alarm", f"電子鎖斷電/失聯 (>{int(_LOCK_OFFLINE_ALARM_SEC)}秒)")
-                self._offline_alarmed = True
+        斷電期間鑰匙機械開門鎖無電記不到,此告警至少留下斷電時段供事後查核。
+        每顆鎖各自判定 —— 一顆沒接不會讓另一顆也被當成失聯。"""
+        if not lk.connected:
+            if lk.offline_since is None:
+                lk.offline_since = time.time()
+            elif not lk.offline_alarmed and (time.time() - lk.offline_since) >= _LOCK_OFFLINE_ALARM_SEC:
+                self._fire_lock_event(lk, "alarm", f"電子鎖斷電/失聯 (>{int(_LOCK_OFFLINE_ALARM_SEC)}秒)")
+                lk.offline_alarmed = True
         else:
             # 失聯持續 ≥5 秒後恢復 → 記恢復連線(不必等滿告警閾值,過濾<5秒偶發抖動;
             # 也讓 daemon 重啟後只要重新失聯過再恢復就記得到)
-            if self._offline_since is not None and (time.time() - self._offline_since) >= 5:
-                self._fire_lock_event("info", "電子鎖恢復連線")
-            self._offline_since = None
-            self._offline_alarmed = False
+            if lk.offline_since is not None and (time.time() - lk.offline_since) >= 5:
+                self._fire_lock_event(lk, "info", "電子鎖恢復連線")
+            lk.offline_since = None
+            lk.offline_alarmed = False
 
     def _start_lock_monitor(self) -> None:
         """啟動電子鎖獨立 poll thread。與 _di_loop 共用 IOModule._lock 序列化 RS-485,
@@ -746,49 +884,64 @@ class IOService:
     def _lock_loop(self) -> None:
         # USB-485 模式:讀 0xC000 完整記錄檢測刷卡(含卡號);THS2 模式:讀 0x0023 action 邊沿(無卡號)。
         # 門磁/手柄/鑰匙慢變 → 每 ~1s(tick 0,7,14...) 刷新一次。
-        print(f"[io_svc] _lock_loop entered (port={LOCK_SERIAL_PORT or 'THS2'})", flush=True)
+        print(f"[io_svc] _lock_loop entered (port={LOCK_SERIAL_PORT or 'THS2'}, "
+              f"addrs={LOCK_ADDRS})", flush=True)
         if LOCK_SERIAL_PORT:
-            try:
-                self._drain_lock_records()   # 清空啟動前積壓,避免歷史刷卡 flood
-            except Exception:
-                pass
+            for lk in self._locks.values():
+                try:
+                    self._drain_lock_records(lk.addr)   # 清空啟動前積壓,避免歷史刷卡 flood
+                except Exception:
+                    pass
         tick = 0
         while not self._stop_lock.is_set():
-            action = None
-            try:
-                if LOCK_SERIAL_PORT:
-                    # USB-485:讀 0xC000 一條完整記錄,有刷卡 → 帶卡號 fire
-                    rec = self._read_lock_swipe_record()
-                    self._lock_connected = True
-                    self._lock_err = ""
-                    if rec:
-                        action = rec["way"]
-                        base = _LOCK_ACTION_NAMES.get(rec["way"], f"方式{rec['way']}")
-                        holder = self._lookup_card_holder(rec["card"])
-                        disp = f"{base}:{holder}" if holder else f"{base}:{rec['card']}"
-                        self._fire_lock_event("swipe", disp, rec["way"], card_no=rec["card"])
-                    # 失效卡/未授權刷卡 → 0xD000 失敗記錄 → 告警
-                    frec = self._read_lock_fail_record()
-                    if frec:
-                        who = self._lookup_card_holder(frec["card"])
-                        tag = f":{who}" if who else f":{frec['card']}"
-                        self._fire_lock_event("alarm", f"未授權刷卡{tag}", frec["way"], card_no=frec["card"])
-                else:
-                    # THS2:0x0023 action 上升沿(讀不到卡號)
-                    action = self._lock_read(_LOCK_REG_ACTION)[0]
-                    self._lock_connected = True
-                    self._lock_err = ""
-                    if self._is_real_action(action) and not self._is_real_action(self._lock_prev_action):
-                        self._fire_lock_event("swipe", _LOCK_ACTION_NAMES.get(action, f"未知({action})"), action)
-                    self._lock_prev_action = action
-            except Exception as e:
-                self._lock_connected = False
-                self._lock_err = str(e)
-            if tick % 7 == 0:
-                self._poll_lock_states(action)
-                if self._lock_connected:
-                    self._detect_state_events()   # 斷電時 _lock_status 為舊值,跳過避免誤報
-                self._detect_offline()
+            for lk in list(self._locks.values()):
+                # 讀不到的鎖要退避。不退避的話,一顆沒接的鎖每 tick 吃掉一次 0.3s
+                # serial timeout,迴圈週期會從 150ms 被拖到 350ms+,連帶讓「有接的
+                # 那顆」漏掉只保持 ~150ms 的刷卡動作 —— 一顆沒接拖垮另一顆。
+                if not lk.connected and time.time() < lk.next_probe:
+                    if tick % 7 == 0:
+                        self._detect_offline(lk)
+                    continue
+                action = None
+                try:
+                    if LOCK_SERIAL_PORT:
+                        # USB-485:讀 0xC000 一條完整記錄,有刷卡 → 帶卡號 fire
+                        rec = self._read_lock_swipe_record(lk.addr)
+                        lk.connected = True
+                        lk.err = ""
+                        if rec:
+                            action = rec["way"]
+                            base = _LOCK_ACTION_NAMES.get(rec["way"], f"方式{rec['way']}")
+                            holder = self._lookup_card_holder(rec["card"])
+                            disp = f"{base}:{holder}" if holder else f"{base}:{rec['card']}"
+                            self._fire_lock_event(lk, "swipe", disp, rec["way"], card_no=rec["card"])
+                        # 失效卡/未授權刷卡 → 0xD000 失敗記錄 → 告警
+                        frec = self._read_lock_fail_record(lk.addr)
+                        if frec:
+                            who = self._lookup_card_holder(frec["card"])
+                            tag = f":{who}" if who else f":{frec['card']}"
+                            self._fire_lock_event(lk, "alarm", f"未授權刷卡{tag}",
+                                                  frec["way"], card_no=frec["card"])
+                    else:
+                        # THS2:0x0023 action 上升沿(讀不到卡號)
+                        action = self._lock_read(_LOCK_REG_ACTION, addr=lk.addr)[0]
+                        lk.connected = True
+                        lk.err = ""
+                        if self._is_real_action(action) and not self._is_real_action(lk.prev_action):
+                            self._fire_lock_event(
+                                lk, "swipe", _LOCK_ACTION_NAMES.get(action, f"未知({action})"), action)
+                        lk.prev_action = action
+                except Exception as e:
+                    lk.connected = False
+                    lk.err = str(e)
+                if tick % 7 == 0:
+                    if lk.connected:
+                        self._poll_lock_states(lk, action)
+                    if lk.connected:      # _poll_lock_states 失敗會把 connected 打掉
+                        self._detect_state_events(lk)   # 斷電時 status 為舊值,跳過避免誤報
+                    self._detect_offline(lk)
+                if not lk.connected:
+                    lk.next_probe = time.time() + _LOCK_RETRY_SEC
             tick += 1
             self._stop_lock.wait(0.15)
 
@@ -848,34 +1001,39 @@ class IOService:
         if 0 <= ch < 3:
             self._do_state[ch] = on
 
-    def add_lock_card(self) -> dict:
+    def add_lock_card(self, addr: Optional[int] = None) -> dict:
         """加卡並偵測新卡號:寫 0x2005=0x0033 進加卡模式 → 監測 ~12秒 0x0044/45 變化 → 拿新卡號。
-        client mode 同步呼叫 daemon(長 timeout) 拿卡號寫卡片庫;native(daemon) 觸發+監測。"""
+        client mode 同步呼叫 daemon(長 timeout) 拿卡號寫卡片庫;native(daemon) 觸發+監測。
+        addr 省略 = 第一顆鎖。卡片是「每顆鎖各自的白名單」,要兩顆都能刷就兩顆都加。"""
         if self._daemon_url:
             try:
-                r = self._session.post(f"{self._daemon_url}/lock/add_card", timeout=20)
+                r = self._session.post(f"{self._daemon_url}/lock/add_card",
+                                       params=({"addr": addr} if addr else None), timeout=20)
                 d = r.json()
             except Exception as e:
                 return {"ok": False, "msg": f"加卡失敗(daemon 無回應): {e}"}
             if d.get("ok") and d.get("card_no"):
-                self._persist_lock_card(d.get("card_no"))
+                self._persist_lock_card(d.get("card_no"), addr)
             return d
         if not self._lock_enabled:
             return {"ok": False, "msg": "電子鎖未啟用 (LOCK_MODBUS_ADDR 未設)"}
+        lk = self._pick_lock(addr)
+        if lk is None:
+            return {"ok": False, "msg": f"沒有位址 {addr} 這顆鎖 (目前 {LOCK_ADDRS})"}
         try:
-            before = self._read_lock_cardno()
-            self._lock_write(_LOCK_REG_AUX_ENROLL, _LOCK_AUX_ADD_CARD)
-            _log("info", "電子鎖進入加卡模式 (監測新卡 ~12s)")
+            before = self._read_lock_cardno(lk.addr)
+            self._lock_write(_LOCK_REG_AUX_ENROLL, _LOCK_AUX_ADD_CARD, addr=lk.addr)
+            _log("info", f"電子鎖#{lk.addr} 進入加卡模式 (監測新卡 ~12s)")
             deadline = time.time() + 12.0
             while time.time() < deadline:
                 time.sleep(0.6)
-                cur = self._read_lock_cardno()
+                cur = self._read_lock_cardno(lk.addr)
                 if cur and cur != before and cur != "00000000":
                     _log("info", f"加卡成功,新卡號 {cur}")
                     return {"ok": True, "card_no": cur, "msg": f"加卡成功！卡號 {cur}"}
             # 超時未偵測到卡號變化:可能剛刷的是既有卡(卡號==before)。仍讀當前卡號回傳,
             # 讓卡片庫 upsert(既有卡會重新啟用),避免「刷了卡庫卻沒新增」。
-            final = self._read_lock_cardno()
+            final = self._read_lock_cardno(lk.addr)
             if final and final != "00000000":
                 _log("info", f"加卡完成(卡號未變,既有卡/重複),卡號 {final}")
                 return {"ok": True, "card_no": final,
@@ -884,16 +1042,16 @@ class IOService:
         except Exception as e:
             return {"ok": False, "msg": f"加卡失敗: {e}"}
 
-    def _read_lock_cardno(self):
+    def _read_lock_cardno(self, addr: Optional[int] = None):
         """讀加卡寄存器 0x0044/0x0045 組成 hex 卡號字串(如 E14D0395)。失敗回 None。"""
         try:
-            hi = self._lock_read(_LOCK_REG_CARD_HI)[0]
-            lo = self._lock_read(_LOCK_REG_CARD_LO)[0]
+            hi = self._lock_read(_LOCK_REG_CARD_HI, addr=addr)[0]
+            lo = self._lock_read(_LOCK_REG_CARD_LO, addr=addr)[0]
             return f"{hi:04X}{lo:04X}"
         except Exception:
             return None
 
-    def _persist_lock_card(self, card_no: str) -> None:
+    def _persist_lock_card(self, card_no: str, addr: Optional[int] = None) -> None:
         """把新卡號寫進卡片庫 (LockCard);已存在(active)則不重複。只有 traffic-api(client) 連 DB。"""
         try:
             from api.models import SessionLocal, LockCard
@@ -905,56 +1063,67 @@ class IOService:
                         ex.active = True
                         db.commit()
                 else:
-                    db.add(LockCard(lock_addr=(LOCK_ADDR or None), card_no=card_no))
+                    db.add(LockCard(lock_addr=(addr or LOCK_ADDR or None), card_no=card_no))
                     db.commit()
             finally:
                 db.close()
         except Exception as e:
             print(f"[io_svc client] lock card persist failed: {e}", flush=True)
 
-    def remove_lock_card(self) -> dict:
+    def remove_lock_card(self, addr: Optional[int] = None) -> dict:
         """讓電子鎖進入刪卡模式 (寫 0x2005=0x0055),使用者隨後在鎖上刷要刪除的卡即移除。"""
         if self._daemon_url:
-            self._daemon_post("/lock/remove_card", {})
+            self._daemon_post("/lock/remove_card", {}, params=({"addr": addr} if addr else None))
             return {"ok": True, "msg": "已送出刪卡指令,請在約 10 秒內到鎖上刷要刪除的卡"}
         if not self._lock_enabled:
             return {"ok": False, "msg": "電子鎖未啟用 (LOCK_MODBUS_ADDR 未設)"}
+        lk = self._pick_lock(addr)
+        if lk is None:
+            return {"ok": False, "msg": f"沒有位址 {addr} 這顆鎖 (目前 {LOCK_ADDRS})"}
         try:
-            self._lock_write(_LOCK_REG_AUX_ENROLL, _LOCK_AUX_DEL_CARD)
-            _log("info", "電子鎖進入刪卡模式 (等待鎖上刷卡)")
+            self._lock_write(_LOCK_REG_AUX_ENROLL, _LOCK_AUX_DEL_CARD, addr=lk.addr)
+            _log("info", f"電子鎖#{lk.addr} 進入刪卡模式 (等待鎖上刷卡)")
             return {"ok": True, "msg": "鎖已進入刪卡模式,請在約 10 秒內到鎖上刷要刪除的卡"}
         except Exception as e:
             return {"ok": False, "msg": f"刪卡指令失敗: {e}"}
 
-    def clear_all_lock_cards(self) -> dict:
-        """清空鎖內所有卡片 (寫 0x2006=0x0011,FC06 單寄存器,THS2/USB-485 都寫得進)。client 轉發 daemon。"""
+    def clear_all_lock_cards(self, addr: Optional[int] = None) -> dict:
+        """清空鎖內所有卡片 (寫 0x2006=0x0011,FC06 單寄存器,THS2/USB-485 都寫得進)。client 轉發 daemon。
+        addr 省略 = 只清第一顆。多鎖時要全清就每顆各呼叫一次。"""
         if self._daemon_url:
             try:
-                r = self._session.post(f"{self._daemon_url}/lock/clear_cards", timeout=8)
+                r = self._session.post(f"{self._daemon_url}/lock/clear_cards",
+                                       params=({"addr": addr} if addr else None), timeout=8)
                 return r.json()
             except Exception as e:
                 return {"ok": False, "msg": f"清空失敗(daemon 無回應): {e}"}
         if not self._lock_enabled:
             return {"ok": False, "msg": "電子鎖未啟用 (LOCK_MODBUS_ADDR 未設)"}
+        lk = self._pick_lock(addr)
+        if lk is None:
+            return {"ok": False, "msg": f"沒有位址 {addr} 這顆鎖 (目前 {LOCK_ADDRS})"}
         try:
-            self._lock_write(_LOCK_REG_CLEAR, _LOCK_CLEAR_CARDS)
-            _log("info", "電子鎖清空所有卡片")
-            return {"ok": True, "msg": "已清空鎖內所有卡片"}
+            self._lock_write(_LOCK_REG_CLEAR, _LOCK_CLEAR_CARDS, addr=lk.addr)
+            _log("info", f"電子鎖#{lk.addr} 清空所有卡片")
+            return {"ok": True, "msg": f"已清空鎖#{lk.addr} 內所有卡片"}
         except Exception as e:
             return {"ok": False, "msg": f"清空失敗: {e}"}
 
-    def delete_lock_card_by_no(self, card_no: str) -> dict:
+    def delete_lock_card_by_no(self, card_no: str, addr: Optional[int] = None) -> dict:
         """已知卡號直接刪卡 (FC10 寫刪卡寄存器 0x0047-0x0049: 工號0+卡號),不需現場刷卡。
         card_no = 8 位 hex 字串 (如 E14D0395)。client mode 轉發 daemon。"""
         if self._daemon_url:
             try:
                 r = self._session.post(f"{self._daemon_url}/lock/delete_card",
-                                       json={"card_no": card_no}, timeout=8)
+                                       json={"card_no": card_no, "addr": addr}, timeout=8)
                 return r.json()
             except Exception as e:
                 return {"ok": False, "msg": f"刪卡失敗(daemon 無回應): {e}"}
         if not self._lock_enabled:
             return {"ok": False, "msg": "電子鎖未啟用 (LOCK_MODBUS_ADDR 未設)"}
+        lk = self._pick_lock(addr)
+        if lk is None:
+            return {"ok": False, "msg": f"沒有位址 {addr} 這顆鎖 (目前 {LOCK_ADDRS})"}
         try:
             cn = str(card_no or "").strip().upper()
             if len(cn) != 8:
@@ -964,31 +1133,35 @@ class IOService:
                 # THS2:指定刪 FC16 寫不進。改用學習刪——寫 0x2005=0x0055 進刪卡模式,
                 # 使用者現場刷該卡才從鎖內白名單刪除(FC06 單寄存器 THS2 寫得進)。
                 try:
-                    self._lock_write(_LOCK_REG_AUX_ENROLL, _LOCK_AUX_DEL_CARD)
+                    self._lock_write(_LOCK_REG_AUX_ENROLL, _LOCK_AUX_DEL_CARD, addr=lk.addr)
                 except Exception as e:
                     return {"ok": False, "msg": f"進刪卡模式失敗: {e}"}
-                _log("info", f"電子鎖學習刪卡模式(THS2),待現場刷 {cn}")
+                _log("info", f"電子鎖#{lk.addr} 學習刪卡模式(THS2),待現場刷 {cn}")
                 return {"ok": True, "lock_removed": "pending",
                         "msg": f"已進刪卡模式:請在約 10 秒內到鎖上刷「{cn}」這張卡,刷了才會從鎖內白名單刪除(卡片庫記錄已移除)"}
             # USB-485:刪卡寄存器 0x0047=工號(0)/0x0048=卡號高/0x0049=卡號低,FC16 生效
-            self._lock_write_multi(_LOCK_REG_DEL_CARD, [0, hi, lo])
-            _log("info", f"電子鎖刪卡 {cn}(USB-485)")
+            self._lock_write_multi(_LOCK_REG_DEL_CARD, [0, hi, lo], addr=lk.addr)
+            _log("info", f"電子鎖#{lk.addr} 刪卡 {cn}(USB-485)")
             return {"ok": True, "lock_removed": True, "msg": f"已刪除卡號 {cn}(鎖內白名單已移除)"}
         except Exception as e:
             return {"ok": False, "msg": f"刪卡失敗: {e}"}
 
-    def unlock_lock(self) -> dict:
-        """遠端開鎖 (寫 0x2004=0x0033)。client mode 轉發 daemon;native 直接寫。"""
+    def unlock_lock(self, addr: Optional[int] = None) -> dict:
+        """遠端開鎖 (寫 0x2004=0x0033)。client mode 轉發 daemon;native 直接寫。
+        addr 省略 = 第一顆鎖 —— 多鎖時前端一定要明確指定要開哪一顆。"""
         if self._daemon_url:
-            self._daemon_post("/lock/unlock", {})
+            self._daemon_post("/lock/unlock", {}, params=({"addr": addr} if addr else None))
             return {"ok": True, "msg": "已送出遠端開鎖指令"}
         if not self._lock_enabled:
             return {"ok": False, "msg": "電子鎖未啟用 (LOCK_MODBUS_ADDR 未設)"}
+        lk = self._pick_lock(addr)
+        if lk is None:
+            return {"ok": False, "msg": f"沒有位址 {addr} 這顆鎖 (目前 {LOCK_ADDRS})"}
         try:
-            self._lock_write(_LOCK_REG_UNLOCK, _LOCK_UNLOCK_VAL)
-            self._fire_lock_event("unlock", "遠端開鎖")
-            _log("info", "電子鎖遠端開鎖")
-            return {"ok": True, "msg": "已遠端開鎖"}
+            self._lock_write(_LOCK_REG_UNLOCK, _LOCK_UNLOCK_VAL, addr=lk.addr)
+            self._fire_lock_event(lk, "unlock", "遠端開鎖")
+            _log("info", f"電子鎖#{lk.addr} 遠端開鎖")
+            return {"ok": True, "msg": f"已遠端開鎖 (鎖#{lk.addr})"}
         except Exception as e:
             return {"ok": False, "msg": f"遠端開鎖失敗: {e}"}
 
@@ -1046,13 +1219,7 @@ class IOService:
                 "auto_mode":   self._auto_mode,
                 "downloading": self._downloading,
             },
-            "lock": {
-                "enabled":   self._lock_enabled,
-                "addr":      LOCK_ADDR if self._lock_enabled else None,
-                "connected": self._lock_connected,
-                "error":     self._lock_err,
-                "status":    self._lock_status,
-            },
+            "lock": self.lock_status_block(),
             "config_sync": config_sync.status(),
         }
 
