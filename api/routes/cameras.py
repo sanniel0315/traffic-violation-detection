@@ -439,6 +439,14 @@ async def get_cameras(db: Session = Depends(get_db)):
     return {"total": len(cameras), "items": [_to_dict(c) for c in cameras]}
 
 
+@router.post("/sync-frigate")
+async def sync_frigate_now(restart: bool = True, db: Session = Depends(get_db)):
+    """手動把攝影機設定同步到 Frigate/go2rtc（正常情況會在新增/修改/刪除時自動做，
+    這支是給現場排錯、或設定檔被外部改動後用來對回來）。restart=false 只寫檔不重啟。"""
+    from services import frigate_sync
+    return frigate_sync.sync(db=db, restart=restart)
+
+
 @router.get("/statistics")
 async def get_camera_statistics(db: Session = Depends(get_db)):
     total = db.query(Camera).count()
@@ -495,6 +503,7 @@ async def create_camera(data: CameraCreate, db: Session = Depends(get_db)):
         set_feature_state("detection", c.id, bool(c.detection_enabled))
     except Exception:
         pass
+    _sync_frigate()
     return _to_dict(c)
 
 
@@ -555,6 +564,7 @@ async def update_camera(camera_id: int, data: CameraUpdate, db: Session = Depend
     c.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(c)
+    _sync_frigate()
     return _to_dict(c)
 
 
@@ -962,7 +972,22 @@ async def delete_camera(camera_id: int, db: Session = Depends(get_db)):
     db.delete(c)
     db.commit()
     _teardown_camera_runtime(camera_id)
+    _sync_frigate()
     return {"message": "已刪除"}
+
+
+def _sync_frigate() -> None:
+    """攝影機異動後同步 Frigate/go2rtc 設定（射後不理）。
+
+    不同步的話 traffic-api 讀 DB(IP 新)、Frigate 讀 config.yml(IP 舊),
+    會變成「偵測正常但錄影連不上、開單管理沒影片」的半死狀態。
+    同步失敗只記 log —— 絕不能讓攝影機新增/修改本身跟著失敗。
+    """
+    try:
+        from services import frigate_sync
+        frigate_sync.sync_async()
+    except Exception as e:
+        print(f"[cameras] frigate 同步觸發失敗: {e}", flush=True)
 
 
 def _teardown_camera_runtime(camera_id: int) -> None:
