@@ -13873,6 +13873,18 @@ const app=createApp({
         let hwReqController=null;
         
         // 地圖
+        // ═══════ 離線地圖設定 ═══════
+        // 現場封閉網段沒有外網，地圖一律吃 web/tiles/ 下的本地圖磚。
+        // 換站台時：改 MAP_SITE_CENTER，再跑
+        //   python3 scripts/fetch_map_tiles.py --lat <lat> --lon <lng>
+        const MAP_SITE_CENTER=[23.063772,120.279169];   // 國道8號路口(台南)
+        const MAP_SITE_ZOOM=17;
+        const MAP_MIN_ZOOM=10;                          // 低於此沒抓圖磚
+        const MAP_MAX_ZOOM=18;                          // 高於此沒抓圖磚
+        // 沒有圖磚的位置顯示淡灰底，不要顯示破圖 icon
+        const MAP_BLANK_TILE='data:image/svg+xml;base64,'+btoa(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256">'+
+            '<rect width="256" height="256" fill="#eef1f5"/></svg>');
         let map=null;
         const initMap=()=>{
             nextTick(()=>{
@@ -13889,11 +13901,20 @@ const app=createApp({
                     return;
                 }
                 // 預設 zoomControl 移除 — 跟左上搜尋框衝突；改放右下角
-                map=L.map('map', {zoomControl: false}).setView([25.0330,121.5654],14);
+                // 站台座標(國道8號路口,現場實測 2026-08-13)。換站台改這裡，
+                // 並用 scripts/fetch_map_tiles.py 重抓該座標的圖磚。
+                map=L.map('map', {zoomControl: false}).setView(MAP_SITE_CENTER, MAP_SITE_ZOOM);
                 L.control.zoom({position:'bottomright'}).addTo(map);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-                    attribution:'OSM',
-                    maxZoom:19
+                // 🛑 離線圖磚:現場是封閉網段,連不到任何線上圖磚服務,
+                //    用線上來源整片地圖會是空白。圖磚放在 web/tiles/ 隨版控走。
+                //    範圍只有站台周邊(z10~18),拉太遠或縮太近會沒有圖磚。
+                //    來源是國土測繪中心 WMTS —— 不要改回 OSM 官方 tile server,
+                //    他們對大量下載回「Access blocked」告示圖(HTTP 200,不是錯誤碼)。
+                L.tileLayer('/web/tiles/{z}/{x}/{y}.jpg',{
+                    attribution:'© 內政部國土測繪中心（離線圖磚）',
+                    minZoom:MAP_MIN_ZOOM,
+                    maxZoom:MAP_MAX_ZOOM,
+                    errorTileUrl:MAP_BLANK_TILE
                 }).addTo(map);
                 updateMarkers();
                 // 多保險: 100ms 後再 invalidate 一次 (動畫切換完成)
