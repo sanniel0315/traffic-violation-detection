@@ -5,7 +5,7 @@ Jetson NX 邊緣運算：車輛偵測、車牌辨識、違規偵測、**壅塞�
 ## 技術棧
 - **後端**：FastAPI（:8000）+ SQLAlchemy + SQLite（`data/violations.db`）
 - **前端**：Vue 3 SPA（`web/index.html`）+ Element Plus
-- **AI**：YOLOv8n + TensorRT（車輛）、YOLO26s-cls（大型車細分）、Tesseract（車牌 OCR）
+- **AI**：YOLOv8n + TensorRT（車輛）、YOLO26s-cls（大型車細分）、YOLO 字元偵測微服務 :8010（車牌 OCR，見 `ocr 流程.md`）
 - **NVR**：Frigate + MQTT
 - **平台**：JetPack 6.0 / CUDA 12.2 / TensorRT 8.6 / Python 3.10
 

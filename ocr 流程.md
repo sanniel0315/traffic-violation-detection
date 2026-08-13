@@ -1,328 +1,228 @@
-# OCR 流程
+# 車牌辨識（LPR）架構 — 實際線上版
 
-## 入口
+> 本文對照 2026-08-13 的程式碼逐行核對後改寫，描述的是**現場已驗收、正在跑的**流程。
+> 舊版文件寫的「Tesseract 雙路徑 / 切字 fallback / 224×72 normalize」已經不是實際路徑，
+> 相關程式碼還留在檔案裡但不會執行，見文末〈已停用的舊路徑〉。
 
-- 單張辨識 API: [api/routes/lpr.py](/home/mic-711/projects/traffic-violation-detection/api/routes/lpr.py)
-- 串流辨識 API: [api/routes/lpr_stream.py](/home/mic-711/projects/traffic-violation-detection/api/routes/lpr_stream.py)
-- 車牌 detector: [recognition/plate_detector.py](/home/mic-711/projects/traffic-violation-detection/recognition/plate_detector.py)
-- OCR recognizer: [recognition/plate_recognizer.py](/home/mic-711/projects/traffic-violation-detection/recognition/plate_recognizer.py)
+---
 
-目前主流程分成兩種：
+## 1. 系統組成：兩個 process
 
-1. 單張辨識 `api/routes/lpr.py`
-2. 串流辨識與歷史紀錄 `api/routes/lpr_stream.py`
-
-## 單張辨識流程
-
-### 1. 取得影像
-
-- 來源可能是 upload、base64、camera snapshot。
-- camera snapshot 會先透過 `resolve_analysis_source(camera)` 取得分析來源。
-
-### 2. 找車牌框
-
-- 使用 `PlateDetector.detect(frame, conf=0.12)` 找候選車牌框。
-- 每個候選框會被裁成 `crop`。
-
-### 3. OCR
-
-- 每個 `crop` 會送進 `_recognize_plate_on_crop()`。
-- 這個函式實作在 `lpr_stream.py`，單張 API 直接共用。
-
-### 4. 候選文字評分
-
-- OCR 輸出會做：
-  - 正規化
-  - 產生 plate variants
-  - 格式分數 `_plate_layout_score()`
-  - 最終分數 `_score_ocr_result()`
-- 分數最高的候選 plate 會回傳。
-
-## 串流辨識主流程
-
-### 1. 啟動任務
-
-- `POST /api/lpr/stream/start/{camera_id}`
-- 建立 `LPRStreamTask`
-- 每台 camera 一個背景 thread
-
-任務內的重要狀態：
-
-- `vehicle_tracker`: 用來追蹤同一台車
-- `vehicle_track_states`: 記錄每個 track 的狀態
-- `pending_plate_votes`: OCR 投票桶
-- `last_committed_plates`: history commit cooldown 用
-
-## 目前實際 11 步流程
-
-```text
-frame
--> vehicle detect
--> vehicle track
--> plate detect
--> plate crop + padding + tighten
--> quality check + normalize
--> main whole-plate OCR
--> low-confidence fallback char OCR
--> syntax repair + candidate scoring
--> char-level voting
--> confirmed
--> commit history
+```
+traffic-api   :8000    主程式。LPR 串流任務跑在 process 內（每台攝影機一個 thread）
+traffic-ocr   :8010    services/ocr_service.py — YOLO 字元偵測微服務
 ```
 
-## 串流逐幀處理流程
+拆成兩個 process 的原因（`recognition/plate_recognizer.py:41`）：**字元 YOLO 不要跟主
+偵測 YOLO 搶 GPU**。微服務是裸 `http.server`，模型 load 一次常駐，收 PNG bytes 回 JSON。
+
+兩個都是 systemd unit，`traffic-api.service` 宣告 `After/Wants=traffic-ocr.service`。
+
+```bash
+systemctl status traffic-ocr traffic-api
+curl -s http://127.0.0.1:8010/          # 健康檢查
+```
+
+---
+
+## 2. 模型
+
+| 用途 | 檔案 | 載入位置 |
+|---|---|---|
+| 車牌框偵測 | `models/lpr/plate_yolov8n.engine`，**不存在才退回** `.pt` | `recognition/plate_detector.py:17` |
+| 字元偵測 | `models/lpr/Charcter-LP.pt` | `services/ocr_service.py:114` |
+
+**現場實況**：`models/lpr/` 只有 `plate_yolov8n.pt`（19MB），**沒有 `.engine`**
+→ 車牌框走的是 PyTorch，不是 TensorRT。
+
+**字元模型是 2026-07-13 finetune 後的版本**（`Charcter-LP.pt` 與
+`Charcter-LP_tw_v1.pt` 同為 52,029,963 bytes）。回滾方式：
 
-### 1. 開串流
+```bash
+cp models/lpr/Charcter-LP.pt.before_finetune models/lpr/Charcter-LP.pt
+sudo systemctl restart traffic-ocr.service
+```
+
+`.pt` 可跨機器搬（`.engine` 不行，綁 GPU/TensorRT 版本）。
 
-- `_open_capture(source)` 依來源選 backend
-- 持續讀 frame
+---
 
-### 2. 車輛偵測
+## 3. 對外端點
 
-- 先抓車輛 bbox
-- 只保留車類別
-- 用 `VehicleTracker` 追蹤成 track
+**串流辨識**（`api/routes/lpr_stream.py`，prefix `/api/lpr/stream`）
 
-### 3. 對每台車找車牌
+| 方法 | 路徑 | 用途 |
+|---|---|---|
+| POST | `/start/{camera_id}` | 起一個背景辨識 thread |
+| POST | `/stop/{camera_id}` | 停 |
+| GET | `/status/{camera_id}` | 任務狀態 + debug 計數器 |
+| GET | `/results/{camera_id}` | 該台最近結果 |
+| GET | `/history` | 歷史紀錄查詢（支援 `min_confidence` 過濾） |
+| GET | `/camera-options` | 可選攝影機清單 |
+| GET | `/snapshot/{filename}` | 車牌截圖 |
+| GET | `/all` | 全部任務總覽 |
 
-對每個 vehicle：
+**單張辨識**（`api/routes/lpr.py`，prefix `/api/lpr`）
+
+`/recognize-upload`、`/recognize-base64`、`/recognize-camera/{camera_id}`
+—— 三者最後都收斂到同一個 `_recognize_plate_on_crop()`。
 
-- 先取車輛 crop
-- 用 `PlateDetector` 直接找 plate bbox
-- 若 detector 不穩，還會走 heuristic plate proposal
+---
 
-### 4. 車牌 crop 微調
+## 4. 串流逐幀流程（實際）
 
-候選 plate 會再經過：
+```
+frame
+  ├─ cam_2 / cam_6 → shared_frames（detection worker 經 frigate latest.jpg 拿的 1080p）
+  │                   取不到 → 直接 GET frigate /api/cam_N/latest.jpg
+  └─ 其他攝影機     → cap.read()
+        ↓
+車輛偵測 + VehicleTracker 追蹤（只留車類別）
+        ↓
+車道 ROI 過濾（見 §7）
+        ↓
+PlateDetector.detect(conf=0.12) 找車牌框 → crop
+        ↓
+_recognize_plate_on_crop(crop)  →  recognizer.recognize_easy(crop)
+        ↓
+【5 變體 ensemble】original / clahe / upscale_2x / bilateral / gray_otsu
+   每個變體各 POST 一次到 :8010
+   加權投票：先比出現次數，同票再比平均 conf
+   多變體同意加 bonus（每多 1 票 +0.05，上限 +0.15，總分封頂 0.99）
+   全部 fail → recognize_chars() 字元分割 fallback
+        ↓
+【多幀空間投票】以車牌中心切 bucket，bucket 邊長 160px、TTL 3.5s
+        ↓
+confirm 判定（§6）
+        ↓
+commit 判定（§6）+ 同車牌 cooldown 20s
+        ↓
+_enforce_plate_format 邊界修復（§5）
+        ↓
+寫入 lpr_records（含 vehicle_bbox）+ 更新 lpr_camera_stats
+```
 
-- `_tighten_plate_crop_with_bbox()`
-- `_flatten_plate_roi_with_bbox()`
-- `_enhance_plate_snapshot()`
+### 影像來源分流為什麼要分
 
-目的：
+`_SHARED_FRAME_LPR_CAMS = {2, 6}`（`lpr_stream.py:2842`）。
 
-- 把 plate 框收緊
-- 修正傾斜
-- 放大與增強字元邊緣
+這兩台**不可以走 `cap.read()`** —— 對 go2rtc 來源會偶發 native SEGV，
+把整個 traffic-api process 拉垮。改吃 detection worker 已經取好的
+frigate `latest.jpg`（1080p），取不到才自己去 GET 一次。
 
-### 5. 品質檢查與 normalize
+新增攝影機若也走 go2rtc，要一併加進這個集合。
 
-`_recognize_plate_on_crop()` 進 OCR 前會先做：
+---
 
-- 品質指標 `_plate_quality_metrics()`
-- 品質分級 `_plate_quality_level()`
-- 品質分數 `_plate_quality_score()`
-- normalize 到固定尺寸 `224 x 72`
+## 5. 台灣車牌格式修復（兩層）
 
-目前會看：
+### 第一層：微服務內 `_repair_plate()`（`ocr_service.py:45`）
 
-- 寬高
-- blur
-- brightness
-- contrast
-- aspect ratio
-- angle
+字元 YOLO 出框之後：
 
-太差的 crop 不會直接往下 commit。
+1. **y 座標過濾** —— 只留主要那一行（濾掉牌框上下的雜訊字）
+2. **單字元 conf < 0.4 丟掉** —— 避免一個糊字拖低整體
+3. 依 x 排序組成 `raw_text`，`avg_conf` = 各字元平均
+4. **漏字偵測** —— 相鄰字元 gap / 字寬中位數 > 1.5 就判定可能漏字，
+   依比例給 penalty（1.5→×0.7、2.0→×0.5、2.5+→×0.35）
+5. **格式比對 + 相似字 swap** —— 對到台灣車牌格式（swap ≤ 2、字母位不含 I/O/Q）
+   就用修復後的字串，`conf = avg_conf × (0.6 + 0.4×repair_score) × penalty`
+6. 對不到格式 —— 仍回傳（含 dash 方便人眼看），但 **conf × 0.35 大幅降權**，
+   交給下游門檻濾掉
 
-### 6. OCR 路徑
+### 第二層：存 DB 前 `_enforce_plate_format()`（`lpr_stream.py:146`）
 
-`_recognize_plate_on_crop()` 目前是雙路徑：
+投票層本身**沒有格式檢查**，所以在寫進 DB 前再擋一次。
 
-1. 主路徑：整牌 OCR
-2. 備援路徑：切字 OCR
+原則（寫在 docstring 裡，改的時候不要破壞）：
 
-#### 主路徑
+- **只修不丟** —— 修不成合法格式就原樣回傳，由 `min_confidence` 去濾
+- **對已合法車牌 idempotent** —— 重複套用結果不變
+- 一樣是 swap ≤ 2、字母位排除 I/O/Q
 
-- `_recognize_plate_fast()`
-- 或 `PlateRecognizer.recognize()`
+> 這層是 2026-07 修「23% 無效格式高信心存進 DB」加的。
+> 典型案例：真牌 `BKA-5681` 被讀成 `BKAS-681`（5→S 邊界誤讀）。
+> 根因是 `lpr_stream` in-process 路徑與 `:8010` 兩套後處理不一致，OCR 模型本身沒錯。
 
-先直接讀整張 plate ROI。
+---
 
-#### 備援切字路徑
+## 6. 門檻常數（`lpr_stream.py:58-73`）
 
-- `_segment_plate_characters()`
-- `_ocr_single_character_candidates()`
-- `_rebuild_plate_from_char_candidates()`
+| 常數 | 值 | 意義 |
+|---|---|---|
+| `_PLATE_VOTE_BUCKET_SIZE` | 160 | 空間投票 bucket 邊長（px） |
+| `_PLATE_VOTE_TTL_SEC` | 3.5 | 投票桶存活秒數 |
+| `_PLATE_CONFIRM_MIN_COUNT` | **2** | confirm 需要的票數 |
+| `_PLATE_CONFIRM_MIN_SCORE` | **1.8** | 或加權分數達標 |
+| `_PLATE_COMMIT_MIN_SCORE` | **1.5** | 寫 DB 的最低分數 |
+| `_PLATE_COMMIT_MIN_CONF` | 0.40 | 寫 DB 的最低信心 |
+| `_PLATE_COMMIT_MIN_QUALITY` | 0.08 | 寫 DB 的最低影像品質 |
+| `_PLATE_COMMIT_COOLDOWN_SEC` | 20.0 | 同車牌重複寫入冷卻 |
 
-只有主路徑不夠穩時才啟動。
+**confirm** = `vote_count ≥ 2` **或** `score ≥ 1.8` **或** 強單幀 **或** 極強單幀。
 
-### 7. OCR 結果清理
+程式碼註解留著調整痕跡（`3 → 2`、`2.4 → 1.8`、`2.0 → 1.5`、`0.12 → 0.08`）——
+整體策略是**放寬收錄、靠格式修復把關**，不是靠高門檻。改門檻前先看懂這個取捨。
 
-OCR 結果會做：
+---
 
-- `_clean_plate_text()`
-- `_validate_plate_text()`
-- `_plate_text_candidates()`
-- `_plate_variants()`
-- `_score_ocr_result()`
-- `_is_plausible_plate()`
+## 7. 車道 ROI 過濾（`lpr_stream.py:2765`）
 
-只有通過基本合理性檢查的 plate 才會往下走。
+```python
+_exclude = {"no_parking", "sidewalk", "red_line"}
+```
 
-### 8. 多幀字元級投票
+LPR 只用**車道相關**的 zone（車流/測速）。
 
-為了避免單幀誤判，串流流程有 plate vote bucket：
+🛑 **禁停區 / 人行道 / 紅線不是車道偵測範圍**。以前沒排除時，cam_6 只畫了禁停區
+→ 主車道的車全被濾掉 → `vehicles_detected` 恆為 0，看起來像模型壞了。
 
-- `_PLATE_VOTE_BUCKET_SIZE = 160`
-- `_PLATE_VOTE_TTL_SEC = 3.5`
+---
 
-同一空間 bucket 內的候選會累積：
+## 8. 資料落地
 
-- 次數 `count`
-- 最佳信心度 `best_conf`
-- 是否 valid
-- 原始 raw OCR
-- 字元位置投票 `char_votes`
+| 表 | 內容 |
+|---|---|
+| `lpr_records` | 每筆確認車牌：`plate_number`、`confidence`、`valid`、`vehicle_type`、`snapshot`、`raw`、`vehicle_bbox`、`lane_no`、`created_at` |
+| `lpr_camera_stats` | 每台累計計數器：`total_frames`、`vehicles_detected`、`plate_boxes_detected`、`ocr_candidates_detected`、`vote_candidates_detected`、`confirmed_candidates`、`committed_candidates` |
+| `lpr_report_aggs` | 報表聚合桶 |
 
-投票權重不是只看次數，也會看：
+`vehicle_bbox` 是給「違規 ↔ 車牌」關聯用的：違規當下就在該車 bbox 內做 OCR，
+關聯靠 bbox IoU（`track_id` 跨模組不通用）。
 
-- OCR confidence
-- plate detector confidence
-- quality score
-- syntax score
-- center score
+`lpr_camera_stats` 的七個計數器是**排查漏斗**用的 —— 哪一段掉到 0 就知道問題在哪：
 
-### 9. confirmed 條件
+```
+total_frames → vehicles_detected → plate_boxes_detected → ocr_candidates
+             → vote_candidates → confirmed → committed
+```
 
-目前 confirmed 代表：
+---
 
-- 已經通過候選合理性檢查
-- 有進投票桶
-- `vote_count` 或 `vote_score` 已達標
+## 9. 已停用的舊路徑（程式碼還在，但不執行）
 
-確認條件目前為：
+`_recognize_plate_on_crop()`（`lpr_stream.py:942`）在**第 963 行就 `return`**，
+底下標著 `# === 以下為舊 Tesseract 邏輯（停用）===` 的 200 多行不會被執行，包括：
 
-- `vote_count >= 3`
-- 或 `vote_score >= 2.2`
-- 或 `valid 且 conf >= 0.50`
-- 或 `conf >= 0.72`
+- `_tighten_plate_crop_with_bbox()` / `_flatten_plate_roi_with_bbox()` / `_enhance_plate_snapshot()`
+- normalize 到 224×72
+- `recognize_chars` 切字路徑（**注意**：這個在 `recognize_easy` 內部仍是 fallback，
+  只是 `_recognize_plate_on_crop` 這一層的呼叫不會走到）
+- 所有 `pytesseract` 呼叫
 
-若投票還不夠，也允許強單幀 fallback：
+`import pytesseract` 還在檔案頂端，但**主線已經沒有 Tesseract**。
 
-- `conf >= 0.55`
-- `score >= 3.10`
-- `layout >= 1.20`
+保留現狀是刻意的：這是已驗收的狀態，清死碼會動到 `lpr_stream.py` 主檔，
+要做的話必須排在現場驗證一起，不可以單獨 deploy。
 
-### 10. commit history 條件
+---
 
-confirmed 不等於直接寫 history。
+## 10. 排查順序
 
-目前 commit 需要再通過：
-
-- `plate != UNKNOWN`
-- `raw != vehicle_only`
-- `valid = true`
-- `vote_score >= 2.8`
-- `confidence >= 0.42`
-- `quality_score >= 0.40`，除非 `conf` 很高
-- 非單幀弱候選
-- 同 plate cooldown 通過
-
-cooldown 目前是：
-
-- `30 秒`
-- key 是 `plate`
-
-### 11. 寫入內容
-
-`_store_history_record()` 會寫：
-
-- `plate_number`
-- `confidence`
-- `valid`
-- `vehicle_type`
-- `snapshot`
-- `raw`
-- `camera_id`
-- `camera_name`
-- `created_at`
-
-DB model 是 `LPRRecord`。
-
-## UNKNOWN / vehicle_only
-
-若某個 vehicle track 消失前都沒成功辨識到 plate：
-
-- `_flush_inactive_vehicle_tracks()` 會補寫一筆 `UNKNOWN`
-- `raw = vehicle_only`
-
-這些資料預設不會出現在歷史頁，除非查詢時加 `include_unknown=true`。
-
-## 頁面狀態欄位怎麼看
-
-LPR 頁面的即時統計目前大致對應：
-
-- `已處理幀`: 已進入逐幀處理
-- `車輛數`: vehicle detect + track 有命中
-- `車牌框`: plate detector 有命中
-- `OCR 候選`: OCR 至少產出過 1 個候選字串
-- `投票命中`: 有候選進入 confirmed
-
-注意：
-
-- `投票命中` 不等於辨識正確
-- `投票命中` 也不等於已寫進 history
-- 真正 history commit 還要再過 commit 條件
-
-## 歷史查詢
-
-查詢 API:
-
-- `GET /api/lpr/stream/history`
-
-預設行為：
-
-- 只顯示有 plate 的記錄
-- 排除 `plate_number = UNKNOWN`
-- 排除 `raw = vehicle_only`
-
-因此你在 UI 看到的「車牌歷史」通常會比實際總寫入數少。
-
-## 為什麼會覺得歷史偏少
-
-常見原因有三個：
-
-1. 預設查詢把 `UNKNOWN` 全排掉
-2. 候選有進 confirmed，但 commit 被擋掉
-3. crop 品質差，OCR 被 syntax repair 硬修或直接淘汰
-
-目前已調整：
-
-- 主流程改成整牌 OCR 優先
-- 備援切字改成 top-k 候選
-- 多幀投票改成字元級投票
-- history 改成 `confirmed -> commit` 分離
-- commit 目前改成偏保守，先擋掉假牌
-
-## 目前實際判斷順序
-
-1. 讀 frame
-2. 偵測 vehicle
-3. 追蹤 vehicle track
-4. 對 vehicle 內找 plate bbox
-5. 微調 plate crop + normalize
-6. quality check
-7. 主 OCR / 備援切字 OCR
-8. syntax repair + 候選評分
-9. bucket 投票
-10. confirmed
-11. commit history
-12. 沒 plate 的 stale track 視情況補 `UNKNOWN`
-
-## 建議排查順序
-
-如果辨識數量異常少，先看：
-
-1. `GET /api/lpr/stream/status/{camera_id}`
-2. `last_candidate_plate`
-3. `last_confirmed_plate`
-4. `confirmed_candidates`
-5. `committed_candidates`
-6. `/api/lpr/stream/history?include_unknown=true`
-
-判讀方式：
-
-- `vehicles_detected` 高，但 `vote_candidates_detected` 低：plate detector / crop 品質有問題
-- `vote_candidates_detected` 高，但 `committed_candidates` 低：commit 條件或品質門檻擋住
-- `include_unknown=true` 很多，但正常 history 很少：OCR 成功率不足，不是沒抓到車
+1. `GET /api/lpr/stream/status/{camera_id}` 看七個計數器，找出漏斗斷在哪一段
+2. `total_frames = 0` → 影像來源問題，看 §4 的來源分流
+3. `vehicles_detected = 0` → 先看 ROI 是不是只畫了禁停區（§7）
+4. `plate_boxes = 0` 但有車 → 車牌框模型 / 解析度不足
+5. `ocr_candidates = 0` 但有 plate box → `curl http://127.0.0.1:8010/` 看微服務是否活著
+6. 有 committed 但車牌是錯的 → 看 `raw` 欄位與 `matched_format`，判斷是 OCR 讀錯
+   還是格式修復修歪
