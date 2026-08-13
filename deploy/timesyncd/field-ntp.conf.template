@@ -1,6 +1,12 @@
 # systemd-timesyncd 校時來源 — 由 scripts/setup_new_site.sh 以 FIELD_NTP 產生。
-# 現場網段內的 NTP 優先，外網 fallback 只在維運線通的時候才用得到。
-# 現場若沒有外網，光靠 FallbackNTP 會校不到時，報表時戳會慢慢漂。
+#
+# 🛑 一定要裝成 /etc/systemd/timesyncd.conf.d/zz-field-ntp.conf。
+#    drop-in 依檔名排序讀取，後讀的才蓋得掉先讀的；Jetson 出廠自帶
+#    nv-fallback-ntp.conf（0.pool.ntp.org 等三台外網），檔名排在 nv- 前面
+#    的話我們清空的 FallbackNTP 會被它整個加回來。
+#
+# FallbackNTP 留空是刻意的：現場是封閉網段，沒有外網。空值的意思是
+# 「重設前面累加進來的清單」，不是「不設定」。
 [Time]
 NTP=__FIELD_NTP__
-FallbackNTP=time.google.com time.cloudflare.com
+FallbackNTP=
