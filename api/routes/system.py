@@ -353,7 +353,17 @@ def _get_ntp_runtime_status(servers: List[str] | None = None) -> Dict[str, Any]:
 
 
 def _write_root_file(path: Path, content: str) -> None:
-    """寫入需要 root 的設定檔：先直接寫，沒權限再退回 sudo tee。"""
+    """寫入需要 root 的設定檔：先直接寫，沒權限再退回 sudo tee。
+
+    父目錄不一定存在（drop-in 目錄在某些環境是空的），要先建，
+    否則 write_text 會丟 FileNotFoundError 而不是 PermissionError，
+    走不到 sudo 那條路。
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        subprocess.run(["sudo", "-n", "mkdir", "-p", str(path.parent)],
+                       capture_output=True, timeout=5)
     try:
         path.write_text(content, encoding="utf-8")
         return
@@ -370,6 +380,11 @@ def _sudo_if_needed(cmd: List[str]) -> List[str]:
     return cmd if os.geteuid() == 0 else ["sudo", "-n"] + cmd
 
 
+def _is_systemd_host() -> bool:
+    """PID 1 是不是 systemd。容器內為 False —— 這是 sd_booted() 的標準判法。"""
+    return os.path.isdir("/run/systemd/system")
+
+
 def _apply_ntp_servers(servers: List[str]) -> tuple[bool, str]:
     """Best-effort apply NTP servers in runtime environment.
 
@@ -383,6 +398,11 @@ def _apply_ntp_servers(servers: List[str]) -> tuple[bool, str]:
     try:
         if not shutil.which("timedatectl"):
             return False, "環境未提供 timedatectl，僅儲存設定"
+        # 容器內有 timedatectl 執行檔但 PID 1 不是 systemd，套用一定失敗
+        # （"System has not been booted with systemd" / "Failed to connect to bus"）。
+        # 這是預期情況不是錯誤：容器的時間本來就跟著 host 走，改設定沒有意義。
+        if not _is_systemd_host():
+            return False, "非 systemd 環境（容器內），僅儲存設定；時間由 host 負責"
         # FallbackNTP 留空是刻意的：現場封閉網段沒有外網，留著外網 fallback
         # 只會讓 timesyncd 一直去試連不到的位址。空值會「重設」前面 drop-in
         # 累加進來的清單（Jetson 出廠那份會塞 pool.ntp.org），不是「不設定」。
@@ -445,7 +465,9 @@ def _run_ntp_sync_once(reason: str = "manual") -> Dict[str, Any]:
     else:
         add_log("warning", f"NTP 同步狀態未知 ({reason}) {message}", "system")
     if not ok_apply and status == "success":
-        add_log("warning", f"NTP 設定未完全套用: {apply_msg}", "system")
+        # 容器內套用不了是常態(時間跟著 host 走),每 10 分鐘噴一次 warning 是噪音
+        level = "warning" if _is_systemd_host() else "info"
+        add_log(level, f"NTP 設定未完全套用: {apply_msg}", "system")
     return result
 
 
