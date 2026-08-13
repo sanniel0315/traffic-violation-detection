@@ -2,9 +2,10 @@
 
 基於 NVIDIA Jetson 平台的 AI 邊緣運算交通監控系統，整合車輛偵測、車牌辨識、違規偵測、壅塞分析等功能。
 
-![Platform](https://img.shields.io/badge/Platform-Jetson%20NX-green)
+![Platform](https://img.shields.io/badge/Platform-Jetson%20AGX%20Orin-green)
 ![Python](https://img.shields.io/badge/Python-3.10-blue)
-![CUDA](https://img.shields.io/badge/CUDA-12.2-brightgreen)
+![CUDA](https://img.shields.io/badge/CUDA-12.6-brightgreen)
+![TensorRT](https://img.shields.io/badge/TensorRT-10.3-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 ---
@@ -21,6 +22,14 @@
 - [模組說明](#-模組說明)
 - [使用指南](#-使用指南)
 - [開發指南](#-開發指南)
+- [環境變數](#-環境變數)
+- [故障排除](#-故障排除)
+
+**延伸文件**：[`ocr 流程.md`](./ocr%20流程.md)（車牌辨識架構）、
+[`RUNBOOK.md`](./RUNBOOK.md)（運維）、
+[`DEPLOY_NEW_SITE.md`](./DEPLOY_NEW_SITE.md)（新站台部署）、
+[`電子鎖_README.md`](./電子鎖_README.md)、
+[`API整合文件.md`](./API整合文件.md)（對外規格）
 
 ---
 
@@ -30,7 +39,9 @@
 |------|------|------|
 | 🚗 **車輛偵測** | 偵測汽車、機車、公車、卡車、自行車、行人 | YOLOv8n + TensorRT |
 | 🚛 **大型車分類** | 大貨車/小貨車/大客車二階段細分類 (Top-1 97.7%) | YOLO26s-cls |
-| 🔢 **車牌辨識** | 台灣車牌格式辨識，多重預處理提升準確率 | Tesseract OCR |
+| 🔢 **車牌辨識** | 台灣車牌格式辨識，5 變體 ensemble + 多幀投票 + 格式修復 | YOLO 字元偵測微服務 (:8010) |
+| 🔒 **電子鎖 / IO** | 箱門門磁、刷卡紀錄、三色燈號、DI/DO 控制 | RS-485 Modbus + 獨立 daemon |
+| 🅿️ **停車場管理** | 車位佔用判定、幾何編輯器、VLM 仲裁 | YOLO + 分類器 + Qwen2-VL |
 | 🚨 **違規偵測** | 闖紅燈、超速、違規停車、逆向行駛 | ROI + 規則引擎 + 信心度 sanity gate |
 | 🎯 **速度精準測量** | Trip wire ±1-2 km/h / Homography ±2-5 km/h / Vanishing-point auto-cal | OpenCV findHomography + Kalman filter |
 | 🚦 **壅塞偵測** | 即時車流密度分析，四級壅塞等級判定 | 佔用率演算法 |
@@ -42,7 +53,37 @@
 
 ---
 
-## 🆕 最近更新 (2026-05)
+## 🆕 最近更新 (2026-08)
+
+### 車牌辨識架構（已驗收）
+- OCR 主線是 **YOLO 字元偵測微服務 `:8010`**，不是 Tesseract；Tesseract 相關程式碼仍在檔案內但不執行
+- 5 變體 ensemble（original / clahe / upscale_2x / bilateral / gray_otsu）加權投票
+- 字元模型 2026-07-13 finetune 版上線（`Charcter-LP.pt`），可回滾
+- 格式修復兩層：微服務內 `_repair_plate` + 存 DB 前 `_enforce_plate_format`（只修不丟、idempotent）
+- 完整流程見 [`ocr 流程.md`](./ocr%20流程.md)
+
+### 電子鎖 / IO 模組
+- IO RS-485 拆成獨立 systemd unit（`traffic-io`，`127.0.0.1:8011`），SEGV 不會拖垮主服務
+- 同匯流排支援兩顆電子鎖（addr 2 = 後門 / addr 3 = 前門），含位址掃描與變更
+- 門磁為 NO 常開接點：**門關 = 接點閉合 = raw 1**（與協議文件相反，以現場實測為準）
+- 三色燈號解耦：通訊故障亮紅燈時，綠燈（運作中）不受影響，但壓制「下載中」白燈閃爍
+
+### 攝影機設定自動同步
+- 攝影機新增/修改/刪除後自動改寫 Frigate `go2rtc.streams` 與 `cameras`，去抖後重啟
+- 修掉「DB 是新 IP、config.yml 還是舊 IP」造成的半死狀態
+
+### NTP 校時
+- 設定改寫 systemd **drop-in**（主檔會被 drop-in 蓋掉）
+- drop-in 檔名必須 `zz-` 開頭，才排在 Jetson 出廠的 `nv-fallback-ntp.conf` 之後
+- 現場為封閉網段，**不留外網 fallback**
+
+### 保存政策
+- 照片 30 天 / 錄影 3 天 / `congestion_samples` 30 天
+- 測試用攝影機媒體只留 3 天（`--camera-days`），每日 02:30 釋出空間
+
+---
+
+## 先前更新 (2026-05)
 
 ### Dashboard V3 主頁重做
 - 移除資訊重複（hero meta / KPI / service health 三處不再顯示同資料）
@@ -135,20 +176,24 @@
 
 ## 💻 系統需求
 
-### 硬體需求
+### 硬體需求（現場實機）
 ```
-裝置: NVIDIA Jetson Xavier NX 8GB (或更高)
-儲存: 64GB+ SSD/SD Card
-網路: 支援 RTSP 攝影機
+裝置: NVIDIA Jetson AGX Orin Developer Kit
+系統碟: eMMC 54GB          ← 容量吃緊，媒體與模型一律放 NVMe
+資料碟: NVMe 938GB 掛在 /mnt/nvme
+網路: RTSP 攝影機 + RS-485（IO 模組 / 電子鎖）
 ```
 
-### 軟體環境
+`data/` `models/` `output/` `storage/` 四個目錄是 symlink 指向 `/mnt/nvme/traffic/`，
+由 `scripts/init_dirs.sh` 建立。**不要把媒體寫回 eMMC**，54GB 很快就滿。
+
+### 軟體環境（現場實測值）
 ```
-系統: JetPack 6.0 (Ubuntu 22.04)
-CUDA: 12.2
-TensorRT: 8.6
-Python: 3.10
-Docker: 24.0+
+系統: JetPack 6.1 (L4T R36.4.0 / Ubuntu 22.04)
+CUDA: 12.6
+TensorRT: 10.3
+Python: 3.10.12
+Docker: 只用來跑 Frigate；主程式跑 host systemd
 ```
 
 ---
@@ -163,44 +208,99 @@ traffic-violation-detection/
 ├── 📄 README.md                     # 本文件
 │
 ├── 📂 api/                          # FastAPI 後端服務
-│   ├── 📄 main.py                   # API 入口點
+│   ├── 📄 main.py                   # API 入口點（註冊 23 個 router）
 │   ├── 📄 models.py                 # SQLAlchemy 資料模型
 │   └── 📂 routes/                   # API 路由模組
 │       ├── 📄 auth.py               # 登入/登出/目前使用者
-│       ├── 📄 cameras.py            # 攝影機 CRUD + 連線測試
+│       ├── 📄 cameras.py            # 攝影機 CRUD + 連線測試 + Frigate 同步
 │       ├── 📄 violations.py         # 違規事件管理
 │       ├── 📄 stream.py             # 即時串流 + 偵測服務
 │       ├── 📄 frigate.py            # Frigate NVR 整合
+│       ├── 📄 frigate_camera_endpoints.py  # Frigate 逐台端點
 │       ├── 📄 lpr.py                # 車牌辨識 (單張)
-│       ├── 📄 lpr_stream.py         # 車牌辨識串流
+│       ├── 📄 lpr_stream.py         # 車牌辨識串流（主流程都在這）
 │       ├── 📄 lpr_visual.py         # LPR 視覺化串流
 │       ├── 📄 congestion.py         # 壅塞偵測服務
+│       ├── 📄 traffic.py            # 交通報表 / VD 報表
+│       ├── 📄 analytics.py          # 分析統計
+│       ├── 📄 external.py           # 對外 API（X-API-Key）
+│       ├── 📄 api_key_admin.py      # API 金鑰管理
+│       ├── 📄 io.py / io_tcp.py     # IO 模組（RS-485 / TCP）
+│       ├── 📄 lock.py               # 電子鎖（雙位址、刷卡、事件）
+│       ├── 📄 parking.py            # 停車場車位
+│       ├── 📄 sensor_fusion.py      # 感測器融合
+│       ├── 📄 vision_eye.py         # VisionEye
+│       ├── 📄 mqtt.py               # MQTT 橋接
+│       ├── 📄 nx.py                 # NX VMS 整合
+│       ├── 📄 system.py             # 硬體監測 / NTP / 識別碼
 │       └── 📄 logs.py               # 系統日誌服務
+│
+├── 📂 services/                     # 常駐服務與背景模組
+│   ├── 📄 ocr_service.py            # ⭐ YOLO 字元 OCR 微服務 (:8010)
+│   ├── 📄 io_daemon.py              # ⭐ IO/電子鎖獨立 daemon (:8011)
+│   ├── 📄 io_service.py             # IO 邏輯（燈號、門磁、刷卡）
+│   ├── 📄 io_module.py / pd3r3.py   # RS-485 Modbus 底層
+│   ├── 📄 frigate_sync.py           # 攝影機設定 → Frigate/go2rtc 同步
+│   ├── 📄 network_health.py         # 通訊故障判定（網卡 link 層）
+│   ├── 📄 mqtt_bridge.py            # MQTT
+│   └── 📄 parking_*.py              # 停車場（分類器 / VLM / SAHI / 佔用）
 │
 ├── 📂 detection/                    # 偵測模組
 │   ├── 📄 vehicle_detector.py       # YOLOv8 車輛偵測 (含大型車分類整合)
 │   ├── 📄 truck_classifier.py       # YOLO26s 大型車細分類器
 │   ├── 📄 violation_detector.py     # 違規偵測邏輯
-│   └── 📄 congestion_detector.py    # 壅塞偵測器
+│   ├── 📄 congestion_detector.py    # 壅塞偵測器
+│   ├── 📄 wrong_way.py              # 逆向
+│   ├── 📄 no_helmet.py              # 未戴安全帽
+│   ├── 📄 pedestrian_yield.py       # 未禮讓行人
+│   ├── 📄 parking_violation.py      # 違規停車
+│   ├── 📄 speed_calib.py            # 測速校正
+│   ├── 📄 auto_calibration.py       # 自動校正
+│   ├── 📄 radar_track.py            # 雷達軌跡
+│   └── 📄 gpu_lock.py               # GPU 推論互斥鎖
 │
 ├── 📂 recognition/                  # 辨識模組
-│   ├── 📄 plate_recognizer.py       # Tesseract 車牌 OCR
+│   ├── 📄 plate_detector.py         # 車牌框 YOLO
+│   ├── 📄 plate_recognizer.py       # 車牌 OCR（呼叫 :8010 微服務）
 │   └── 📄 frigate_integration.py    # Frigate 事件整合
 │
-├── 📂 web/                          # 前端介面
-│   ├── 📄 index.html                # Vue 3 SPA 主頁
+├── 📂 web/                          # 前端介面（單檔 inline-template SPA）
+│   ├── 📄 index.html                # Vue 3 SPA 主頁（11000+ 行）
 │   ├── 📄 nvr_playback.html         # NVR 回放介面 (EZ Pro 深色主題)
 │   ├── 📄 roi_editor.html           # ROI 編輯器
+│   ├── 📄 io_panel.html             # IO 控制面板
+│   ├── 📄 lock_panel.html           # 電子鎖面板
+│   ├── 📄 lpr_verify.html           # 車牌人工複驗
+│   ├── 📄 parking_editor.html       # 停車格幾何編輯器
+│   ├── 📄 parking_label.html        # 停車格標註
+│   ├── 📄 agency_landing.html       # 機關交付入口頁
 │   └── 📂 fonts/                    # 字型檔（含 CJK 疊加字型）
 │
+├── 📂 deploy/                       # 部署設定（進版控）
+│   ├── 📂 systemd/                  # traffic-api / -ocr / -io / -frigate / -cleanup
+│   ├── 📂 timesyncd/                # NTP drop-in 模板
+│   └── 📂 journald/                 # journal 保存政策
+│
+├── 📂 scripts/                      # 工具腳本
+│   ├── 📄 setup_new_site.sh         # 新站台一鍵初始化
+│   ├── 📄 init_dirs.sh              # 建立四個資料目錄 symlink
+│   ├── 📄 lint_vue_template.py      # ⭐ 改 web 前必跑
+│   ├── 📄 smoke_check.py            # 部署後煙霧測試
+│   ├── 📄 aggregate_reports.py      # 報表聚合
+│   ├── 📄 cleanup_storage.py        # 保存政策清理
+│   └── 📂 lpr_finetune/             # 車牌字元模型 finetune 流程
+│
 ├── 📂 config/                       # 設定檔
-│   └── 📂 frigate/
-│       └── 📄 config.yml            # Frigate NVR 設定
+│   ├── 📂 frigate/config.yml        # Frigate NVR 設定（執行期會被寫）
+│   └── 📂 system/                   # NTP / NX / 版面 / 功能開關
 │
 ├── 📂 models/                       # AI 模型 (不納入版控)
-│   ├── 📄 yolov8n.pt                # YOLOv8 PyTorch 偵測模型
-│   ├── 📄 yolov8n.engine            # TensorRT 加速模型
-│   └── 📄 truck_cls_yolo26s.pt      # YOLO26s 大型車分類模型
+│   ├── 📄 yolov8n.pt / .engine      # 車輛偵測（engine 優先）
+│   ├── 📄 truck_cls_yolo26s.pt/.engine  # 大型車分類
+│   └── 📂 lpr/
+│       ├── 📄 plate_yolov8n.pt      # 車牌框（現場無 .engine，走 PyTorch）
+│       ├── 📄 Charcter-LP.pt        # 字元偵測（線上 = 07-13 finetune 版）
+│       └── 📄 Charcter-LP.pt.before_finetune   # 回滾用
 │
 ├── 📂 storage/                      # 資料儲存 (不納入版控)
 │   ├── 📂 violations/               # 違規截圖
@@ -236,7 +336,10 @@ traffic-violation-detection/
 │  │ /api/congestion   壅塞偵測 (啟停/狀態/串流)                          │   │
 │  │ /api/frigate      NVR 整合 (設定/事件/錄影)                          │   │
 │  │ /api/traffic      交通報表 (VD 報表/事件查詢)                        │   │
-│  │ /api/system       系統管理 (NTP/NX/硬體狀態)                        │   │
+│  │ /api/system       系統管理 (NTP/NX/硬體狀態/識別碼)                  │   │
+│  │ /api/io /api/lock IO 模組與電子鎖 (轉發到 :8011 daemon)              │   │
+│  │ /api/parking      停車場車位                                         │   │
+│  │ /api/v1/external  對外資料 API (X-API-Key)                           │   │
 │  │ /api/logs         系統日誌 (即時/查詢/清除)                          │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -247,7 +350,7 @@ traffic-violation-detection/
 │   偵測模組       │       │   辨識模組       │       │   儲存層         │
 │ ┌─────────────┐ │       │ ┌─────────────┐ │       │ ┌─────────────┐ │
 │ │VehicleDetect│ │       │ │PlateRecogniz│ │       │ │  SQLite DB  │ │
-│ │ (YOLOv8)    │ │       │ │ (Tesseract) │ │       │ │  violations │ │
+│ │ (YOLOv8)    │ │       │ │ →:8010 OCR  │ │       │ │  violations │ │
 │ └─────────────┘ │       │ └─────────────┘ │       │ │  cameras    │ │
 │ ┌─────────────┐ │       │ ┌─────────────┐ │       │ └─────────────┘ │
 │ │Congestion   │ │       │ │ Frigate     │ │       │ ┌─────────────┐ │
@@ -261,51 +364,88 @@ traffic-violation-detection/
          │
          ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
+│                        同機常駐服務（獨立 process）                          │
+│  ┌─────────────────────────────┐  ┌─────────────────────────────────────┐  │
+│  │ traffic-ocr (:8010)         │  │ traffic-io (127.0.0.1:8011)         │  │
+│  │ └─ YOLO 字元偵測 OCR        │  │ ├─ RS-485 Modbus (DI/DO/電子鎖)     │  │
+│  │    拆開避免與主 YOLO 搶 GPU │  │ └─ 拆開避免 SEGV 拖垮主服務         │  │
+│  └─────────────────────────────┘  └─────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                     │
+┌─────────────────────────────────────────────────────────────────────────────┐
 │                              外部服務層                                      │
 │  ┌─────────────────────────────┐  ┌─────────────────────────────────────┐  │
-│  │ Frigate NVR (:5000)         │  │ IP 攝影機 (RTSP)                    │  │
-│  │ ├─ 動態偵測                 │  │ ├─ rtsp://user:pass@ip:port/path    │  │
+│  │ Frigate NVR (:5000, Docker) │  │ IP 攝影機 (RTSP)                    │  │
+│  │ ├─ go2rtc restream (:8554)  │  │ ├─ rtsp://user:pass@ip:port/path    │  │
 │  │ ├─ 事件錄影                 │  │ └─ H.264/H.265 編碼                 │  │
 │  │ └─ MQTT 推送                │  └─────────────────────────────────────┘  │
 │  └─────────────────────────────┘                                            │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+**process 邊界是刻意的**：字元 OCR 與 RS-485 各自跑在獨立 systemd unit。
+OCR 拆開是為了不跟主偵測搶 GPU；IO 拆開是因為 RS-485 的 native 例外會直接
+SEGV，同 process 會把整套偵測拉下水。
+
 ---
 
 ## 🚀 安裝部署
 
-### 方式一：Docker 部署 (推薦)
+> ⚠️ **正式機（Jetson）跑的是 host systemd，不是容器。**
+> 只有 Frigate 在 Docker。容器版 compose 是給開發機 / staging 用的，
+> 兩者搶同一個 `:8000`，**不能同時啟動**。
+
+### 方式一：正式部署（Jetson，systemd）
+
+新站台一次帶起來：
+
 ```bash
-# 1. 克隆專案
-git clone https://github.com/your-repo/traffic-violation-detection.git
+git clone git@github.com:sanniel0315/traffic-violation-detection.git
 cd traffic-violation-detection
 
-# 2. 建立環境變數
-cp .env.example .env
+FIELD_NTP=<現場NTP位址> TRAFFIC_STORAGE_ROOT=/mnt/nvme/traffic \
+  bash scripts/setup_new_site.sh
 
-# 3. 啟動服務
+sudo systemctl enable --now traffic-frigate traffic-ocr traffic-io traffic-api
+```
+
+四個服務的分工：
+
+| unit | 埠 | 職責 |
+|---|---|---|
+| `traffic-api` | `:8000` | 主程式（偵測、LPR 串流、報表、Web） |
+| `traffic-ocr` | `:8010` | YOLO 字元 OCR 微服務 |
+| `traffic-io` | `127.0.0.1:8011` | RS-485 IO / 電子鎖 daemon |
+| `traffic-frigate` | `:5000` | Frigate NVR（Docker compose 包一層） |
+| `traffic-cleanup.timer` | — | 每日 02:30 依保存政策清理 |
+
+`AUTH_SECRET` **必填**，沒設或用公開預設值會**直接拒絕啟動**
+（避免 session token 被偽造）。產生方式：
+
+```bash
+python3 -c "import secrets;print(secrets.token_urlsafe(48))"
+```
+
+### 方式二：容器部署（開發機 / staging）
+```bash
+cp .env.example .env        # 至少要有 AUTH_SECRET
 docker compose up -d
-
-# 4. 查看日誌
 docker logs -f traffic-api
 ```
 
-### 方式二：手動安裝
+程式碼是 bind-mount 進容器的，改完 `docker restart traffic-api` 就生效，
+不用 rebuild image（除非動到 `requirements.txt` / `Dockerfile`）。
+
+### 方式三：本機直跑
 ```bash
-# 1. 安裝依賴
 pip install -r requirements.txt
+bash scripts/init_dirs.sh                      # 建立四個資料目錄
+python3 scripts/download_plate_model.py        # 車牌模型
+AUTH_SECRET=$(python3 -c "import secrets;print(secrets.token_urlsafe(48))") \
+  uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 
-# 2. 安裝 Tesseract OCR
-sudo apt install tesseract-ocr tesseract-ocr-chi-tra
-
-# 3. 下載 YOLOv8 模型
-wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt -O models/yolov8n.pt
-# 4. (可選) 放置 TensorRT 模型
-# cp /path/to/yolov8n.engine models/yolov8n.engine
-
-# 5. 啟動 API
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+# 另開一個 terminal：OCR 微服務（不起的話車牌辨識全部拿不到結果）
+python3 services/ocr_service.py
 ```
 
 ### 存取服務
@@ -315,14 +455,15 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 | Web 介面 | http://localhost:8000/web/ | 管理介面 |
 | NVR 回放 | http://localhost:8000/web/nvr_playback.html | EZ Pro 風格回放介面 |
 | API 文件 | http://localhost:8000/docs | Swagger UI |
-| API Reference | [docs/API_REFERENCE.md](./docs/API_REFERENCE.md) | 完整 API 文件 (95+ 端點) |
+| API Reference | [docs/API_REFERENCE.md](./docs/API_REFERENCE.md) | 完整 API 文件（全系統 208 個端點） |
 | Frigate NVR | http://localhost:5000 | NVR 介面 |
 
-**預設登入帳號（首次初始化）**
+**預設登入帳號（首次初始化，可用 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 覆寫）**
 ```
 username: admin
 password: admin123
 ```
+⚠️ 上線前務必改掉。
 
 ### 部署後自動檢查（建議每次必跑）
 ```bash
@@ -333,7 +474,11 @@ python3 scripts/smoke_check.py --base-url http://127.0.0.1:8000 --timeout 60
 ./scripts/restart_and_verify.sh http://127.0.0.1:8000 60
 ```
 
-### 現場上板部署（無網路 Jetson）
+### 現場上板部署（無網路 Jetson，**容器版**）
+
+> 正式機是 systemd 版，離線更新請直接 `scp` 檔案或 `git bundle`，
+> 不要用下面的 docker save/load 流程 —— 那是容器版才適用。
+
 1. 開發機打包映像
 ```bash
 docker compose build api
@@ -410,16 +555,24 @@ gh workflow run "Jetson Device Verification"
 
 ### 手動 deploy（fallback）
 
-```bash
-# 從 dev PC ssh 進 Jetson
-ssh ubuntu@192.168.0.108 "cd ~/traffic-violation-detection && git pull origin main && sudo systemctl restart traffic-api"
+> 🛑 **不要寫死 LAN IP。** 現場的 LAN 位址是 DHCP，實測換過好幾次
+> （`.108` → `.102` → `192.168.84.87` → `192.168.1.3`）。
+> 一律走 Tailscale 或 Cloudflare Tunnel。
 
-# 或從 dev PC 透過 API trigger restart (NOPASSWD sudo 已設)
-curl -X POST http://192.168.0.108:8000/api/system/restart-api
+```bash
+# 從 dev PC ssh 進 Jetson（Tailscale 固定位址）
+ssh ubuntu@100.92.17.87 "cd ~/traffic-violation-detection && git pull origin main && sudo systemctl restart traffic-api"
 
 # 驗證部署版本
-curl http://192.168.0.108:8000/api/system/version
+ssh ubuntu@100.92.17.87 "cd ~/traffic-violation-detection && git log --oneline -1"
+
+# 外網（固定網址）
+curl https://tvd.name-car-box.com/api/health
 ```
+
+**pull 前先看 `git status`。** `config/frigate/config.yml` 與
+`config/system/*.json` 是執行期會被寫的檔案，會擋住 pull。
+CI 的部署流程已經處理（deploy 前後保留執行期設定檔），手動 pull 要自己顧。
 
 ### 完整流程文件
 
@@ -549,12 +702,20 @@ curl -X POST http://localhost:8000/api/cameras \
 |------|------|------|
 | `GET` | `/api/lpr/status` | LPR 服務狀態 |
 | `POST` | `/api/lpr/recognize-upload` | 上傳圖片辨識 |
+| `POST` | `/api/lpr/recognize-base64` | base64 圖片辨識 |
 | `POST` | `/api/lpr/recognize-camera/{id}` | 攝影機截圖辨識 |
 | `POST` | `/api/lpr/stream/start/{id}` | 啟動串流辨識 |
 | `POST` | `/api/lpr/stream/stop/{id}` | 停止串流辨識 |
-| `GET` | `/api/lpr/stream/status/{id}` | 串流辨識狀態 |
+| `GET` | `/api/lpr/stream/status/{id}` | 串流辨識狀態 + 七個排查計數器 |
 | `GET` | `/api/lpr/stream/results/{id}` | 取得辨識結果 |
+| `GET` | `/api/lpr/stream/history` | 歷史紀錄（支援 `min_confidence`） |
+| `GET` | `/api/lpr/stream/camera-options` | 可選攝影機清單 |
+| `GET` | `/api/lpr/stream/snapshot/{filename}` | 車牌截圖 |
+| `GET` | `/api/lpr/stream/all` | 全部任務總覽 |
 | `GET` | `/api/lpr/visual/stream/{id}` | 視覺化串流 |
+
+> 車牌辨識完整架構（模型、5 變體 ensemble、投票門檻、格式修復兩層、
+> 排查漏斗）見 **[`ocr 流程.md`](./ocr%20流程.md)**。
 
 **上傳辨識範例：**
 ```bash
@@ -777,70 +938,84 @@ class CongestionDetector:
 
 ---
 
-### 3. 車牌辨識模組 `recognition/plate_recognizer.py`
-```python
-class PlateRecognizer:
-    """台灣車牌辨識器 - 多重預處理 + Tesseract OCR"""
-    
-    PLATE_PATTERNS = [
-        r'^[A-Z]{3}-\d{4}$',    # ABC-1234 (新式)
-        r'^[A-Z]{2}-\d{4}$',    # AB-1234 (舊式)
-        r'^\d{4}-[A-Z]{2}$',    # 1234-AB
-        r'^[A-Z]{3}-\d{3}$',    # ABC-123 (機車)
-        # ... 更多格式
-    ]
-    
-    def recognize(self, img) -> Dict:
-        """
-        辨識車牌
-        
-        Returns:
-            {
-                'plate_number': 'ABC-1234',
-                'confidence': 0.92,
-                'valid': True,
-                'type': '一般'
-            }
-        """
-        
-    def preprocess(self, img) -> List[ndarray]:
-        """多重預處理 (6 種方式)"""
-        # 1. 原圖灰階
-        # 2. CLAHE 增強
-        # 3. Otsu 二值化
-        # 4. 反轉二值化
-        # 5. 自適應二值化
-        # 6. 銳化
-        
-    def perspective_transform(self, img) -> ndarray:
-        """透視變換校正傾斜車牌"""
-        
-    def _validate(self, plate) -> bool:
-        """驗證台灣車牌格式"""
+### 3. 車牌辨識模組 `recognition/plate_recognizer.py` + `services/ocr_service.py`
+
+> ⚠️ 舊版本文件寫「Tesseract + 6 種預處理」，**那不是現在的路徑**。
+> `import pytesseract` 還在檔案裡，但主線不呼叫它。
+> 完整說明見 [`ocr 流程.md`](./ocr%20流程.md)。
+
+辨識拆成兩個 process：
+
+```
+traffic-api  :8000    PlateRecognizer.recognize_easy()  ← 呼叫端
+traffic-ocr  :8010    ocr_service.py  YOLO 字元偵測      ← 模型常駐
 ```
 
-**LPR 處理流程：**
+拆開的原因：**字元 YOLO 不要跟主偵測 YOLO 搶 GPU**。
+
+```python
+# recognition/plate_recognizer.py
+class PlateRecognizer:
+    def recognize_easy(self, img) -> Dict:
+        """5 變體 ensemble：每個變體各 POST 一次到 :8010，加權投票取勝者。
+
+        變體: original / clahe / upscale_2x / bilateral / gray_otsu
+        投票: 先比出現次數，同票再比平均 conf
+        加成: 多變體同意每票 +0.05（上限 +0.15，總分封頂 0.99）
+        失敗: 全部 fail → recognize_chars() 字元分割 fallback
+        """
 ```
-RTSP 輸入
+
+```python
+# services/ocr_service.py — 微服務內部
+def ocr_plate(img_bytes) -> dict:
+    """YOLO 出字元框後：
+       1. y 座標過濾 —— 只留主要那一行（濾掉牌框上下雜訊）
+       2. 單字元 conf < 0.4 丟掉 —— 一個糊字不該拖低整體
+       3. 依 x 排序組字，avg_conf = 各字元平均
+       4. 漏字偵測 —— gap / 字寬中位數 > 1.5 給 penalty
+       5. _repair_plate() 台灣格式修復 + 相似字 swap
+    """
+```
+
+**實際 LPR 處理流程：**
+```
+RTSP / frigate latest.jpg
     │
     ▼
-YOLOv8n (車輛偵測)
+YOLOv8n 車輛偵測 + 追蹤
     │ car, motorcycle, bus, truck
     ▼
-ROI 裁切 (車牌區域定位)
+車道 ROI 過濾（排除禁停/人行道/紅線）
     │
     ▼
-多重預處理 (6 種方式)
+PlateDetector 找車牌框 (conf 0.12)
     │
     ▼
-Tesseract OCR
+5 變體 ensemble → :8010 YOLO 字元偵測 ×5
     │
     ▼
-格式驗證 (台灣車牌)
+微服務內格式修復 _repair_plate
     │
     ▼
-輸出結果
+多幀空間投票（bucket 160px，TTL 3.5s）
+    │
+    ▼
+confirm（票數 ≥2 或 score ≥1.8）→ commit（score ≥1.5、conf ≥0.40）
+    │
+    ▼
+存 DB 前 _enforce_plate_format 邊界修復（只修不丟）
+    │
+    ▼
+lpr_records（含 vehicle_bbox，供違規關聯用）
 ```
+
+**台灣車牌格式**（兩層修復共用同一組規則）：
+
+- 依總長度比對格式表，字母位／數字位分開檢查
+- 相似字 swap 上限 2 次（`5↔S`、`0↔O`、`1↔I` 等）
+- 字母位排除 `I` / `O` / `Q`（台灣車牌規範不使用）
+- 修不成合法格式**不丟棄**，原樣保留交由信心度門檻過濾
 
 ---
 
@@ -1007,17 +1182,65 @@ class MyModel(Base):
 
 ## 📝 環境變數
 
+### 必填
+
+| 變數 | 說明 |
+|------|------|
+| `AUTH_SECRET` | Session 簽章金鑰。**未設或用公開預設值會拒絕啟動**。`python3 -c "import secrets;print(secrets.token_urlsafe(48))"` |
+
+### 常用
+
 | 變數 | 預設值 | 說明 |
 |------|--------|------|
 | `DATABASE_URL` | `sqlite:///./data/violations.db` | 資料庫連線 |
-| `FRIGATE_HOST` | `frigate` | Frigate 主機 |
-| `FRIGATE_PORT` | `5000` | Frigate 埠號 |
-| `MODEL_DIR` | `/home/ubuntu/traffic-violation-detection/models` | 模型目錄 |
-| `DETECT_MODEL_ENGINE` | `yolov8n.engine` | 偵測 engine 模型（可填絕對路徑或檔名） |
-| `DETECT_MODEL_PT` | `yolov8n.pt` | 偵測 pt 模型（可填絕對路徑或檔名） |
-| `TRUCK_CLS_MODEL` | `truck_cls_yolo26s.pt` | 大型車分類模型（可填絕對路徑或檔名） |
-| `DEVICE` | `cuda:0` | 推論裝置 |
 | `TZ` | `Asia/Taipei` | 時區 |
+| `DEVICE` | `cuda:0` | 推論裝置 |
+| `DEVICE_ID` | — | 終端控制器識別碼（交付規範用，例 `R34_動態號誌VD`） |
+| `STREAM_HOST` | — | 前端組串流網址用的主機位址 |
+| `EXTERNAL_API_KEY` | — | 對外 API 的 `X-API-Key` |
+| `AUTH_TTL_HOURS` | — | Session 有效時數 |
+
+### 模型路徑
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `MODEL_DIR` | `/home/ubuntu/traffic-violation-detection/models` | 模型根目錄 |
+| `LPR_MODEL_DIR` | `${MODEL_DIR}/lpr` | 車牌模型目錄 |
+| `DETECT_MODEL_ENGINE` | `yolov8n.engine` | 車輛偵測 engine |
+| `DETECT_MODEL_PT` | `yolov8n.pt` | 車輛偵測 pt（engine 不存在時用） |
+| `LPR_PLATE_MODEL_ENGINE` | `plate_yolov8n.engine` | 車牌框 engine |
+| `LPR_PLATE_MODEL_PT` | `plate_yolov8n.pt` | 車牌框 pt（現場實際走這個） |
+| `TRUCK_CLS_MODEL` | `truck_cls_yolo26s.pt` | 大型車分類模型 |
+| `DISABLE_TRT` / `FORCE_GPU` | — | 除錯用：停用 TensorRT / 強制 GPU |
+
+### Frigate / NVR
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `FRIGATE_HOST` | `frigate` | Frigate 主機（host 部署要設 `localhost`） |
+| `FRIGATE_PORT` | `5000` | Frigate 埠號 |
+| `FRIGATE_CONFIG_PATH` | `/workspace/config/frigate/config.yml` | 自動同步要改寫的設定檔 |
+| `FRIGATE_RESTART_CMD` | `sudo -n systemctl restart traffic-frigate` | 套用設定的重啟指令 |
+| `FRIGATE_RESTART_DEBOUNCE_SEC` | `8` | 連續改多台時的去抖秒數 |
+
+### IO / 電子鎖
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `IO_DAEMON_URL` | `http://127.0.0.1:8011` | 主程式連 IO daemon 的位址 |
+| `LOCK_SERIAL_PORT` | — | RS-485 裝置（現場改用 USB-485 `/dev/ttyUSB0` 才讀得到完整卡號） |
+| `LOCK_MODBUS_ADDR` | `0`（停用） | 電子鎖位址，支援多顆與命名：`2:後門,3:前門` |
+| `LOCK_RETRY_SEC` | `5` | 讀不到的鎖退避秒數（不退避會拖慢整個輪詢迴圈） |
+| `IO_ADDR` / `IO_BAUD` / `IO_PORT` | — | PD3R3 IO 模組參數 |
+
+### 系統
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `NET_IFACE` | 自動偵測 default route | 通訊故障要監看的網卡（可逗號分隔多張） |
+| `NTP_DROPIN_PATH` | `/etc/systemd/timesyncd.conf.d/zz-field-ntp.conf` | NTP 設定落點（**檔名必須排在出廠 drop-in 之後**） |
+| `TRAFFIC_STORAGE_ROOT` | `/mnt/nvme/traffic` | 四個資料目錄的實體位置 |
+| `SYSTEM_CONFIG_DIR` | `/workspace/config/system` | 執行期設定檔目錄 |
 
 ### 模型路徑規則
 
@@ -1036,26 +1259,56 @@ DETECT_MODEL_PT=yolov8n.pt
 
 ## 🔍 故障排除
 
+> 以下是 **systemd（正式機）** 的指令。容器版把 `journalctl -u traffic-api`
+> 換成 `docker logs -f traffic-api`、`systemctl restart` 換成 `docker restart`。
+
 ### 攝影機連線失敗
 ```bash
-# 測試 RTSP 連線
-docker exec traffic-api python3 -c "
-import cv2
-cap = cv2.VideoCapture('rtsp://user:pass@ip:port/path')
-print('Connected:', cap.isOpened())
-cap.release()
-"
+# 直接探 RTSP（比 cv2 快，也看得到 codec）
+ffprobe -rtsp_transport tcp -i "rtsp://user:pass@ip:port/path" 2>&1 | head -20
 ```
 
-### 查看 API 日誌
+### 查看日誌
 ```bash
-docker logs -f traffic-api
+journalctl -u traffic-api -f              # 主程式
+journalctl -u traffic-ocr -n 50           # OCR 微服務
+journalctl -u traffic-io  -n 50           # IO / 電子鎖
 ```
+
+journal 已設持久化（`/var/log/journal` → NVMe，20G / 保留 6 個月）。
 
 ### 重啟服務
 ```bash
-docker restart traffic-api
+sudo systemctl restart traffic-api
 ```
+
+> ⚠️ 偵測、LPR、壅塞都在 `traffic-api` 這一個 process 裡，重啟會全部中斷。
+> 小改動請批次做完再一次重啟。使用者回報「壞了」時，先確認是不是剛重啟
+> 或瀏覽器快取（hard reload），不要急著改程式碼。
+
+### 網頁顯示離線但後端是好的
+```bash
+ss -tn | grep :8000 | awk '{print $5}' | cut -d: -f1 | sort | uniq -c
+```
+
+同一個瀏覽器 IP 出現 6 條就是**瀏覽器連線數上限被 MJPEG 串流佔滿**，
+API 請求排不進去。重啟服務永遠無效。
+
+### 車牌辨識沒有結果
+```bash
+curl -s http://127.0.0.1:8010/                        # OCR 微服務活著嗎
+curl -s http://127.0.0.1:8000/api/lpr/stream/status/6 # 看七個計數器斷在哪
+```
+
+排查漏斗與各段意義見 [`ocr 流程.md`](./ocr%20流程.md) 第 10 節。
+
+### 改完 web 頁面整段 UI 消失 / 白屏
+```bash
+python3 scripts/lint_vue_template.py --all
+```
+
+單檔 inline-template SPA 對 HTML balance 極度敏感，**改動 `web/` 下任何
+含 `createApp` 的頁面後 commit 前必跑**。詳見 `CLAUDE.md` 的強制 SOP。
 
 ---
 
@@ -1071,4 +1324,5 @@ MIT License
 
 ---
 
-*最後更新: 2026-05-27*
+*最後更新: 2026-08-13 — 硬體/環境數值、部署方式、車牌辨識架構、環境變數、
+故障排除均已對回程式碼與現場實機核對*
