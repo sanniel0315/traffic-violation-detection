@@ -73,10 +73,12 @@ fi
 echo "==> [7/7] NTP 校時來源"
 if [ -n "${FIELD_NTP:-}" ]; then
   sudo mkdir -p /etc/systemd/timesyncd.conf.d
+  # 檔名 zz- 開頭才排在 Jetson 出廠的 nv-fallback-ntp.conf 之後,蓋得掉它的外網清單
   sed "s|__FIELD_NTP__|$FIELD_NTP|" deploy/timesyncd/field-ntp.conf.template \
-    | sudo tee /etc/systemd/timesyncd.conf.d/field-ntp.conf >/dev/null
+    | sudo tee /etc/systemd/timesyncd.conf.d/zz-field-ntp.conf >/dev/null
+  sudo rm -f /etc/systemd/timesyncd.conf.d/field-ntp.conf   # 舊檔名殘留會混淆排查
   sudo systemctl restart systemd-timesyncd
-  echo "  NTP → $FIELD_NTP (外網 fallback 保留)"
+  echo "  NTP → $FIELD_NTP (現場封閉網段,不留外網 fallback)"
   echo "  驗證: timedatectl show-timesync --property=ServerName --property=ServerAddress"
 else
   echo "  !! 未設 FIELD_NTP，沿用系統預設(外網 NTP)。現場若沒外網會校不到時,"

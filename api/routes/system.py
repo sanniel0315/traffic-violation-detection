@@ -23,9 +23,12 @@ from api.routes.auth import get_admin_user, get_current_user
 
 router = APIRouter(prefix="/api/system", tags=["系統監測"])
 NTP_SETTINGS_PATH = "/workspace/config/system/ntp_settings.json"
-# systemd drop-in 才是最後生效的那份（優先權高於 /etc/systemd/timesyncd.conf）
+# systemd drop-in 才是最後生效的那份（優先權高於 /etc/systemd/timesyncd.conf）。
+# 🛑 檔名要 zz- 開頭：drop-in 依檔名排序讀取，後讀的才蓋得掉先讀的。
+#    Jetson 出廠自帶 nv-fallback-ntp.conf（0.pool.ntp.org 等三台外網），
+#    叫 field-ntp.conf 會排在 nv- 前面 → 我們清空的 FallbackNTP 又被它加回來。
 NTP_DROPIN_PATH = Path(os.getenv("NTP_DROPIN_PATH",
-                                 "/etc/systemd/timesyncd.conf.d/field-ntp.conf"))
+                                 "/etc/systemd/timesyncd.conf.d/zz-field-ntp.conf"))
 NX_SETTINGS_PATH = "/workspace/config/system/nx_settings.json"
 MONITOR_LAYOUT_PATH = "/workspace/config/system/monitor_layout.json"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -380,10 +383,12 @@ def _apply_ntp_servers(servers: List[str]) -> tuple[bool, str]:
     try:
         if not shutil.which("timedatectl"):
             return False, "環境未提供 timedatectl，僅儲存設定"
-        # 現場 NTP 不通時（維運/工廠端）還能靠外網對時，不會整台沒時間
+        # FallbackNTP 留空是刻意的：現場封閉網段沒有外網，留著外網 fallback
+        # 只會讓 timesyncd 一直去試連不到的位址。空值會「重設」前面 drop-in
+        # 累加進來的清單（Jetson 出廠那份會塞 pool.ntp.org），不是「不設定」。
         cfg = ("# 由網頁「硬體效能監測 → 系統時間校時」產生，手改會被覆蓋\n"
                "[Time]\nNTP=" + " ".join(servers) + "\n"
-               "FallbackNTP=time.google.com time.cloudflare.com\n")
+               "FallbackNTP=\n")
         _write_root_file(NTP_DROPIN_PATH, cfg)
         subprocess.run(_sudo_if_needed(["timedatectl", "set-ntp", "true"]),
                        check=False, timeout=3, capture_output=True)

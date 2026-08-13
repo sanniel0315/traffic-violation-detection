@@ -223,8 +223,20 @@ FIELD_NTP=10.41.0.111 TRAFFIC_STORAGE_ROOT=/mnt/nvme/traffic bash scripts/setup_
 ```bash
 sudo mkdir -p /etc/systemd/timesyncd.conf.d
 sed "s|__FIELD_NTP__|10.41.0.111|" deploy/timesyncd/field-ntp.conf.template \
-  | sudo tee /etc/systemd/timesyncd.conf.d/field-ntp.conf
+  | sudo tee /etc/systemd/timesyncd.conf.d/zz-field-ntp.conf
+sudo rm -f /etc/systemd/timesyncd.conf.d/field-ntp.conf
 sudo systemctl restart systemd-timesyncd
+```
+
+⚠️ 檔名一定要 `zz-` 開頭。drop-in 依檔名排序讀取，後讀的才蓋得掉先讀的，
+而 Jetson 出廠自帶 `nv-fallback-ntp.conf`（`0.pool.ntp.org` 等三台外網）。
+叫 `field-ntp.conf` 會排在它前面 → 我們清空的 `FallbackNTP` 被整個加回來，
+`timedatectl` 看起來有校到時，實際是連到外網、現場斷網後就漂。
+
+改完驗 `FallbackNTPServers=` 必須是空的：
+
+```bash
+timedatectl show-timesync --property=SystemNTPServers --property=FallbackNTPServers
 ```
 
 驗證（`ServerAddress` 要是現場那台，不是外網）：
