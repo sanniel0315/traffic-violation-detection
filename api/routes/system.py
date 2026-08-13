@@ -23,6 +23,9 @@ from api.routes.auth import get_admin_user, get_current_user
 
 router = APIRouter(prefix="/api/system", tags=["系統監測"])
 NTP_SETTINGS_PATH = "/workspace/config/system/ntp_settings.json"
+# systemd drop-in 才是最後生效的那份（優先權高於 /etc/systemd/timesyncd.conf）
+NTP_DROPIN_PATH = Path(os.getenv("NTP_DROPIN_PATH",
+                                 "/etc/systemd/timesyncd.conf.d/field-ntp.conf"))
 NX_SETTINGS_PATH = "/workspace/config/system/nx_settings.json"
 MONITOR_LAYOUT_PATH = "/workspace/config/system/monitor_layout.json"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -346,18 +349,48 @@ def _get_ntp_runtime_status(servers: List[str] | None = None) -> Dict[str, Any]:
     return runtime
 
 
-def _apply_ntp_servers(servers: List[str]) -> tuple[bool, str]:
-    """Best-effort apply NTP servers in runtime environment."""
+def _write_root_file(path: Path, content: str) -> None:
+    """寫入需要 root 的設定檔：先直接寫，沒權限再退回 sudo tee。"""
     try:
-        if shutil.which("timedatectl"):
-            cfg = "[Time]\nNTP=" + " ".join(servers) + "\nFallbackNTP=pool.ntp.org\n"
-            cfg_path = Path("/etc/systemd/timesyncd.conf")
-            cfg_path.write_text(cfg, encoding="utf-8")
-            subprocess.run(["timedatectl", "set-ntp", "true"], check=False, timeout=3)
-            if shutil.which("systemctl"):
-                subprocess.run(["systemctl", "restart", "systemd-timesyncd"], check=False, timeout=4)
-            return True, "已套用 systemd-timesyncd 設定"
-        return False, "環境未提供 timedatectl，僅儲存設定"
+        path.write_text(content, encoding="utf-8")
+        return
+    except PermissionError:
+        pass
+    p = subprocess.run(["sudo", "-n", "tee", str(path)],
+                       input=content.encode("utf-8"),
+                       capture_output=True, timeout=5)
+    if p.returncode != 0:
+        raise PermissionError((p.stderr or b"").decode(errors="ignore")[:120] or "sudo tee 失敗")
+
+
+def _sudo_if_needed(cmd: List[str]) -> List[str]:
+    return cmd if os.geteuid() == 0 else ["sudo", "-n"] + cmd
+
+
+def _apply_ntp_servers(servers: List[str]) -> tuple[bool, str]:
+    """Best-effort apply NTP servers in runtime environment.
+
+    🛑 一定要寫 drop-in（timesyncd.conf.d/），不可以寫主檔 timesyncd.conf。
+       systemd 的 drop-in 優先權高於主檔，現場機有 field-ntp.conf 指到
+       現場 NTP（10.41.0.111）。寫主檔會被它整個蓋掉 —— 網頁按了儲存、
+       畫面顯示新伺服器，實際生效的還是舊的，是最難察覺的那種假成功。
+       2026-08-13 實測：主檔每 10 分鐘被排程重寫成 time.google.com，
+       但 timedatectl 一直吃 drop-in 的 10.41.0.111。
+    """
+    try:
+        if not shutil.which("timedatectl"):
+            return False, "環境未提供 timedatectl，僅儲存設定"
+        # 現場 NTP 不通時（維運/工廠端）還能靠外網對時，不會整台沒時間
+        cfg = ("# 由網頁「硬體效能監測 → 系統時間校時」產生，手改會被覆蓋\n"
+               "[Time]\nNTP=" + " ".join(servers) + "\n"
+               "FallbackNTP=time.google.com time.cloudflare.com\n")
+        _write_root_file(NTP_DROPIN_PATH, cfg)
+        subprocess.run(_sudo_if_needed(["timedatectl", "set-ntp", "true"]),
+                       check=False, timeout=3, capture_output=True)
+        if shutil.which("systemctl"):
+            subprocess.run(_sudo_if_needed(["systemctl", "restart", "systemd-timesyncd"]),
+                           check=False, timeout=6, capture_output=True)
+        return True, f"已套用 systemd-timesyncd 設定 ({NTP_DROPIN_PATH.name})"
     except Exception as e:
         return False, f"套用 NTP 設定失敗: {e}"
 

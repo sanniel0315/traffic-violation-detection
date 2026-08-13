@@ -8438,8 +8438,9 @@
                         <div class="card-body">
                             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">
                                 <div>
-                                    <div style="font-size:12px;color:#64748b;margin-bottom:6px">NTP Servers（每行一個）</div>
-                                    <el-input v-model="ntpServersText" type="textarea" :rows="4" placeholder="time.stdtime.gov.tw&#10;time.google.com"/>
+                                    <div style="font-size:12px;color:#64748b;margin-bottom:6px">NTP Servers（每行一個，第一行優先）</div>
+                                    <el-input v-model="ntpServersText" type="textarea" :rows="4" placeholder="10.41.0.111"></el-input>
+                                    <div style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.6">現場 NTP 不通時自動改用外網（time.google.com / time.cloudflare.com）</div>
                                 </div>
                                 <div>
                                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
