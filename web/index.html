@@ -15184,8 +15184,19 @@ const app=createApp({
         // 因此保留 2 條給 API，其餘給即時串流；超額的自動改快照輪詢
         // (快照是一次性請求，拿完就把連線還回去)。
         const BROWSER_CONN_LIMIT=6;
-        const API_CONN_RESERVE=2;
-        const MAX_LIVE_MJPEG=BROWSER_CONN_LIMIT-API_CONN_RESERVE;
+        // 保留 3 條給 API:2 條不夠。dashboard 一次就併發 /api/dashboard + /api/violations,
+        // 再加 /api/health 就是 3 —— 現場 4 台攝影機時實測 Chrome 六條全滿、health 排不到
+        // socket → SERVICE OFFLINE(後端當時 8ms 就回應)。2026-08-14。
+        const API_CONN_RESERVE=3;
+        // HTTP/2 以上是多工的,同一 origin 沒有 6 條連線上限,不需要限制同時串流數。
+        // 走 Cloudflare tunnel(h2/h3)時四台可以全部即時;Tailscale/LAN 直連是 HTTP/1.1,
+        // 才需要讓超額的降級成快照輪詢。
+        const _navProto=(()=>{
+            try{ return String(performance.getEntriesByType('navigation')[0]?.nextHopProtocol||''); }
+            catch(_){ return ''; }
+        })();
+        const IS_MULTIPLEXED=/^h[23]/i.test(_navProto);
+        const MAX_LIVE_MJPEG=IS_MULTIPLEXED?99:(BROWSER_CONN_LIMIT-API_CONN_RESERVE);
         const enforceStreamBudget=()=>{
             const now=Date.now();
             const zoomId=monitorZoomVisible.value?Number(monitorZoomCamera.value?.id||0):0;
