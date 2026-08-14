@@ -755,8 +755,21 @@ createApp({
         // 標記模式:點 ROI 的邊 → 該邊在「未指定 → 進線 → 出線 → 未指定」之間循環。
         // 命中測試在 canvas 座標做(與畫出來的完全一致),不必換算回原圖。
         const markInoutEdge = (cx, cy) => {
+            // 🛑 canvas 只在圖片 @load 時才設尺寸。圖還沒載完(4G 現場那張 1080p 快照
+            //    要好幾秒)canvas 是 0x0 → toCanvasPoint 把所有點算成 (0,0) → 每條邊
+            //    都退化成原點 → 距離永遠 > 24px → 點了完全沒反應,看起來像卡住。
+            //    講清楚是還在載入,不要讓使用者一直空點。
+            const _cv = canvasRef.value;
+            if (!_cv || !_cv.width || !_cv.height) {
+                ElementPlus.ElMessage.warning('影像尚未載入完成，請等畫面出現後再標記進出線');
+                return;
+            }
             const cands = zones.value.filter(z => isFlowZoneType(z.type) && !isLineType(z.type)
                                                   && (z.points || []).length >= 3);
+            if (!cands.length) {
+                ElementPlus.ElMessage.warning('請先把車流 ROI 畫好並按「儲存區域」，才能標進出線');
+                return;
+            }
             // 進線與出線必須落在「同一個 ROI」的兩條邊上。
             // 車道 ROI 常常彼此相鄰,若每次都在所有 ROI 裡找最近的邊,
             // 進線會標在 A 框、出線標在 B 框 —— 畫面上看起來有一進一出,
@@ -1046,8 +1059,23 @@ createApp({
             window.location.href = '/web/';
         };
         
+        // 視窗大小改變 → 圖片(max-width:100%)跟著縮放,但 canvas 尺寸是 initCanvas
+        // 當時抓的 clientWidth,不會跟著變 → 疊在上面的 canvas 與影像錯位,點下去的
+        // 座標就偏掉。重新 initCanvas 讓兩者對齊(座標本身是照 sourceSize 換算的,
+        // 重新設定尺寸不會影響已存的 ROI)。
+        let _resizeTimer = null;
+        const onWindowResize = () => {
+            clearTimeout(_resizeTimer);
+            _resizeTimer = setTimeout(initCanvas, 150);   // 拖曳視窗時去抖
+        };
+
         onMounted(() => {
             loadCamera();
+            window.addEventListener('resize', onWindowResize);
+        });
+        onUnmounted(() => {
+            window.removeEventListener('resize', onWindowResize);
+            clearTimeout(_resizeTimer);
         });
         
         return {
