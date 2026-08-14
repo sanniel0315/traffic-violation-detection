@@ -16915,14 +16915,20 @@ const app=createApp({
                 if(!w || w.closed){
                     clearRoiEditorPoll();
                     pauseMonitorStreamsForRoi(false);   // 編輯器關掉 → 串流恢復
-                    await refreshPreviewZones({silent:true});
+                    // force:編輯器已經把 zone 寫進 DB,這一刷是要把新畫的 ROI 帶回來。
+                    // 不 force 的話會被 previewZonesDirty 擋掉 → 存完卻看不到新 ROI。
+                    await refreshPreviewZones({silent:true,force:true});
                     return;
                 }
-                // 🛑 這裡不要定時 refresh。原本每 800ms 就用伺服器版本蓋掉
-                //    previewCamera.zones —— 使用者在綁定列表勾「左直右」、改車道編號,
-                //    還沒按「儲存設定」就被蓋回去,看起來像勾了會自己跳掉,根本改不了。
-                //    ROI 編輯器存檔時會 postMessage(zones_updated),那時才刷新就夠;
-                //    這個 timer 只負責偵測編輯器關閉。
+                // 🛑 定時 refresh 只在「列表沒有未存修改」時才做。
+                //    原本無條件每 800ms 用伺服器版本蓋掉 previewCamera.zones ——
+                //    使用者勾「左直右」、改車道編號還沒按儲存就被蓋回去,根本改不了。
+                //    但完全不刷也不行:編輯器存檔後若沒關視窗、postMessage 又沒收到,
+                //    主頁就一直看不到新畫的 ROI(現場回報「編輯完儲存沒出現」)。
+                //    所以保留輪詢當保險,由 previewZonesDirty 擋住覆蓋。
+                if(showPreviewModal.value && !previewZonesDirty.value){
+                    await refreshPreviewZones({silent:true});
+                }
             },800);
         };
         const handleRoiEditorMessage=async(event)=>{
@@ -16933,7 +16939,10 @@ const app=createApp({
             const currentId=String(previewCamera.value?.id||'');
             const targetId=String(data?.cameraId||'');
             if(!currentId || !targetId || currentId!==targetId)return;
-            await refreshPreviewZones({silent:true});
+            // 編輯器主動通知「已存檔」→ 一定要刷新,不受 previewZonesDirty 阻擋。
+            // 這是使用者剛按下儲存的結果,比列表裡未存的舊修改新。
+            await refreshPreviewZones({silent:true,force:true});
+            previewZonesDirty.value=false;
         };
         const handleWindowFocus=()=>{
             if(showPreviewModal.value && isAnalysisPage.value){
