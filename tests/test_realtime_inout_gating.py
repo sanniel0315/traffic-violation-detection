@@ -57,7 +57,12 @@ check("方向留空 → 不給",
 # ── 2. 端點的 SQL 必須釘住索引 ───────────────────────────────────────
 src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "api", "routes", "external.py"), encoding="utf-8").read()
-rt = src.split("def external_realtime(", 1)[1].split("\n@router", 1)[0]
+# 🛑 不可以只切 external_realtime 的函式本體。即時查詢的實作已經抽成
+#    _realtime_rows()(逐分鐘查詢要重複呼叫同一段),SQL 與 row 組裝都在那裡,
+#    只切端點本體會讓這幾項檢查全部落空(改成 minutes= 逐分鐘那次就踩到,
+#    4 項假失敗)。這裡把 helper 與端點合起來一起檢查。
+rt = (src.split("def _realtime_rows(", 1)[1].split("\n@router", 1)[0]
+      + src.split("def external_realtime(", 1)[1].split("\n@router", 1)[0])
 print("\n即時端點的查詢必須釘住 created_at 索引")
 check("traffic_events 有 INDEXED BY",
       "traffic_events INDEXED BY ix_traffic_events_created_at" in rt, True)

@@ -206,7 +206,10 @@ check("補齊用的是 meta 的車道編號", 'meta.get("lane_nos")' in rows_src
 
 ext_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "api", "routes", "external.py"), encoding="utf-8").read()
-rt_src = ext_src.split("def external_realtime(", 1)[1].split("\n@router", 1)[0]
+# 即時查詢的實作已抽成 _realtime_rows()(逐分鐘查詢重複呼叫同一段),
+# 補齊車道那段在 helper 裡 —— 只切端點本體會假失敗。兩段合起來檢查。
+rt_src = (ext_src.split("def _realtime_rows(", 1)[1].split("\n@router", 1)[0]
+          + ext_src.split("def external_realtime(", 1)[1].split("\n@router", 1)[0])
 check("即時端點也先補齊車道", 'for ln in (meta.get("lane_nos") or [])' in rt_src, True)
 
 print()
