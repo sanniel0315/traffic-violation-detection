@@ -14606,15 +14606,57 @@ const app=createApp({
                 await refreshLprTaskStatus(cameraIds);
             }
         };
+        // 網路瞬斷/服務重啟時的重試。dashboard 這類「只在進頁面時抓一次」的資料
+        // 一旦失敗就會停在空值,而且不會自己好 —— 部署重啟每次都可能踩到。
+        const withRetry=async(fn,tries=3,gapMs=3000)=>{
+            let last;
+            for(let i=0;i<tries;i++){
+                try{ return await fn(); }
+                catch(e){
+                    last=e;
+                    if(i<tries-1)await new Promise(s=>setTimeout(s,gapMs));
+                }
+            }
+            throw last;
+        };
+        // 服務健康三格 (NVR / MQTT / LPR)。
+        // 🛑 這三個抓失敗不可以靜靜吃掉 —— 原本包在 Promise.allSettled 裡，只在進
+        //    dashboard 的當下抓一次，抓不到就永遠停在「載入中…」,而且沒有任何重試。
+        //    traffic-api 剛重啟時進頁面必踩(實測 2026-08-14)。
+        //    改成:失敗重試 3 次,仍失敗就標成未連線 —— 顯示錯誤好過假裝還在載入。
+        const refreshServiceHealth=async(tries=3)=>{
+            const jobs=[
+                ['/api/frigate/status', frigateStatus],
+                ['/api/mqtt/status',    mqttStatus],
+                ['/api/lpr/status',     lprStatus],
+            ];
+            for(let i=0;i<tries;i++){
+                const r=await Promise.allSettled(jobs.map(([url,obj])=>
+                    fetch(url,{cache:'no-store'})
+                        .then(res=>{if(!res.ok)throw new Error('HTTP '+res.status);return res.json();})
+                        .then(d=>Object.assign(obj,d))
+                ));
+                if(r.every(x=>x.status==='fulfilled'))return;
+                if(i<tries-1)await new Promise(s=>setTimeout(s,3000));
+            }
+            // 空值 = 模板的「載入中…」。三次都失敗就不要再假裝在載入。
+            if(!frigateStatus.status)frigateStatus.status='offline';
+            if(mqttStatus.connected===null)mqttStatus.connected=false;
+            if(!lprStatus.status)lprStatus.status='offline';
+        };
         const load=async()=>{
             try{
                 if(shouldRefreshOverviewData()){
                     // 兩個 fetch 並行 (原 sequential 要等 dashboard 完才抓 violations, ~500ms;
                     //  並行只等較慢者, ~330ms — 加快 dashboard 進入體感)
-                    const [_dashRes,_vRes]=await Promise.all([
+                    // 🛑 這裡失敗不可以只是吃掉 —— 進頁面那一刻若 traffic-api 正在重啟,
+                    //    dashboard.value 會停在空物件,畫面顯示「攝影機 0 / 0 線上」+ 三個
+                    //    服務「載入中…」,而且 dashboard 關掉自動刷新後永遠不會再試一次,
+                    //    使用者只能自己 F5。實測 2026-08-14 現場就是卡在這個狀態。
+                    const [_dashRes,_vRes]=await withRetry(()=>Promise.all([
                         fetch('/api/dashboard'),
                         fetch('/api/violations?page_size=30')
-                    ]);
+                    ]));
                     dashboard.value=await _dashRes.json();
                     const vItems=((await _vRes.json()).items)||[];
                     // 統計頁使用 loadStats 的完整資料，避免被背景刷新覆蓋
@@ -14631,11 +14673,7 @@ const app=createApp({
                 // 預設值 → 誤報「3 服務異常(NVR/MQTT/LPR)」。這裡補刷 (輕量 fetch，
                 // 不走 loadMqttStatus 以免連帶抓 MQTT 訊息列表)。
                 if(String(page.value||'')==='dashboard'){
-                    Promise.allSettled([
-                        fetch('/api/frigate/status',{cache:'no-store'}).then(r=>r.json()).then(d=>Object.assign(frigateStatus,d)),
-                        fetch('/api/mqtt/status').then(r=>r.json()).then(d=>Object.assign(mqttStatus,d)),
-                        fetch('/api/lpr/status').then(r=>r.json()).then(d=>Object.assign(lprStatus,d)),
-                    ]);
+                    refreshServiceHealth();
                 }
                 // 保險: NVR 重啟 overlay 卡死自動解 — 若 Frigate uptime > 60s 表示沒在重啟
                 if(nvrRestarting.value){
