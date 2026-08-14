@@ -16874,6 +16874,24 @@ const app=createApp({
                 return false;
             }
         };
+        // ROI 編輯器開著時暫停本頁所有監控串流。
+        // 編輯器是另開分頁,但共用同一個 origin 的連線池與同一條上行 —— 現場 4G
+        // 上行只有 3.6 Mbps,四路 MJPEG 佔滿後,編輯器要載的那張 1080p 快照(約 600KB)
+        // 只能撿殘餘頻寬,實測卡一分多鐘。暫停串流後頻寬全部給編輯器。
+        // 沿用 _zoomPausedGrid 這個旗標:錯誤重連 timer、60 秒 recycle timer、
+        // enforceStreamBudget 三處都已經會避開它,不必再加守衛。
+        const pauseMonitorStreamsForRoi=(paused)=>{
+            cameras.value.forEach(c=>{
+                if(paused){
+                    c._zoomPausedGrid=true;
+                    c.showStream=false;
+                }else if(c._zoomPausedGrid && !monitorZoomVisible.value){
+                    c._zoomPausedGrid=false;
+                    c._zoomReloadTick=Date.now();   // 換 src 強制重掛,避免黑畫面
+                    c.showStream=!!c.enabled;
+                }
+            });
+        };
         const openRoiEditor=(id)=>{
             const mode=encodeURIComponent(page.value||'');
             const w=window.open(`/web/roi_editor.html?id=${id}&mode=${mode}&v=${Date.now()}`,'_blank');
@@ -16881,10 +16899,12 @@ const app=createApp({
                 ElementPlus.ElMessage.warning('無法開啟 ROI 編輯器，請檢查瀏覽器彈窗設定');
                 return;
             }
+            pauseMonitorStreamsForRoi(true);
             clearRoiEditorPoll();
             roiEditorPollTimer=setInterval(async()=>{
                 if(!w || w.closed){
                     clearRoiEditorPoll();
+                    pauseMonitorStreamsForRoi(false);   // 編輯器關掉 → 串流恢復
                     await refreshPreviewZones({silent:true});
                     return;
                 }
@@ -17107,6 +17127,7 @@ const app=createApp({
                 if(!ok)return;
             }
             clearRoiEditorPoll();
+            pauseMonitorStreamsForRoi(false);
             if(_roiResizeObs){_roiResizeObs.disconnect();_roiResizeObs=null;}
             showPreviewModal.value=false;
             loadCameras();
@@ -18498,6 +18519,7 @@ const app=createApp({
         watch(showPreviewModal,(v)=>{
             if(!v){
                 clearRoiEditorPoll();
+                pauseMonitorStreamsForRoi(false);
             }
         });
         watch(()=>`${cameraForm.source_mode}:${cameraForm.http_source_kind}`,(mode)=>{
