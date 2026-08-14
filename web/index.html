@@ -2969,89 +2969,24 @@
             text-decoration: underline;
         }
 
-        /* 地址搜尋框 */
-        .map-search-box {
+        /* 離線模式的圖資標示 + 設座標說明（取代原本的線上地址搜尋框） */
+        .map-offline-note {
             position: absolute;
-            top: 12px; left: 12px; right: 12px;
-            max-width: 420px;
+            top: 12px; left: 12px;
             z-index: 500;
-        }
-        .map-search-input {
-            width: 100%;
-            padding: 9px 32px 9px 14px;
+            padding: 8px 12px;
             border: 1px solid var(--gov-border);
             border-radius: 8px;
             background: var(--gov-surface);
-            font-family: var(--font-sans);
-            font-size: 13px;
-            color: var(--gov-text);
             box-shadow: 0 4px 12px rgba(11,30,60,0.08);
-            outline: none;
-            transition: border-color .18s, box-shadow .18s;
-        }
-        .map-search-input:focus {
-            border-color: var(--gov-primary);
-            box-shadow: 0 4px 12px rgba(11,94,168,0.18), 0 0 0 3px rgba(11,94,168,0.12);
-        }
-        .map-search-input::placeholder {
-            color: var(--gov-mute-2);
-            font-size: 12.5px;
-        }
-        .map-search-clear, .map-search-spinner {
-            position: absolute; right: 10px; top: 9px;
-            width: 18px; height: 18px;
-            border-radius: 50%;
-            background: var(--gov-surface-2);
-            color: var(--gov-muted);
-            border: none;
-            cursor: pointer;
-            font-size: 11px;
-            display: flex; align-items: center; justify-content: center;
-        }
-        .map-search-spinner {
-            border: 2px solid var(--gov-primary-soft);
-            border-top-color: var(--gov-primary);
-            animation: nvrSpin 0.7s linear infinite;
-        }
-        .map-search-dropdown {
-            position: absolute;
-            top: 44px; left: 0; right: 0;
-            background: var(--gov-surface);
-            border: 1px solid var(--gov-border);
-            border-radius: 8px;
-            box-shadow: 0 10px 28px rgba(11,30,60,0.18);
-            max-height: 280px;
-            overflow-y: auto;
-        }
-        .map-search-item {
-            padding: 10px 14px;
-            border-bottom: 1px solid var(--gov-border);
-            cursor: pointer;
-            transition: background .15s ease;
-        }
-        .map-search-item:hover { background: var(--gov-primary-soft); }
-        .map-search-item:last-child { border-bottom: none; }
-        .map-search-item-name {
-            font-size: 13px;
+            font-size: 12px;
+            line-height: 1.7;
             color: var(--gov-text);
-            font-weight: 600;
-            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            pointer-events: none;
         }
-        .map-search-item-meta {
+        .map-offline-note small {
+            color: var(--gov-muted);
             font-size: 11px;
-            color: var(--gov-muted);
-            margin-top: 2px;
-            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        }
-        .map-search-empty {
-            padding: 14px 16px;
-            font-size: 13px;
-            color: var(--gov-text);
-            line-height: 1.6;
-        }
-        .map-search-empty small {
-            color: var(--gov-muted);
-            font-size: 11.5px;
         }
 
         /* 拖拉 camera 到地圖時的 hover 提示 */
@@ -4925,33 +4860,12 @@
                                  @drop.prevent="onCamDropOnMap($event)"
                                  @dragleave="mapDragHover=false"
                                  :class="{'map-drag-hover': mapDragHover}">
-                                <!-- 地址搜尋框 -->
-                                <div class="map-search-box">
-                                    <input
-                                        type="text"
-                                        v-model="mapSearchQuery"
-                                        @input="onMapSearchInput"
-                                        @keydown.enter.prevent="onMapSearchSelect(mapSearchResults[0])"
-                                        @keydown.escape="mapSearchResults=[]"
-                                        placeholder="搜尋地址 / 地名（按 Enter 選第一筆）"
-                                        class="map-search-input"
-                                    />
-                                    <div v-if="mapSearchLoading" class="map-search-spinner"></div>
-                                    <button v-else-if="mapSearchQuery" @click="mapSearchQuery='';mapSearchResults=[]" class="map-search-clear">✕</button>
-                                    <div v-if="mapSearchResults.length" class="map-search-dropdown">
-                                        <div v-for="r in mapSearchResults" :key="r.place_id"
-                                             class="map-search-item"
-                                             @click="onMapSearchSelect(r)">
-                                            <div class="map-search-item-name">{{ r.display_name.split(',').slice(0,2).join(',') }}</div>
-                                            <div class="map-search-item-meta">{{ r.display_name.split(',').slice(2,5).join(',') }}</div>
-                                        </div>
-                                    </div>
-                                    <div v-else-if="mapSearchQuery.length>=2 && !mapSearchLoading" class="map-search-dropdown">
-                                        <div class="map-search-empty">
-                                            找不到「{{ mapSearchQuery }}」<br>
-                                            <small>試試地名（基隆市 / 瑞芳區）或地標，道路代號可改用「台62線」。<br>找不到也可直接點地圖 + 拖 marker 設座標。</small>
-                                        </div>
-                                    </div>
+                                <!-- 離線模式提示 —— 原本的地址搜尋走 nominatim.openstreetmap.org，
+                                     現場是封閉網段連不到，查詢只會一直轉圈後失敗，故移除。
+                                     設座標改用「拖曳攝影機到地圖」或「點地圖任一處」，兩者都不需要外網。 -->
+                                <div class="map-offline-note">
+                                    離線地圖模式 · 圖資 © 內政部國土測繪中心<br>
+                                    <small>設定座標：把右側攝影機拖到地圖上，或先按該台的定位鈕再點地圖</small>
                                 </div>
                                 <!-- 設定座標 banner (顯示於進入設定模式時) -->
                                 <div v-if="mapPlacingCamera" class="map-placing-banner">
@@ -14075,64 +13989,6 @@ const app=createApp({
             }
         };
 
-        // ═══════ 地址搜尋 (Nominatim API) ═══════
-        const mapSearchQuery=ref('');
-        const mapSearchResults=ref([]);
-        const mapSearchLoading=ref(false);
-        let _mapSearchTimer=null;
-        const _nominatim=async(q)=>{
-            // countrycodes=tw 限定台灣 + viewbox 偏台灣本島，提高道路代號命中率
-            const url=`https://nominatim.openstreetmap.org/search?format=json&limit=6&accept-language=zh-TW&countrycodes=tw&q=${encodeURIComponent(q)}`;
-            const r=await fetch(url,{headers:{'Accept':'application/json'}});
-            return r.ok ? await r.json() : [];
-        };
-        // 台灣道路名稱 → 候選查詢字串清單 (Nominatim OSM 標註方式不一，多試幾種)
-        const _twRoadVariants=(q)=>{
-            const variants=[q];
-            const s=q.replace(/\s+/g,'');
-            let m;
-            // 國道 (國道8 / 國8 / 國道8號) → 國道8號 + National Freeway 8
-            if((m=s.match(/^(?:國道|國)\s*(\d+)\s*號?$/))){
-                const n=m[1];
-                variants.push(`國道${n}號`, `國道${n}`, `National Freeway ${n}`, `Freeway ${n}, Taiwan`);
-            }
-            // 台/臺 快速公路 (台62 / 台62線) → 台62線 + Provincial Highway 62
-            else if((m=s.match(/^(?:台|臺)\s*(\d+)\s*[線号號]?$/))){
-                const n=m[1];
-                variants.push(`台${n}線`, `臺${n}線`, `Provincial Highway ${n}`, `Highway ${n}, Taiwan`);
-            }
-            // 縣道/鄉道/市道 X
-            else if((m=s.match(/^(縣道|鄉道|市道|縣|鄉|市)\s*(\d+)/))){
-                variants.push(`${m[1]}${m[2]}`, `${s}號`);
-            }
-            return [...new Set(variants)];
-        };
-        const onMapSearchInput=()=>{
-            if(_mapSearchTimer)clearTimeout(_mapSearchTimer);
-            const q=String(mapSearchQuery.value||'').trim();
-            if(q.length<2){mapSearchResults.value=[];return;}
-            mapSearchLoading.value=true;
-            _mapSearchTimer=setTimeout(async()=>{
-                try{
-                    let results=[];
-                    // 依序試各種台灣道路名稱變體，命中即停
-                    for(const variant of _twRoadVariants(q)){
-                        results=await _nominatim(variant);
-                        if(results.length)break;
-                    }
-                    mapSearchResults.value=results;
-                }catch(_){mapSearchResults.value=[];}
-                mapSearchLoading.value=false;
-            },500);
-        };
-        const onMapSearchSelect=(r)=>{
-            if(!r?.lat||!r?.lon)return;
-            const lat=parseFloat(r.lat), lng=parseFloat(r.lon);
-            if(!map){initMap();setTimeout(()=>onMapSearchSelect(r),300);return;}
-            map.flyTo([lat,lng], 16, {animate:true, duration:0.8});
-            mapSearchResults.value=[];
-            mapSearchQuery.value=r.display_name.split(',').slice(0,2).join(',');
-        };
 
         // ═══════ 互動描定攝影機座標 ═══════
         const mapPlacingCamera=ref(null);
@@ -18828,7 +18684,7 @@ const app=createApp({
             if(lprVisualTimer)clearInterval(lprVisualTimer);
         });
         
-        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,radarCameraId,radarTracks,radarStats,radarDotColor,radarClassZh,radarInsights,loadRadarTracks,visionEyeUrl,onVisionEyeError,trackHistory,parkingSources,parkingSource,parkingData,parkingSnapshotUrl,parkingRawSnapshotUrl,parkingImgEl,pmRect,pmLabel,pmDown,pmMove,pmUp,parkingShowVerify,parkingShowBoxes,parkingShowVehicles,parkingUseStream,vlmStatus,vlmResult,vlmQuerying,loadVlmStatus,triggerVlmLoad,askVlm,assistantOpen,toggleAssistant,assistantZoomImg,assistantPanelStyle,assistantDragStart,assistantSource,assistantMessages,assistantInput,assistantLoading,assistantSnapUrl,assistantSources,reloadAssistantSnap,sendAssistant,assistantPresets,assistantTTS,assistantListening,quickAsk,assistantVoiceInput,loadParkingSources,loadParkingOccupancy,openParkingEditor,downloadParkingSnapshot,openParkingLabel,parkingLiveRunning,parkingIntervalMs,parkingShowAdd,parkingAddForm,startParkingLive,stopParkingLive,addParkingSource,twipcamQuery,twipcamResults,twipcamSearching,searchTwipcam,pickTwipcam,parkingHistory,loadParkingHistory,parkingTrendPath,parkingCounting,parkingCountingMismatch,parkingCrossValidation,parkingCrossCalibrated,parkingCrossEscalated,parkingCrossHasArea,parkingCrossSuspect,parkingCrossTrend,loadParkingCounting,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapSearchQuery,mapSearchResults,mapSearchLoading,onMapSearchInput,onMapSearchSelect,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewLocations,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
+        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,radarCameraId,radarTracks,radarStats,radarDotColor,radarClassZh,radarInsights,loadRadarTracks,visionEyeUrl,onVisionEyeError,trackHistory,parkingSources,parkingSource,parkingData,parkingSnapshotUrl,parkingRawSnapshotUrl,parkingImgEl,pmRect,pmLabel,pmDown,pmMove,pmUp,parkingShowVerify,parkingShowBoxes,parkingShowVehicles,parkingUseStream,vlmStatus,vlmResult,vlmQuerying,loadVlmStatus,triggerVlmLoad,askVlm,assistantOpen,toggleAssistant,assistantZoomImg,assistantPanelStyle,assistantDragStart,assistantSource,assistantMessages,assistantInput,assistantLoading,assistantSnapUrl,assistantSources,reloadAssistantSnap,sendAssistant,assistantPresets,assistantTTS,assistantListening,quickAsk,assistantVoiceInput,loadParkingSources,loadParkingOccupancy,openParkingEditor,downloadParkingSnapshot,openParkingLabel,parkingLiveRunning,parkingIntervalMs,parkingShowAdd,parkingAddForm,startParkingLive,stopParkingLive,addParkingSource,twipcamQuery,twipcamResults,twipcamSearching,searchTwipcam,pickTwipcam,parkingHistory,loadParkingHistory,parkingTrendPath,parkingCounting,parkingCountingMismatch,parkingCrossValidation,parkingCrossCalibrated,parkingCrossEscalated,parkingCrossHasArea,parkingCrossSuspect,parkingCrossTrend,loadParkingCounting,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewLocations,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,previewParkingZones,previewParkingZoneCount,parkingSubKindOptions,applyParkingSubKindToZone,directionLabel,directionArrowLabel,directionOptionsForZone,roadDirectionOptions,monitorZoneOverlayItems,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedPlateIsInferred,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,detailClipRetrying,detailClipReloadKey,onDetailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
