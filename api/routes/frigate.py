@@ -1337,10 +1337,13 @@ async def sync_cameras_to_nvr():
                 status="offline",
                 enabled=fcfg.get("enabled", True),
                 detection_enabled=fcfg.get("detect", {}).get("enabled", True),
+                # 🛑 違規偵測預設關閉,與 cameras.py 的新增流程一致。
+                #    從 NVR 匯入的攝影機更沒有 ROI / 校正,預設開啟只會產生
+                #    未經校正的違規單。要用時到設定頁逐項打開。
                 detection_config={
-                    "red_light": True,
-                    "speeding": True,
-                    "illegal_parking": True,
+                    "red_light": False,
+                    "speeding": False,
+                    "illegal_parking": False,
                 },
                 zones=[],
                 created_at=datetime.utcnow(),

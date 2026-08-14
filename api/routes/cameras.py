@@ -483,10 +483,15 @@ async def create_camera(data: CameraCreate, db: Session = Depends(get_db)):
         port=data.port or "554",
         stream_path=data.stream_path,
         location=data.location,
+        # 🛑 違規偵測功能一律預設關閉。
+        #    這幾項都要先畫好對應的 ROI / 設好參數才會準:闖紅燈要停止線與號誌連動、
+        #    超速要 trip-wire 或 homography 校正、違規停車要禁停區與靜止門檻。
+        #    預設開啟等於新加一台攝影機就開始產生未經校正的違規單,現場得回頭清。
+        #    逆向行駛仍在開發中;未戴安全帽需要 helmet model,兩者本來就不預設開。
         detection_config=data.detection_config or {
-            "red_light": True,
-            "speeding": True,
-            "illegal_parking": True,
+            "red_light": False,
+            "speeding": False,
+            "illegal_parking": False,
             "wrong_way": False,
             "no_helmet": False,
             "speed_limit": 50
