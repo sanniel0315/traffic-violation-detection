@@ -2447,15 +2447,20 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                 _z = next((_zz for _zz in _inout_zones if _zone_key(_zz) == _zk), None)
                                 if _z is None:
                                     continue
-                                # 有指定進/出線 → 這一步移動必須真的跨過那條邊才計數
+                                # 🛑 沒標那條線就不計數(2026-08-15 依現場要求改)。
+                                #    舊行為是「沒指定就整框進出都算」——但現場多數框只標
+                                #    一條(只算進、或只算出),另一側不標卻照算,會得到一個
+                                #    沒人要的數字(例如只標進線,out_flow 卻把所有離開的車
+                                #    都算進去)。現在:標了才算,沒標就是不算。
                                 _edge = _zone_edge_segment(
                                     _z, _z.get("in_edge") if _dir == "IN" else _z.get("out_edge")
                                 )
-                                if _edge is not None:
-                                    if _prev_pt is None:
-                                        continue  # 首次出現、沒有前一點可連線 → 無法判定跨線
-                                    if not _seg_intersect(_prev_pt, _cur_pt, _edge[0], _edge[1]):
-                                        continue
+                                if _edge is None:
+                                    continue      # 該方向沒標線 → 不計
+                                if _prev_pt is None:
+                                    continue      # 首次出現、沒有前一點可連線 → 無法判定跨線
+                                if not _seg_intersect(_prev_pt, _cur_pt, _edge[0], _edge[1]):
+                                    continue
                                 rows.append(TrafficEvent(
                                     camera_id=int(camera_id), label=_lbl,
                                     speed_kmh=_spv, occupancy=zone_occupancy_map.get(_zk),
@@ -2472,15 +2477,18 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         _occ[str(_z.get("name") or _zk)] = sum(1 for _t in tracks.values() if _zk in (_t.get("_inout_inside") or set()))
                     detection_services[camera_id]["inout_occupancy"] = _occ
                     # 離開畫面才出框的(track 清除時記下的)→ 這裡補發 EXIT 一筆
+                    # 🛑 改為「沒標出線就不計」之後,這條補發路徑實際上不會再觸發:
+                    #    有標出線 → 消失在畫面不算跨線,本來就跳過;
+                    #    沒標出線 → 新規則下 EXIT 一律不計。
+                    #    保留程式碼但兩個條件都擋住,語意才一致(不要出現「轉場不算、
+                    #    但消失在畫面反而算」的矛盾)。
                     if _inout_exit_pending:
                         for _zk, _pending_cls in _inout_exit_pending:
                             _z = next((_zz for _zz in _inout_zones if _zone_key(_zz) == _zk), None)
                             if _z is None:
                                 continue
-                            # 有指定出線時,「消失在畫面」不算跨越出線 → 不補發,
-                            # 否則沒走出線的車也會被算成 OUT。
-                            if _zone_edge_segment(_z, _z.get("out_edge")) is not None:
-                                continue
+                            # 沒標出線 → 不計(新規則);有標出線 → 消失在畫面不算跨越 → 也不計
+                            continue
                             rows.append(TrafficEvent(
                                 camera_id=int(camera_id), label=_pending_cls or "unknown",
                                 speed_kmh=None, occupancy=None,
