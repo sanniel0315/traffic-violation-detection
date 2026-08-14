@@ -187,6 +187,45 @@ def discover_inline_template_pages(root='web'):
     return found
 
 
+# Vue 3 global build 的 composition API —— 這些一定要從 Vue 解構出來才能用
+_VUE_APIS = (
+    'ref', 'reactive', 'computed', 'watch', 'watchEffect', 'nextTick',
+    'onMounted', 'onUnmounted', 'onBeforeMount', 'onBeforeUnmount',
+    'onUpdated', 'onActivated', 'onDeactivated', 'defineComponent',
+    'shallowRef', 'toRaw', 'markRaw', 'provide', 'inject',
+)
+_VUE_DESTRUCTURE = re.compile(r'const\s*\{([^}]*)\}\s*=\s*Vue\b')
+
+
+def lint_vue_api_imports(text):
+    """抓「用了 Vue API 但沒從 Vue 解構出來」。
+
+    🛑 這種錯誤語法完全合法,HTML 結構檢查與 JS 語法檢查都抓不到 ——
+       要等執行到那一行才 ReferenceError,而 Vue 的 setup 一拋例外整個 app
+       就不掛載 → 白畫面。實際踩過兩次:
+       - 2026-08-15 roi_editor.html 用 onUnmounted 但沒引入 → 編輯器空白頁
+       - 同類型:識別字在模板用到但 setup 沒回傳 → 主頁白畫面
+    """
+    imported = set()
+    for m in _VUE_DESTRUCTURE.finditer(text):
+        for name in m.group(1).split(','):
+            name = name.split(':')[0].strip()
+            if name:
+                imported.add(name)
+    if not imported:
+        return []          # 沒有用解構寫法(可能是 Vue.ref 形式),不做判斷
+    missing = []
+    for api in _VUE_APIS:
+        if api in imported:
+            continue
+        # 呼叫形式 api(...) 且前面不是 . 或字母(排除 Vue.ref / myRef 之類)
+        m = re.search(r'(?<![.\w])' + api + r'\s*\(', text)
+        if m:
+            line = text[:m.start()].count('\n') + 1
+            missing.append((api, line))
+    return missing
+
+
 def lint_one(target):
     """回傳 (fails, warns)。"""
     if str(target).startswith(('http://', 'https://')):
@@ -197,6 +236,14 @@ def lint_one(target):
         text = pathlib.Path(target).read_text(encoding='utf-8')
     fails = lint(text)
     sc = lint_selfclosing_custom(text)
+    api_missing = lint_vue_api_imports(text)
+    if api_missing:
+        # 這個一定是 FAIL 不是 WARN —— 執行到就 ReferenceError,整頁白畫面
+        print(f'[FAIL] {len(api_missing)} 個 Vue API 有用到但沒從 Vue 解構出來 '
+              f'(執行時 ReferenceError → 整頁白畫面):')
+        for api, line in api_missing:
+            print(f'       第 {line} 行用到 {api}() —— 請加進 const {{ ... }} = Vue')
+        fails += len(api_missing)
     if fails:
         print(f'[FAIL] {fails} HTML structure error(s) — Vue mount likely fails')
     elif sc:
