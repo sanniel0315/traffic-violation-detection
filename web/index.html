@@ -8728,12 +8728,12 @@
                                         <!-- 🛑 進出框不給改「行車方向」。標了進出線的 ROI,direction 必須是
                                              INOUT,轉場計數才會跑;這裡若讓人改成「直行」,進出計數整個失效
                                              (而且該車道的一般流量也會出問題)。所以進出框只顯示固定標籤,
-                                             真正的道路行進方向請用下面的「行進方向」。 -->
+                                             標了進出線就不必再選方向。 -->
                                         <span v-if="page==='traffic_flow_settings' && isInoutZone(item.zone)" class="afx-group">
-                                            <span style="font-size:12px;color:#64748b">行車方向</span>
+                                            <span style="font-size:12px;color:#64748b">計數方式</span>
                                             <el-tag size="small" type="warning">進出(IN/OUT)</el-tag>
                                         </span>
-                                        <span v-if="page==='traffic_flow_settings' && !isInoutZone(item.zone) && (item.zone.type==='flow_detection' || item.zone.type==='detection')" style="font-size:12px;color:#64748b">行車方向</span>
+                                        <span v-if="page==='traffic_flow_settings' && !isInoutZone(item.zone) && (item.zone.type==='flow_detection' || item.zone.type==='detection')" style="font-size:12px;color:#64748b">計數方式</span>
                                         <select
                                             v-if="page==='traffic_flow_settings' && !isInoutZone(item.zone) && (item.zone.type==='flow_detection' || item.zone.type==='detection')"
                                             v-model="item.zone.direction"
@@ -8742,18 +8742,12 @@
                                             style="width:110px">
                                             <option v-for="opt in directionOptionsForZone(item.zone)" :key="`flow-dir-${item.index}-${opt.value||'none'}`" :value="opt.value">{{ opt.label }}</option>
                                         </select>
-                                        <!-- 選了「進出(IN/OUT)」之後 direction 被進出模式佔走,
-                                             道路的行進方向要另外記,否則對外 VD 報表的 direction
-                                             只能回 INOUT。只在 INOUT 時出現,不干擾一般車流區。 -->
-                                        <span v-if="page==='traffic_flow_settings' && isInoutZone(item.zone)" style="font-size:12px;color:#64748b">行進方向</span>
-                                        <select
-                                            v-if="page==='traffic_flow_settings' && isInoutZone(item.zone)"
-                                            v-model="item.zone.travel_direction"
-                                            @change="markPreviewZonesDirty"
-                                            class="stats-native-select"
-                                            style="width:110px">
-                                            <option v-for="opt in roadDirectionOptions" :key="`flow-travel-${item.index}-${opt.value||'none'}`" :value="opt.value">{{ opt.label }}</option>
-                                        </select>
+                                        <!-- 進出框不需要選任何方向:哪邊進、哪邊出已經由 ROI 上標的
+                                             進線/出線決定,再讓人選一次只會不一致(而且兩個名字只差
+                                             一個字,實際上分不出差別)。
+                                             travel_direction 這個資料欄位保留,只是不在 UI 出現;
+                                             影響:對外 VD 報表這類 zone 的 direction 欄會是未指定。
+                                             之後若業主要求報表帶道路方向,把這段 UI 打開即可。 -->
                                         <!-- 進出線改成在 ROI 編輯器直接點邊界標記（同一個 ROI，不另開區域）。
                                              這裡只做唯讀顯示 —— 原本兩個下拉要人腦把「邊5」對到畫面位置，
                                              既難用又把這一列擠爆。 -->
