@@ -1062,6 +1062,147 @@ async def external_congestion_report(
     }
 
 
+@router.get("/congestion-report/realtime",
+            summary="即時壅塞報表 — 逐分鐘佔有率(直接讀原始表,不經聚合)")
+def external_congestion_realtime(
+    minutes: int = Query(
+        5, ge=1, le=180,
+        description="回傳最近 N 個「已結束」的整分鐘桶,每分鐘一筆(不含當前未完成的分鐘)"),
+    detector_id: Optional[int] = Query(None, description="攝影機 camera_id;留空=全部"),
+    include_lanes: int = Query(
+        0, description="0=只回整體(is_overall);1=連車道層一起回"),
+    api_key: ApiKey = Depends(require_scope("congestion_report")),
+    db: Session = Depends(get_db),
+):
+    """即時壅塞佔有率 —— 逐分鐘,每分鐘每台都有,不缺漏。
+
+    與 /congestion-report 的差別:
+
+    - **/congestion-report** 讀聚合表 `congestion_report_aggs`,有聚合延遲,
+      且該表有已知缺口(實測缺 765/1014 小時)→ 會少報。
+    - **本端點**直接讀原始表 `congestion_samples`,沒有延遲也沒有缺口。
+
+    記錄格式與 /congestion-report 相同,客戶端不必改解析。
+
+    **佔有率欄位**(單位都是百分比 0~100,不是 0~1):
+    - `avg_occupancy_pct` — 該分鐘的平均佔有率(依樣本數平均)
+    - `max_occupancy_pct` — 該分鐘的最大瞬時佔有率
+    - `avg_raw_occupancy_pct` — 未經 queue/density 加權的原始面積佔有率
+
+    ⚠️ 這裡的佔有率是**壅塞演算法**的定義(ROI 面積被車輛覆蓋的比例,再經
+    queue/density 加權),與 /realtime、/vd-report 裡 VD 的 `avg_occupancy_pct`
+    (車輛偵測事件記錄的佔用率)定義不同,兩者數字不會一樣,不要混用。
+
+    只回「已結束」的分鐘:當前分鐘還在累積,數字會變,拿去存檔會前後不一致。
+    """
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    cur_min = now.replace(second=0)
+    first = cur_min - timedelta(minutes=minutes)
+
+    camera_by_id, _ = _camera_meta(db)
+    cam_filter = " AND camera_id = :cam" if detector_id is not None else ""
+    overall_filter = "" if include_lanes else " AND is_overall = 1"
+    params = {"since": first.replace(tzinfo=None).isoformat(sep=" "),
+              "until": cur_min.replace(tzinfo=None).isoformat(sep=" ")}
+    if detector_id is not None:
+        params["cam"] = int(detector_id)
+
+    # 一次撈完整個範圍再依分鐘分組,避免 N 次查詢(minutes 最大 180)
+    rows = db.execute(text(f"""
+        SELECT strftime('%Y-%m-%dT%H:%M:00', created_at) AS bucket,
+               camera_id, COALESCE(camera_name,'') AS camera_name,
+               COALESCE(zone_name,'') AS zone_name,
+               COALESCE(lane_no, 0) AS lane_no,
+               COALESCE(direction,'') AS direction, is_overall,
+               AVG(occupancy) AS avg_occ, MAX(occupancy) AS max_occ,
+               AVG(raw_occupancy) AS avg_raw_occ,
+               AVG(vehicle_count) AS avg_veh, AVG(stopped_vehicle_count) AS avg_stop,
+               AVG(estimated_queue_length_m) AS avg_q, MAX(estimated_queue_length_m) AS max_q,
+               SUM(CASE WHEN queue_active = 1 THEN COALESCE(sample_interval_sec, 0) ELSE 0 END) AS q_dur,
+               COUNT(*) AS n
+        FROM congestion_samples INDEXED BY ix_congestion_samples_created_at
+        WHERE created_at >= :since AND created_at < :until{cam_filter}{overall_filter}
+        GROUP BY bucket, camera_id, zone_name, lane_no, is_overall
+    """), params).fetchall()
+
+    def pct(v):
+        """佔有率統一輸出百分比。DB 存的是 0~1 小數,但保險起見容忍已是百分比的值。"""
+        if v is None:
+            return 0.0
+        f = float(v)
+        return round(f * 100.0 if f <= 1.0 else f, 1)
+
+    by_bucket: dict = {}
+    for r in rows:
+        by_bucket.setdefault(str(r[0]), []).append(r)
+
+    records: list = []
+    for i in range(minutes, 0, -1):
+        b_start = cur_min - timedelta(minutes=i)
+        b_end = b_start + timedelta(minutes=1)
+        key = b_start.replace(tzinfo=None).strftime("%Y-%m-%dT%H:%M:00")
+        ts = b_start.astimezone(TZ_TAIPEI)
+        hit_cams = set()
+        for r in by_bucket.get(key, []):
+            hit_cams.add(int(r[1] or 0))
+            records.append({
+                "detector_id": str(r[2] or camera_by_id.get(int(r[1] or 0), {}).get("camera_name") or r[1]),
+                "camera_name": str(r[2] or ""),
+                "time_start": ts.isoformat(),
+                "time_end": (ts + timedelta(minutes=1)).isoformat(),
+                "zone_name": str(r[3] or ""),
+                "lane_no": int(r[4] or 0) or None,
+                "direction": str(r[5] or ""),
+                "avg_occupancy_pct": pct(r[7]),
+                "max_occupancy_pct": pct(r[8]),
+                "avg_raw_occupancy_pct": pct(r[9]),
+                "avg_vehicle_count": round(float(r[10] or 0), 1),
+                "avg_stopped_vehicle_count": round(float(r[11] or 0), 1),
+                "avg_queue_length_m": round(float(r[12] or 0), 1),
+                "max_queue_length_m": round(float(r[13] or 0), 1),
+                "queue_active_duration_sec": round(float(r[14] or 0), 1),
+                "sample_count": int(r[15] or 0),
+                "status": "active",
+            })
+        # 🛑 該分鐘沒有樣本的攝影機也要出現(值 0),否則呼叫端分不出
+        #    「那一分鐘沒有壅塞」和「那一分鐘沒收到資料」。
+        for cam, meta in camera_by_id.items():
+            if not meta.get("vd_eligible"):
+                continue
+            if detector_id is not None and cam != int(detector_id):
+                continue
+            if cam in hit_cams:
+                continue
+            records.append({
+                "detector_id": str(meta.get("camera_name") or f"cam_{cam}"),
+                "camera_name": str(meta.get("camera_name") or ""),
+                "time_start": ts.isoformat(),
+                "time_end": (ts + timedelta(minutes=1)).isoformat(),
+                "zone_name": "", "lane_no": None,
+                "direction": normalize_direction(meta.get("direction")),
+                "avg_occupancy_pct": 0.0, "max_occupancy_pct": 0.0,
+                "avg_raw_occupancy_pct": 0.0,
+                "avg_vehicle_count": 0.0, "avg_stopped_vehicle_count": 0.0,
+                "avg_queue_length_m": 0.0, "max_queue_length_m": 0.0,
+                "queue_active_duration_sec": 0.0, "sample_count": 0,
+                "status": "active" if meta.get("enabled", True) else "disabled",
+            })
+
+    return {
+        "status": "success",
+        "data": {
+            "interval": "1m",
+            "minutes": int(minutes),
+            "bucket_count": int(minutes),
+            "period": {"start": first.astimezone(TZ_TAIPEI).isoformat(),
+                       "end": cur_min.astimezone(TZ_TAIPEI).isoformat()},
+            "stats": _congestion_stats(records),
+            "records": records,
+        },
+        "meta": _meta(),
+    }
+
+
 @router.get("/congestion-report/latest", summary="壅塞統計報表(快捷) — 最近 N 分鐘 + 統計摘要")
 async def external_congestion_report_latest(
     minutes: int = Query(5, ge=1, le=360, description="回傳最近幾個完整桶(interval=1m 時即分鐘數)"),
