@@ -15155,7 +15155,20 @@ const app=createApp({
             let budget=MAX_LIVE_MJPEG-(zoomId?1:0);
             sortedCameras.value.forEach(c=>{
                 if(!c?.enabled)return;
-                if(c.id===zoomId){ c._budgetSnapshot=false; return; }
+                if(c.id===zoomId){
+                    c._budgetSnapshot=false;
+                    // 🛑 放大視窗一定要即時串流。watchdog 會把「30 秒沒新畫面」的攝影機
+                    //    打成 monitorSnapshotMode(快照輪詢),而 getMonitorStreamUrl 一看到
+                    //    這個旗標就回傳單張 snapshot —— 放大出來是一張靜止 JPEG,
+                    //    看起來就像「影像停掉」。這裡沒還原的話只能按「重載」才會動。
+                    //    攝影機還沒安裝好/離線時特別容易踩到(實測 2026-08-14)。
+                    if(c.monitorSnapshotMode){
+                        c.monitorSnapshotMode=false;
+                        c.lastFrameAt=now;
+                        c._zoomReloadTick=now;
+                    }
+                    return;
+                }
                 if(getMonitorMediaKind(c)==='video')return;   // mp4 直連檔案，不佔 API 的連線池
                 if(budget>0){
                     budget-=1;
@@ -15207,7 +15220,10 @@ const app=createApp({
             camera._zoomReloadTick=Date.now();
             camera.showStream=false;
             setTimeout(()=>{
-                if(page.value==='monitor' && camera.enabled){
+                // 🛑 _zoomPausedGrid 要檢查:放大視窗開著時,網格那一路是被 openMonitorZoom
+                //    刻意停掉的(同一台開兩條 RTSP 會互相搶,放大畫面就卡住)。這個 timer
+                //    是放大之前的錯誤排進來的,不擋掉會在放大開著時偷偷把網格串流叫回來。
+                if(page.value==='monitor' && camera.enabled && !camera._zoomPausedGrid){
                     camera.showStream=true;
                     camera._zoomReloadTick=Date.now();
                 }
@@ -15338,6 +15354,10 @@ const app=createApp({
                     cameras.value.forEach(c=>{
                         if(!c?.enabled || c.monitorSnapshotMode)return;
                         if(getMonitorMediaKind(c)==='video')return;
+                        // 🛑 放大視窗那一台不要 recycle。它的網格串流是被 openMonitorZoom
+                        //    刻意停掉的,這裡重掛會變成同一台開兩條 RTSP,放大畫面直接死掉;
+                        //    而且 bump _zoomReloadTick 會連放大視窗的 <img> 一起換 src。
+                        if(c._zoomPausedGrid)return;
                         const lastFrame = c.lastFrameAt || 0;
                         const stale = lastFrame > 0 && (now - lastFrame) > STALE_THRESHOLD_MS;
                         const periodic = c.showStream;
@@ -15346,7 +15366,7 @@ const app=createApp({
                             c._zoomReloadTick=now;
                             c.showStream=false;
                             setTimeout(()=>{
-                                if(page.value==='monitor' && c.enabled){
+                                if(page.value==='monitor' && c.enabled && !c._zoomPausedGrid){
                                     c.showStream=true;
                                     c._zoomReloadTick=Date.now();
                                     c.lastFrameAt=Date.now();
