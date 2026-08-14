@@ -15120,15 +15120,14 @@ const app=createApp({
             return getMonitorStreamUrl(camera, opts);
         };
         const getPreviewStreamUrl=(camera)=>{
-            if(isMp4Camera(camera)){
-                return `/api/stream/${camera.id}/snapshot?t=${Date.now()}`;
-            }
-            const settingsPages=['traffic_flow_settings','speed_detection','congestion_detection'];
-            if(settingsPages.includes(page.value)){
-                return `/api/stream/${camera.id}/snapshot?t=${Date.now()}`;
-            }
-            const route=resolveCameraStreamMode(camera)==='overlay'?'live-overlay':'live';
-            return `/api/stream/${camera.id}/${route}?t=${Date.now()}`;
+            // 🛑 設定對話框一律用快照,不要開 live 串流。
+            //    這個對話框是拿來畫 ROI / 調參數的,靜態畫面就夠;開 live 等於多佔一條
+            //    MJPEG 長連線 —— 監控頁四路網格已經把預算用滿,再開第五條就拿不到
+            //    連線,對話框整個沒畫面(現場實測 2026-08-14「點設定沒畫面」)。
+            //    車流/車速/壅塞三個設定頁本來就是用快照,這裡只是把監控頁改成一致。
+            //    帶 overlay=1 讓靜態畫面也看得到現有 ROI 與偵測框,方便對照著畫。
+            const ov=resolveCameraStreamMode(camera)==='overlay'?'&overlay=1':'';
+            return `/api/stream/${camera.id}/snapshot?t=${Date.now()}${ov}`;
         };
         const onPreviewImgError=()=>{
             if(!previewCamera.value?.id)return;
