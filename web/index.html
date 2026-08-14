@@ -15151,15 +15151,27 @@ const app=createApp({
         // 再加 /api/health 就是 3 —— 現場 4 台攝影機時實測 Chrome 六條全滿、health 排不到
         // socket → SERVICE OFFLINE(後端當時 8ms 就回應)。2026-08-14。
         const API_CONN_RESERVE=3;
-        // HTTP/2 以上是多工的,同一 origin 沒有 6 條連線上限,不需要限制同時串流數。
-        // 走 Cloudflare tunnel(h2/h3)時四台可以全部即時;Tailscale/LAN 直連是 HTTP/1.1,
-        // 才需要讓超額的降級成快照輪詢。
-        const _navProto=(()=>{
-            try{ return String(performance.getEntriesByType('navigation')[0]?.nextHopProtocol||''); }
-            catch(_){ return ''; }
+        // 🛑 限制串流數要同時看「連線數」和「頻寬」,兩者是不同的瓶頸:
+        //    HTTP/1.1 → 6 條連線上限(多工解不了)
+        //    4G / 慢速上行 → 頻寬上限(HTTP/2 多工也解不了)
+        //    2026-08-14 現場實測:走 tunnel(HTTP/2)四路 MJPEG 把 4G 上行 11.4 Mbps 吃光,
+        //    同一個 1.13MB 網頁本機 0.03s、經 tunnel 要 20.7s(剩 0.44 Mbps),
+        //    /api/health 逾時 → SERVICE OFFLINE。連線數沒滿,是頻寬沒了。
+        const _nav=(()=>{ try{ return performance.getEntriesByType('navigation')[0]||null; }catch(_){ return null; } })();
+        const IS_MULTIPLEXED=/^h[23]/i.test(String(_nav?.nextHopProtocol||''));
+        // 用「這一頁自己載入的實際速度」判斷頻寬,比 navigator.connection 可靠
+        // (後者在桌面瀏覽器常常不存在或不準)。index.html 約 1.1MB,是很好的探針。
+        const _pageKBps=(()=>{
+            try{
+                const bytes=Number(_nav?.transferSize||0);
+                const secs=Number(_nav?.responseEnd||0)-Number(_nav?.requestStart||0);
+                return (bytes>200000 && secs>0) ? (bytes/1024)/(secs/1000) : 0;   // KB/s
+            }catch(_){ return 0; }
         })();
-        const IS_MULTIPLEXED=/^h[23]/i.test(_navProto);
-        const MAX_LIVE_MJPEG=IS_MULTIPLEXED?99:(BROWSER_CONN_LIMIT-API_CONN_RESERVE);
+        // < 400 KB/s(約 3 Mbps)視為窄頻上行:只留 1 路即時,其餘走快照輪詢。
+        // 0 = 量不到(快取命中等),不做判斷。
+        const IS_LOW_BANDWIDTH=_pageKBps>0 && _pageKBps<400;
+        const MAX_LIVE_MJPEG=IS_LOW_BANDWIDTH?1:(IS_MULTIPLEXED?99:(BROWSER_CONN_LIMIT-API_CONN_RESERVE));
         const enforceStreamBudget=()=>{
             const now=Date.now();
             const zoomId=monitorZoomVisible.value?Number(monitorZoomCamera.value?.id||0):0;
@@ -15351,7 +15363,9 @@ const app=createApp({
                         return;
                     }
                     // 被連線預算擠掉的用 2 秒輪詢(接近即時)，因錯誤降級的維持 5 秒
-                    const _tick=c._budgetSnapshot?2000:5000;
+                    // 🛑 窄頻(4G)要拉長:一張 1080p 快照約 600KB,四台每 2 秒 = 9.6 Mbps,
+                    //    比 4G 上行(實測 11.4 Mbps)還接近上限,會跟即時串流互相搶。
+                    const _tick=IS_LOW_BANDWIDTH?8000:(c._budgetSnapshot?2000:5000);
                     if(c.monitorSnapshotMode && now-Number(c.snapshotTickAt||0)>_tick){
                         c.thumbKey=now;
                         c.snapshotTickAt=now;
