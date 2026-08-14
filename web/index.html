@@ -15099,7 +15099,11 @@ const app=createApp({
         };
         const getMonitorStreamUrl=(camera, opts={})=>{
             if(camera?.monitorSnapshotMode){
-                return `/api/stream/${camera.id}/snapshot?t=${camera.thumbKey||streamKey.value}`;
+                // 🛑 快照模式也要帶 overlay=1,否則降級成快照輪詢的那幾台就看不到 ROI /
+                //    偵測框 —— 使用者會以為「顯示 ROI 只有一台有出現」。
+                //    ROI 是後端畫進影像的,snapshot 端點預設 overlay=0 不畫。
+                const ov=(resolveCameraStreamMode(camera)==='overlay' && overlayShowRoi.value)?'&overlay=1':'';
+                return `/api/stream/${camera.id}/snapshot?t=${camera.thumbKey||streamKey.value}${ov}`;
             }
             const route=resolveCameraStreamMode(camera)==='overlay'?'live-overlay':'live';
             const roiParam=route==='live-overlay'?`&roi=${overlayShowRoi.value?1:0}`:'';
