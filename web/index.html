@@ -14188,7 +14188,16 @@ const app=createApp({
         // ---- 車流 ROI 進出線 ----
         // 邊 i = points[i] → points[(i+1)%n]，UI 顯示為「邊1」起算(對應 index 0)。
         // canvas 會在每條邊中點畫同一組編號，使用者照號碼選即可。
-        const isInoutZone=(zone)=>String(zone?.direction||'')==='INOUT';
+        // 🛑 判定要跟後端一致:stream.py 的規則是「只要標了進線或出線,這個框就是
+        //    進出框,不管方向被設成什麼」(會在執行期把 direction 正規化成 INOUT)。
+        //    前端若只看 direction,遇到舊資料 direction='IN' 但已標邊的 zone 就會
+        //    當成一般車流區 → 又把那個不該出現的方向下拉顯示出來(現場實測)。
+        const isInoutZone=(zone)=>{
+            if(String(zone?.direction||'').toUpperCase()==='INOUT')return true;
+            const n=(zone?.points||[]).length;
+            return normalizeEdgeIndex(zone?.in_edge,n)!==null
+                || normalizeEdgeIndex(zone?.out_edge,n)!==null;
+        };
         // 進出線現在在 ROI 編輯器上點邊界標記,這裡只做唯讀顯示
         const zoneInoutLabel=(zone)=>{
             const n=(zone?.points||[]).length;
