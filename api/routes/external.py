@@ -365,66 +365,26 @@ def _meta(fmt: str = "json") -> dict:
 # 專案規則:未細分的 truck 視為小車(保守估計,避免誤算為大車)。
 
 
-@router.get("/realtime", summary="即時 VD 車流報表（預設 mode=minute 分鐘內累積；mode=window 為滾動視窗）")
-def external_realtime(
-    mode: str = Query(
-        # 預設 minute:客戶要的是「這一分鐘到目前為止的累積」。
-        # 🛑 不要把預設改回 window —— 匯入 OpenAPI 的工具(Postman 等)query 參數
-        # 預設是沒勾選的,呼叫端一旦忘了帶 mode,會靜默拿到另一種語意的數字
-        # (滾動視窗會與前一次重疊,拿去存檔就重複計算)。預設值必須是最常用、
-        # 且拿錯也最不會出事的那個。
-        "minute", pattern="^(window|minute)$",
-        description="minute=從當前整分累積到現在(跨分歸零,預設);window=往回推 window_sec 秒的滾動視窗",
-    ),
-    window_sec: int = Query(60, ge=10, le=600, description="滾動視窗長度(mode=window 時有效)"),
-    detector_id: Optional[int] = Query(None, description="攝影機 camera_id;留空=全部"),
-    api_key: ApiKey = Depends(require_scope("vd_report")),
-    db: Session = Depends(get_db),
-):
-    """即時 VD 車流報表 —— 兩種取樣方式，記錄格式與 /vd-report 完全相同。
+def _realtime_rows(db: Session, since: datetime, start: datetime,
+                   detector_id: Optional[int], until: Optional[datetime] = None) -> list:
+    """算出 [since, until) 這一段的 VD 記錄列(與 build_vd_report_rows 同結構)。
 
-    **mode=minute（分鐘內累積）** — 起點釘在當前整分，終點是「現在」，跨分歸零。
-    分鐘內任何時間查，拿到的都是「從整分到當下的累積」：
+    直接讀原始表 traffic_events / congestion_samples,不經聚合 ——
+    🛑 聚合表 traffic_report_aggs 有已知缺口(實測缺 765/1014 小時),
+       逐分鐘查詢若走聚合會少報,所以這裡一律讀原始表。
 
-        18:49:14  起點 18:49:00  經過 14 秒  累積  2
-        18:49:54  起點 18:49:00  經過 54 秒  累積 18   ← 同一起點，只增不減
-        18:50:15  起點 18:50:00  經過 15 秒  累積  6   ← 跨分歸零
-
-    分鐘結束時的累積值，等於 /vd-report 該分鐘桶的值（已實測，含大車 0 不符）。
-    統計單位是一分鐘、又想在分鐘內看到進度時用這個。
-
-    **mode=window（滾動視窗，預設）** — 每次往回看 window_sec 秒，起點終點一起移動。
-    適合畫面顯示，數字較平滑。⚠️ 視窗互相重疊，直接加總會重複計算，不可拿來存檔。
-
-    共通：
-    - 資料直接讀原始表、不經聚合，沒有聚合延遲。
-    - `elapsed_sec` 是本次涵蓋的秒數；`flow_per_hour` 依它換算成每小時車流率。
-    - `in_flow` / `out_flow` **只有畫了進出線的攝影機才有這兩個欄位**（不是給 0）。
-    - `status`：active = 正常運作，disabled = 該攝影機停用（數值恆 0，不是沒有車）。
-    - 沒測速的攝影機 `avg_speed_kmh` 為 null（不是 0 —— 0 代表車速真的是 0）。
-
-    要存檔請改用 /vd-report/latest：那是不重疊的固定分鐘桶，一分鐘只有一個答案。
+    start 只用來標記這一桶的時間(timeKey/timeText);until=None 表示取到現在。
     """
-    now = datetime.now(timezone.utc).replace(microsecond=0)
-    if mode == "minute":
-        # 分鐘內累積:起點釘在當前整分,終點是「現在」。
-        # 同一分鐘內連續查詢,起點不動、終點往前 → 數字只會往上累加;
-        # 跨到下一分鐘就自動歸零重算。整分那一刻累積為 0(這一分鐘才剛開始),
-        # 而分鐘結束時的累積值,會等於 /vd-report 該分鐘桶的值。
-        start = now.replace(second=0)
-        span = now - start
-    else:
-        span = timedelta(seconds=int(window_sec))
-        start = now - span
-    since = start.replace(tzinfo=None)
-    elapsed = max(int(span.total_seconds()), 0)
-
     camera_by_id, _ = _camera_meta(db)
     large_case = " OR ".join(
         "LOWER(COALESCE(label,'')) LIKE '%%%s%%'" % lbl for lbl in _LARGE_LABELS
     )
     cam_filter = " AND camera_id = :cam" if detector_id is not None else ""
     params = {"since": since.isoformat(sep=" ")}
+    until_filter = ""
+    if until is not None:
+        params["until"] = until.isoformat(sep=" ")
+        until_filter = " AND created_at < :until"
     if detector_id is not None:
         params["cam"] = int(detector_id)
 
@@ -436,7 +396,7 @@ def external_realtime(
                AVG(CASE WHEN occupancy >= 0 THEN occupancy END) AS avg_occ,
                SUM(CASE WHEN ({large_case}) THEN 1 ELSE 0 END) AS large_n
         FROM traffic_events INDEXED BY ix_traffic_events_created_at
-        WHERE created_at >= :since{cam_filter}
+        WHERE created_at >= :since{until_filter}{cam_filter}
         GROUP BY camera_id, lane_no, direction
     """), params).fetchall()
 
@@ -448,7 +408,7 @@ def external_realtime(
                MAX(queue_duration_sec) AS max_q_dur,
                AVG(occupancy) AS avg_occ
         FROM congestion_samples INDEXED BY ix_congestion_samples_created_at
-        WHERE created_at >= :since{cam_filter}
+        WHERE created_at >= :since{until_filter}{cam_filter}
         GROUP BY camera_id, lane_no, is_overall
     """), params).fetchall()
 
@@ -567,6 +527,103 @@ def external_realtime(
         for key in ("_sp_sum", "_sp_n", "_oc_sum", "_oc_n"):
             d.pop(key, None)
         out_rows.append(d)
+    return out_rows
+
+@router.get("/realtime", summary="即時 VD 車流報表（預設 mode=minute 分鐘內累積；mode=window 為滾動視窗）")
+def external_realtime(
+    mode: str = Query(
+        # 預設 minute:客戶要的是「這一分鐘到目前為止的累積」。
+        # 🛑 不要把預設改回 window —— 匯入 OpenAPI 的工具(Postman 等)query 參數
+        # 預設是沒勾選的,呼叫端一旦忘了帶 mode,會靜默拿到另一種語意的數字
+        # (滾動視窗會與前一次重疊,拿去存檔就重複計算)。預設值必須是最常用、
+        # 且拿錯也最不會出事的那個。
+        "minute", pattern="^(window|minute)$",
+        description="minute=從當前整分累積到現在(跨分歸零,預設);window=往回推 window_sec 秒的滾動視窗",
+    ),
+    window_sec: int = Query(60, ge=10, le=600, description="滾動視窗長度(mode=window 時有效)"),
+    minutes: int = Query(
+        0, ge=0, le=180,
+        description="逐分鐘查詢:回傳最近 N 個「已結束」的整分鐘桶,每分鐘一筆(不含當前未完成的分鐘)。"
+                    "0=不啟用,維持原本的單一視窗行為。",
+    ),
+    detector_id: Optional[int] = Query(None, description="攝影機 camera_id;留空=全部"),
+    api_key: ApiKey = Depends(require_scope("vd_report")),
+    db: Session = Depends(get_db),
+):
+    """即時 VD 車流報表 —— 兩種取樣方式，記錄格式與 /vd-report 完全相同。
+
+    **mode=minute（分鐘內累積）** — 起點釘在當前整分，終點是「現在」，跨分歸零。
+    分鐘內任何時間查，拿到的都是「從整分到當下的累積」：
+
+        18:49:14  起點 18:49:00  經過 14 秒  累積  2
+        18:49:54  起點 18:49:00  經過 54 秒  累積 18   ← 同一起點，只增不減
+        18:50:15  起點 18:50:00  經過 15 秒  累積  6   ← 跨分歸零
+
+    分鐘結束時的累積值，等於 /vd-report 該分鐘桶的值（已實測，含大車 0 不符）。
+    統計單位是一分鐘、又想在分鐘內看到進度時用這個。
+
+    **mode=window（滾動視窗，預設）** — 每次往回看 window_sec 秒，起點終點一起移動。
+    適合畫面顯示，數字較平滑。⚠️ 視窗互相重疊，直接加總會重複計算，不可拿來存檔。
+
+    共通：
+    - 資料直接讀原始表、不經聚合，沒有聚合延遲。
+    - `elapsed_sec` 是本次涵蓋的秒數；`flow_per_hour` 依它換算成每小時車流率。
+    - `in_flow` / `out_flow` **只有畫了進出線的攝影機才有這兩個欄位**（不是給 0）。
+    - `status`：active = 正常運作，disabled = 該攝影機停用（數值恆 0，不是沒有車）。
+    - 沒測速的攝影機 `avg_speed_kmh` 為 null（不是 0 —— 0 代表車速真的是 0）。
+
+    要存檔請改用 /vd-report/latest：那是不重疊的固定分鐘桶，一分鐘只有一個答案。
+    """
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    # ── 逐分鐘查詢:最近 N 個「已結束」的整分鐘桶 ────────────────────────
+    # 每一分鐘、每一台都一定有一筆(沒車就是 0),中間不會跳過任何一分鐘 ——
+    # 呼叫端可以直接拿去補資料庫,不必自己判斷哪一分鐘漏了。
+    # 只回已結束的分鐘:當前這一分鐘還在累積,數字會變,存檔會不一致。
+    if minutes > 0:
+        cur_min = now.replace(second=0)
+        all_records: list = []
+        for i in range(minutes, 0, -1):
+            b_start = cur_min - timedelta(minutes=i)
+            b_end = b_start + timedelta(minutes=1)
+            rows_i = _realtime_rows(db, b_start.replace(tzinfo=None), b_start,
+                                    detector_id, until=b_end.replace(tzinfo=None))
+            recs_i = _vd_rows_to_records(rows_i, "1m", span=timedelta(minutes=1))
+            for rec in recs_i:
+                # 整分桶固定 60 秒,車流率不用外推
+                rec["flow_per_hour"] = round(rec["total_flow"] * 60.0, 1)
+            all_records.extend(recs_i)
+        first = cur_min - timedelta(minutes=minutes)
+        return {
+            "status": "success",
+            "data": {
+                "mode": "minute",
+                "interval": "1m",
+                "minutes": int(minutes),
+                "bucket_count": int(minutes),
+                "elapsed_sec": 60,
+                "period": {"start": first.astimezone(TZ_TAIPEI).isoformat(),
+                           "end": cur_min.astimezone(TZ_TAIPEI).isoformat()},
+                "stats": _vd_stats(all_records),
+                "records": all_records,
+            },
+            "meta": _meta(),
+        }
+
+    if mode == "minute":
+        # 分鐘內累積:起點釘在當前整分,終點是「現在」。
+        # 同一分鐘內連續查詢,起點不動、終點往前 → 數字只會往上累加;
+        # 跨到下一分鐘就自動歸零重算。整分那一刻累積為 0(這一分鐘才剛開始),
+        # 而分鐘結束時的累積值,會等於 /vd-report 該分鐘桶的值。
+        start = now.replace(second=0)
+        span = now - start
+    else:
+        span = timedelta(seconds=int(window_sec))
+        start = now - span
+    since = start.replace(tzinfo=None)
+    elapsed = max(int(span.total_seconds()), 0)
+
+    out_rows = _realtime_rows(db, since, start, detector_id)
 
     records = _vd_rows_to_records(out_rows, "1m", span=span)
     # 即時特有:換算每小時車流率,呼叫端不必知道視窗多長就能直接顯示
