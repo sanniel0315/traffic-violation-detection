@@ -2081,7 +2081,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     for tid in stale_ids:
                         _st = tracks.pop(tid, None)
                         if _st and _st.get("_inout_inside"):  # 車在框內就消失(離開畫面)→ 待補發 EXIT
-                            _inout_exit_pending.extend(_st.get("_inout_inside"))
+                            # 連車種一起帶走,否則補發時只能寫 unknown(見 _inout_cls 的註解)
+                            _cls = _st.get("_inout_cls")
+                            _inout_exit_pending.extend((_zk, _cls) for _zk in _st.get("_inout_inside"))
                     # P1: 找能算出 homography 的 speed_zone (拿第一個)
                     # 改用「_get_zone_homography 回非 None」為條件,讓 helper 自己判 Form A/B:
                     #   Form A: zone.calibration = {points_pixel, width_m, length_m}
@@ -2422,6 +2424,10 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         _cur_pt = _vehicle_center(_v)
                         _prev_pt = _tr.get("_inout_pt")
                         _tr["_inout_pt"] = _cur_pt
+                        # 記下車種:track 被清掉(車離開畫面)時要補發 EXIT,那時 vehicle
+                        # 物件已經沒了,不記就只能寫 "unknown" —— 現場實測一小時 527 筆
+                        # EXIT 全是 unknown,佔報表車種統計的 24.6%。
+                        _tr["_inout_cls"] = str(_v.get("class_name") or "").lower() or None
                         if _cur_in != _prev_in:
                             _bb = _v.get("bbox", {}) or {}
                             _sp = _v.get("speed_kmh")
@@ -2467,7 +2473,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     detection_services[camera_id]["inout_occupancy"] = _occ
                     # 離開畫面才出框的(track 清除時記下的)→ 這裡補發 EXIT 一筆
                     if _inout_exit_pending:
-                        for _zk in _inout_exit_pending:
+                        for _zk, _pending_cls in _inout_exit_pending:
                             _z = next((_zz for _zz in _inout_zones if _zone_key(_zz) == _zk), None)
                             if _z is None:
                                 continue
@@ -2476,7 +2482,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             if _zone_edge_segment(_z, _z.get("out_edge")) is not None:
                                 continue
                             rows.append(TrafficEvent(
-                                camera_id=int(camera_id), label="unknown",
+                                camera_id=int(camera_id), label=_pending_cls or "unknown",
                                 speed_kmh=None, occupancy=None,
                                 lane_no=_parse_lane_no(_z), direction="EXIT",
                                 entered_zones=[str(_z.get("name") or "")],
