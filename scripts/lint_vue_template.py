@@ -226,6 +226,57 @@ def lint_vue_api_imports(text):
     return missing
 
 
+_SETUP_RETURN = re.compile(r'\n\s*return\s*\{([^}]*)\}\s*;?\s*\n\s*\}\s*\n?\s*\}\)', re.S)
+# 模板裡的函式呼叫:{{ foo(...) }} 或 :attr="foo(...)" / @evt="foo(...)"
+# 排除 $ 前綴:$t / $lang 這類是 app.config.globalProperties 提供的,
+# 不會出現在 setup return 裡(排除掉才不會誤報)。
+_TPL_CALL = re.compile(r'[:@][\w.-]+\s*=\s*"[^"]*?(?<![.\w$])([a-zA-Z_]\w*)\s*\(')
+_JS_BUILTINS = {
+    'String', 'Number', 'Boolean', 'Array', 'Object', 'Math', 'Date', 'JSON',
+    'parseInt', 'parseFloat', 'isNaN', 'encodeURIComponent', 'decodeURIComponent',
+    'if', 'for', 'while', 'return', 'typeof', 'new', 'function', 'catch',
+}
+
+
+def lint_setup_return(text):
+    """抓「模板呼叫了某個函式,但 setup 的 return 沒有它」。
+
+    🛑 這種錯誤只有在那段模板「實際被渲染」時才爆 —— v-for / v-if 包住的
+       區塊平常不算,一旦有資料就 render error → 整個 app unmount → 白畫面。
+       實際踩過兩次:
+       - roi_editor.html zoneColorOf:zone 列表是 v-for,存檔後列表出現才白
+       - index.html deviceIdentity:硬體監測頁點開才白
+       抓不到 setup return 區塊時直接跳過(不同寫法很多),寧可漏報不要誤報。
+    """
+    # 🛑 不可以用「第一個符合的 return {...}」—— 巢狀函式裡的小 return 也會中,
+    #    抓到它就等於拿到一份幾乎空的清單,模板裡每個函式都變成「沒回傳」
+    #    (實測 index.html 一次噴 98 個假警報)。setup 的 return 是全檔最大的那個,
+    #    取識別字最多的那一個才穩。
+    best = None
+    for m in _SETUP_RETURN.finditer(text):
+        names = {n.split(':')[0].strip() for n in m.group(1).split(',') if n.strip()}
+        if best is None or len(names) > len(best):
+            best = names
+    if not best or len(best) < 20:
+        return []          # 找不到夠大的 setup return → 跳過,寧可漏報不要誤報
+    returned = best
+    # 🛑 不能用「第一個 <script 之前」當模板 —— 檔頭就有 <script src=...> 載入
+    #    Vue/ElementPlus,那樣切出來的模板是空的,整個檢查等於沒跑(實際踩過)。
+    #    正確做法:把所有 <script>...</script> 區塊挖掉,剩下的才是模板。
+    tpl = re.sub(r'<script\b[^>]*>.*?</script>', ' ', text, flags=re.S | re.I)
+    missing, seen = [], set()
+    for cm in _TPL_CALL.finditer(tpl):
+        name = cm.group(1)
+        if name in returned or name in _JS_BUILTINS or name in seen:
+            continue
+        # 該名稱要真的在 script 裡被定義過,否則可能是內建/全域
+        if not re.search(r'(?:const|let|var|function)\s+' + name + r'\b', text):
+            continue
+        seen.add(name)
+        missing.append((name, tpl[:cm.start()].count('\n') + 1))
+    return missing
+
+
 def lint_one(target):
     """回傳 (fails, warns)。"""
     if str(target).startswith(('http://', 'https://')):
@@ -244,6 +295,13 @@ def lint_one(target):
         for api, line in api_missing:
             print(f'       第 {line} 行用到 {api}() —— 請加進 const {{ ... }} = Vue')
         fails += len(api_missing)
+    ret_missing = lint_setup_return(text)
+    if ret_missing:
+        print(f'[FAIL] {len(ret_missing)} 個函式模板有呼叫但 setup 沒回傳 '
+              f'(該段模板一旦渲染就白畫面):')
+        for name, line in ret_missing:
+            print(f'       第 {line} 行 {name}() —— 請加進 setup 的 return')
+        fails += len(ret_missing)
     if fails:
         print(f'[FAIL] {fails} HTML structure error(s) — Vue mount likely fails')
     elif sc:
