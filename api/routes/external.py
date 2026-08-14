@@ -435,6 +435,7 @@ def _realtime_rows(db: Session, since: datetime, start: datetime,
                 # 設定好的車道先建出來(值 0) —— 沒有車的時段若回空陣列,
                 # 呼叫端照 lane_count 跑迴圈讀 lanes[i] 會爆掉。
                 "lanes": {int(ln): {
+                    "laneName": (meta.get("lane_names") or {}).get(int(ln)),
                     "flow": 0, "smallFlow": 0, "largeFlow": 0, "avgSpeed": None,
                     "avgOccupancyPct": None, "avgQueueLengthM": None, "maxQueueLengthM": None,
                     "queueDurationSec": None, "maxQueueDurationSec": None,
@@ -465,6 +466,7 @@ def _realtime_rows(db: Session, since: datetime, start: datetime,
         lane_no = int(r[1] or 0)
         if lane_no > 0:
             lane = d["lanes"].setdefault(lane_no, {
+                "laneName": (camera_by_id.get(int(r[0]), {}).get("lane_names") or {}).get(lane_no),
                 "flow": 0, "smallFlow": 0, "largeFlow": 0, "avgSpeed": None,
                 "avgOccupancyPct": None, "avgQueueLengthM": None, "maxQueueLengthM": None,
                 "queueDurationSec": None, "maxQueueDurationSec": None,
@@ -691,6 +693,10 @@ def _vd_rows_to_records(rows: list, bucket: str, span: timedelta | None = None) 
         for lane_no, ld in (row.get("lanes") or {}).items():
             lanes.append({
                 "lane_no": int(lane_no) if str(lane_no).isdigit() else lane_no,
+                # 別名 = 設定 ROI 時取的名稱(上匝道 / 下匝道 …)。
+                # 只有編號的話現場分不出哪條是哪條;沒取名就回 null,不要回空字串
+                # (呼叫端才分得出「沒取名」和「名字是空的」)。
+                "lane_name": ld.get("laneName") or None,
                 "flow": ld.get("flow", 0),
                 "small_vehicle_flow": ld.get("smallFlow", 0),
                 "large_vehicle_flow": ld.get("largeFlow", 0),

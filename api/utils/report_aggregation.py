@@ -196,6 +196,10 @@ def _camera_meta(db: Session):
     for cam in cameras:
         zones = list(cam.zones or []) if isinstance(cam.zones, list) else []
         lane_set = set()
+        # 車道編號 → ROI 名稱(別名)。報表只有 lane_no,現場光看「車道1/車道2」
+        # 分不出是上匝道還是下匝道;把設定時取的名字帶出去給呼叫端顯示。
+        # 同一個 lane_no 有多個 zone 時取第一個非空名稱(通常是同一條車道的不同框)。
+        lane_names: dict[int, str] = {}
         direction_counts: dict[str, int] = {}
         for zone in zones:
             if not is_vd_zone(zone):
@@ -204,6 +208,9 @@ def _camera_meta(db: Session):
             lane_no = int(lane_no) if str(lane_no).isdigit() else None
             if lane_no and lane_no > 0:
                 lane_set.add(lane_no)
+                zname = str(zone.get("name") or "").strip()
+                if zname and lane_no not in lane_names:
+                    lane_names[lane_no] = zname
             # 車流 zone 的 `direction` 一個欄位同時扛兩種語意:轉向(left/straight/right)
             # 或進出模式(INOUT)。一旦選了 INOUT,這個 zone 就沒有地方記「道路的行進方向」,
             # 對外報表的 direction 只能回 INOUT —— 那不是行車方向。
@@ -233,6 +240,8 @@ def _camera_meta(db: Session):
             # 只存數量的話,lane_count 說有 4 條、lanes 卻是空陣列,
             # 呼叫端照 lane_count 跑迴圈讀 lanes[i] 會直接爆掉。
             "lane_nos": sorted(lane_set),
+            # 車道編號 → 別名(ROI 名稱),給報表的 lanes[].lane_name 用
+            "lane_names": lane_names,
             "direction": main_direction,
             "vd_eligible": any(is_vd_zone(zone) for zone in zones),
             # 攝影機停用時各項數值恆為 0。對外要標明是「停用」而不是「沒有車」——
@@ -694,9 +703,16 @@ def build_vd_report_rows(
         return row["lanes"][lane_key]
 
     def prefill_lanes(row: dict, meta: dict) -> None:
-        """把該相機設定好的車道先建出來(值 0),沒有車的時段也不會回空陣列。"""
+        """把該相機設定好的車道先建出來(值 0),沒有車的時段也不會回空陣列。
+
+        順便把車道別名(設定 ROI 時取的名稱)帶進去 —— 報表只有 lane_no,
+        現場分不出「車道1」是上匝道還是下匝道。
+        """
+        names = meta.get("lane_names") or {}
         for lane_no in (meta.get("lane_nos") or []):
-            ensure_lane(row, int(lane_no))
+            lane = ensure_lane(row, int(lane_no))
+            if names.get(int(lane_no)):
+                lane["laneName"] = names[int(lane_no)]
 
     for agg in traffic_rows:
         device_id = _device_id_for(agg, camera_by_id)
