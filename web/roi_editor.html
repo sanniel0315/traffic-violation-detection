@@ -121,7 +121,7 @@
             <h3>已設定的區域 ({{ zones.length }})</h3>
             <h4 style="margin:12px 0 8px">🟩 車流區 ({{ flowZones.length }})</h4>
             <div class="zone-item" v-for="item in flowZones" :key="'flow-'+item.idx">
-                <div class="zone-color" :style="{background: colors[item.zone.type]}"></div>
+                <div class="zone-color" :style="{background: zoneColorOf(item.zone)}"></div>
                 <el-tag size="small" type="info">#{{ item.idx + 1 }}</el-tag>
                 <el-input v-model="item.zone.name" size="small" style="width:180px" placeholder="區域名稱"></el-input>
                 <el-select v-model="item.zone.type" size="small" style="width:150px">
@@ -143,7 +143,7 @@
             <div v-if="!flowZones.length" style="color:#999;font-size:12px;padding:4px 0 10px">尚未設定車流區</div>
             <h4 style="margin:12px 0 8px">⚡ 車速區 ({{ speedZones.length }})</h4>
             <div class="zone-item" v-for="item in speedZones" :key="'speed-'+item.idx">
-                <div class="zone-color" :style="{background: colors[item.zone.type]}"></div>
+                <div class="zone-color" :style="{background: zoneColorOf(item.zone)}"></div>
                 <el-tag size="small" type="info">#{{ item.idx + 1 }}</el-tag>
                 <el-input v-model="item.zone.name" size="small" style="width:160px" placeholder="區域名稱"></el-input>
                 <el-select v-model="item.zone.type" size="small" style="width:150px">
@@ -164,7 +164,7 @@
 
             <h4 style="margin:12px 0 8px">🧩 其他區域 ({{ otherZones.length }})</h4>
             <div class="zone-item" v-for="item in otherZones" :key="'other-'+item.idx">
-                <div class="zone-color" :style="{background: colors[item.zone.type]}"></div>
+                <div class="zone-color" :style="{background: zoneColorOf(item.zone)}"></div>
                 <el-tag size="small" type="info">#{{ item.idx + 1 }}</el-tag>
                 <el-input v-model="item.zone.name" size="small" style="width:160px" placeholder="區域名稱"></el-input>
                 <el-select v-model="item.zone.type" size="small" style="width:150px">
@@ -443,6 +443,17 @@ createApp({
             }
         });
         
+        // 🛑 顏色要看 scope 不能只看 type:壅塞的佔用率區域跟車流區是「同 type
+        //    (flow_detection)、不同 scope」的兩個獨立 zone。壅塞用淡黃色。
+        //    要同步的另外兩處:web/index.html zoneColorOf、api/routes/stream.py。
+        const CONGESTION_SCOPE = 'congestion_detection';
+        const CONGESTION_ZONE_COLOR = '#ffe066';
+        const zoneColorOf = (z) => {
+            // 正在畫的新 zone 還沒有 scope 欄位,用編輯器目前的 scope 判斷
+            const sc = String(z?.scope || currentScope || '');
+            return sc === CONGESTION_SCOPE ? CONGESTION_ZONE_COLOR
+                                           : (colors[String(z?.type || '')] || '#64748b');
+        };
         const colors = {
             detection: '#67c23a',
             flow_detection: '#67c23a',
@@ -666,7 +677,7 @@ createApp({
             zones.value.forEach(zone => {
                 const zPoints = (zone.points || []).map(p => toCanvasPoint(p, zone));
                 if (!zPoints.length) return;
-                const zColor = colors[zone.type] || '#64748b';
+                const zColor = zoneColorOf(zone);
                 const zIsLine = isLineType(zone.type);
                 ctx.fillStyle = zColor + '40';
                 ctx.strokeStyle = zColor;
@@ -684,7 +695,7 @@ createApp({
                 
                 // 標籤
                 if (zPoints.length > 0) {
-                    ctx.fillStyle = colors[zone.type];
+                    ctx.fillStyle = zoneColorOf(zone);
                     ctx.font = '14px sans-serif';
                     const laneNoTag = isFlowZoneType(zone.type) && Number(zone.lane_no) >= 1
                         ? ` [車道${Number(zone.lane_no)}]` : '';
@@ -711,7 +722,7 @@ createApp({
                     source_height: sourceSize.value.height
                 };
                 const drawPoints = points.value.map(p => toCanvasPoint(p, draftZone));
-                const dColor = colors[zoneType.value] || '#64748b';
+                const dColor = zoneColorOf({ type: zoneType.value });
                 const dIsLine = isLineType(zoneType.value);
                 ctx.fillStyle = dColor + '40';
                 ctx.strokeStyle = dColor;
