@@ -8723,9 +8723,17 @@
                                             :step="1"
                                             size="small"
                                             style="width:110px"></el-input-number>
-                                        <span v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')" style="font-size:12px;color:#64748b">行車方向</span>
+                                        <!-- 🛑 進出框不給改「行車方向」。標了進出線的 ROI,direction 必須是
+                                             INOUT,轉場計數才會跑;這裡若讓人改成「直行」,進出計數整個失效
+                                             (而且該車道的一般流量也會出問題)。所以進出框只顯示固定標籤,
+                                             真正的道路行進方向請用下面的「行進方向」。 -->
+                                        <span v-if="page==='traffic_flow_settings' && isInoutZone(item.zone)" class="afx-group">
+                                            <span style="font-size:12px;color:#64748b">行車方向</span>
+                                            <el-tag size="small" type="warning">進出(IN/OUT)</el-tag>
+                                        </span>
+                                        <span v-if="page==='traffic_flow_settings' && !isInoutZone(item.zone) && (item.zone.type==='flow_detection' || item.zone.type==='detection')" style="font-size:12px;color:#64748b">行車方向</span>
                                         <select
-                                            v-if="page==='traffic_flow_settings' && (item.zone.type==='flow_detection' || item.zone.type==='detection')"
+                                            v-if="page==='traffic_flow_settings' && !isInoutZone(item.zone) && (item.zone.type==='flow_detection' || item.zone.type==='detection')"
                                             v-model="item.zone.direction"
                                             @change="drawRoi"
                                             class="stats-native-select"
