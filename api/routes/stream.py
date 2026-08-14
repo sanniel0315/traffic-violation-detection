@@ -1162,7 +1162,14 @@ def _draw_roi_labels(frame, zones: list):
         if poly is None:
             continue
         ztype = str(z.get("type") or "")
-        color = color_map.get(ztype, (140, 140, 140))
+        # 🛑 壅塞的佔用率區域跟車流區是「同 type(flow_detection)、不同 scope」的兩個
+        #    獨立 zone,只看 type 會把車流區一起改色。壅塞用淡黃色 #ffe066。
+        #    OpenCV 是 BGR:#ffe066 → RGB(255,224,102) → BGR(102,224,255)。
+        #    前端兩處要同步:web/index.html zoneColorOf、web/roi_editor.html zoneColorOf。
+        if str(z.get("scope") or "") == SCOPE_CONGESTION:
+            color = (102, 224, 255)
+        else:
+            color = color_map.get(ztype, (140, 140, 140))
         cv2.polylines(frame, [poly.astype(np.int32)], True, color, 2, lineType=cv2.LINE_AA)
         name = str(z.get("name") or "").strip()
         if not name:
