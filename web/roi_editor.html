@@ -610,7 +610,14 @@ createApp({
         // 邊 i = points[i] → points[(i+1) % n]，索引從 0 起算（畫面標籤顯示 i+1）。
         const inoutMode = ref(false);
         const inoutRole = ref('in');     // 目前要標的角色:'in' 進線 / 'out' 出線
-        const isInoutZone = (z) => String(z?.direction || '').toUpperCase() === 'INOUT';
+        // 與 stream.py / index.html 同一條規則:標了進線或出線就是進出框,
+        // 不管 direction 存成什麼(舊資料常是 'IN')。
+        const isInoutZone = (z) => {
+            if (String(z?.direction || '').toUpperCase() === 'INOUT') return true;
+            const n = (z?.points || []).length;
+            return normalizeEdgeIndex(z?.in_edge, n) !== null
+                || normalizeEdgeIndex(z?.out_edge, n) !== null;
+        };
         const normalizeEdgeIndex = (v, n) => {
             if (v === '' || v === null || v === undefined) return null;
             const i = Number(v);
@@ -770,23 +777,17 @@ createApp({
                 ElementPlus.ElMessage.warning('請先把車流 ROI 畫好並按「儲存區域」，才能標進出線');
                 return;
             }
-            // 進線與出線必須落在「同一個 ROI」的兩條邊上。
-            // 車道 ROI 常常彼此相鄰,若每次都在所有 ROI 裡找最近的邊,
-            // 進線會標在 A 框、出線標在 B 框 —— 畫面上看起來有一進一出,
-            // 實際上兩個框各半,計數完全不對。
-            //
-            // 🛑 但只能鎖「配對還沒完成」的那個框,不能鎖「所有標過的框」——
-            //    後者會讓第一個框標完之後,第二個車流區永遠標不了(現場實測:
-            //    兩個車流區各要一組進出線,第 2 區完全無法標記)。
-            //    只有一邊有值(進或出缺一個)= 配對進行中 → 鎖定它把另一邊補完;
-            //    兩邊都有值 = 已完成 → 放開,讓其他框可以開始標。
+            // 🛑 不要鎖定任何框。曾經為了「防止進線標在 A 框、出線標在 B 框」而鎖,
+            //    但那個假設是錯的 —— 現場多數框只需要標一條(只算進、或只算出),
+            //    只有一處要一進一出。鎖定會讓標完第一個框之後再也標不了其他框。
+            //    改成永遠在所有車流 ROI 裡找最近的邊,並在訊息裡寫清楚標到哪個框,
+            //    標錯看得出來(再點同一條邊即可取消)。
             const edgeCount = (z) => {
                 const n = (z.points || []).length;
                 return (normalizeEdgeIndex(z.in_edge, n) !== null ? 1 : 0)
                      + (normalizeEdgeIndex(z.out_edge, n) !== null ? 1 : 0);
             };
-            const inProgress = cands.filter(z => edgeCount(z) === 1);
-            const pool = inProgress.length ? inProgress : cands;
+            const pool = cands;
             let best = null;
             pool.forEach((zone) => {
                 const zPoints = (zone.points || []).map(p => toCanvasPoint(p, zone));
@@ -796,9 +797,7 @@ createApp({
                 }
             });
             if (!best || best.d > 24) {
-                ElementPlus.ElMessage.info(inProgress.length
-                    ? `請先把「${inProgress[0].name || '該車流 ROI'}」的進出線標完（同一個框要一進一出）`
-                    : '請點在車流 ROI 的邊線上（誤差 24px 內）');
+                ElementPlus.ElMessage.info('請點在車流 ROI 的邊線上（誤差 24px 內）');
                 return;
             }
             // 同一個 ROI 標「一進一出」= 兩條不同的邊各給一個角色。
@@ -814,7 +813,7 @@ createApp({
             if ((role === 'in' ? inIdx : outIdx) === best.edge) {
                 // 再點一次同一條邊 → 取消該角色
                 if (role === 'in') z.in_edge = null; else z.out_edge = null;
-                msg = `邊${best.edge + 1} 的${roleName}已取消`;
+                msg = `「${z.name || '車流區'}」邊${best.edge + 1} 的${roleName}已取消`;
             } else {
                 if (role === 'in') {
                     z.in_edge = best.edge;
@@ -823,18 +822,11 @@ createApp({
                     z.out_edge = best.edge;
                     if (inIdx === best.edge) z.in_edge = null;
                 }
-                msg = `邊${best.edge + 1} 設為「${roleName}」`;
-                // 標完進線自動跳到標出線,一進一出兩次點擊就完成
-                if (role === 'in' && normalizeEdgeIndex(z.out_edge, n) === null) {
-                    inoutRole.value = 'out';
-                    msg += '，接著請點「出線」的那條邊';
-                } else if (role === 'out' && normalizeEdgeIndex(z.in_edge, n) !== null) {
-                    // 這個框一進一出都齊了 → 角色轉回「進線」,可以直接開始標下一個
-                    // 車流區。不轉回去的話會停在「出線」,標第 2 區時第一下就標成出線。
-                    inoutRole.value = 'in';
-                    const _left = cands.filter(c => edgeCount(c) === 0).length;
-                    if (_left > 0) msg += `，這個框完成；還有 ${_left} 個車流區可以標`;
-                }
+                // 🛑 不要自動切換角色。多數框只標一條(只算進、或只算出),
+                //    標完進線就自動跳到出線的話,下一次點別的框會被標成出線,
+                //    角色跟使用者的意圖對不上。角色一律由上面的「進線/出線」自己選。
+                //    訊息帶出框名,標到哪個框一目了然。
+                msg = `「${z.name || '車流區'}」邊${best.edge + 1} 設為「${roleName}」`;
             }
             // 標了邊就代表這個 ROI 要做進出計數,方向自動切成 INOUT,
             // 免得使用者還要回主頁另外改一個下拉才生效。
