@@ -68,10 +68,14 @@ def _verdict(zone, direction, prev_pt, cur_pt) -> str:
     edge = in_seg if direction == "IN" else out_seg
     if edge is None:
         return "不計:該方向沒標線"
-    if prev_pt is not None and _seg_intersect(prev_pt, cur_pt, edge[0], edge[1]):
-        return "計入(跨線)"
-    if prev_pt is None or in_seg is None or out_seg is None:
+    if prev_pt is None:
+        # 第一次被偵測到就已在框內(框的入口比 YOLO 認得出車的距離還遠)。
+        # 線上是照算的 —— 擋掉會讓 IN 少算 11/16,連帶它的出場也被擋掉。
         return "計入(無法反證)"
+    if _seg_intersect(prev_pt, cur_pt, edge[0], edge[1]):
+        return "計入(跨線)"
+    if in_seg is None or out_seg is None:
+        return "計入(只標一條)"
     axis = ((out_seg[0][0] + out_seg[1][0]) / 2.0 - (in_seg[0][0] + in_seg[1][0]) / 2.0,
             (out_seg[0][1] + out_seg[1][1]) / 2.0 - (in_seg[0][1] + in_seg[1][1]) / 2.0)
     mv = (cur_pt[0] - prev_pt[0], cur_pt[1] - prev_pt[1])
@@ -121,6 +125,7 @@ def main() -> int:
     transitions = Counter()  # (zone, 方向) → 次數
     verdicts = Counter()     # (zone, 方向, 結論) → 次數  ← 線上實際會不會寫入事件
     died_inside = Counter()  # zone → track 在框內就過期的次數(這些車的 EXIT 觀察不到)
+    lost_exit = Counter()    # zone → 算過進場、track 卻在框內過期 → 掉掉的 out_flow
     frames = 0
     period = 1.0 / max(0.1, args.fps)
     t0 = time.time()
@@ -140,8 +145,11 @@ def main() -> int:
         vehicles = det.detect(frame) or []
         # 過期清除(比照線上 track_ttl_sec):在框內就過期 = 線上看不到那筆 EXIT
         for tid in [t for t, tr in tracks.items() if now - tr["t"] > args.ttl]:
-            for zk in tracks.pop(tid)["inside"]:
+            _gone = tracks.pop(tid)
+            for zk in _gone["inside"]:
                 died_inside[zk] += 1
+            for zk in _gone["counted"]:
+                lost_exit[zk] += 1   # 算過進場、卻沒等到出場 → 這筆 out_flow 就是這樣掉的
         seen = set()
         for v in vehicles:
             c = _vehicle_center(v)
@@ -157,7 +165,7 @@ def main() -> int:
             if fresh:
                 best = next_id
                 next_id += 1
-                tracks[best] = {"pt": None, "inside": set(), "t": now}
+                tracks[best] = {"pt": None, "inside": set(), "counted": set(), "t": now}
                 # 第一次被偵測到的位置 —— 已經在框內的話,線上沒有「框外那一段」可連線
                 births.append((c, any(point_in_zone(c, z) for z in zones)))
             seen.add(best)
@@ -176,6 +184,11 @@ def main() -> int:
                     else:
                         continue
                     transitions[(zk, d)] += 1
+                    # 線上還有一道閘門:EXIT 必須是「同一個 track 算過進場」才計。
+                    # 這裡照抄,才看得出線上的 EXIT 是被哪一關擋掉的。
+                    if d == "EXIT" and zk not in tr["counted"]:
+                        verdicts[(zk, d, "不計:這個 track 沒算過進場")] += 1
+                        continue
                     hits = [i for i in range(len(z.get("points") or []))
                             if prev_pt is not None
                             and (lambda s: s is not None and _seg_intersect(prev_pt, c, s[0], s[1]))(
@@ -184,7 +197,13 @@ def main() -> int:
                         crossed[(zk, d, i + 1)] += 1
                     if not hits:
                         crossed[(zk, d, "無(跳幀/框內)")] += 1
-                    verdicts[(zk, d, _verdict(z, d, prev_pt, c))] += 1
+                    v = _verdict(z, d, prev_pt, c)
+                    verdicts[(zk, d, v)] += 1
+                    if v.startswith("計入"):
+                        if d == "IN":
+                            tr["counted"].add(zk)
+                        else:
+                            tr["counted"].discard(zk)
             tr["inside"] = cur_in
 
     cap.release()
