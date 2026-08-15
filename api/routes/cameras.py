@@ -9,6 +9,7 @@ import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from typing import Optional
@@ -386,6 +387,35 @@ def import_source_file(data: ImportSourceFileRequest):
     }
 
 
+def _commit_with_retry(db: Session, retries: int = 5) -> None:
+    """存檔遇到 SQLite 寫鎖就重試,不要直接回 500。
+
+    現場實測(2026-08-16 23:28)使用者在網頁存 cam 2 的設定時吃到
+    `PUT /api/cameras/2 -> 500  sqlite3.OperationalError: database is locked`。
+    四台偵測每分鐘往 traffic_events 寫上百筆,雖然已經開了 WAL 與
+    busy_timeout,但只要有人握著寫入交易超過那個秒數,使用者的存檔就整個失敗
+    —— 而這是「按下儲存卻沒存進去」這種最難查的症狀。
+    寫鎖是暫時的,退避重試幾次就過得去;非鎖定的錯誤照樣往上拋。
+    """
+    delay = 0.2
+    last: OperationalError | None = None
+    for attempt in range(retries):
+        try:
+            db.commit()
+            return
+        except OperationalError as exc:
+            if "database is locked" not in str(exc).lower():
+                raise
+            db.rollback()
+            last = exc
+            if attempt == retries - 1:
+                break
+            time.sleep(delay)
+            delay *= 2
+    if last is not None:
+        raise HTTPException(status_code=503, detail="資料庫忙碌中,請稍後再存一次")
+
+
 def _normalize_camera_name(name: Optional[str]) -> str:
     return str(name or "").strip()
 
@@ -589,7 +619,7 @@ async def update_camera(camera_id: int, data: CameraUpdate, db: Session = Depend
     elif "enabled" in payload and bool(payload.get("enabled")) and not previous_enabled:
         c.status = c.status or "offline"
     c.updated_at = datetime.utcnow()
-    db.commit()
+    _commit_with_retry(db)
     db.refresh(c)
     _sync_frigate()
     return _to_dict(c)

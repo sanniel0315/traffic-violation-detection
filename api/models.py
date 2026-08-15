@@ -30,9 +30,11 @@ if DATABASE_URL.startswith("sqlite"):
     @_sa_event.listens_for(engine, "connect")
     def _sqlite_on_connect(dbapi_conn, _connection_record):
         # WAL：讀寫不互鎖（報表聚合 DELETE/INSERT 與即時事件寫入共存的關鍵）；
-        # busy_timeout：寫鎖衝突時等待 5 秒，取代預設立即拋 "database is locked"。
+        # busy_timeout：寫鎖衝突時先等，取代預設立即拋 "database is locked"。
+        # 5 秒不夠：現場四台偵測每分鐘往 traffic_events 寫上百筆，使用者存
+        # 相機設定時仍吃到 500（2026-08-16 23:28 PUT /api/cameras/2）。放到 15 秒。
         cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA busy_timeout=15000")
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.close()
