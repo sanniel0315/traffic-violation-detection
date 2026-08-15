@@ -84,6 +84,62 @@ def _verdict(zone, direction, prev_pt, cur_pt) -> str:
     return "不計:逆車流軸"
 
 
+def _axis(zone):
+    """車流軸:進線中點 → 出線中點。回傳 (起點, 單位向量, 長度)。"""
+    ins = _zone_edge_segment(zone, zone.get("in_edge"))
+    outs = _zone_edge_segment(zone, zone.get("out_edge"))
+    if ins is None or outs is None:
+        return None
+    a = ((ins[0][0] + ins[1][0]) / 2.0, (ins[0][1] + ins[1][1]) / 2.0)
+    b = ((outs[0][0] + outs[1][0]) / 2.0, (outs[0][1] + outs[1][1]) / 2.0)
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    L = (dx * dx + dy * dy) ** 0.5
+    if L <= 0:
+        return None
+    return a, (dx / L, dy / L), L
+
+
+def _clip_halfplane(pts, origin, normal, cut):
+    """Sutherland-Hodgman:只留下 dot(p-origin, normal) >= cut 的那半邊。"""
+    def t(p):
+        return (p[0] - origin[0]) * normal[0] + (p[1] - origin[1]) * normal[1] - cut
+    out = []
+    n = len(pts)
+    for i in range(n):
+        a, b = pts[i], pts[(i + 1) % n]
+        ta, tb = t(a), t(b)
+        if ta >= 0:
+            out.append(a)
+        if (ta >= 0) != (tb >= 0):
+            r = ta / (ta - tb)
+            out.append([round(a[0] + r * (b[0] - a[0])), round(a[1] + r * (b[1] - a[1]))])
+    return out
+
+
+def suggest_entry(zone, births_inside):
+    """依「車第一次被偵測到的位置」算出入口邊該退到哪裡,回傳新的多邊形。
+
+    框的入口邊比 YOLO 認得出車的距離還遠時,車進框那一刻沒被看到,進場只能
+    用推定的 —— 把入口邊退到車已經穩定被偵測到的位置之後,進場就變成真正
+    觀察得到的跨線事件。取 p90 而不是最深的那台,免得一個離群值把框砍太多。
+    """
+    ax = _axis(zone)
+    if ax is None or not births_inside:
+        return None
+    origin, n, L = ax
+    ts = sorted((p[0] - origin[0]) * n[0] + (p[1] - origin[1]) * n[1]
+                for p in births_inside)
+    p90 = ts[min(len(ts) - 1, int(len(ts) * 0.9))]
+    cut = p90 + 10.0          # 再退 10px,讓最深的那批也確實落在框外
+    if cut >= L * 0.8:
+        return None           # 退太多會把框砍到只剩尾巴,不建議
+    pts = [[int(p[0]), int(p[1])] for p in (zone.get("points") or [])]
+    return {
+        "cut": cut, "axis_len": L, "ts": ts,
+        "points": _clip_halfplane(pts, origin, n, cut),
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--camera", type=int, required=True)
@@ -167,7 +223,7 @@ def main() -> int:
                 next_id += 1
                 tracks[best] = {"pt": None, "inside": set(), "counted": set(), "t": now}
                 # 第一次被偵測到的位置 —— 已經在框內的話,線上沒有「框外那一段」可連線
-                births.append((c, any(point_in_zone(c, z) for z in zones)))
+                births.append((c, [z for z in zones if point_in_zone(c, z)]))
             seen.add(best)
             tr = tracks[best]
             prev_pt, prev_in = tr["pt"], tr["inside"]
@@ -227,10 +283,10 @@ def main() -> int:
                     cv2.rectangle(vis, (m[0] - 26, m[1] - 12), (m[0] + 34, m[1] + 10), (0, 0, 0), -1)
                     cv2.putText(vis, tag, (m[0] - 22, m[1] + 5),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        for pt, was_inside in births:
+        for pt, in_zs in births:
             # 紅=第一次就在框內(問題點)  藍=在框外(正常,追得到跨線)
             cv2.circle(vis, (int(pt[0]), int(pt[1])), 7,
-                       (0, 0, 255) if was_inside else (255, 160, 0), -1)
+                       (0, 0, 255) if in_zs else (255, 160, 0), -1)
         cv2.imwrite(args.out, vis)
         inside_n = sum(1 for _, i in births if i)
         print(f"\n已輸出 {args.out}")
@@ -256,6 +312,32 @@ def main() -> int:
             print(f"  {zk}: {n} 次")
     else:
         print("  (沒有)")
+
+    print("\n=== 算過進場、卻沒等到出場(掉掉的 out_flow) ===")
+    if lost_exit:
+        for zk, n in lost_exit.most_common():
+            print(f"  {zk}: {n} 次")
+    else:
+        print("  (沒有)")
+
+    print("\n=== 入口邊建議(依車第一次被偵測到的位置) ===")
+    for z in zones:
+        nm = str(z.get("name") or "")
+        pts_in = [pt for pt, in_zs in births if any(zz is z for zz in in_zs)]
+        if not pts_in:
+            print(f"  {nm}: 沒有「第一次出現就在框內」的車 → 入口邊位置沒問題")
+            continue
+        sug = suggest_entry(z, pts_in)
+        if sug is None:
+            print(f"  {nm}: {len(pts_in)} 台第一次出現就在框內,"
+                  f"但沒標進出線、或退太多會把框砍掉 → 不建議自動調")
+            continue
+        ts = sug["ts"]
+        print(f"  {nm}: {len(pts_in)} 台第一次出現就在框內")
+        print(f"    沿車流軸位置 最淺 {ts[0]:.0f}px / 中位 {ts[len(ts) // 2]:.0f}px / "
+              f"最深 {ts[-1]:.0f}px  (框全長 {sug['axis_len']:.0f}px)")
+        print(f"    建議入口邊退到 {sug['cut']:.0f}px,新多邊形:")
+        print(f"    {sug['points']}")
     return 0
 
 
