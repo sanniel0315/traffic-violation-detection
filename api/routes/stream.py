@@ -1538,11 +1538,17 @@ async def live_stream(camera_id: int, w: int = 0, fps: float = 0.0,
 
 
 @router.get("/{camera_id}/live-overlay")
-async def live_stream_overlay(camera_id: int, q: str = "low", roi: str = "0", db: Session = Depends(get_db)):
+async def live_stream_overlay(camera_id: int, q: str = "low", roi: str = "0",
+                              w: int = 0, fps: float = 0.0,
+                              db: Session = Depends(get_db)):
     """即時影像串流 (MJPEG + AI 辨識框)
 
     q=low (預設): 720p, JPEG Q60, 監控網格用 (頻寬輕)
     q=high: 1080p, JPEG Q75, 放大/轉發用 (清晰度優先)
+
+    w / fps：省頻寬旋鈕，與 /live 同一組（不給就維持上面的 q 行為）。
+    疊加模式實測 q=low 仍要 1.77 Mbps，是非疊加(w=640 fps=4)的 7 倍 ——
+    網格同樣要能省，辨識框才不會因為頻寬而被迫關掉。
     """
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:
@@ -1561,6 +1567,8 @@ async def live_stream_overlay(camera_id: int, q: str = "low", roi: str = "0", db
             render_roi_labels=show_roi,
             camera_id=camera_id,
             high_quality=hq,
+            target_width=max(0, min(1920, int(w or 0))),
+            fps_cap=max(0.0, min(15.0, float(fps or 0))),
         ),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
