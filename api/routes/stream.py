@@ -1216,9 +1216,17 @@ def generate_frames_overlay(
     render_roi_labels: bool = True,
     camera_id: int = None,
     high_quality: bool = False,
+    target_width: int = 0,
+    fps_cap: float = 0.0,
 ):
     """產生即時 MJPEG 串流，可選擇是否繪製辨識疊加。
     high_quality=True: 輸出 1080p JPEG Q75；否則輸出 720p JPEG Q60。
+
+    target_width / fps_cap：給監控網格用的省頻寬旋鈕（0 = 沿用上面的預設）。
+    監控格在畫面上只有約 480x270，但預設送的是 1280 寬 8fps ——
+    現場實測單路 9.0~11.9 Mbps，而現場 4G 上行只有 3.6~11.4 Mbps，
+    一台就吃光整條線，這是 SERVICE OFFLINE 反覆發生的物理原因
+    （2026-08-16 量測）。送 640 寬 4fps 約 1 Mbps，畫面在格子裡看不出差別。
     """
     http_source = resolve_local_api_source(source)
     use_http_mjpeg = _is_http_mjpeg_source(http_source)
@@ -1264,7 +1272,7 @@ def generate_frames_overlay(
     _shared_warm = False
     # 輸出限速：避免瀏覽器同時解 4 cam × 14 FPS × 100KB = 5.6 MB/s 累積延遲導致頓
     OUTPUT_FPS_CAP = 8.0
-    _min_yield_interval = 1.0 / OUTPUT_FPS_CAP
+    _min_yield_interval = 1.0 / (float(fps_cap) if float(fps_cap or 0) > 0 else OUTPUT_FPS_CAP)
     _last_yield_ts = 0.0
     while True:
         # process shutdown 時讓 generator 乾淨退出，避免卡到 systemd SIGKILL
@@ -1351,16 +1359,24 @@ def generate_frames_overlay(
         had_frame = True
 
         if not render_overlay:
+            # 🛑 這是 /live(不畫疊加)的實際輸出路徑,結尾會 continue,
+            #    永遠到不了下面那段「1280 寬 Q60」的邏輯 —— 所以它一直在送
+            #    1920 寬 Q75 10fps。現場實測單路 9.0~11.9 Mbps,而現場 4G 上行
+            #    只有 3.6~11.4 Mbps,一台就吃光整條線(2026-08-16 量測),
+            #    這是 SERVICE OFFLINE 反覆發生的物理原因。
+            #    監控格在畫面上只有約 480x270,給 640 寬就夠了。
             fh0, fw0 = frame.shape[:2]
-            if fw0 > 1920:
-                s0 = 1920.0 / fw0
-                out = cv2.resize(frame, (1920, int(fh0 * s0)))
+            _tw = int(target_width) if int(target_width or 0) > 0 else 1920
+            if fw0 > _tw:
+                s0 = float(_tw) / fw0
+                out = cv2.resize(frame, (_tw, int(fh0 * s0)))
             else:
                 out = frame
-            _, buffer = cv2.imencode('.jpg', out, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            _q = 55 if _tw <= 800 else 75
+            _, buffer = cv2.imencode('.jpg', out, [cv2.IMWRITE_JPEG_QUALITY, _q])
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-            time.sleep(0.1)
+            time.sleep(1.0 / (float(fps_cap) if float(fps_cap or 0) > 0 else 10.0))
             continue
         # 影像永遠走自己讀到的 RTSP frame（25 FPS 順暢，無殘影）。
         # bbox 從 _shared_frames 拿最近偵測結果疊上去；detection 8 FPS → bbox 約延遲 120ms。
@@ -1474,8 +1490,9 @@ def generate_frames_overlay(
         #   low  (預設): 1280 寬 Q60 (監控網格用，頻寬輕)
         #   high        : 1920 寬 Q75 (放大/轉發用，清晰度優先)
         fh, fw = frame.shape[:2]
-        _target_w = 1920 if high_quality else 1280
-        _jpg_q = 75 if high_quality else 60
+        _target_w = int(target_width) if int(target_width or 0) > 0 else (1920 if high_quality else 1280)
+        # 縮圖尺寸再用 Q75 沒有意義（檔案大但看不出差），小圖降到 Q55 省一半
+        _jpg_q = 75 if high_quality else (55 if _target_w <= 800 else 60)
         if fw > _target_w:
             scale = _target_w / fw
             frame = cv2.resize(frame, (_target_w, int(fh * scale)))
@@ -1494,8 +1511,12 @@ def generate_frames_overlay(
 
 
 @router.get("/{camera_id}/live")
-async def live_stream(camera_id: int, db: Session = Depends(get_db)):
-    """即時影像串流 (MJPEG，背景仍持續分析但不畫辨識框)"""
+async def live_stream(camera_id: int, w: int = 0, fps: float = 0.0,
+                      db: Session = Depends(get_db)):
+    """即時影像串流 (MJPEG，背景仍持續分析但不畫辨識框)
+
+    w / fps：省頻寬旋鈕，給監控網格用（不給就維持原本 1280 寬 8fps 的行為）。
+    """
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:
         raise HTTPException(status_code=404, detail="攝影機不存在")
@@ -1509,6 +1530,8 @@ async def live_stream(camera_id: int, db: Session = Depends(get_db)):
             render_overlay=False,
             render_roi_labels=False,
             camera_id=camera_id,
+            target_width=max(0, min(1920, int(w or 0))),
+            fps_cap=max(0.0, min(15.0, float(fps or 0))),
         ),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )

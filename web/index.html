@@ -15187,8 +15187,13 @@ const app=createApp({
             const roiParam=route==='live-overlay'?`&roi=${overlayShowRoi.value?1:0}`:'';
             // 放大視窗 / 轉發場景要 1080p 清晰度 (q=high)，監控網格維持 720p 省頻寬
             const qParam=(route==='live-overlay' && opts.highQuality)?'&q=high':'';
+            // 監控網格的格子在畫面上只有約 480x270,卻預設收 1280 寬 8fps ——
+            // 現場實測單路 9.0~11.9 Mbps,4G 上行只有 3.6~11.4 Mbps,一台就吃光。
+            // 非放大的格子改送 640 寬 4fps(約 1 Mbps),格子裡看不出差別。
+            // 放大視窗不套用,維持原清晰度。
+            const lite=(route==='live' && !opts.highQuality)?'&w=640&fps=4':'';
             const tick=monitorStreamTick(camera);
-            return `/api/stream/${camera.id}/${route}?t=${tick}${roiParam}${qParam}`;
+            return `/api/stream/${camera.id}/${route}?t=${tick}${roiParam}${qParam}${lite}`;
         };
         const getMonitorMediaUrl=(camera, opts={})=>{
             if(getMonitorMediaKind(camera)==='video'){
