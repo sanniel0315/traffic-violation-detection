@@ -1,0 +1,366 @@
+{
+  "info": {
+    "name": "交通 VD 對外 API (R34 動態號誌)",
+    "description": "對外報表 API 驗證用。匯入後先到 Variables 頁改 baseUrl 與 apiKey，然後對整個 Collection 按 Run 就會跑完全部檢查。\n\nbaseUrl 用哪一個：\n- Tailscale（遠端維護，最通用）: http://100.92.17.87:8000\n- 現場網路（分析器 eth1 固定 IP）: http://10.42.38.35:8000\n- 4G 路由器內網: http://192.168.1.3:8000\n\n注意：4G 是中華電信行動 CGNAT，對外 IP 111.70.33.189 從外面連不進來，不能當 baseUrl。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://100.92.17.87:8000", "type": "string" },
+    { "key": "apiKey", "value": "tvd_hwacom_traffic_2026", "type": "string" },
+    { "key": "detectorName", "value": "CCTV-N8-E-9-L-NE-2-SIG", "type": "string" },
+    { "key": "detectorId", "value": "3", "type": "string" }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "X-API-Key", "type": "string" },
+      { "key": "value", "value": "{{apiKey}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "00 健康檢查（公開，不需金鑰）",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/api/health", "host": ["{{baseUrl}}"], "path": ["api", "health"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('回應時間 < 3 秒', () => pm.expect(pm.response.responseTime).to.be.below(3000));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 金鑰驗證：沒帶金鑰要回 401",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/external/realtime",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "external", "realtime"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('沒帶金鑰要被擋（401）', () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 realtime（本分鐘累積 mode=minute）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/external/realtime?mode=minute",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "external", "realtime"],
+          "query": [{ "key": "mode", "value": "minute" }]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const d = pm.response.json().data;",
+              "pm.test('mode = minute', () => pm.expect(d.mode).to.eql('minute'));",
+              "pm.test('period.start 對齊整分', () => pm.expect(d.period.start).to.match(/:00\\+08:00$/));",
+              "pm.test('四台偵測器都有回', () => pm.expect(d.stats.detector_count).to.eql(4));",
+              "console.log('本分鐘累積 流量=' + d.stats.overall.total_flow +",
+              "            ' 進=' + d.stats.overall.in_flow +",
+              "            ' 出=' + d.stats.overall.out_flow +",
+              "            ' 佔有率=' + d.stats.overall.avg_occupancy_pct + '%');"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 realtime 逐分鐘（minutes=5）★ 建議存檔用",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/external/realtime?minutes=5",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "external", "realtime"],
+          "query": [{ "key": "minutes", "value": "5" }]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const d = pm.response.json().data;",
+              "",
+              "// 不缺漏保證：筆數必須恰好等於 分鐘數 × 偵測器數",
+              "pm.test('資料無缺口：records = minutes × detector_count', () => {",
+              "  pm.expect(d.stats.record_count).to.eql(d.stats.bucket_count * d.stats.detector_count);",
+              "});",
+              "pm.test('回 5 個已結束的分鐘桶', () => pm.expect(d.stats.bucket_count).to.eql(5));",
+              "",
+              "// 三類數字都要在",
+              "const r = d.records[0];",
+              "pm.test('有車流欄位', () => pm.expect(r).to.have.property('total_flow'));",
+              "pm.test('有進出欄位', () => {",
+              "  pm.expect(r).to.have.property('in_flow');",
+              "  pm.expect(r).to.have.property('out_flow');",
+              "  pm.expect(r).to.have.property('direction_counts');",
+              "});",
+              "pm.test('有佔有率欄位（VD 定義）', () => pm.expect(r).to.have.property('avg_occupancy_pct'));",
+              "pm.test('車道有中文別名 lane_name', () => {",
+              "  pm.expect(r.lanes.length).to.be.above(0);",
+              "  pm.expect(r.lanes[0]).to.have.property('lane_name');",
+              "});",
+              "",
+              "const o = d.stats.overall;",
+              "console.log('5 分鐘合計 流量=' + o.total_flow + ' 進=' + o.in_flow + ' 出=' + o.out_flow);",
+              "d.records.slice(0, 4).forEach(x => console.log(",
+              "  x.time_start + ' ' + x.detector_id + '  流量=' + x.total_flow +",
+              "  ' 進=' + x.in_flow + ' 出=' + x.out_flow + ' 佔有率=' + x.avg_occupancy_pct + '%'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 detector_id 用數字",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/external/realtime?minutes=3&detector_id={{detectorId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "external", "realtime"],
+          "query": [
+            { "key": "minutes", "value": "3" },
+            { "key": "detector_id", "value": "{{detectorId}}" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const d = pm.response.json().data;",
+              "pm.test('只回這一台', () => pm.expect(d.stats.detector_count).to.eql(1));",
+              "pm.test('回的是指定的那台', () => pm.expect(d.records[0].detector_id).to.eql(pm.variables.get('detectorName')));",
+              "pm.collectionVariables.set('flowByNumber', d.stats.overall.total_flow);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 detector_id 用名稱（回應的值可直接回填）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/external/realtime?minutes=3&detector_id={{detectorName}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "external", "realtime"],
+          "query": [
+            { "key": "minutes", "value": "3" },
+            { "key": "detector_id", "value": "{{detectorName}}" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK（名稱寫法也要通）', () => pm.response.to.have.status(200));",
+              "const d = pm.response.json().data;",
+              "pm.test('只回這一台', () => pm.expect(d.stats.detector_count).to.eql(1));",
+              "pm.test('與數字寫法拿到同一組資料', () => {",
+              "  pm.expect(d.stats.overall.total_flow).to.eql(Number(pm.collectionVariables.get('flowByNumber')));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 detector_id 名稱打錯要回 404",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/external/realtime?minutes=3&detector_id=NOT_EXIST",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "external", "realtime"],
+          "query": [
+            { "key": "minutes", "value": "3" },
+            { "key": "detector_id", "value": "NOT_EXIST" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('打錯名稱回 404', () => pm.response.to.have.status(404));",
+              "pm.test('錯誤訊息有講可用寫法', () => pm.expect(pm.response.json().detail).to.include('camera_id'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 即時壅塞佔有率（congestion-report/realtime）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/external/congestion-report/realtime?minutes=5",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "external", "congestion-report", "realtime"],
+          "query": [{ "key": "minutes", "value": "5" }]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const d = pm.response.json().data;",
+              "const r = d.records[0];",
+              "pm.test('三個佔有率欄位都在', () => {",
+              "  pm.expect(r).to.have.property('avg_occupancy_pct');",
+              "  pm.expect(r).to.have.property('max_occupancy_pct');",
+              "  pm.expect(r).to.have.property('avg_raw_occupancy_pct');",
+              "});",
+              "pm.test('有 sample_count（用來分辨「暢通」與「沒資料」）', () => {",
+              "  pm.expect(r).to.have.property('sample_count');",
+              "});",
+              "pm.test('佔有率是 0~100 的百分比不是 0~1 小數', () => {",
+              "  d.records.forEach(x => pm.expect(x.avg_occupancy_pct).to.be.at.most(100));",
+              "});",
+              "d.records.slice(0, 4).forEach(x => console.log(",
+              "  x.time_start + ' ' + x.detector_id + '  平均=' + x.avg_occupancy_pct +",
+              "  '% 最大=' + x.max_occupancy_pct + '% 原始=' + x.avg_raw_occupancy_pct +",
+              "  '% 取樣=' + x.sample_count));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 壅塞含車道層（include_lanes=1）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/external/congestion-report/realtime?minutes=3&include_lanes=1",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "external", "congestion-report", "realtime"],
+          "query": [
+            { "key": "minutes", "value": "3" },
+            { "key": "include_lanes", "value": "1" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const d = pm.response.json().data;",
+              "pm.test('比只回整體時筆數多（多了車道層）', () => pm.expect(d.records.length).to.be.above(0));",
+              "console.log('筆數 ' + d.records.length + '（含車道層）');"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 每分鐘最終值（vd-report/latest，聚合表）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/external/vd-report/latest?minutes=5&interval=1m",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "external", "vd-report", "latest"],
+          "query": [
+            { "key": "minutes", "value": "5" },
+            { "key": "interval", "value": "1m" }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const d = pm.response.json().data;",
+              "pm.test('有 period', () => pm.expect(d).to.have.property('period'));",
+              "console.log('聚合表區間 ' + d.period.start + ' ~ ' + d.period.end +",
+              "            '（會落後約 15 秒，且有已知缺口，存檔建議改用 03）');"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 串流清單（streams）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/external/streams",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "external", "streams"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const d = pm.response.json().data;",
+              "pm.test('四路串流', () => pm.expect(d.stream_count).to.eql(4));",
+              "pm.test('每路都有 rtsp / hls / mjpeg 網址', () => {",
+              "  d.streams.forEach(s => {",
+              "    pm.expect(s.urls).to.have.property('rtsp');",
+              "    pm.expect(s.urls).to.have.property('hls');",
+              "    pm.expect(s.urls).to.have.property('mjpeg');",
+              "  });",
+              "});",
+              "d.streams.forEach(s => console.log(s.stream_id + ' ' + s.name + '  ' + s.urls.rtsp));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
