@@ -205,6 +205,12 @@ body {
 .grid-cell.drop-target { border-color:var(--accent-cyan); border-style:dashed; border-width:2px; }
 .grid-cell-empty { color:var(--text-muted); font-size:12px; text-align:center; pointer-events:none; }
 .grid-cell-empty span { display:block; font-size:24px; margin-bottom:4px; opacity:.3; }
+.grid-cell-cam {
+  background:rgba(0,0,0,.55); color:#fff; border:1px solid rgba(255,255,255,.25);
+  border-radius:4px; font-size:11px; padding:1px 4px; max-width:130px;
+}
+.grid-cell-cam option { color:#111; }
+.grid-cell-cam.empty-pick { pointer-events:auto; margin-top:8px; max-width:150px; }
 .grid-cell video { width:100%; height:100%; object-fit:contain; background:#000; display:block; }
 .grid-cell-overlay {
   position:absolute; top:0; left:0; right:0;
@@ -694,7 +700,12 @@ body {
             <div style="font-size:12px;opacity:0.85">{{ cell.errorMsg }}</div>
           </div>
           <div class="grid-cell-overlay">
-            <span class="grid-cell-name">{{cell.camera||''}}</span>
+            <select class="grid-cell-cam" @click.stop @change="setCellCamera(idx,$event.target.value)">
+              <option v-for="k in cellCameraChoices" :key="k" :value="k" :selected="k===cell.camera">
+                {{ cameraDisplayName(k)||k }}
+              </option>
+            </select>
+            <span class="grid-cell-time">{{ cellWallClock(cell) }}</span>
             <span class="grid-cell-time">{{formatClock(cell.currentSec)}} / {{formatClock(cell.durationSec)}}</span>
           </div>
           <div v-if="showOverlay && cell.camera" class="grid-cell-info-overlay"
@@ -711,6 +722,15 @@ body {
         <div v-else class="grid-cell-empty">
           <span>&#9654;</span>
           <div>Cell {{idx+1}}</div>
+          <!-- 空格也要能直接選相機。原本只有拖曳一種方式,手機沒有拖放,
+               2x2 想各看一台就卡住了。 -->
+          <select class="grid-cell-cam empty-pick" @click.stop
+                  @change="setCellCamera(idx,$event.target.value)">
+            <option value="">選擇攝影機…</option>
+            <option v-for="k in cellCameraChoices" :key="k" :value="k">
+              {{ cameraDisplayName(k)||k }}
+            </option>
+          </select>
         </div>
       </div>
     </div>
@@ -1023,10 +1043,10 @@ setup(){
 
   // Grid
   const gridModes=['1x1','2x2','3x3'];
-  const gridMode=ref('1x1');
+  const gridMode=ref('2x2');   // 現場要求預設四格
   const activeCell=ref(0);
   const dropTarget=ref(-1);
-  const cells=reactive(Array.from({length:9},()=>({camera:'',url:'',label:'',playing:false,currentSec:0,durationSec:0,key:'',errorMsg:''})));
+  const cells=reactive(Array.from({length:9},()=>({camera:'',url:'',label:'',playing:false,currentSec:0,durationSec:0,key:'',errorMsg:'',startTs:0})));
   const cellVideoRefs=reactive({});
 
   // Cameras (from API)
@@ -1090,7 +1110,13 @@ setup(){
   const deviceTree=computed(()=>{
     const kw=String(deviceSearch.value||'').trim().toLowerCase();
     const sysKeys=new Set((cameras.value||[]).map(c=>{const id=Number(c?.id);return Number.isFinite(id)&&id>0?`cam_${id}`:null;}).filter(Boolean));
-    const nvrKeys=new Set((frigateCameras.value||[]).map(c=>String(c?.name||'')).filter(Boolean));
+    // /api/frigate/status 的 cameras 是字串陣列(["cam_2",...]),
+    // 但 /api/frigate/cameras 回的是物件陣列([{name:"cam_7",...}])。
+    // 這裡只讀 c.name,遇到字串會拿到 undefined → 全部被濾掉,
+    // 左側「NVR 設備」因此一直是 (0)。兩種形狀都收。
+    const nvrKeys=new Set((frigateCameras.value||[])
+      .map(c=>typeof c==='string'?c:String(c&&c.name||''))
+      .filter(Boolean));
     const makeItem=(key,src)=>{
       const label=cameraDisplayName(key)||key;
       const count=(rows.value||[]).filter(r=>String(r?.camera||'')===key).length;
@@ -1180,11 +1206,15 @@ setup(){
     return `${d(a)} ~ ${d(b)}`;
   });
   // 目前在看哪幾台:以格子裡實際載入的相機為準,沒有就退回篩選條件
+  // 時間軸顯示「作用中那一格」的可用性 —— 2x2 各格可能是不同相機,
+  // 全部混在一起畫的話,看到的斷檔不知道是哪一台的。
   const tlActiveCams=computed(()=>{
-    const s=new Set();
-    cells.forEach(c=>{ const v=String(c&&c.camera||'').trim(); if(v)s.add(v); });
-    if(!s.size){ const v=String(filter.camera||'').trim(); if(v)s.add(v); }
-    return Array.from(s);
+    const act=String((cells[activeCell.value]||{}).camera||'').trim();
+    if(act)return [act];
+    const any=cells.map(c=>String(c&&c.camera||'').trim()).filter(Boolean);
+    if(any.length)return [any[0]];
+    const f=String(filter.camera||'').trim();
+    return f?[f]:[];
   });
   // 小時 → 覆蓋率(0~1)。多台時取最大:只要有一台錄到,那段就有畫面可看。
   const tlHourMap=computed(()=>{
@@ -1291,6 +1321,21 @@ setup(){
     tlSegTimer=setTimeout(loadTimelineSegs,250);
   });
 
+  // 每格顯示「現在播到幾點幾分」而不是只有片段內秒數 —— 一小時一段的話,
+  // 光看 12:34 / 50:31 分不出那是幾點的畫面。
+  const cellWallClock=(cell)=>{
+    const ts=Number(cell&&cell.startTs||0)+Number(cell&&cell.currentSec||0);
+    if(!(ts>0))return '';
+    const d=new Date(ts*1000);
+    return `${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  };
+  // 每格下拉可選的相機:清單裡真的有錄影的那些
+  const cellCameraChoices=computed(()=>{
+    const s=new Set();
+    (rows.value||[]).forEach(r=>{ const c=String(r&&r.camera||'').trim(); if(c)s.add(c); });
+    return Array.from(s).sort();
+  });
+
   const setScale=(i)=>{ tlScaleIdx.value=Math.max(0,Math.min(TL_SCALES.length-1,i)); };
   const zoomIn=()=>setScale(tlScaleIdx.value-1);
   const zoomOut=()=>setScale(tlScaleIdx.value+1);
@@ -1373,21 +1418,42 @@ setup(){
   };
 
   // ── Methods ──
-  const selectRow=(row)=>{
+  // 可指定要載進哪一格 —— 2x2 時每格各自選相機與時段,不能只認 activeCell
+  const selectRow=(row,cellIdx)=>{
     if(!row)return;
-    current.value=row;
-    const cell=cells[activeCell.value];
+    const idx=Number.isInteger(cellIdx)?cellIdx:activeCell.value;
+    const cell=cells[idx];
+    if(!cell)return;
     cell.url=String(row.play_url||'');
     cell.camera=String(row.camera||'');
     cell.label=String(row.label||'');
     cell.key=row.key;
     cell.currentSec=0;
+    cell.startTs=Number(row.start_time||0);
     cell.durationSec=Math.max(0,Math.floor(Number(row?.duration_sec||0)));
     cell.playing=false;
     cell.errorMsg='';
-    isPlaying.value=false;
-    currentSec.value=0;
-    durationSec.value=cell.durationSec;
+    if(idx===activeCell.value){
+      current.value=row;
+      isPlaying.value=false;
+      currentSec.value=0;
+      durationSec.value=cell.durationSec;
+    }
+  };
+  // 換某一格的相機,盡量停在同一個時刻(看不同角度的同一段時間)
+  const setCellCamera=(idx,cam)=>{
+    const cell=cells[idx]; if(!cell)return;
+    const key=String(cam||'').trim();
+    if(!key){ clearCell(idx); return; }
+    const wantTs=Number(cell.startTs||0)+Number(cell.currentSec||0) || tlCenter.value;
+    const cand=rows.value.filter(r=>r&&r.source==='recording'&&String(r.camera)===key);
+    if(!cand.length){ ElementPlus.ElMessage.warning(`${cameraDisplayName(key)||key} 沒有可播的錄影`); return; }
+    const hit=cand.find(r=>wantTs>=Number(r.start_time||0)&&wantTs<Number(r.end_time||0))
+      || cand.reduce((a,b)=>Math.abs(Number(b.start_time)-wantTs)<Math.abs(Number(a.start_time)-wantTs)?b:a);
+    selectRow(hit,idx);
+    if(hit && wantTs>=Number(hit.start_time||0) && wantTs<Number(hit.end_time||0)){
+      pendingSeek[idx]=Math.max(0,wantTs-Number(hit.start_time||0));
+    }
   };
   const selectCamera=(key)=>{
     filter.camera=key===filter.camera?'':key;
@@ -1485,12 +1551,15 @@ setup(){
     const key=evt.dataTransfer.getData('text/plain');
     if(!key)return;
     activeCell.value=idx;
-    filter.camera=key;
-    loadPlayback({silent:true});
+    // 只換這一格。舊寫法是改 filter.camera 再整個重查,等於把其他格
+    // 的內容一起換掉 —— 2x2 就沒辦法一格一台看不同相機。
+    setCellCamera(idx,key);
   };
   const clearCell=(idx)=>{
     cells[idx].url='';cells[idx].camera='';cells[idx].label='';cells[idx].key='';
-    cells[idx].currentSec=0;cells[idx].durationSec=0;
+    cells[idx].currentSec=0;cells[idx].durationSec=0;cells[idx].startTs=0;
+    cells[idx].errorMsg='';
+    destroyHls(idx);
   };
 
   // Bookmarks
@@ -1610,7 +1679,11 @@ setup(){
     try{
       const r=await fetch('/api/cameras');
       const d=await r.json();
+      // /api/cameras 回的是 {total, items:[...]}。原本只認裸陣列與 d.data,
+      // 兩種都不是 → cameras 永遠是空的 → 左側「系統攝影機 (0)」。
+      // 這在 87 與 104 都會發生,不是 staging 沒資料。
       if(Array.isArray(d))cameras.value=d;
+      else if(Array.isArray(d?.items))cameras.value=d.items;
       else if(Array.isArray(d?.data))cameras.value=d.data;
     }catch(_){}
   };
@@ -1717,6 +1790,7 @@ setup(){
     timelineBars,timelineTicks,playheadLeft,nowLeft,
     TL_SCALES,tlScaleIdx,tlRangeLabel,tlBarEl,tlDragging,
     setScale,zoomIn,zoomOut,tlGoNow,onTlWheel,onTlDown,onTlMove,onTlUp,
+    setCellCamera,cellWallClock,cellCameraChoices,
     attachSource,
     formatClock,formatDuration,formatTime,
     setGridMode,selectRow,selectCamera,selectPrev,selectNext,
