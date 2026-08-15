@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from api.models import AggregationJobState, ApiKey, CongestionReportAgg, get_db
+from api.models import AggregationJobState, ApiKey, Camera, CongestionReportAgg, get_db
 from api.utils.api_key_auth import require_scope, resolve_api_key
 from api.utils.device_id import get_device_id
 from api.utils.report_aggregation import (
@@ -365,6 +365,28 @@ def _meta(fmt: str = "json") -> dict:
 # 專案規則:未細分的 truck 視為小車(保守估計,避免誤算為大車)。
 
 
+def _resolve_detector_id(db: Session, raw) -> Optional[int]:
+    """detector_id 同時接受 camera_id 數字與回應裡的偵測器名稱。
+
+    回應每一筆的 detector_id 給的是攝影機名稱(例:CCTV-N8-E-9-L-NE-1-SIG),
+    但查詢參數原本只收整數 camera_id —— 使用者把回應拿到的值直接回填當篩選
+    條件就會吃到 422。這裡兩種都收,對外行為才自洽。
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    if s.isdigit():
+        return int(s)
+    cam = db.query(Camera).filter(Camera.name == s).first()
+    if cam is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"找不到 detector_id={s!r};可用 camera_id 數字,或 /streams 回傳的名稱")
+    return int(cam.id)
+
+
 def _realtime_rows(db: Session, since: datetime, start: datetime,
                    detector_id: Optional[int], until: Optional[datetime] = None) -> list:
     """算出 [since, until) 這一段的 VD 記錄列(與 build_vd_report_rows 同結構)。
@@ -548,7 +570,7 @@ def external_realtime(
         description="逐分鐘查詢:回傳最近 N 個「已結束」的整分鐘桶,每分鐘一筆(不含當前未完成的分鐘)。"
                     "0=不啟用,維持原本的單一視窗行為。",
     ),
-    detector_id: Optional[int] = Query(None, description="攝影機 camera_id;留空=全部"),
+    detector_id: Optional[str] = Query(None, description="攝影機 camera_id 數字,或回應裡的 detector_id 名稱;留空=全部"),
     api_key: ApiKey = Depends(require_scope("vd_report")),
     db: Session = Depends(get_db),
 ):
@@ -576,6 +598,7 @@ def external_realtime(
 
     要存檔請改用 /vd-report/latest：那是不重疊的固定分鐘桶，一分鐘只有一個答案。
     """
+    detector_id = _resolve_detector_id(db, detector_id)  # 數字或名稱都收
     now = datetime.now(timezone.utc).replace(microsecond=0)
 
     # ── 逐分鐘查詢:最近 N 個「已結束」的整分鐘桶 ────────────────────────
@@ -807,12 +830,13 @@ async def external_vd_report(
         ..., description="起始時間 ISO8601,例 2026-07-13T00:00:00+08:00。不帶時區視為 UTC;查台北時間請帶 +08:00"),
     end_time: datetime = Query(
         ..., description="結束時間 ISO8601,例 2026-07-13T23:59:59+08:00。格式同 start_time"),
-    detector_id: Optional[int] = Query(None, description="攝影機 camera_id(2/3/6/8,見 /streams);留空=全部"),
+    detector_id: Optional[str] = Query(None, description="攝影機 camera_id 數字(2/3/6/8),或回應裡的 detector_id 名稱,見 /streams;留空=全部"),
     interval: str = Query("5m", description="時間桶大小:1m / 5m / 1h"),
     format: str = Query("json", description="輸出格式:json / csv"),
     api_key: ApiKey = Depends(require_scope("vd_report")),
     db: Session = Depends(get_db),
 ):
+    detector_id = _resolve_detector_id(db, detector_id)  # 數字或名稱都收
     bucket = normalize_bucket_size(interval)
     _validate_time_range(start_time, end_time, bucket)
 
@@ -845,13 +869,14 @@ async def external_vd_report(
 async def external_vd_report_latest(
     minutes: int = Query(5, ge=1, le=360, description="回傳最近幾個完整桶(interval=1m 時即分鐘數)"),
     interval: str = Query("1m"),
-    detector_id: Optional[int] = Query(None),
+    detector_id: Optional[str] = Query(None, description="攝影機 camera_id 數字,或回應裡的 detector_id 名稱;留空=全部"),
     include_records: bool = Query(True, description="False 只回統計摘要,不回逐桶明細"),
     api_key: ApiKey = Depends(require_scope("vd_report")),
     db: Session = Depends(get_db),
 ):
     """快捷查詢:免自己算時間/UTC,自動回最近 N 個「已結束」的桶 + 統計摘要。
     上層每分鐘輪詢就打這個(建議 minutes 給 3~5 容忍聚合延遲,以 time_start 去重 upsert)。"""
+    detector_id = _resolve_detector_id(db, detector_id)  # 數字或名稱都收
     bucket = normalize_bucket_size(interval)
     step = BUCKET_SECONDS[bucket]
     now = datetime.now(timezone.utc)
@@ -1016,12 +1041,13 @@ async def external_congestion_report(
         ..., description="起始時間 ISO8601,例 2026-07-13T00:00:00+08:00。不帶時區視為 UTC;查台北時間請帶 +08:00"),
     end_time: datetime = Query(
         ..., description="結束時間 ISO8601,例 2026-07-13T23:59:59+08:00。格式同 start_time"),
-    detector_id: Optional[int] = Query(None, description="攝影機 camera_id(2/3/6/8,見 /streams);留空=全部"),
+    detector_id: Optional[str] = Query(None, description="攝影機 camera_id 數字(2/3/6/8),或回應裡的 detector_id 名稱,見 /streams;留空=全部"),
     interval: str = Query("5m", description="時間桶大小:1m / 5m / 1h"),
     format: str = Query("json", description="輸出格式:json / csv"),
     api_key: ApiKey = Depends(require_scope("congestion_report")),
     db: Session = Depends(get_db),
 ):
+    detector_id = _resolve_detector_id(db, detector_id)  # 數字或名稱都收
     bucket = normalize_bucket_size(interval)
     _validate_time_range(start_time, end_time, bucket)
 
@@ -1074,7 +1100,7 @@ def external_congestion_realtime(
     minutes: int = Query(
         5, ge=1, le=180,
         description="回傳最近 N 個「已結束」的整分鐘桶,每分鐘一筆(不含當前未完成的分鐘)"),
-    detector_id: Optional[int] = Query(None, description="攝影機 camera_id;留空=全部"),
+    detector_id: Optional[str] = Query(None, description="攝影機 camera_id 數字,或回應裡的 detector_id 名稱;留空=全部"),
     include_lanes: int = Query(
         0, description="0=只回整體(is_overall);1=連車道層一起回"),
     api_key: ApiKey = Depends(require_scope("congestion_report")),
@@ -1101,6 +1127,7 @@ def external_congestion_realtime(
 
     只回「已結束」的分鐘:當前分鐘還在累積,數字會變,拿去存檔會前後不一致。
     """
+    detector_id = _resolve_detector_id(db, detector_id)  # 數字或名稱都收
     now = datetime.now(timezone.utc).replace(microsecond=0)
     cur_min = now.replace(second=0)
     first = cur_min - timedelta(minutes=minutes)
@@ -1213,13 +1240,14 @@ def external_congestion_realtime(
 async def external_congestion_report_latest(
     minutes: int = Query(5, ge=1, le=360, description="回傳最近幾個完整桶(interval=1m 時即分鐘數)"),
     interval: str = Query("1m"),
-    detector_id: Optional[int] = Query(None),
+    detector_id: Optional[str] = Query(None, description="攝影機 camera_id 數字,或回應裡的 detector_id 名稱;留空=全部"),
     include_records: bool = Query(True, description="False 只回統計摘要,不回逐桶明細"),
     api_key: ApiKey = Depends(require_scope("congestion_report")),
     db: Session = Depends(get_db),
 ):
     """壅塞統計報表快捷:免自己算時間/UTC,自動回最近 N 個「已結束」的桶 + 統計摘要。
     上層每分鐘輪詢就打這個(建議 minutes 給 3~5 容忍聚合延遲,以 time_start 去重 upsert)。"""
+    detector_id = _resolve_detector_id(db, detector_id)  # 數字或名稱都收
     bucket = normalize_bucket_size(interval)
     step = BUCKET_SECONDS[bucket]
     now = datetime.now(timezone.utc)
