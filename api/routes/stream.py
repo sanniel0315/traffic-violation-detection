@@ -1810,6 +1810,13 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     # track_ttl 從 1.2 → 5 秒：塞車場景偶爾 1 frame detection miss 不會讓 track
     # 被刪除產生新 ID，避免 traffic_event cooldown 被頻繁 reset 導致重複計數
     track_ttl_sec = float(detection_config.get("speed_track_ttl_sec", 5.0) or 5.0)
+    # track 配對距離要跟著「兩輪偵測的間隔」放大。現場實測(2026-08-15)偵測只跑
+    # cam2 3.3 / cam3 3.1 / cam4 1.4 fps，一幀之間車子位移遠超過固定的 90px →
+    # 每輪都配不到舊 track、一直開新 ID：cam3 兩分鐘內有 20 次 track 在 ROI 框內
+    # 就過期(那些車的「出框」永遠觀察不到,out_flow 因此恆 0)。
+    # 同一段影像把配對距離放到 220px 重跑：跨線判不出來的 23→6 次、EXIT 轉場
+    # 4→9 次、框內過期 20→10 次。
+    _last_round_ts = None
     # 信任門檻（DB 寫入與超速開單共用）：飽和上限、純 pixel 可信上限
     _speed_clamp_max = float(detection_config.get("speed_clamp_max", 150.0) or 150.0)
     _speed_pixel_trust_max = float(detection_config.get("speed_pixel_trust_max", 100.0) or 100.0)
@@ -1837,7 +1844,10 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     _speed_calib_log = bool(detection_config.get("speed_calib_log"))
     tracks = {}
     next_track_id = 1
-    _inout_exit_pending = []  # INOUT:離開畫面(track 被清)時仍在框內 → 待補發 EXIT 的 zone key
+    # 進出計數專用的 track(不與車速那套共用 —— 那套跑在 ROI 過濾後的車輛清單上,
+    # 看不到框外的車,「出框」永遠觀察不到。詳見下方 _inout_zones 區塊的說明)
+    _inout_tracks: dict = {}
+    _inout_next_id = 1
 
     frame_count = 0
     detection_count = 0
@@ -2028,7 +2038,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
 
     # 以下是 _process_post_yolo 函式體（原本內聯在 worker 迴圈裡，現在抽出來）
     def _process_post_yolo(infer_frame, detections, cur_ts):
-        nonlocal next_track_id, detection_count
+        nonlocal next_track_id, detection_count, _last_round_ts, _inout_next_id
         vehicles = [d for d in detections if d['class_name'] in ['car', 'motorcycle', 'truck', 'bus', 'heavy_truck', 'light_truck']]
 
         # 最小 bbox 面積過濾：砍掉遠端把路面標線/接縫誤判成車的小框。
@@ -2042,6 +2052,16 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                    * ((v.get('bbox') or {}).get('y2', 0) - (v.get('bbox') or {}).get('y1', 0))
                    >= _min_bbox_area
             ]
+
+        # 進出計數要用「ROI 過濾前」的清單:過濾後看不到框外的車,就看不到車開出框。
+        # (now_ts / _match_dist 也一起在這裡算 —— 下面的車速區塊只在過濾後還有車時
+        #  才跑,但進出計數在框內沒車時也要跑,不能依賴那裡的變數。)
+        _vehicles_all = list(vehicles)
+        now_ts = time.time()
+        # 依實際偵測間隔決定配對距離(見 _last_round_ts 的說明)
+        _round_dt = 0.0 if _last_round_ts is None else max(0.0, now_ts - _last_round_ts)
+        _last_round_ts = now_ts
+        _match_dist = max(90.0, min(260.0, 70.0 + 500.0 * _round_dt))
 
         # ROI 區域過濾：只保留中心點在偵測區域內的車輛
         if vehicles and det_zones:
@@ -2076,14 +2096,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
 
         # 背景速度估算（與 live-overlay 同邏輯）
         if vehicles:
-                    now_ts = time.time()
                     stale_ids = [tid for tid, tr in tracks.items() if (now_ts - tr.get("t", now_ts)) > track_ttl_sec]
                     for tid in stale_ids:
-                        _st = tracks.pop(tid, None)
-                        if _st and _st.get("_inout_inside"):  # 車在框內就消失(離開畫面)→ 待補發 EXIT
-                            # 連車種一起帶走,否則補發時只能寫 unknown(見 _inout_cls 的註解)
-                            _cls = _st.get("_inout_cls")
-                            _inout_exit_pending.extend((_zk, _cls) for _zk in _st.get("_inout_inside"))
+                        tracks.pop(tid, None)
                     # P1: 找能算出 homography 的 speed_zone (拿第一個)
                     # 改用「_get_zone_homography 回非 None」為條件,讓 helper 自己判 Form A/B:
                     #   Form A: zone.calibration = {points_pixel, width_m, length_m}
@@ -2112,7 +2127,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         cx = int((b.get("x1", 0) + b.get("x2", 0)) / 2)
                         cy = int((b.get("y1", 0) + b.get("y2", 0)) / 2)
                         cls = str(v.get("class_name") or "")
-                        track_id = _nearest_track_id((cx, cy), cls, tracks)
+                        track_id = _nearest_track_id((cx, cy), cls, tracks, max_dist=_match_dist)
                         if track_id is None:
                             track_id = next_track_id
                             next_track_id += 1
@@ -2310,7 +2325,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         else:
                             tracks[track_id]["center_bottom_prev"] = (float(_ground_x), float(_ground_y))
                 
-        if vehicles and det_zones:
+        # 用 _vehicles_all 當條件:框內沒車但畫面上還有車時,進出計數仍要跑
+        # (最後一台開出框的那一幀,filtered 會是空的 → 舊寫法會漏掉那筆 EXIT)
+        if (vehicles or _vehicles_all) and det_zones:
             detection_count += 1
 
             # 更新服務狀態
@@ -2407,27 +2424,40 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 # EXIT 顯示為「出」、計入 out_flow,但不重複計入總流量(進框已計)→ 總=通過量。
                 #
                 # 邊線模式:zone 若有設 in_edge / out_edge(ROI 多邊形的邊索引),
-                # 則車輛必須「實際跨越那條邊」才計數 — 用前一幀中心點到本幀中心點
-                # 的移動線段與該邊做相交測試。從其他邊進出的車不計入,避免同一個
-                # ROI 兩側都在灌數。沒設邊索引的 zone 維持舊行為(整框進出都算)。
+                # 該邊代表「哪一側是進、哪一側是出」。
+                #
+                # 🛑 進出計數必須看「ROI 過濾前」的車輛清單,而且要自己一套 track。
+                #    上面第 2052 行的「ROI 區域過濾」已經把 vehicles 砍成只剩框內的
+                #    車 —— 車一開出框就從 vehicles 消失,「框內→框外」這個轉場根本
+                #    不可能發生,out_flow 因此恆 0(2026-08-15 查出的真因);而新車第
+                #    一次出現時 track 是新的、_prev_in 是空的,所以只有 IN 有值。
+                #    track_id 也是在過濾後的清單上配發的,框外的車拿不到,不能沿用。
                 if _inout_zones:
-                    for _v in vehicles:
-                        _tid = _v.get("track_id")
-                        if _tid is None:
-                            continue
-                        _tr = tracks.setdefault(_tid, {})
-                        _prev_in = _tr.get("_inout_inside") or set()
-                        _cur_in = set()
-                        for _z in _inout_zones:
-                            if _vehicle_hit_zones(_v, [_z]):
-                                _cur_in.add(_zone_key(_z))
+                    for _dead in [_t for _t, _s in _inout_tracks.items()
+                                  if now_ts - _s["t"] > track_ttl_sec]:
+                        _inout_tracks.pop(_dead, None)
+                    _matched = set()
+                    for _v in _vehicles_all:
                         _cur_pt = _vehicle_center(_v)
-                        _prev_pt = _tr.get("_inout_pt")
-                        _tr["_inout_pt"] = _cur_pt
-                        # 記下車種:track 被清掉(車離開畫面)時要補發 EXIT,那時 vehicle
-                        # 物件已經沒了,不記就只能寫 "unknown" —— 現場實測一小時 527 筆
-                        # EXIT 全是 unknown,佔報表車種統計的 24.6%。
-                        _tr["_inout_cls"] = str(_v.get("class_name") or "").lower() or None
+                        _best, _bd = None, float("inf")
+                        for _t, _s in _inout_tracks.items():
+                            if _t in _matched or _s["pt"] is None:
+                                continue
+                            _d = ((_s["pt"][0] - _cur_pt[0]) ** 2
+                                  + (_s["pt"][1] - _cur_pt[1]) ** 2) ** 0.5
+                            if _d < _bd:
+                                _best, _bd = _t, _d
+                        if _best is None or _bd > _match_dist:
+                            _best = _inout_next_id
+                            _inout_next_id += 1
+                            _inout_tracks[_best] = {"pt": None, "inside": set(), "t": now_ts}
+                        _matched.add(_best)
+                        _tr = _inout_tracks[_best]
+                        _prev_in = _tr["inside"]
+                        _prev_pt = _tr["pt"]          # 新 track 為 None → 無前一點可連線
+                        _cur_in = {_zone_key(_z) for _z in _inout_zones
+                                   if _vehicle_hit_zones(_v, [_z])}
+                        _tr["pt"], _tr["t"] = _cur_pt, now_ts
                         if _cur_in != _prev_in:
                             _bb = _v.get("bbox", {}) or {}
                             _sp = _v.get("speed_kmh")
@@ -2452,15 +2482,41 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                 #    一條(只算進、或只算出),另一側不標卻照算,會得到一個
                                 #    沒人要的數字(例如只標進線,out_flow 卻把所有離開的車
                                 #    都算進去)。現在:標了才算,沒標就是不算。
-                                _edge = _zone_edge_segment(
-                                    _z, _z.get("in_edge") if _dir == "IN" else _z.get("out_edge")
-                                )
+                                _in_seg = _zone_edge_segment(_z, _z.get("in_edge"))
+                                _out_seg = _zone_edge_segment(_z, _z.get("out_edge"))
+                                _edge = _in_seg if _dir == "IN" else _out_seg
                                 if _edge is None:
                                     continue      # 該方向沒標線 → 不計
+                                # 標記的邊代表「哪一側是進、哪一側是出」,不是要求車子的
+                                # 移動線段一定要壓在那條線上 —— 現場實測(2026-08-15,cam3)
+                                # 硬性跨線測試對 IN 幾乎永遠不成立:偵測只有 3.1 fps,一幀
+                                # 位移遠大於 track 配對距離 → track 反覆重建,轉場當下
+                                # _prev_pt 是 None;再加上 23/70 的車第一次被偵測到時就
+                                # 已經在框內,根本沒有「框外那一段」可以連線。
+                                # 也不能改用「離哪條標記邊近」:cam3 上匝道的進線只有 126px
+                                # (右上角一小段)、出線是整條底邊,車永遠離底邊近 → IN 10/10
+                                # 全被誤判掉。
+                                # 定案:跨到標記線就直接算;跨不到就看車是不是「順著車流軸」
+                                # 走 —— 軸 = 進線中點 → 出線中點,只跟兩條線的相對位置有關,
+                                # 不受邊長短影響。逆著軸走的(對向車道、迴轉)才排除。
                                 if _prev_pt is None:
-                                    continue      # 首次出現、沒有前一點可連線 → 無法判定跨線
-                                if not _seg_intersect(_prev_pt, _cur_pt, _edge[0], _edge[1]):
+                                    # track 第一次出現就已經在框內 → 沒看到它跨進來。
+                                    # 改用「ROI 過濾前」的清單之後,車正常都是先在框外
+                                    # 被看到,還會發生這種事的多半是遮蔽後才冒出來或
+                                    # ID 交換 —— 算成進場會讓 in_flow 灌水(實測 in 129
+                                    # 對 out 49)。
                                     continue
+                                _crossed = _seg_intersect(_prev_pt, _cur_pt, _edge[0], _edge[1])
+                                if not _crossed and _in_seg is not None and _out_seg is not None:
+                                    _axis = (
+                                        (_out_seg[0][0] + _out_seg[1][0]) / 2.0
+                                        - (_in_seg[0][0] + _in_seg[1][0]) / 2.0,
+                                        (_out_seg[0][1] + _out_seg[1][1]) / 2.0
+                                        - (_in_seg[0][1] + _in_seg[1][1]) / 2.0,
+                                    )
+                                    _mv = (_cur_pt[0] - _prev_pt[0], _cur_pt[1] - _prev_pt[1])
+                                    if _axis[0] * _mv[0] + _axis[1] * _mv[1] <= 0:
+                                        continue   # 逆著車流軸 → 不是這個方向的車
                                 rows.append(TrafficEvent(
                                     camera_id=int(camera_id), label=_lbl,
                                     speed_kmh=_spv, occupancy=zone_occupancy_map.get(_zk),
@@ -2469,35 +2525,14 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                     bbox=_bbl, source="roi_detection",
                                 ))
                                 row_to_vehicle.append(_v)
-                        _tr["_inout_inside"] = _cur_in
+                        _tr["inside"] = _cur_in
                     # 框內即時車數(= 目前有多少 track 在該框內),放進偵測狀態
                     _occ = {}
                     for _z in _inout_zones:
                         _zk = _zone_key(_z)
-                        _occ[str(_z.get("name") or _zk)] = sum(1 for _t in tracks.values() if _zk in (_t.get("_inout_inside") or set()))
+                        _occ[str(_z.get("name") or _zk)] = sum(
+                            1 for _s in _inout_tracks.values() if _zk in _s["inside"])
                     detection_services[camera_id]["inout_occupancy"] = _occ
-                    # 離開畫面才出框的(track 清除時記下的)→ 這裡補發 EXIT 一筆
-                    # 🛑 改為「沒標出線就不計」之後,這條補發路徑實際上不會再觸發:
-                    #    有標出線 → 消失在畫面不算跨線,本來就跳過;
-                    #    沒標出線 → 新規則下 EXIT 一律不計。
-                    #    保留程式碼但兩個條件都擋住,語意才一致(不要出現「轉場不算、
-                    #    但消失在畫面反而算」的矛盾)。
-                    if _inout_exit_pending:
-                        for _zk, _pending_cls in _inout_exit_pending:
-                            _z = next((_zz for _zz in _inout_zones if _zone_key(_zz) == _zk), None)
-                            if _z is None:
-                                continue
-                            # 沒標出線 → 不計(新規則);有標出線 → 消失在畫面不算跨越 → 也不計
-                            continue
-                            rows.append(TrafficEvent(
-                                camera_id=int(camera_id), label=_pending_cls or "unknown",
-                                speed_kmh=None, occupancy=None,
-                                lane_no=_parse_lane_no(_z), direction="EXIT",
-                                entered_zones=[str(_z.get("name") or "")],
-                                bbox=[None, None, None, None], source="roi_detection",
-                            ))
-                            row_to_vehicle.append({"bbox": {}})
-                        _inout_exit_pending.clear()
                 if rows:
                     db.add_all(rows)
                     db.commit()
