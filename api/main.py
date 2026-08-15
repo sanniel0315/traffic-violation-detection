@@ -30,6 +30,7 @@ from api.routes import io as io_route
 from api.routes import lock as lock_route
 from api.routes import sensor_fusion as sensor_fusion_route
 from api.routes import analytics as analytics_route
+from api.routes import push as push_route
 from api.routes import vision_eye as vision_eye_route
 from api.routes import io_tcp as io_tcp_route
 from api.routes import parking as parking_route
@@ -309,6 +310,11 @@ async def lifespan(app: FastAPI):
         _io_start()
     except Exception as _e:
         print(f"?? IO service ????: {_e}", flush=True)
+    # 啟動推播 poller(偵測新違規→Expo Push)
+    try:
+        push_route.start_poller()
+    except Exception as _e:
+        print(f"⚠️ push poller 啟動失敗: {_e}", flush=True)
     print("✅ 系統初始化完成")
     yield
     # 通知所有 streaming generator 退出，避免 sync while True 卡到 SIGKILL
@@ -373,6 +379,7 @@ def redoc_full(_admin=Depends(get_admin_user)):
 
 # 註冊路由
 app.include_router(violations.router)
+app.include_router(push_route.router)
 app.include_router(cameras.router)
 app.include_router(stream.router)
 app.include_router(traffic.router)
