@@ -1160,6 +1160,133 @@ def play_nvr_recording(src: str, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.api_route("/vod/{vod_path:path}", methods=["GET", "HEAD"])
+def proxy_frigate_vod(vod_path: str, request: Request):
+    """HLS 全時錄影回放代理（路徑原樣轉送）。
+
+    為什麼不沿用 /recordings/play?src=... 那種查詢參數帶來源的做法：
+    HLS 的 master.m3u8 內容是 `index-v1.m3u8`、index 裡是 `seg-1-v1.ts`，
+    全部都是相對路徑。瀏覽器會拿它們去接「目前這支 m3u8 的所在目錄」，
+    所以代理必須保留同樣的路徑結構，相對路徑才解析得回這支端點；
+    用查詢參數的話相對路徑會指回 Frigate 的 :5000，而瀏覽器（手機、
+    Tailscale 遠端）連不到那個埠。
+
+    為什麼要用 HLS 而不是 clip.mp4：clip.mp4 是把整段重新封裝後才送，
+    現場實測抓一小時 60 秒內下載到 553MB 還沒完；HLS 的一小時播放清單
+    只有 10KB，播到哪才下載到哪（每 10 秒片段約 2MB），還能原生 seek。
+    """
+    is_head = request.method == "HEAD"
+    path = str(vod_path or "").strip().lstrip("/")
+    if not path:
+        raise HTTPException(status_code=400, detail="缺少 vod 路徑")
+    if ".." in path:
+        raise HTTPException(status_code=400, detail="不合法的路徑")
+
+    upstream_headers = {}
+    range_header = request.headers.get("range")
+    if range_header:
+        upstream_headers["Range"] = range_header
+
+    upstream = None
+    last_error = None
+    for base in _frigate_base_urls():
+        url = f"{base}/vod/{path}"
+        try:
+            if is_head:
+                r = requests.head(url, timeout=10, headers=upstream_headers, allow_redirects=True)
+            else:
+                r = requests.get(url, timeout=40, stream=True, headers=upstream_headers)
+            if r.status_code in (200, 206):
+                upstream = r
+                break
+            r.close()
+        except Exception as e:
+            last_error = e
+    if upstream is None:
+        if last_error:
+            raise HTTPException(status_code=502, detail=str(last_error))
+        raise HTTPException(status_code=404, detail="找不到該時段的錄影")
+
+    headers = {"Cache-Control": "no-store", "Accept-Ranges": "bytes"}
+    for k in ("Content-Length", "Content-Range", "ETag", "Last-Modified"):
+        v = upstream.headers.get(k)
+        if v:
+            headers[k] = v
+    ct = upstream.headers.get("content-type") or (
+        "application/vnd.apple.mpegurl" if path.endswith(".m3u8") else "video/mp2t"
+    )
+
+    if is_head:
+        try:
+            upstream.close()
+        except Exception:
+            pass
+        return Response(status_code=upstream.status_code, headers=headers, media_type=ct)
+
+    def _iter():
+        try:
+            for chunk in upstream.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    return StreamingResponse(_iter(), media_type=ct, headers=headers,
+                             status_code=upstream.status_code)
+
+
+@router.get("/recordings/timeline")
+def get_recording_timeline(
+    cameras: Optional[str] = None,
+    days: int = Query(7, ge=1, le=90),
+    tz: str = "Asia/Taipei",
+):
+    """回放時間軸的可用性資料：每台每天每小時錄了幾秒。
+
+    給底部時間軸畫「有錄影 / 沒錄影」用。Frigate 的
+    /api/{cam}/recordings/summary 只回「有錄到的小時」，沒錄到的小時是
+    整筆不存在 —— 直接畫會把斷檔跟沒資料混在一起，所以這裡補齊 0～23 全部
+    24 小時，值為該小時的錄影秒數（0 = 沒錄到）。
+    """
+    cam_list = [c.strip() for c in str(cameras or "").split(",") if c.strip()]
+    if not cam_list:
+        cam_list = _list_frigate_camera_names()
+
+    out: Dict[str, Any] = {}
+    for cam in cam_list:
+        response, _url, _err = _get_frigate(
+            f"/api/{cam}/recordings/summary", timeout=15, params={"timezone": tz})
+        day_map: Dict[str, List[int]] = {}
+        if response is not None and response.status_code == 200:
+            try:
+                rows = response.json() or []
+            except Exception:
+                rows = []
+            for row in rows if isinstance(rows, list) else []:
+                if not isinstance(row, dict):
+                    continue
+                day = str(row.get("day") or "").strip()
+                if not day:
+                    continue
+                hours = [0] * 24
+                for h in (row.get("hours") or []):
+                    if not isinstance(h, dict):
+                        continue
+                    try:
+                        idx = int(str(h.get("hour")))
+                        dur = int(float(h.get("duration") or 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if 0 <= idx < 24:
+                        hours[idx] = max(0, min(3600, dur))
+                day_map[day] = hours
+        out[cam] = [
+            {"day": d, "hours": day_map[d], "total_sec": sum(day_map[d])}
+            for d in sorted(day_map, reverse=True)[:days]
+        ]
+    return {"timezone": tz, "cameras": out}
+
+
 # ============ 同步 API ============
 
 @router.post("/sync-cameras")
