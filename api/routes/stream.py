@@ -2433,31 +2433,93 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 #    一次出現時 track 是新的、_prev_in 是空的,所以只有 IN 有值。
                 #    track_id 也是在過濾後的清單上配發的,框外的車拿不到,不能沿用。
                 if _inout_zones:
+                    # track 過期(車開出畫面、或在框內被遮蔽到追不回來)時,若它算過進場
+                    # 卻還沒算出場,這裡補一筆 —— 進到框裡的車一定會出去,不補的話
+                    # out_flow 會系統性短少(實測上匝道 2 分鐘掉 5 筆)。
+                    # 有標出線才補(沿用「沒標就不計」的規則)。
                     for _dead in [_t for _t, _s in _inout_tracks.items()
                                   if now_ts - _s["t"] > track_ttl_sec]:
-                        _inout_tracks.pop(_dead, None)
-                    _matched = set()
-                    for _v in _vehicles_all:
-                        _cur_pt = _vehicle_center(_v)
-                        _best, _bd = None, float("inf")
-                        for _t, _s in _inout_tracks.items():
-                            if _t in _matched or _s["pt"] is None:
+                        _gone = _inout_tracks.pop(_dead, None)
+                        for _zk in (_gone or {}).get("counted", ()):
+                            _z = next((_zz for _zz in _inout_zones
+                                       if _zone_key(_zz) == _zk), None)
+                            if _z is None or _zone_edge_segment(_z, _z.get("out_edge")) is None:
                                 continue
-                            _d = ((_s["pt"][0] - _cur_pt[0]) ** 2
-                                  + (_s["pt"][1] - _cur_pt[1]) ** 2) ** 0.5
-                            if _d < _bd:
-                                _best, _bd = _t, _d
-                        if _best is None or _bd > _match_dist:
+                            rows.append(TrafficEvent(
+                                camera_id=int(camera_id),
+                                label=_gone.get("cls") or "unknown",
+                                speed_kmh=None, occupancy=None,
+                                lane_no=_parse_lane_no(_z), direction="EXIT",
+                                entered_zones=[str(_z.get("name") or "")],
+                                bbox=[None, None, None, None], source="roi_detection",
+                            ))
+                            row_to_vehicle.append({"bbox": {}})
+                    # 配對比對「預測位置」而不是上一個位置:偵測只有 3 fps 上下,
+                    # 車一幀就跑很遠;遇到遮蔽漏偵測幾幀之後距離更遠 → 用上一個位置
+                    # 比對必然接不上,track 在框內斷掉。斷掉的後果是進出不對稱:
+                    # 舊 track 沒等到出框、新 track 沒算過進場(實測上匝道 IN 12 對
+                    # EXIT 4)。用「上次位置 + 速度 × 經過時間」外推就接得回來,
+                    # 也順便降低兩台相鄰車被互換 ID 的機會。
+                    # 全域最佳配對:把所有(車,track)配對依距離排序、好的先配。
+                    # 逐台車各自找最近的話,前面的車會先把 track「搶走」,後面真正
+                    # 該配到那個 track 的車只好開新的 → 同一台車被拆成多段,進出
+                    # 各多算一次(實測上匝道 IN 87 對一般流量 39,2.2 倍)。
+                    _pts = [_vehicle_center(_v) for _v in _vehicles_all]
+                    _pairs = []
+                    for _vi, _cur_pt in enumerate(_pts):
+                        for _t, _s in _inout_tracks.items():
+                            if _s["pt"] is None:
+                                continue
+                            _gap = max(0.0, now_ts - _s["t"])
+                            # 外推距離設上限:3 fps 下中心點抖動會被放大成很離譜的速度,
+                            # 不設限反而預測到別的地方去、配不回自己的車。
+                            _ex = min(_match_dist, abs(_s["vel"][0]) * _gap)
+                            _ey = min(_match_dist, abs(_s["vel"][1]) * _gap)
+                            _px = _s["pt"][0] + (_ex if _s["vel"][0] >= 0 else -_ex)
+                            _py = _s["pt"][1] + (_ey if _s["vel"][1] >= 0 else -_ey)
+                            _d = ((_px - _cur_pt[0]) ** 2 + (_py - _cur_pt[1]) ** 2) ** 0.5
+                            if _d <= _match_dist:
+                                _pairs.append((_d, _vi, _t))
+                    _pairs.sort()
+                    _matched, _taken = set(), {}
+                    for _d, _vi, _t in _pairs:
+                        if _vi in _taken or _t in _matched:
+                            continue
+                        _taken[_vi] = _t
+                        _matched.add(_t)
+                    for _vi, _v in enumerate(_vehicles_all):
+                        _cur_pt = _pts[_vi]
+                        _best = _taken.get(_vi)
+                        if _best is None:
                             _best = _inout_next_id
                             _inout_next_id += 1
-                            _inout_tracks[_best] = {"pt": None, "inside": set(), "t": now_ts}
-                        _matched.add(_best)
+                            _inout_tracks[_best] = {"pt": None, "vel": (0.0, 0.0),
+                                                    "inside": set(), "counted": set(),
+                                                    "cls": None, "t": now_ts}
                         _tr = _inout_tracks[_best]
                         _prev_in = _tr["inside"]
                         _prev_pt = _tr["pt"]          # 新 track 為 None → 無前一點可連線
+                        _prev_t = _tr["t"]
                         _cur_in = {_zone_key(_z) for _z in _inout_zones
                                    if _vehicle_hit_zones(_v, [_z])}
+                        if _prev_pt is not None and now_ts > _prev_t:
+                            _dt = now_ts - _prev_t
+                            _tr["vel"] = (
+                                0.5 * _tr["vel"][0] + 0.5 * (_cur_pt[0] - _prev_pt[0]) / _dt,
+                                0.5 * _tr["vel"][1] + 0.5 * (_cur_pt[1] - _prev_pt[1]) / _dt,
+                            )
                         _tr["pt"], _tr["t"] = _cur_pt, now_ts
+                        # 記下車種:track 過期補發 EXIT 時 vehicle 物件已經沒了,
+                        # 不記就只能寫 unknown(現場實測過那樣會佔報表車種統計 24.6%)
+                        _tr["cls"] = str(_v.get("class_name") or "").lower() or None
+                        # 去抖動:框內外要連續兩次觀測一致才算真的轉場。
+                        # 車貼著框邊走時,bbox 中心會來回跨線,一次抖動就生出一組
+                        # IN+EXIT —— 兩邊等比例膨脹,所以 IN≈EXIT 卻都是一般流量的
+                        # 2 倍(實測四個框都是 2.0~2.2x,一致到不可能是追蹤雜訊)。
+                        if _cur_in != _prev_in and _tr.get("pend") != _cur_in:
+                            _tr["pend"] = _cur_in     # 先觀察一次,這輪不動 inside
+                            continue
+                        _tr["pend"] = None
                         if _cur_in != _prev_in:
                             _bb = _v.get("bbox", {}) or {}
                             _sp = _v.get("speed_kmh")
@@ -2476,6 +2538,13 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             for _zk, _dir in [(zk, "IN") for zk in (_cur_in - _prev_in)] + [(zk, "EXIT") for zk in (_prev_in - _cur_in)]:
                                 _z = next((_zz for _zz in _inout_zones if _zone_key(_zz) == _zk), None)
                                 if _z is None:
+                                    continue
+                                # 進出必須對稱:只有「有算過進場」的 track,出框才算出場。
+                                # 進場那邊擋掉了「第一次被偵測到就已在框內」的 track,出場
+                                # 若不比照,車在框內被遮蔽→track 斷掉→新 track 出框時就會
+                                # 補一筆沒有對應進場的 EXIT(實測上匝道 13 分鐘 IN 49 對
+                                # EXIT 76,還出現 IN=0 但 EXIT=7 的分鐘)。
+                                if _dir == "EXIT" and _zk not in _tr["counted"]:
                                     continue
                                 # 🛑 沒標那條線就不計數(2026-08-15 依現場要求改)。
                                 #    舊行為是「沒指定就整框進出都算」——但現場多數框只標
@@ -2499,15 +2568,16 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                 # 定案:跨到標記線就直接算;跨不到就看車是不是「順著車流軸」
                                 # 走 —— 軸 = 進線中點 → 出線中點,只跟兩條線的相對位置有關,
                                 # 不受邊長短影響。逆著軸走的(對向車道、迴轉)才排除。
-                                if _prev_pt is None:
-                                    # track 第一次出現就已經在框內 → 沒看到它跨進來。
-                                    # 改用「ROI 過濾前」的清單之後,車正常都是先在框外
-                                    # 被看到,還會發生這種事的多半是遮蔽後才冒出來或
-                                    # ID 交換 —— 算成進場會讓 in_flow 灌水(實測 in 129
-                                    # 對 out 49)。
-                                    continue
-                                _crossed = _seg_intersect(_prev_pt, _cur_pt, _edge[0], _edge[1])
-                                if not _crossed and _in_seg is not None and _out_seg is not None:
+                                # _prev_pt is None = track 第一次被偵測到就已經在框內。
+                                # 現場實測(cam3 上匝道 2 分鐘)這種佔 13/31 —— 框的上緣
+                                # 比 YOLO 認得出車的距離還遠,車進框那一刻根本還沒被偵測到,
+                                # 不是遮蔽或 ID 交換。擋掉它會讓 IN 少算 11/16,而且它的
+                                # 出場又因為「沒算過進場」被連帶擋掉 9/11 → 兩邊一起塌。
+                                # 所以照算:進到框裡就是一筆進場,無法反證。
+                                _crossed = (_prev_pt is not None
+                                            and _seg_intersect(_prev_pt, _cur_pt, _edge[0], _edge[1]))
+                                if not _crossed and _prev_pt is not None \
+                                        and _in_seg is not None and _out_seg is not None:
                                     _axis = (
                                         (_out_seg[0][0] + _out_seg[1][0]) / 2.0
                                         - (_in_seg[0][0] + _in_seg[1][0]) / 2.0,
@@ -2525,6 +2595,10 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                     bbox=_bbl, source="roi_detection",
                                 ))
                                 row_to_vehicle.append(_v)
+                                if _dir == "IN":
+                                    _tr["counted"].add(_zk)
+                                else:
+                                    _tr["counted"].discard(_zk)
                         _tr["inside"] = _cur_in
                     # 框內即時車數(= 目前有多少 track 在該框內),放進偵測狀態
                     _occ = {}
