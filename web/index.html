@@ -2199,6 +2199,66 @@
             transition: none !important;
             user-select: none;
         }
+
+        /* ---- 手機版導覽(off-canvas 抽屜) ---- */
+        /* 桌機不顯示;≤720px 才接手。原本整份 CSS 沒有任何 media query 碰到
+           .sidebar,手機上側邊欄固定吃掉 240px,而收合鈕是 26px 圓形又掛在
+           側邊欄外緣(right:-13px),觸控目標遠低於 44px,實際上點不到。 */
+        .mobile-nav-btn { display: none; }
+        .sidebar-backdrop { display: none; }
+
+        @media (max-width: 720px) {
+            .mobile-nav-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                position: fixed;
+                top: 8px; left: 8px;
+                width: 44px; height: 44px;   /* 觸控目標下限 */
+                z-index: 1002;
+                background: var(--gov-surface);
+                border: 1px solid var(--gov-border);
+                border-radius: 10px;
+                color: var(--gov-text);
+                box-shadow: 0 2px 10px rgba(16,24,40,0.12);
+                padding: 0;
+                cursor: pointer;
+            }
+            .mobile-nav-btn svg { width: 22px; height: 22px; }
+            .mobile-nav-btn:active { background: var(--gov-bg); }
+
+            .sidebar {
+                position: fixed;
+                top: 0; bottom: 0; left: 0;
+                width: min(280px, 82vw) !important;
+                z-index: 1001;
+                transform: translateX(-100%);
+                transition: transform .24s cubic-bezier(.4,.1,.2,1);
+                box-shadow: 2px 0 16px rgba(16,24,40,0.18);
+                overflow-y: auto;
+                border-right: none;
+            }
+            .sidebar.mobile-open { transform: none; }
+
+            /* 拖寬 handle 與桌機收合鈕在手機沒有意義 */
+            .sidebar-resizer,
+            .sidebar-toggle { display: none !important; }
+
+            .sidebar-backdrop {
+                display: block;
+                position: fixed;
+                inset: 0;
+                background: rgba(16,24,40,0.45);
+                z-index: 1000;
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity .24s ease;
+            }
+            .sidebar-backdrop.show { opacity: 1; pointer-events: auto; }
+
+            /* 讓出漢堡鈕的位置,不要壓到區域下拉 */
+            .header { padding-left: 60px; }
+        }
         /* collapsed: icon-only 64px */
         .sidebar.collapsed {
             width: 64px;
@@ -4496,6 +4556,14 @@
         </div>
     </div>
     <div v-else class="layout">
+        <!-- 手機版導覽:桌機的收合鈕只有 26px 又掛在側邊欄外緣,手機點不到,
+             側邊欄也一直吃掉 240px 寬。≤720px 改成 off-canvas 抽屜。 -->
+        <button class="mobile-nav-btn" id="mobile-nav-btn" type="button" aria-label="開啟選單" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M4 7h16M4 12h16M4 17h16"/>
+            </svg>
+        </button>
+        <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
         <!-- 側邊欄 -->
         <div class="sidebar">
             <!-- sidebar brand 區 — AI 交通影像分析 LOGO (v2) -->
@@ -18664,15 +18732,49 @@ const app=createApp({
             if(!Number.isNaN(savedW) && savedW>=SIDEBAR_MIN && savedW<=SIDEBAR_MAX){
                 sb.style.setProperty('--sidebar-w',savedW+'px');
             }
-            if(localStorage.getItem('sidebarCollapsed')==='1'){
+            // 手機用 off-canvas 抽屜,桌機那套「收合成 64px」在手機不適用:
+            // 抽屜是整個滑出畫面,再套 collapsed 會把選單文字全部藏起來,
+            // 滑出來也只剩看不懂的圖示。所以手機一律不吃 collapsed 狀態。
+            const mqMobile=window.matchMedia('(max-width: 720px)');
+            const isMobile=()=>mqMobile.matches;
+            if(localStorage.getItem('sidebarCollapsed')==='1' && !isMobile()){
                 sb.classList.add('collapsed');
             }
-            // toggle button
+            // toggle button（桌機:收合／展開）
             const toggle=document.getElementById('sidebar-toggle');
             toggle?.addEventListener('click',()=>{
                 sb.classList.toggle('collapsed');
                 localStorage.setItem('sidebarCollapsed', sb.classList.contains('collapsed')?'1':'0');
             });
+
+            // ---- 手機:漢堡鈕 + 遮罩 ----
+            const navBtn=document.getElementById('mobile-nav-btn');
+            const backdrop=document.getElementById('sidebar-backdrop');
+            const setDrawer=(open)=>{
+                sb.classList.toggle('mobile-open', open);
+                backdrop?.classList.toggle('show', open);
+                navBtn?.setAttribute('aria-expanded', open?'true':'false');
+                // 抽屜開著時鎖住背景捲動,否則手指滑動會帶動後面的內容
+                document.body.style.overflow = open ? 'hidden' : '';
+            };
+            navBtn?.addEventListener('click',()=>setDrawer(!sb.classList.contains('mobile-open')));
+            backdrop?.addEventListener('click',()=>setDrawer(false));
+            // 點選單項目就關抽屜,否則選完頁面被抽屜擋住
+            sb.addEventListener('click',(e)=>{
+                if(!isMobile()) return;
+                if(e.target.closest('.menu-item')) setDrawer(false);
+            });
+            // 轉螢幕方向／改視窗大小跨過斷點時把狀態清乾淨
+            const syncBreakpoint=()=>{
+                if(isMobile()){
+                    sb.classList.remove('collapsed');
+                }else{
+                    setDrawer(false);
+                    if(localStorage.getItem('sidebarCollapsed')==='1') sb.classList.add('collapsed');
+                }
+            };
+            mqMobile.addEventListener('change', syncBreakpoint);
+            syncBreakpoint();
             // resize drag
             const resizer=document.getElementById('sidebar-resizer');
             let dragging=false;
