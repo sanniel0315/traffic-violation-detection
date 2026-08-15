@@ -2460,6 +2460,13 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     # 舊 track 沒等到出框、新 track 沒算過進場(實測上匝道 IN 12 對
                     # EXIT 4)。用「上次位置 + 速度 × 經過時間」外推就接得回來,
                     # 也順便降低兩台相鄰車被互換 ID 的機會。
+                    # 多邊形每輪建一次就好(空間遲滯要算點到邊界的帶號距離)
+                    _inout_polys = {}
+                    for _z in _inout_zones:
+                        _zpts = _z.get("points") or []
+                        if len(_zpts) >= 3:
+                            _inout_polys[_zone_key(_z)] = np.array(
+                                _zpts, dtype=np.float32).reshape(-1, 1, 2)
                     # 全域最佳配對:把所有(車,track)配對依距離排序、好的先配。
                     # 逐台車各自找最近的話,前面的車會先把 track「搶走」,後面真正
                     # 該配到那個 track 的車只好開新的 → 同一台車被拆成多段,進出
@@ -2500,8 +2507,26 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         _prev_in = _tr["inside"]
                         _prev_pt = _tr["pt"]          # 新 track 為 None → 無前一點可連線
                         _prev_t = _tr["t"]
-                        _cur_in = {_zone_key(_z) for _z in _inout_zones
-                                   if _vehicle_hit_zones(_v, [_z])}
+                        # 空間遲滯:框邊內外各留一條緩衝帶,中心點落在帶內就維持
+                        # 原本的狀態,要真的進去/出來夠深才翻面。車貼著框邊走時
+                        # bbox 中心會在邊線上來回抖,單看「在不在框內」一次抖動就
+                        # 生出一組 IN+EXIT。緩衝寬度取 bbox 高度的 15%(下限 8px)——
+                        # 近端車 bbox 大、抖動也大,遠端車小,用固定像素兩邊都不對。
+                        _bh = max(0.0, float((_v.get("bbox") or {}).get("y2", 0))
+                                  - float((_v.get("bbox") or {}).get("y1", 0)))
+                        _margin = max(8.0, 0.15 * _bh)
+                        _cur_in = set()
+                        for _z in _inout_zones:
+                            _zk2 = _zone_key(_z)
+                            _poly = _inout_polys.get(_zk2)
+                            if _poly is None:
+                                continue
+                            _sd = cv2.pointPolygonTest(_poly, (float(_cur_pt[0]),
+                                                               float(_cur_pt[1])), True)
+                            if _sd >= _margin:
+                                _cur_in.add(_zk2)          # 夠深入 → 算在框內
+                            elif _sd > -_margin and _zk2 in _prev_in:
+                                _cur_in.add(_zk2)          # 還在緩衝帶內 → 維持原狀
                         if _prev_pt is not None and now_ts > _prev_t:
                             _dt = now_ts - _prev_t
                             _tr["vel"] = (
