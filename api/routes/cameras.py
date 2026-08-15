@@ -390,6 +390,26 @@ def _normalize_camera_name(name: Optional[str]) -> str:
     return str(name or "").strip()
 
 
+def _normalize_zone_directions(zones):
+    """標了進出線的框,direction 一律存成 INOUT。
+
+    ROI 編輯器存檔時仍會把 direction 寫成 'IN'/'straight',每次重啟偵測都要
+    靠防呆改回 INOUT(日誌固定噴一行警告)。更麻煩的是這個值真的害過人:
+    direction='IN' 的框,報表端 `if direction in ("IN","EXIT"): continue`
+    會把它的一般流量事件排除在總流量外,那個車道的流量整個消失。
+    在存檔這一層修掉,不管前端送什麼進來都不會再留下壞值。
+    """
+    if not isinstance(zones, list):
+        return zones
+    for z in zones:
+        if not isinstance(z, dict):
+            continue
+        if z.get("in_edge") in (None, "") and z.get("out_edge") in (None, ""):
+            continue
+        z["direction"] = "INOUT"
+    return zones
+
+
 def _normalize_camera_source(source: Optional[str]) -> str:
     raw = str(source or "").strip()
     if not raw:
@@ -536,6 +556,8 @@ async def update_camera(camera_id: int, data: CameraUpdate, db: Session = Depend
         payload["name"] = next_name
     if "source" in payload:
         payload["source"] = next_source
+    if "zones" in payload:
+        payload["zones"] = _normalize_zone_directions(payload["zones"])
 
     for key, value in payload.items():
         setattr(c, key, value)
