@@ -345,10 +345,40 @@ body {
 
 /* Timeline */
 .timeline-area { padding:6px 10px 2px; }
+.timeline-toolbar {
+  display:flex; align-items:center; gap:6px; padding:0 2px 5px;
+}
+.tl-scales { display:flex; gap:2px; }
+.tl-scale-btn {
+  min-width:30px; height:26px; padding:0 8px; border-radius:5px;
+  border:1px solid var(--border-color); background:var(--bg-tertiary);
+  color:var(--text-secondary); font-size:12px; cursor:pointer;
+  transition:all .12s;
+}
+.tl-scale-btn:hover { color:var(--text-primary); background:var(--bg-hover); }
+.tl-scale-btn.active { background:var(--accent-blue); color:#fff; border-color:var(--accent-blue); }
+.tl-zoom-btn {
+  width:26px; height:26px; border-radius:5px;
+  border:1px solid var(--border-color); background:var(--bg-tertiary);
+  color:var(--text-secondary); font-size:15px; line-height:1; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+}
+.tl-zoom-btn:hover { color:var(--text-primary); background:var(--bg-hover); }
+.tl-zoom-btn.wide { width:auto; padding:0 9px; font-size:12px; }
+.tl-range-label {
+  font-size:11px; color:var(--text-muted); font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+}
+.tl-spacer { flex:1; }
 .timeline-bar {
   position:relative; height:48px; border-radius:6px; overflow:hidden;
   background:var(--bg-tertiary); border:1px solid var(--border-color);
-  cursor:pointer;
+  cursor:grab; touch-action:none;   /* 手機要能拖曳平移,不要被瀏覽器捲動吃掉 */
+}
+.timeline-bar.dragging { cursor:grabbing; }
+.timeline-now {
+  position:absolute; top:0; bottom:0; width:1px;
+  background:var(--accent-red); opacity:.7; z-index:1; pointer-events:none;
 }
 .timeline-segments { position:absolute; inset:0; display:flex; }
 .timeline-seg {
@@ -776,21 +806,33 @@ body {
 
     <!-- Timeline -->
     <div class="timeline-area" v-show="viewMode==='playback'">
-      <div class="timeline-bar" @click="seekTimeline($event)">
+      <div class="timeline-toolbar">
+        <div class="tl-scales">
+          <button v-for="(s,i) in TL_SCALES" :key="s.key" type="button"
+                  class="tl-scale-btn" :class="{active:tlScaleIdx===i}"
+                  @click="setScale(i)">{{ s.label }}</button>
+        </div>
+        <button class="tl-zoom-btn" type="button" @click="zoomIn" title="放大刻度">+</button>
+        <button class="tl-zoom-btn" type="button" @click="zoomOut" title="縮小刻度">&minus;</button>
+        <span class="tl-range-label">{{ tlRangeLabel }}</span>
+        <span class="tl-spacer"></span>
+        <span class="tl-range-label">滾輪縮放 / 拖曳平移 / 點擊定位</span>
+        <button class="tl-zoom-btn wide" type="button" @click="tlGoNow" title="回到現在">現在</button>
+      </div>
+      <div class="timeline-bar" ref="tlBarEl" :class="{dragging:tlDragging}"
+           @wheel.prevent="onTlWheel"
+           @pointerdown="onTlDown" @pointermove="onTlMove"
+           @pointerup="onTlUp" @pointercancel="onTlUp">
         <div class="timeline-segments">
           <div class="timeline-seg" v-for="bar in timelineBars" :key="bar.idx"
-               :class="bar.count>0 ? (bar.hasMotion?'event':'continuous') : 'empty'"
-               :style="{flex:'1 1 0'}">
+               :class="bar.cls" :style="{flex:'1 1 0',opacity:bar.op}">
           </div>
         </div>
+        <div class="timeline-now" v-if="nowLeft>=0" :style="{left:nowLeft+'%'}"></div>
         <div class="timeline-playhead" v-if="playheadLeft>=0" :style="{left:playheadLeft+'%'}"></div>
-        <div class="timeline-markers">
-          <div class="timeline-marker" v-for="(m,mi) in timelineMarkers" :key="mi"
-               :style="{left:m.left+'%'}"></div>
-        </div>
       </div>
       <div class="timeline-ticks">
-        <span v-for="t in timelineTicks" :key="t.left">{{t.label}}</span>
+        <span v-for="t in timelineTicks" :key="t.key">{{ t.label }}</span>
       </div>
     </div>
 
@@ -1104,50 +1146,196 @@ setup(){
   });
 
   // Timeline
+  // ── 時間軸(牆鐘 + 可縮放刻度) ──
+  // 舊版是把「清單筆數」畫成密度圖、範圍自動貼合資料,所以看不出真實時間、
+  // 也不能縮放或平移。改成固定的牆鐘視窗:中心點 + 刻度決定看多寬,
+  // 底色畫的是「那段時間到底有沒有錄到」。
+  const TL_SCALES=[
+    {key:'minute',label:'分',span:15*60},
+    {key:'hour',  label:'時',span:3*3600},
+    {key:'day',   label:'日',span:24*3600},
+    {key:'month', label:'月',span:30*24*3600},
+  ];
+  const TL_BINS=120;
+  const tlScaleIdx=ref(2);                                  // 預設「日」
+  const tlCenter=ref(Math.floor(Date.now()/1000));
+  const tlAvail=ref({});                                    // 每台每天每小時錄了幾秒
+  const tlSegs=ref([]);                                     // 「分」刻度才抓的實際片段
+  const tlBarEl=ref(null);
+  const tlDragging=ref(false);
+  const tlDrag={active:false,moved:false,x0:0,c0:0};
+  const pendingSeek={};                                     // 每格待套用的定位秒數
+  const nowTick=ref(Math.floor(Date.now()/1000));            // 「現在」紅線
+  setInterval(()=>{ nowTick.value=Math.floor(Date.now()/1000); },10000);
+
   const timelineRange=computed(()=>{
-    const vals=rows.value.map(r=>Number(r?.start_time||0)).filter(v=>v>0);
-    let from=parseTs(filter.timeFrom), to=parseTs(filter.timeTo);
-    if(!from)from=vals.length?Math.min(...vals):0;
-    if(!to)to=vals.length?Math.max(...vals):from+3600;
-    if(to<=from)to=from+3600;
-    return {from,to,span:Math.max(1,to-from)};
+    const span=TL_SCALES[tlScaleIdx.value].span;
+    const from=Math.floor(tlCenter.value-span/2);
+    return {from,to:from+span,span};
+  });
+  const tlRangeLabel=computed(()=>{
+    const {from,to}=timelineRange.value;
+    const a=new Date(from*1000), b=new Date(to*1000);
+    const d=(x)=>`${pad(x.getMonth()+1)}/${pad(x.getDate())} ${pad(x.getHours())}:${pad(x.getMinutes())}`;
+    return `${d(a)} ~ ${d(b)}`;
+  });
+  // 目前在看哪幾台:以格子裡實際載入的相機為準,沒有就退回篩選條件
+  const tlActiveCams=computed(()=>{
+    const s=new Set();
+    cells.forEach(c=>{ const v=String(c&&c.camera||'').trim(); if(v)s.add(v); });
+    if(!s.size){ const v=String(filter.camera||'').trim(); if(v)s.add(v); }
+    return Array.from(s);
+  });
+  // 小時 → 覆蓋率(0~1)。多台時取最大:只要有一台錄到,那段就有畫面可看。
+  const tlHourMap=computed(()=>{
+    const m=new Map(), cams=tlActiveCams.value;
+    Object.entries(tlAvail.value||{}).forEach(([cam,days])=>{
+      if(cams.length&&cams.indexOf(cam)<0)return;
+      (Array.isArray(days)?days:[]).forEach(d=>{
+        (Array.isArray(d&&d.hours)?d.hours:[]).forEach((sec,h)=>{
+          if(!(Number(sec)>0))return;
+          const ts=Math.floor(new Date(`${d.day}T${String(h).padStart(2,'0')}:00:00+08:00`).getTime()/1000);
+          if(!Number.isFinite(ts))return;
+          m.set(ts,Math.max(m.get(ts)||0,Math.min(1,Number(sec)/3600)));
+        });
+      });
+    });
+    return m;
   });
   const timelineBars=computed(()=>{
-    const bins=80, {from,span}=timelineRange.value;
-    const counts=Array.from({length:bins},()=>({count:0,hasMotion:false}));
-    rows.value.forEach(r=>{
-      const ts=Number(r?.start_time||0);if(ts<=0)return;
-      const pos=Math.max(0,Math.min(bins-1,Math.floor(((ts-from)/span)*bins)));
-      counts[pos].count++;
-      if(r?.source==='motion')counts[pos].hasMotion=true;
-    });
-    return counts.map((c,i)=>({idx:i,...c}));
-  });
-  const timelineMarkers=computed(()=>{
     const {from,span}=timelineRange.value;
-    return rows.value.filter(r=>r?.source==='motion').map(r=>{
-      const ts=Number(r?.start_time||0);if(ts<=0)return null;
-      return {left:Math.max(0,Math.min(100,((ts-from)/span)*100)),row:r};
-    }).filter(Boolean);
+    const binSpan=span/TL_BINS;
+    // 「分」刻度用實際片段畫:小時級的覆蓋率在 15 分鐘視窗下太粗,
+    // 看不出斷檔在哪一分鐘。Frigate 原生的 10 秒片段在這個刻度剛好合用。
+    const useSegs=TL_SCALES[tlScaleIdx.value].key==='minute';
+    const segs=tlSegs.value, hm=tlHourMap.value, out=[];
+    for(let i=0;i<TL_BINS;i++){
+      const b0=from+i*binSpan, b1=b0+binSpan;
+      let acc=0;
+      if(useSegs){
+        for(let k=0;k<segs.length;k++){
+          const o=Math.min(b1,segs[k].end)-Math.max(b0,segs[k].start);
+          if(o>0)acc+=o;
+        }
+      }else{
+        const h0=Math.floor(b0/3600)*3600;
+        for(let t=h0;t<b1;t+=3600){
+          const r=hm.get(t)||0;
+          if(r<=0)continue;
+          const o=Math.min(b1,t+3600)-Math.max(b0,t);
+          if(o>0)acc+=o*r;
+        }
+      }
+      const cov=Math.min(1,binSpan>0?acc/binSpan:0);
+      out.push({idx:i,cov,cls:cov>0?'continuous':'empty',op:cov>0?(0.35+0.65*cov):1});
+    }
+    return out;
   });
   const timelineTicks=computed(()=>{
     const {from,span}=timelineRange.value;
+    const key=TL_SCALES[tlScaleIdx.value].key;
     const steps=6, out=[];
     for(let i=0;i<=steps;i++){
       const sec=Math.floor(from+(span*(i/steps)));
       const dt=new Date(sec*1000);
-      const label=span>=86400?`${pad(dt.getMonth()+1)}/${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`:`${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
-      out.push({left:Math.round((i/steps)*1000)/10,label});
+      let label;
+      if(key==='month')label=`${pad(dt.getMonth()+1)}/${pad(dt.getDate())}`;
+      else if(key==='day')label=`${pad(dt.getMonth()+1)}/${pad(dt.getDate())} ${pad(dt.getHours())}:00`;
+      else label=`${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+      out.push({key:`${i}-${sec}`,label});
     }
     return out;
   });
+  const tlPctOf=(ts)=>{
+    const {from,span}=timelineRange.value;
+    if(!(ts>0)||!(span>0))return -1;
+    const p=((ts-from)/span)*100;
+    return (p<0||p>100)?-1:p;
+  };
+  const nowLeft=computed(()=>tlPctOf(nowTick.value));
+  // 播放頭要跟著影片實際播到哪走,不能只用片段起點 —— 一小時一段的話
+  // 播放頭會整整一小時卡在同一個位置。
   const playheadLeft=computed(()=>{
     if(!current.value)return -1;
-    const {from,span}=timelineRange.value;
-    const ts=Number(current.value.start_time||0);
-    if(ts<=0)return -1;
-    return Math.max(0,Math.min(100,((ts-from)/span)*100));
+    return tlPctOf(Number(current.value.start_time||0)+Number(currentSec.value||0));
   });
+
+  // 「分」刻度要畫到分鐘級的斷檔,小時覆蓋率不夠細 —— 這時才去抓實際片段。
+  // Frigate 原生就是每 10 秒一段,拿來當清單很糟(那就是先前「破碎幾秒」的來源),
+  // 但拿來畫 15 分鐘視窗的時間軸剛剛好。只在需要時抓,並用 debounce 擋住
+  // 拖曳過程中的連續請求。
+  let tlSegTimer=null, tlSegSeq=0;
+  const loadTimelineSegs=()=>{
+    if(TL_SCALES[tlScaleIdx.value].key!=='minute'){ tlSegs.value=[]; return; }
+    const {from,to}=timelineRange.value;
+    const cam=tlActiveCams.value[0]||String(filter.camera||'').trim();
+    if(!cam){ tlSegs.value=[]; return; }
+    const seq=++tlSegSeq;
+    const p=new URLSearchParams({camera:cam,limit:'500',
+      start_time:String(from-60),end_time:String(to+60)});
+    fetch(`/api/frigate/recordings?${p}`)
+      .then(r=>r.ok?r.json():null)
+      .then(d=>{
+        if(seq!==tlSegSeq)return;            // 已有更新的請求,丟掉這次結果
+        const out=[];
+        (Array.isArray(d&&d.items)?d.items:[]).forEach(it=>{
+          const s=parseTs(it&&it.start_time), e=parseTs(it&&it.end_time);
+          if(s>0&&e>s)out.push({start:s,end:e});
+        });
+        tlSegs.value=out;
+      })
+      .catch(()=>{});
+  };
+  watch([tlScaleIdx,tlCenter,tlActiveCams],()=>{
+    if(tlSegTimer)clearTimeout(tlSegTimer);
+    tlSegTimer=setTimeout(loadTimelineSegs,250);
+  });
+
+  const setScale=(i)=>{ tlScaleIdx.value=Math.max(0,Math.min(TL_SCALES.length-1,i)); };
+  const zoomIn=()=>setScale(tlScaleIdx.value-1);
+  const zoomOut=()=>setScale(tlScaleIdx.value+1);
+  const tlGoNow=()=>{ tlCenter.value=Math.floor(Date.now()/1000); };
+  const tlRatioAt=(clientX)=>{
+    const el=tlBarEl.value; if(!el)return null;
+    const rect=el.getBoundingClientRect();
+    if(!(rect.width>0))return null;
+    return Math.max(0,Math.min(1,(clientX-rect.left)/rect.width));
+  };
+  const tlTimeAt=(clientX)=>{
+    const r=tlRatioAt(clientX); if(r==null)return null;
+    const {from,span}=timelineRange.value;
+    return Math.floor(from+r*span);
+  };
+  const onTlWheel=(e)=>{
+    const anchor=tlTimeAt(e.clientX), ratio=tlRatioAt(e.clientX);
+    const before=tlScaleIdx.value;
+    setScale(before+(e.deltaY>0?1:-1));
+    if(anchor!=null&&ratio!=null&&tlScaleIdx.value!==before){
+      // 讓游標底下的時間點停在原地,縮放才不會跳走
+      tlCenter.value=Math.floor(anchor+TL_SCALES[tlScaleIdx.value].span*(0.5-ratio));
+    }
+  };
+  const onTlDown=(e)=>{
+    tlDrag.active=true; tlDrag.moved=false;
+    tlDrag.x0=e.clientX; tlDrag.c0=tlCenter.value;
+    tlDragging.value=true;
+    try{ e.currentTarget.setPointerCapture(e.pointerId); }catch(_e){}
+  };
+  const onTlMove=(e)=>{
+    if(!tlDrag.active)return;
+    const el=tlBarEl.value, rect=el?el.getBoundingClientRect():null;
+    if(!rect||!(rect.width>0))return;
+    const dx=e.clientX-tlDrag.x0;
+    if(Math.abs(dx)>3)tlDrag.moved=true;
+    // 拖曳只動視窗,不碰播放 —— 播放中也能左右滑動找時間
+    tlCenter.value=Math.floor(tlDrag.c0-(dx/rect.width)*timelineRange.value.span);
+  };
+  const onTlUp=(e)=>{
+    if(!tlDrag.active)return;
+    tlDrag.active=false; tlDragging.value=false;
+    try{ e.currentTarget.releasePointerCapture(e.pointerId); }catch(_e){}
+    if(!tlDrag.moved){ const t=tlTimeAt(e.clientX); if(t!=null)seekToTime(t); }
+  };
 
   // ── HLS 掛載 ──
   // 全時錄影改用 HLS(.m3u8)播放,不再用 clip.mp4:clip.mp4 是整段重新封裝
@@ -1231,6 +1419,12 @@ setup(){
     cells[idx].errorMsg='';
     if(idx===activeCell.value)durationSec.value=dur;
     video.playbackRate=playbackRate.value;
+    // 從時間軸點進來的定位:要等 metadata 就緒才 seek 得動
+    const want=pendingSeek[idx];
+    if(want!=null&&Number.isFinite(want)){
+      try{ video.currentTime=Math.max(0,Math.min(want,dur||want)); }catch(_e){}
+      pendingSeek[idx]=null;
+    }
   };
   const onVideoError=(idx,evt)=>{
     const url=cells[idx]?.url||'';
@@ -1266,16 +1460,22 @@ setup(){
     a.click();
     ElementPlus.ElMessage.success('已擷取畫面');
   };
-  const seekTimeline=(evt)=>{
-    if(!rows.value.length)return;
-    const {from,span}=timelineRange.value;
-    const rect=evt.currentTarget.getBoundingClientRect();
-    if(!rect||rect.width<=0)return;
-    const ratio=Math.max(0,Math.min(1,(evt.clientX-rect.left)/rect.width));
-    const targetTs=Math.floor(from+ratio*span);
-    let best=rows.value[0], gap=Math.abs(Number(best?.start_time||0)-targetTs);
-    rows.value.forEach(r=>{const g=Math.abs(Number(r?.start_time||0)-targetTs);if(g<gap){best=r;gap=g;}});
-    selectRow(best);
+  // 點時間軸 → 跳到那個時刻。一小時一段,所以先找出包含該時刻的那一段,
+  // 再把「距離該段起點幾秒」記下來,等 video 載到 metadata 後才 seek 得動。
+  const seekToTime=(ts)=>{
+    const cam=String((cells[activeCell.value]||{}).camera||filter.camera||'').trim();
+    const cand=rows.value.filter(r=>r&&r.source==='recording'&&(!cam||String(r.camera)===cam));
+    const hit=cand.find(r=>ts>=Number(r.start_time||0)&&ts<Number(r.end_time||0));
+    if(!hit){ ElementPlus.ElMessage.warning('該時間點沒有錄影'); return; }
+    pendingSeek[activeCell.value]=Math.max(0,ts-Number(hit.start_time||0));
+    if(String((cells[activeCell.value]||{}).key||'')===String(hit.key)){
+      // 已經在播這一段 → 直接 seek,不用重載
+      const v=cellVideoRefs[activeCell.value];
+      if(v){ try{ v.currentTime=pendingSeek[activeCell.value]; }catch(_e){} }
+      pendingSeek[activeCell.value]=null;
+      return;
+    }
+    selectRow(hit);
   };
 
   // Drag & Drop
@@ -1343,6 +1543,7 @@ setup(){
         const r=await fetch(`/api/frigate/recordings/timeline?${p}`);
         const d=await r.json().catch(()=>({}));
         if(r.ok&&!d?.error){
+          tlAvail.value=d?.cameras||{};   // 同一份資料同時餵清單與時間軸
           const fromTs=from?parseTs(from):0, toTs=to?parseTs(to):0;
           Object.entries(d?.cameras||{}).forEach(([camName,dayRows])=>{
             (Array.isArray(dayRows)?dayRows:[]).forEach(dayRow=>{
@@ -1513,10 +1714,13 @@ setup(){
     gridModes,gridMode,gridStyle,activeCell,dropTarget,
     visibleCells:visibleCells,activeCellCamera,cellVideoRefs,
     cells,deviceTree,summary,notifications,thumbRows,
-    timelineBars,timelineMarkers,timelineTicks,playheadLeft,
+    timelineBars,timelineTicks,playheadLeft,nowLeft,
+    TL_SCALES,tlScaleIdx,tlRangeLabel,tlBarEl,tlDragging,
+    setScale,zoomIn,zoomOut,tlGoNow,onTlWheel,onTlDown,onTlMove,onTlUp,
+    attachSource,
     formatClock,formatDuration,formatTime,
     setGridMode,selectRow,selectCamera,selectPrev,selectNext,
-    togglePlay,seekBy,applyRate,captureFrame,seekTimeline,
+    togglePlay,seekBy,applyRate,captureFrame,seekToTime,
     onVideoLoaded,onVideoTimeUpdate,onVideoError,
     onDragStartDevice,onDropCell,clearCell,
     addBookmark,jumpToBookmark,
