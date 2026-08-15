@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NVR Playback</title>
 <link rel="icon" href="/favicon.ico">
+<script src="/web/lib/hls.min.js"></script>
 <script src="/web/lib/vue.global.prod.js"></script>
 <script src="/web/lib/element-plus.min.js"></script>
 <script src="/web/lib/element-plus-icons.min.js"></script>
@@ -648,9 +649,9 @@ body {
            @drop="onDropCell($event,idx)">
         <!-- Video -->
         <template v-if="cell.url">
-          <video :ref="el=>{if(el)cellVideoRefs[idx]=el}"
+          <video :ref="el=>{if(el){cellVideoRefs[idx]=el;attachSource(idx,el,cell.url);}}"
                  :key="cell.url"
-                 :src="cell.url" controls
+                 controls
                  @loadedmetadata="onVideoLoaded(idx)"
                  @timeupdate="onVideoTimeUpdate(idx)"
                  @play="cell.playing=true"
@@ -1148,6 +1149,41 @@ setup(){
     return Math.max(0,Math.min(100,((ts-from)/span)*100));
   });
 
+  // ── HLS 掛載 ──
+  // 全時錄影改用 HLS(.m3u8)播放,不再用 clip.mp4:clip.mp4 是整段重新封裝
+  // 後才送,現場實測抓一小時 60 秒內下載到 553MB 還沒完,四格同時開會直接
+  // 壓垮 4G;HLS 的一小時播放清單只有 10KB,播到哪才下載到哪。
+  const hlsByCell={};
+  const destroyHls=(idx)=>{
+    const h=hlsByCell[idx];
+    if(h){ try{h.destroy();}catch(e){} delete hlsByCell[idx]; }
+  };
+  const attachSource=(idx,el,url)=>{
+    if(!el)return;
+    if(el.__srcApplied===url)return;   // ref callback 會重複觸發,避免重掛
+    el.__srcApplied=url;
+    destroyHls(idx);
+    if(!url){ el.removeAttribute('src'); return; }
+    if(/\.m3u8(\?|$)/i.test(url)){
+      // Safari / iOS 原生支援 HLS,掛 hls.js 反而會衝突
+      if(el.canPlayType('application/vnd.apple.mpegurl')){ el.src=url; return; }
+      if(window.Hls && window.Hls.isSupported()){
+        // 四格同時播時限制緩衝,否則記憶體會被 1080p 片段吃光
+        const h=new window.Hls({maxBufferLength:30,maxMaxBufferLength:60,enableWorker:true});
+        h.loadSource(url);
+        h.attachMedia(el);
+        h.on(window.Hls.Events.ERROR,(_e,data)=>{
+          if(data&&data.fatal&&cells[idx])cells[idx].errorMsg=`HLS ${data.type||'error'}`;
+        });
+        hlsByCell[idx]=h;
+        return;
+      }
+      if(cells[idx])cells[idx].errorMsg='此瀏覽器不支援 HLS 回放';
+      return;
+    }
+    el.src=url;   // 事件短片仍走 mp4
+  };
+
   // ── Methods ──
   const selectRow=(row)=>{
     if(!row)return;
@@ -1297,17 +1333,34 @@ setup(){
       const result=[];
 
       if(src!=='motion'){
-        const p=new URLSearchParams({limit:String(limit)});
-        if(cam)p.set('camera',cam);if(from)p.set('start_time',from);if(to)p.set('end_time',to);
-        const r=await fetch(`/api/frigate/recordings?${p}`);
+        // 全時錄影改成「每小時一列」。
+        // 舊做法是打 /api/frigate/recordings 直接拿 Frigate 的原生片段,而
+        // Frigate 就是每 10 秒切一段 —— 清單因此變成一堆幾秒的碎片,現場反映
+        // 「破碎幾秒、也不能選」。改讀 recordings/timeline(每天每小時錄了幾秒),
+        // 有錄到的小時各出一列,播放來源用 HLS 拼接整個小時。
+        const p=new URLSearchParams({days:'7'});
+        if(cam)p.set('cameras',cam);
+        const r=await fetch(`/api/frigate/recordings/timeline?${p}`);
         const d=await r.json().catch(()=>({}));
         if(r.ok&&!d?.error){
-          (Array.isArray(d?.items)?d.items:[]).forEach((rec,i)=>{
-            const ts=parseTs(rec?.start_time), endTs=parseTs(rec?.end_time);
-            const dur=Number(rec?.duration||0);
-            result.push({key:`rec-${rec?.id||i}`,source:'recording',camera:String(rec?.camera||cam||''),
-              start_time:ts,end_time:endTs,duration_sec:(dur>0?Math.floor(dur):Math.max(0,endTs-ts)),
-              label:'全時錄影',play_url:String(rec?.play_url||''),raw:rec});
+          const fromTs=from?parseTs(from):0, toTs=to?parseTs(to):0;
+          Object.entries(d?.cameras||{}).forEach(([camName,dayRows])=>{
+            (Array.isArray(dayRows)?dayRows:[]).forEach(dayRow=>{
+              const day=String(dayRow?.day||'');
+              (Array.isArray(dayRow?.hours)?dayRow.hours:[]).forEach((sec,h)=>{
+                if(!(Number(sec)>0))return;   // 那小時沒錄到就不列
+                const startTs=Math.floor(new Date(`${day}T${String(h).padStart(2,'0')}:00:00+08:00`).getTime()/1000);
+                if(!Number.isFinite(startTs))return;
+                const endTs=startTs+3600;
+                if(fromTs&&endTs<fromTs)return;
+                if(toTs&&startTs>toTs)return;
+                result.push({key:`hour-${camName}-${day}-${h}`,source:'recording',camera:camName,
+                  start_time:startTs,end_time:endTs,duration_sec:Math.floor(Number(sec)),
+                  label:'全時錄影',
+                  play_url:`/api/frigate/vod/${encodeURIComponent(camName)}/start/${startTs}/end/${endTs}/master.m3u8`,
+                  raw:{hour:h,day,recorded_sec:Number(sec)}});
+              });
+            });
           });
         }
       }
