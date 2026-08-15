@@ -11717,6 +11717,9 @@ const app=createApp({
             const normalizeDirection=(raw)=>{
                 const t=String(raw||'').trim().toUpperCase();
                 if(!t)return 'unknown';
+                // INOUT 要先擋:下面的子字串比對會讓 'inout'.includes('in') 命中,
+                // 把進出框誤判成「只進場」的 IN。
+                if(t==='INOUT')return 'INOUT';
                 if(t==='IN' || t==='OUT' || t==='N2S' || t==='S2N' || t==='E2W' || t==='W2E'){
                     return t;
                 }
@@ -11783,8 +11786,15 @@ const app=createApp({
                     const zMeta=(camObj.zones||[]).find(z=>isTrafficScopeZone(z) && String(z?.name||'')===zName);
                     const laneNo = parseLaneNo(zMeta?.lane_no) || parseLaneNo(zMeta?.lane_id) || parseLaneNo(zMeta?.name) || parseLaneNo(zName) || evtLaneNo || 'unknown';
                     let movement='unknown';
-                    if(zMeta && (zMeta.lane||zMeta.direction)){
-                        movement = movementFromText(zMeta.lane);
+                    if(zMeta && (zMeta.lane||zMeta.direction||(Array.isArray(zMeta.lane_tags)&&zMeta.lane_tags.length))){
+                        // 用 movementFromZone 而不是 movementFromText(zMeta.lane):
+                        // zMeta.lane 現場都是空字串,左直右實際存在 lane_tags 裡。
+                        // 這個分支只要 direction 有值就會提早 return,下面讀 lane_tags
+                        // 的分支永遠到不了 → 左直右一律靠 direction 猜。
+                        // direction='straight' 時猜對了所以沒被發現;改成 INOUT 之後
+                        // normalizeDirection 會因為 'inout'.includes('in') 回 'IN',
+                        // movement 停在 unknown → 報表左直右整欄變「-」。
+                        movement = movementFromZone(zMeta);
                         return finalizeLaneDirection(movement,laneNo,zMeta.direction);
                     }
                     if(zMeta && Array.isArray(zMeta.lane_tags) && zMeta.lane_tags.length){
