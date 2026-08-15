@@ -15249,12 +15249,49 @@ const app=createApp({
         // < 400 KB/s(約 3 Mbps)視為窄頻上行:只留 1 路即時,其餘走快照輪詢。
         // 0 = 量不到(快取命中等),不做判斷。
         const IS_LOW_BANDWIDTH=_pageKBps>0 && _pageKBps<400;
-        const MAX_LIVE_MJPEG=IS_LOW_BANDWIDTH?1:(IS_MULTIPLEXED?99:(BROWSER_CONN_LIMIT-API_CONN_RESERVE));
+        const _MJPEG_BASE=IS_LOW_BANDWIDTH?1:(IS_MULTIPLEXED?99:(BROWSER_CONN_LIMIT-API_CONN_RESERVE));
+        // 🛑 6 條連線上限是「整個瀏覽器對同一來源」共用的,但這個預算是每個分頁
+        //    各自算的 —— 開兩個分頁,各自守著 3 路,合起來就把 6 條佔滿,
+        //    /api/health 排不到 socket → SERVICE OFFLINE。
+        //    現場實測(2026-08-16 01:59):6 條 established 全來自同一台電腦,
+        //    其中 5 條 Send-Q 積了 400~576KB,典型的 MJPEG 塞住。
+        //    用 localStorage 做跨分頁心跳,活著的分頁均分預算(每頁至少 1 路)。
+        const _TAB_ID=Math.random().toString(36).slice(2)+Date.now().toString(36);
+        const _TAB_KEY='tvd_live_tabs';
+        const _TAB_TTL=12000;
+        const _readTabs=()=>{
+            try{
+                const now=Date.now();
+                const raw=JSON.parse(localStorage.getItem(_TAB_KEY)||'{}');
+                const alive={};
+                Object.keys(raw).forEach(k=>{ if(now-Number(raw[k]||0)<_TAB_TTL)alive[k]=raw[k]; });
+                return alive;
+            }catch(_){ return {}; }
+        };
+        const _beatTab=()=>{
+            try{
+                const alive=_readTabs();
+                alive[_TAB_ID]=Date.now();
+                localStorage.setItem(_TAB_KEY,JSON.stringify(alive));
+                return Math.max(1,Object.keys(alive).length);
+            }catch(_){ return 1; }
+        };
+        const liveTabCount=ref(1);
+        _beatTab();
+        setInterval(()=>{ liveTabCount.value=_beatTab(); },5000);
+        window.addEventListener('beforeunload',()=>{
+            try{ const a=_readTabs(); delete a[_TAB_ID]; localStorage.setItem(_TAB_KEY,JSON.stringify(a)); }catch(_){}
+        });
+        const MAX_LIVE_MJPEG_REF=computed(()=>{
+            if(IS_MULTIPLEXED)return _MJPEG_BASE;         // 多工不受 6 條限制
+            const n=Math.max(1,Number(liveTabCount.value||1));
+            return Math.max(1,Math.floor(_MJPEG_BASE/n));
+        });
         const enforceStreamBudget=()=>{
             const now=Date.now();
             const zoomId=monitorZoomVisible.value?Number(monitorZoomCamera.value?.id||0):0;
             // 放大視窗那一台一定要即時，先扣一條
-            let budget=MAX_LIVE_MJPEG-(zoomId?1:0);
+            let budget=MAX_LIVE_MJPEG_REF.value-(zoomId?1:0);
             sortedCameras.value.forEach(c=>{
                 if(!c?.enabled)return;
                 if(c.id===zoomId){
