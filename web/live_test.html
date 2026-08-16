@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>即時影像播放路徑診斷</title>
+<script src="/web/lib/hls.min.js"></script>
+<style>
+  body{font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:16px}
+  h1{font-size:18px;margin:0 0 4px}
+  .hint{font-size:12px;color:#94a3b8;margin-bottom:14px;line-height:1.7}
+  .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  select,button{background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:6px 10px;font-size:13px}
+  button{cursor:pointer}
+  button.go{background:#2563eb;border-color:#2563eb;font-weight:600}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+  .card{background:#1e293b;border:1px solid #334155;border-radius:8px;overflow:hidden}
+  .card h2{font-size:13px;margin:0;padding:8px 10px;border-bottom:1px solid #334155;display:flex;justify-content:space-between;align-items:center}
+  .tag{font-size:11px;padding:2px 7px;border-radius:10px;background:#334155;color:#94a3b8}
+  .tag.ok{background:#065f46;color:#6ee7b7}
+  .tag.fail{background:#7f1d1d;color:#fca5a5}
+  .tag.run{background:#78350f;color:#fcd34d}
+  .box{aspect-ratio:16/9;background:#000;display:flex;align-items:center;justify-content:center}
+  .box video,.box img{width:100%;height:100%;object-fit:contain;background:#000}
+  .meta{font-size:11px;color:#94a3b8;padding:7px 10px;line-height:1.7;font-variant-numeric:tabular-nums;min-height:52px}
+  .sum{margin-top:16px;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px;font-size:13px;line-height:1.9}
+  code{background:#0f172a;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<h1>即時影像播放路徑診斷</h1>
+<div class="hint">
+  用你自己的瀏覽器測，哪一種方式播得動。headless 測不準，所以要真人開一次。<br>
+  綠色 = 有畫面且時間在前進；紅色 = 失敗（會寫出原因）。每張卡片下方是 15 秒內收到的資料量，可直接比較頻寬。
+</div>
+
+<div class="bar">
+  <label>攝影機</label>
+  <select id="cam"></select>
+  <button class="go" id="run">開始測試</button>
+  <button id="stop">停止</button>
+  <span id="env" class="tag"></span>
+</div>
+
+<div class="grid" id="grid"></div>
+<div class="sum" id="sum">按「開始測試」後，這裡會給結論。</div>
+
+<script>
+const GO2RTC_PORT = 1984;
+const base = () => `${location.protocol}//${location.hostname}:${GO2RTC_PORT}`;
+const $ = (id) => document.getElementById(id);
+let timers = [], hlsInstances = [];
+
+// 目前這台主機有哪些 go2rtc 串流（走自家 API，避開 CORS）
+async function loadCams() {
+  const sel = $('cam');
+  sel.innerHTML = '';
+  try {
+    const r = await fetch('/api/frigate/status');
+    const d = await r.json();
+    const list = Array.isArray(d?.cameras) ? d.cameras : [];
+    list.map(c => typeof c === 'string' ? c : String(c?.name || ''))
+        .filter(Boolean)
+        .forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o); });
+  } catch (e) {
+    const o = document.createElement('option'); o.value = ''; o.textContent = '(讀不到相機清單)'; sel.appendChild(o);
+  }
+}
+
+function card(id, title, note) {
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.innerHTML = `<h2><span>${title}</span><span class="tag run" id="${id}-tag">測試中</span></h2>
+    <div class="box" id="${id}-box"></div>
+    <div class="meta" id="${id}-meta">${note || ''}</div>`;
+  $('grid').appendChild(el);
+  return el;
+}
+const setTag = (id, cls, text) => { const t = $(`${id}-tag`); t.className = 'tag ' + cls; t.textContent = text; };
+const setMeta = (id, html) => { $(`${id}-meta`).innerHTML = html; };
+
+// 觀察一個 video：有沒有畫面、時間有沒有前進
+function watchVideo(id, v, startedAt, extra) {
+  let last = -1, stalls = 0;
+  const t = setInterval(() => {
+    if (v.videoWidth > 0 && v.currentTime > last) {
+      const ms = Date.now() - startedAt;
+      setTag(id, 'ok', '可播放');
+      setMeta(id, `${v.videoWidth}x${v.videoHeight}　首幀 ${ms} ms<br>播放位置 ${v.currentTime.toFixed(1)}s${extra ? '<br>' + extra() : ''}`);
+      last = v.currentTime;
+      stalls = 0;
+    } else {
+      stalls++;
+      if (stalls > 12 && v.videoWidth === 0) {
+        setTag(id, 'fail', '沒有畫面');
+        const e = v.error ? `code${v.error.code} ${v.error.message || ''}` : '20 秒內沒有解出畫面';
+        setMeta(id, `失敗：${e}`);
+        clearInterval(t);
+      }
+    }
+  }, 1000);
+  timers.push(t);
+}
+
+// 用 fetch 量同一路的資料量（15 秒），純粹比頻寬
+async function measure(id, url, label) {
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 15000);
+    const r = await fetch(url, { signal: ctrl.signal });
+    const reader = r.body.getReader();
+    let bytes = 0, t0 = Date.now();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.length;
+      if (Date.now() - t0 > 15000) { ctrl.abort(); break; }
+    }
+    const mbps = (bytes * 8 / ((Date.now() - t0) / 1000) / 1e6);
+    return `${label}：${mbps.toFixed(2)} Mbps`;
+  } catch (e) { return `${label}：量測中止`; }
+}
+
+function stopAll() {
+  timers.forEach(clearInterval); timers = [];
+  hlsInstances.forEach(h => { try { h.destroy(); } catch (_) {} }); hlsInstances = [];
+  document.querySelectorAll('video').forEach(v => { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (_) {} });
+  $('grid').innerHTML = '';
+}
+
+async function run() {
+  stopAll();
+  const cam = $('cam').value;
+  if (!cam) { alert('沒有可測的攝影機'); return; }
+  const camId = (cam.match(/^cam_(\d+)$/) || [])[1] || '';
+
+  // A) <video src> 直接吃 go2rtc 的 fMP4
+  card('a', 'A. go2rtc stream.mp4（直接餵 video）', '不需要任何函式庫，最理想。Chrome 對漸進式 fMP4 支援不一。');
+  const va = document.createElement('video');
+  va.muted = true; va.autoplay = true; va.playsInline = true; va.controls = true;
+  va.src = `${base()}/api/stream.mp4?src=${encodeURIComponent(cam)}`;
+  $('a-box').appendChild(va);
+  watchVideo('a', va, Date.now());
+
+  // B) go2rtc 自帶元件（MSE / WebRTC 自動切換，延遲最低）
+  card('b', 'B. go2rtc video-stream.js（MSE/WebRTC）', '官方元件，延遲 <1 秒。需要瀏覽器支援 ES module 與 MSE。');
+  try {
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.type = 'module'; s.src = `${base()}/video-stream.js`;
+      s.onload = res; s.onerror = () => rej(new Error('script 載入失敗'));
+      document.head.appendChild(s);
+      setTimeout(res, 6000);
+    });
+    if (!customElements.get('video-stream')) throw new Error('元件沒有註冊（ES module 被擋或載入失敗）');
+    const el = document.createElement('video-stream');
+    el.setAttribute('src', `${base()}/api/ws?src=${encodeURIComponent(cam)}`);
+    el.style.cssText = 'width:100%;height:100%';
+    $('b-box').appendChild(el);
+    const t = setInterval(() => {
+      const v = (el.shadowRoot || el).querySelector('video');
+      if (v) { clearInterval(t); watchVideo('b', v, Date.now()); }
+    }, 400);
+    timers.push(t);
+    setTimeout(() => { if ($('b-tag').textContent === '測試中') { setTag('b', 'fail', '沒有畫面'); setMeta('b', '失敗：20 秒內沒有出現 video 元素'); } }, 20000);
+  } catch (e) {
+    setTag('b', 'fail', '失敗'); setMeta('b', `失敗：${e.message}`);
+  }
+
+  // C) hls.js + go2rtc HLS
+  card('c', 'C. hls.js + go2rtc HLS', '相容性最好，但延遲較高（數秒）。hls.js 已隨系統離線佈署。');
+  const vc = document.createElement('video');
+  vc.muted = true; vc.autoplay = true; vc.playsInline = true; vc.controls = true;
+  $('c-box').appendChild(vc);
+  const hlsUrl = `${base()}/api/stream.m3u8?src=${encodeURIComponent(cam)}`;
+  if (vc.canPlayType('application/vnd.apple.mpegurl')) {
+    vc.src = hlsUrl; watchVideo('c', vc, Date.now());
+  } else if (window.Hls && window.Hls.isSupported()) {
+    const h = new window.Hls(); hlsInstances.push(h);
+    let fatal = null;
+    h.on(window.Hls.Events.ERROR, (_e, d) => { if (d && d.fatal) fatal = `${d.type}/${d.details}`; });
+    h.loadSource(hlsUrl); h.attachMedia(vc);
+    watchVideo('c', vc, Date.now());
+    setTimeout(() => { if ($('c-tag').textContent !== '可播放' && fatal) { setTag('c', 'fail', '失敗'); setMeta('c', `失敗：HLS ${fatal}`); } }, 12000);
+  } else {
+    setTag('c', 'fail', '不支援'); setMeta('c', '此瀏覽器不支援 MSE，hls.js 無法運作');
+  }
+
+  // D) 現況對照：MJPEG
+  if (camId) {
+    card('d', 'D. 現況 MJPEG（對照組）', '目前系統在用的方式。用來比較畫質與頻寬。');
+    const img = document.createElement('img');
+    img.src = `/api/stream/${camId}/live-overlay?q=low&roi=1&t=${Date.now()}`;
+    $('d-box').appendChild(img);
+    img.onload = () => { setTag('d', 'ok', '可播放'); };
+    img.onerror = () => { setTag('d', 'fail', '失敗'); setMeta('d', '失敗：MJPEG 載入錯誤'); };
+    setTimeout(async () => {
+      const m = await measure('d', `/api/stream/${camId}/live-overlay?q=low&roi=1&t=${Date.now()}`, 'MJPEG 疊加');
+      setMeta('d', ($('d-meta').innerHTML || '') + '<br>' + m);
+    }, 500);
+  }
+
+  // 頻寬對照
+  setTimeout(async () => {
+    const m1 = await measure('a', `${base()}/api/stream.mp4?src=${encodeURIComponent(cam)}`, 'H.264 直通');
+    setMeta('a', ($('a-meta').innerHTML || '') + '<br>' + m1);
+  }, 1000);
+
+  setTimeout(() => {
+    const r = ['a', 'b', 'c'].map(k => `${k.toUpperCase()}=${$(`${k}-tag`).textContent}`).join('　');
+    $('sum').innerHTML = `結論：${r}<br>只要 A / B / C 任何一個是「可播放」，即時影像就能改走 H.264，頻寬約可省 8 成；<br>` +
+      `辨識疊加改由前端用 SVG 畫在影片上（偵測框資料後端已經有，加一支 JSON 端點即可），疊加照樣看得到。<br>` +
+      `請把這一頁的結果截圖或告訴我哪幾個是綠色。`;
+  }, 25000);
+}
+
+$('run').onclick = run;
+$('stop').onclick = stopAll;
+$('env').textContent = `${location.hostname}　MSE:${window.MediaSource ? '有' : '無'}　hls.js:${window.Hls ? '有' : '無'}`;
+loadCams();
+</script>
+</body>
+</html>

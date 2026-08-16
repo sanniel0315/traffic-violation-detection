@@ -211,6 +211,7 @@ body {
 }
 .grid-cell-cam option { color:#111; }
 .grid-cell-cam.empty-pick { pointer-events:auto; margin-top:8px; max-width:150px; }
+.ctrl-btn.wide { width:auto; padding:0 12px; font-size:12px; white-space:nowrap; }
 .grid-cell video { width:100%; height:100%; object-fit:contain; background:#000; display:block; }
 .grid-cell-overlay {
   position:absolute; top:0; left:0; right:0;
@@ -704,6 +705,8 @@ body {
               <option v-for="k in cellCameraChoices" :key="k" :value="k" :selected="k===cell.camera">
                 {{ cameraDisplayName(k)||k }}
               </option>
+              <!-- 選這個等於關掉這一格(setCellCamera 收到空字串會 clearCell) -->
+              <option value="">— 關閉此格 —</option>
             </select>
             <span class="grid-cell-time">{{ cellWallClock(cell) }}</span>
             <span class="grid-cell-time">{{formatClock(cell.currentSec)}} / {{formatClock(cell.durationSec)}}</span>
@@ -868,6 +871,8 @@ body {
         <button class="ctrl-btn" @click="selectNext" title="下一段">&#9197;</button>
       </div>
       <div class="ctrl-sep"></div>
+      <button class="ctrl-btn wide" @click="syncAll"
+              title="把所有格子對到作用中那一格的時刻,然後一起播放">同步播放</button>
       <select class="ctrl-speed" v-model.number="playbackRate" @change="applyRate" title="播放速度">
         <option :value="0.5">0.5x</option>
         <option :value="1">1x</option>
@@ -1330,11 +1335,50 @@ setup(){
     return `${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   };
   // 每格下拉可選的相機:清單裡真的有錄影的那些
+  // 每格可選的相機 = 所有伺服器抓進來的(系統 DB + NVR/go2rtc + 歷史片段),
+  // 不再只列「這次查詢剛好有回錄影」的那幾台 —— 現場要能任選。
   const cellCameraChoices=computed(()=>{
     const s=new Set();
     (rows.value||[]).forEach(r=>{ const c=String(r&&r.camera||'').trim(); if(c)s.add(c); });
+    (cameras.value||[]).forEach(c=>{ const id=Number(c&&c.id); if(Number.isFinite(id)&&id>0)s.add(`cam_${id}`); });
+    (frigateCameras.value||[]).forEach(c=>{ const n=(typeof c==='string')?c:String(c&&c.name||''); if(n)s.add(n); });
+    (cameraOptions.value||[]).forEach(c=>{ const n=String(c||'').trim(); if(n)s.add(n); });
     return Array.from(s).sort();
   });
+
+  // ── 一鍵同步播放 ──
+  // 各格原本各播各的(不同相機、不同時段)。要比對同一時刻的多個角度時,
+  // 得手動一格一格對時間,對不準。這裡以「作用中那一格目前播到的牆鐘時刻」
+  // 為基準,把其他已載入的格子全部對過去,然後一起播。
+  const syncAll=async()=>{
+    const base=cells[activeCell.value];
+    const baseTs=Number(base&&base.startTs||0)+Number(base&&base.currentSec||0);
+    if(!(baseTs>0)){ ElementPlus.ElMessage.warning('請先在任一格載入影片,再按同步'); return; }
+    let done=0;
+    for(let i=0;i<cells.length;i++){
+      const cell=cells[i];
+      if(!cell||!cell.camera)continue;
+      if(i===activeCell.value){ done++; continue; }
+      const cand=rows.value.filter(r=>r&&r.source==='recording'&&String(r.camera)===String(cell.camera));
+      const hit=cand.find(r=>baseTs>=Number(r.start_time||0)&&baseTs<Number(r.end_time||0));
+      if(!hit)continue;                       // 那台在這個時刻沒有錄影,跳過
+      const off=Math.max(0,baseTs-Number(hit.start_time||0));
+      if(String(cell.key||'')===String(hit.key)){
+        const v=cellVideoRefs[i];
+        if(v){ try{ v.currentTime=off; }catch(_e){} }
+      }else{
+        pendingSeek[i]=off;
+        selectRow(hit,i);
+      }
+      done++;
+    }
+    await nextTick();
+    setTimeout(()=>{
+      cells.forEach((c,i)=>{ const v=cellVideoRefs[i]; if(c&&c.url&&v){ try{ v.play(); }catch(_e){} } });
+      isPlaying.value=true;
+    },800);
+    ElementPlus.ElMessage.success(`已同步 ${done} 格到 ${cellWallClock(base)}`);
+  };
 
   const setScale=(i)=>{ tlScaleIdx.value=Math.max(0,Math.min(TL_SCALES.length-1,i)); };
   const zoomIn=()=>setScale(tlScaleIdx.value-1);
@@ -1790,7 +1834,7 @@ setup(){
     timelineBars,timelineTicks,playheadLeft,nowLeft,
     TL_SCALES,tlScaleIdx,tlRangeLabel,tlBarEl,tlDragging,
     setScale,zoomIn,zoomOut,tlGoNow,onTlWheel,onTlDown,onTlMove,onTlUp,
-    setCellCamera,cellWallClock,cellCameraChoices,
+    setCellCamera,cellWallClock,cellCameraChoices,syncAll,
     attachSource,
     formatClock,formatDuration,formatTime,
     setGridMode,selectRow,selectCamera,selectPrev,selectNext,

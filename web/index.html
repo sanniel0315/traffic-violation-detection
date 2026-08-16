@@ -15187,14 +15187,21 @@ const app=createApp({
             const roiParam=route==='live-overlay'?`&roi=${overlayShowRoi.value?1:0}`:'';
             // 放大視窗 / 轉發場景要 1080p 清晰度 (q=high)，監控網格維持 720p 省頻寬
             const qParam=(route==='live-overlay' && opts.highQuality)?'&q=high':'';
-            // 監控網格的格子在畫面上只有約 480x270,卻預設收 1280~1920 寬 ——
-            // 現場實測單路 9.0~11.9 Mbps,4G 上行只有 3.6~11.4 Mbps,一台就吃光。
-            // 非放大的格子改送 800 寬 4fps,格子裡看不出差別。
-            // 疊加模式也要套用:實測 q=low 仍要 1.77 Mbps(非疊加的 7 倍),
-            // 不省的話會被迫在「看得到辨識框」與「連得上」之間二選一。
-            // 疊加給 800 寬(比非疊加的 640 大一點),辨識框與車道標籤才看得清楚。
-            // 放大視窗一律不套用,維持原清晰度。
-            const lite=opts.highQuality?'':(route==='live-overlay'?'&w=800&fps=4':'&w=640&fps=4');
+            // 省頻寬:現場實測非疊加單路 9.0~11.9 Mbps、疊加 1.0~1.45 Mbps,
+            // 而 4G 上行只有 3.6~11.4 Mbps —— 不省就會把整條線吃光,
+            // 這是 SERVICE OFFLINE 反覆發生的物理原因。
+            //
+            // 但清晰度不能犧牲:2x2 在 1920 螢幕上每格約 950px 寬,
+            // 送 800 寬會明顯發糊(現場反映「太小」)。實測 1120 與 1280 幾乎同價
+            // (0.72 vs 0.77 Mbps),所以疊加直接給 1280 —— 與原本 q=low 同解析度,
+            // 省下來的是幀率(8→4fps)。非疊加沒有文字,960 就夠。
+            // 🛑 幀率不可以降(現場要求):畫面順暢度是判讀車流的基礎,
+            //    掉到 4~5fps 會看不出車輛動態。所以只動解析度,fps 一律維持原本
+            //    (非疊加 10fps、疊加 8fps)。
+            //   分割格 非疊加  960 寬(原本 1920)
+            //   分割格 疊加   1280 寬(原本就是 1280,不動)
+            //   放大視窗      不套用 → 1920x1080 Q75
+            const lite=opts.highQuality?'':(route==='live-overlay'?'':'&w=960');
             const tick=monitorStreamTick(camera);
             return `/api/stream/${camera.id}/${route}?t=${tick}${roiParam}${qParam}${lite}`;
         };
