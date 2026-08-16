@@ -121,6 +121,31 @@ _shared_frames: Dict[int, dict] = {}  # {camera_id: {"frame": ndarray, "ts": flo
 # 疊加的框本來就是另外從 _shared_frames["detections"] 取的(既有註解:約延遲
 # 120ms),所以畫面改吃 reader 的原始幀不影響框,兩者都會變順。
 _live_frames: Dict[int, dict] = {}  # {camera_id: {"frame": ndarray, "ts": float}}
+# 已編碼 JPEG 的共用快取。每個觀看者原本各自做「複製整張 1080p → 畫框 → 編碼」,
+# 四格開兩個瀏覽器就是 8 份完全一樣的工作。同一幀 + 同一輸出參數只做一次,
+# 其餘觀看者直接拿 bytes。key 帶入所有會影響輸出內容的參數,不同參數不會互相污染。
+_encoded_cache: Dict[tuple, dict] = {}
+_encoded_cache_lock = threading.Lock()
+
+
+def _enc_cache_get(key, src_ts):
+    if not src_ts:
+        return None
+    with _encoded_cache_lock:
+        e = _encoded_cache.get(key)
+        if e is not None and e.get("src_ts") == src_ts:
+            return e.get("jpeg")
+    return None
+
+
+def _enc_cache_put(key, src_ts, jpeg: bytes):
+    if not src_ts:
+        return
+    with _encoded_cache_lock:
+        _encoded_cache[key] = {"src_ts": src_ts, "jpeg": jpeg}
+        if len(_encoded_cache) > 64:      # 參數組合有限,64 筆綽綽有餘
+            for k in list(_encoded_cache)[:16]:
+                _encoded_cache.pop(k, None)
 
 # ---- 違規 4 frame ring buffer (方案 C 100% 命中) ----
 # 違規觸發時直接從 ring 撈 t-2s frame + 觸發當下 + timer 抓未來 t+0.5/t+2s
@@ -1277,6 +1302,7 @@ def generate_frames_overlay(
     last_http_ts = 0.0
     last_shared_ts = 0.0
     last_live_ts = 0.0
+    cur_src_ts = 0.0
     _shared_warm = False
     # 輸出限速：避免瀏覽器同時解 4 cam × 14 FPS × 100KB = 5.6 MB/s 累積延遲導致頓
     # 輸出幀率上限。8 → 15:畫面來源改吃 reader 原始幀之後不再被推論綁住,
@@ -1307,6 +1333,7 @@ def generate_frames_overlay(
                             frame = _f
                             ret = True
                             last_live_ts = _lts
+                            cur_src_ts = _lts
         _sf_early = _shared_frames.get(camera_id) if (camera_id and not ret) else None
         if _sf_early and _sf_early.get("frame") is not None:
             ts = float(_sf_early.get("ts") or 0.0)
@@ -1317,10 +1344,25 @@ def generate_frames_overlay(
                     frame = _sf_early["frame"].copy() if hasattr(_sf_early["frame"], "copy") else _sf_early["frame"]
                     ret = frame is not None and getattr(frame, "size", 0) > 0
                     last_shared_ts = ts
+                    cur_src_ts = ts
                 else:
                     # 同 ts → 沒新 frame，短暫等再 poll，避免重複送舊 frame 浪費 CPU
                     time.sleep(0.01)
                     continue
+        # 同一幀 + 同一輸出參數,別的觀看者可能已經做完複製/畫框/編碼了 → 直接用
+        if ret and cur_src_ts:
+            _ck = (camera_id, bool(render_overlay), bool(render_roi_labels),
+                   int(target_width or 0), int(jpeg_quality or 0), bool(high_quality))
+            _hit = _enc_cache_get(_ck, cur_src_ts)
+            if _hit is not None:
+                now_c = time.time()
+                _wait_c = _min_yield_interval - (now_c - _last_yield_ts)
+                if _wait_c > 0:
+                    time.sleep(_wait_c)
+                _last_yield_ts = time.time()
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + _hit + b'\r\n')
+                continue
         if not ret and _shared_warm:
             # 偵測 worker 之前有 frame 但這次拿不到（短暫 stale），不要切去 RTSP，等下一輪
             time.sleep(0.02)
@@ -1399,8 +1441,13 @@ def generate_frames_overlay(
                 out = frame
             _q = int(jpeg_quality) if int(jpeg_quality or 0) > 0 else (55 if _tw <= 800 else 75)
             _, buffer = cv2.imencode('.jpg', out, [cv2.IMWRITE_JPEG_QUALITY, _q])
+            _jb = buffer.tobytes()
+            # 存起來給其他同參數的觀看者共用,不必重做編碼
+            _enc_cache_put((camera_id, False, bool(render_roi_labels),
+                            int(target_width or 0), int(jpeg_quality or 0),
+                            bool(high_quality)), cur_src_ts, _jb)
             yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                   b'Content-Type: image/jpeg\r\n\r\n' + _jb + b'\r\n')
             time.sleep(1.0 / (float(fps_cap) if float(fps_cap or 0) > 0 else OUTPUT_FPS_CAP))
             continue
         # 影像永遠走自己讀到的 RTSP frame（25 FPS 順暢，無殘影）。
@@ -1529,8 +1576,12 @@ def generate_frames_overlay(
             time.sleep(wait)
         _last_yield_ts = time.time()
         _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, _jpg_q])
+        _jb2 = buffer.tobytes()
+        _enc_cache_put((camera_id, bool(render_overlay), bool(render_roi_labels),
+                        int(target_width or 0), int(jpeg_quality or 0),
+                        bool(high_quality)), cur_src_ts, _jb2)
         yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+               b'Content-Type: image/jpeg\r\n\r\n' + _jb2 + b'\r\n')
 
     if cap is not None:
         cap.release()
