@@ -1330,7 +1330,14 @@ def generate_frames_overlay(
                     if _lts != last_live_ts:
                         _f = _lf.get("frame")
                         if _f is not None and getattr(_f, "size", 0) > 0:
-                            frame = _f
+                            # 🛑 一定要 copy:_live_frames 的 ndarray 是 reader 與所有
+                            #    觀看者共用的。下面畫辨識框與 ROI 是就地改寫,不複製的話
+                            #    開著 ROI 的觀看者會把框畫進共用畫面 —— 關掉 ROI 的人
+                            #    拿到的就是已經被畫過的那張(現場回報「隱藏 ROI 還是有
+                            #    出現」),而且被污染的畫面還可能被其他消費者取用。
+                            #    原本從 _shared_frames 取時本來就有 .copy(),
+                            #    我在 80f0ea3 改吃 _live_frames 時漏掉了。
+                            frame = _f.copy() if hasattr(_f, "copy") else _f
                             ret = True
                             last_live_ts = _lts
                             cur_src_ts = _lts
