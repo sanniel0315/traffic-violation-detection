@@ -2869,6 +2869,26 @@ class LPRStreamTask:
             self.last_frame_at = time.time()  # 啟動 watchdog 計時
             consecutive_fail = 0
 
+            # 跳幀解碼:攝影機推 30fps,但 LPR 每幀都做完整處理根本跟不上 ——
+            # 現場實測 traffic-api 對每台相機的 RTSP 連線積壓到 4MB(核心收了但
+            # 程式讀不走),代表這個 cap.read() 迴圈跟不上來源速度。
+            # grab() 只讀封包不解碼,成本極低;車牌在畫面上會停留數幀,
+            # 10fps 對辨識完全足夠。沿用偵測那邊同一個設定鍵,現場可調。
+            _lpr_decode_skip = 2
+            try:
+                from api.models import SessionLocal as _SL, Camera as _Cam
+                _db = _SL()
+                try:
+                    _c = _db.query(_Cam).filter(_Cam.id == self.camera_id).first()
+                    _cfg = (_c.detection_config or {}) if _c else {}
+                    _lpr_decode_skip = max(0, int(_cfg.get("decode_skip_frames", 2) or 0))
+                finally:
+                    _db.close()
+            except Exception:
+                pass
+            if _lpr_decode_skip:
+                print(f"[LPR] cam_{self.camera_id} 跳幀解碼 skip={_lpr_decode_skip}", flush=True)
+
             frame_skip = 1
             last_shared_ts = 0.0
             last_frigate_fetch = 0.0  # cam_6 fallback rate-limit
@@ -2939,6 +2959,11 @@ class LPRStreamTask:
                         self.last_frame_at = time.time()
 
                     try:
+                        # 先用 grab() 丟掉不需要的幀(只讀封包不解碼),
+                        # 讓讀取速度跟上來源,socket 才不會一直積壓
+                        for _ in range(_lpr_decode_skip):
+                            if not cap.grab():
+                                break
                         ret, frame = cap.read()
                     except Exception:
                         ret, frame = False, None
