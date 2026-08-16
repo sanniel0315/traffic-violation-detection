@@ -1279,7 +1279,10 @@ def generate_frames_overlay(
     last_live_ts = 0.0
     _shared_warm = False
     # 輸出限速：避免瀏覽器同時解 4 cam × 14 FPS × 100KB = 5.6 MB/s 累積延遲導致頓
-    OUTPUT_FPS_CAP = 8.0
+    # 輸出幀率上限。8 → 15:畫面來源改吃 reader 原始幀之後不再被推論綁住,
+    # 上限就成了新的瓶頸(現場實測疊加剛好卡在 6~7fps)。15fps 對判讀車流
+    # 已經很順,再往上頻寬與編碼成本等比例上升但肉眼差異有限。
+    OUTPUT_FPS_CAP = 15.0
     _min_yield_interval = 1.0 / (float(fps_cap) if float(fps_cap or 0) > 0 else OUTPUT_FPS_CAP)
     _last_yield_ts = 0.0
     while True:
@@ -1398,7 +1401,7 @@ def generate_frames_overlay(
             _, buffer = cv2.imencode('.jpg', out, [cv2.IMWRITE_JPEG_QUALITY, _q])
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-            time.sleep(1.0 / (float(fps_cap) if float(fps_cap or 0) > 0 else 10.0))
+            time.sleep(1.0 / (float(fps_cap) if float(fps_cap or 0) > 0 else OUTPUT_FPS_CAP))
             continue
         # 影像永遠走自己讀到的 RTSP frame（25 FPS 順暢，無殘影）。
         # bbox 從 _shared_frames 拿最近偵測結果疊上去；detection 8 FPS → bbox 約延遲 120ms。
