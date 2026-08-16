@@ -46,8 +46,10 @@
 <div class="sum" id="sum">按「開始測試」後，這裡會給結論。</div>
 
 <script>
-const GO2RTC_PORT = 1984;
-const base = () => `${location.protocol}//${location.hostname}:${GO2RTC_PORT}`;
+// go2rtc 的 :1984 只綁 127.0.0.1,瀏覽器連不到(2026-08-17 實測 A/B/C 全紅的真因)。
+// 改走 traffic-api 的 /api/go2rtc 反向代理 —— 同源、同一個埠、router 不用多開埠。
+const base = () => '/api/go2rtc';
+const wsBase = () => `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/go2rtc`;
 const $ = (id) => document.getElementById(id);
 let timers = [], hlsInstances = [];
 
@@ -154,7 +156,7 @@ async function run() {
     });
     if (!customElements.get('video-stream')) throw new Error('元件沒有註冊（ES module 被擋或載入失敗）');
     const el = document.createElement('video-stream');
-    el.setAttribute('src', `${base()}/api/ws?src=${encodeURIComponent(cam)}`);
+    el.setAttribute('src', `${wsBase()}/api/ws?src=${encodeURIComponent(cam)}`);
     el.style.cssText = 'width:100%;height:100%';
     $('b-box').appendChild(el);
     const t = setInterval(() => {
