@@ -115,6 +115,12 @@ def _seg_intersect(p1, p2, q1, q2) -> bool:
 detection_services: Dict[int, dict] = {}
 # detection 服務共享最新 frame 給 overlay（避免 NX 串流開第二條連線）
 _shared_frames: Dict[int, dict] = {}  # {camera_id: {"frame": ndarray, "ts": float}}
+# 純畫面共用區,由 reader 以 RTSP 原生速率更新(不含偵測結果)。
+# 即時播放與疊加原本都拿 _shared_frames 的畫面,而那是偵測 worker 的輸出,
+# 更新率被推論鎖與 GIL 綁住 —— 實測串流只有約 6 fps,看起來一頓一頓。
+# 疊加的框本來就是另外從 _shared_frames["detections"] 取的(既有註解:約延遲
+# 120ms),所以畫面改吃 reader 的原始幀不影響框,兩者都會變順。
+_live_frames: Dict[int, dict] = {}  # {camera_id: {"frame": ndarray, "ts": float}}
 
 # ---- 違規 4 frame ring buffer (方案 C 100% 命中) ----
 # 違規觸發時直接從 ring 撈 t-2s frame + 觸發當下 + timer 抓未來 t+0.5/t+2s
@@ -1270,6 +1276,7 @@ def generate_frames_overlay(
     http_state = _ensure_http_mjpeg_worker(http_source) if use_http_mjpeg else None
     last_http_ts = 0.0
     last_shared_ts = 0.0
+    last_live_ts = 0.0
     _shared_warm = False
     # 輸出限速：避免瀏覽器同時解 4 cam × 14 FPS × 100KB = 5.6 MB/s 累積延遲導致頓
     OUTPUT_FPS_CAP = 8.0
@@ -1283,7 +1290,21 @@ def generate_frames_overlay(
         # 若 detection 完全未啟動才 fallback 自己讀 RTSP。
         ret = False
         frame = None
-        _sf_early = _shared_frames.get(camera_id) if camera_id else None
+        # 畫面優先吃 reader 的原始幀(原生速率),不必等偵測 worker。
+        # 疊加要用的偵測框在下方另外從 _shared_frames["detections"] 取,不受影響。
+        if camera_id is not None:
+            _lf = _live_frames.get(camera_id)
+            if _lf is not None:
+                _lts = float(_lf.get("ts") or 0.0)
+                if _lts > 0 and (time.time() - _lts) < 2.0:
+                    _shared_warm = True
+                    if _lts != last_live_ts:
+                        _f = _lf.get("frame")
+                        if _f is not None and getattr(_f, "size", 0) > 0:
+                            frame = _f
+                            ret = True
+                            last_live_ts = _lts
+        _sf_early = _shared_frames.get(camera_id) if (camera_id and not ret) else None
         if _sf_early and _sf_early.get("frame") is not None:
             ts = float(_sf_early.get("ts") or 0.0)
             age = time.time() - ts
@@ -2058,6 +2079,8 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             _read_fail_count[0] = 0
             _latest["frame"] = frm
             _latest["ts"] = time.time()
+            if camera_id is not None:
+                _live_frames[camera_id] = {"frame": frm, "ts": _latest["ts"]}
             if camera_id in _ANNOTATED_STREAM_CAM_IDS:
                 try:
                     from detection.annotated_streamer import push_frame as _push_f
