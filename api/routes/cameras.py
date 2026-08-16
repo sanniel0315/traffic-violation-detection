@@ -9,6 +9,7 @@ import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from api.routes.auth import get_current_user
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -484,7 +485,16 @@ def _find_duplicate_camera(
 
 
 @router.get("")
-async def get_cameras(db: Session = Depends(get_db)):
+async def get_cameras(db: Session = Depends(get_db),
+                      _user=Depends(get_current_user)):
+    """相機清單。
+
+    🛑 一定要登入:回應內含 source(rtsp://帳號:密碼@...)與 password 明文,
+       攝影機編輯對話框需要它們,所以不能遮蔽 —— 那就必須擋在認證後面。
+       在此之前這支是完全匿名可讀的,只要系統對外開放,四支攝影機的
+       帳密就等同公開(現場 2026-08-16 查出)。
+       網頁登入後瀏覽器會自動帶 cookie,正常使用不受影響。
+    """
     cameras = db.query(Camera).all()
     return {"total": len(cameras), "items": [_to_dict(c) for c in cameras]}
 

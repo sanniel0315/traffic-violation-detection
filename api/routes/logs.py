@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """系統日誌 API"""
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Depends
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -8,6 +8,7 @@ import threading
 from zoneinfo import ZoneInfo
 
 from api.models import SessionLocal, SystemLog
+from api.routes.auth import get_current_user
 
 router = APIRouter(prefix="/api/logs", tags=["系統日誌"])
 
@@ -68,7 +69,8 @@ def add_log(level: str, message: str, source: str = "system"):
 
 
 @router.get("")
-async def get_logs(limit: int = 100, level: str = None, source: str = None):
+async def get_logs(limit: int = 100, level: str = None, source: str = None,
+                   _user=Depends(get_current_user)):
     """取得日誌"""
     return await query_logs(limit=limit, level=level, source=source)
 
