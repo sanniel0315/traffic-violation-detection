@@ -21,6 +21,7 @@ import threading
 from zoneinfo import ZoneInfo
 from api.models import init_db
 from api.routes import auth, frigate, lpr, lpr_stream, lpr_visual, violations, cameras, stream, traffic, nx
+from api.routes import go2rtc as go2rtc_route
 from api.routes.auth import get_admin_user
 from api.routes import congestion
 from api.routes import logs, system
@@ -385,6 +386,7 @@ app.include_router(stream.router)
 app.include_router(traffic.router)
 app.include_router(auth.router)
 app.include_router(frigate.router)
+app.include_router(go2rtc_route.router)
 app.include_router(nx.router)
 app.include_router(lpr.router)
 app.include_router(lpr_stream.router)
