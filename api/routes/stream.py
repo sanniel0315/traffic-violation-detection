@@ -28,7 +28,7 @@ from api.models import get_db, Camera, SessionLocal, TrafficEvent
 from api.routes.logs import add_log
 from api.utils.roi_scope import SCOPE_TRAFFIC, SCOPE_SPEED, SCOPE_CONGESTION, select_zones
 from api.utils.feature_state import get_feature_enabled, set_feature_state
-from api.utils.camera_stream import resolve_analysis_source, resolve_capture_source, resolve_local_api_source
+from api.utils.camera_stream import direct_source_for, resolve_analysis_source, resolve_capture_source, resolve_local_api_source
 from api.utils.shutdown import shutdown_event
 
 router = APIRouter(prefix="/api/stream", tags=["串流"])
@@ -2089,7 +2089,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         _decode_skip = 0
 
     def _reader_loop():
-        nonlocal cap
+        nonlocal cap, source
         while detection_services.get(camera_id, {}).get('running', False) and not _latest["stop"]:
             try:
                 # 跳幀解碼:worker 只用 MAX_INFER_FPS(10) 的幀,但這裡若逐幀 read()
@@ -2128,6 +2128,13 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 _read_fail_count[0] += 1
                 if _read_fail_count[0] == 1 or _read_fail_count[0] % 100 == 0:
                     print(f"⚠️ [detection] cam{camera_id} cap.read() failed (count={_read_fail_count[0]}), reconnecting...", flush=True)
+                # 分析來源若是 go2rtc restream,連續失敗代表 go2rtc 那邊有問題 →
+                # 退回直連相機。分析絕不能因為共用來源而中斷。
+                if _read_fail_count[0] == 3:
+                    _direct = direct_source_for(source)
+                    if _direct != source:
+                        print(f"⚠️ [detection] cam{camera_id} go2rtc restream 連續失敗,退回直連相機", flush=True)
+                        source = _direct
                 try:
                     cap.release()
                 except Exception:

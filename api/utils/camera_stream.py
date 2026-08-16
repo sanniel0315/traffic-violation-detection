@@ -4,6 +4,8 @@ import base64
 import hashlib
 import json
 import os
+import re
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlsplit, urlunsplit
@@ -278,7 +280,7 @@ def _set_query_value(url: str, key: str, value: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(params), parts.fragment))
 
 
-def resolve_analysis_source(camera: Any) -> str:
+def _resolve_analysis_source_raw(camera: Any) -> str:
     source = _as_text(getattr(camera, "source", ""))
     cfg = getattr(camera, "detection_config", None)
     nx_relay_format = "mpegts"
@@ -326,3 +328,94 @@ def resolve_analysis_source(camera: Any) -> str:
         low_path,
     )
     return resolve_capture_source(built or source)
+
+
+# ---------------------------------------------------------------------------
+# go2rtc restream 共用
+# ---------------------------------------------------------------------------
+# 2026-08-16 在 104 實測:每支相機同時被拉 3 條 RTSP —— go2rtc 1 條、
+# traffic-api 自己 2 條(cv2.VideoCapture 直連相機,完全繞過 go2rtc)。
+# frigate 反而是對的,它走 rtsp://127.0.0.1:8554/cam_N。
+# 相機端要同時服務 3 個連線,對 111.70.34.184 那種「兩支共用一個 IP、
+# 本來就會間歇斷」的機器是額外負擔。讓分析也走 go2rtc → 對外連線 3 降到 1。
+#
+# 🛑 安全前提:只有在 go2rtc 那條 stream 的 producer URL 跟我們要開的 URL
+#    「完全一致」時才切換。URL 一樣 = 同一條流 = 同解析度 = ROI 座標零風險。
+#    若分析走 profile1 低解析、而 go2rtc 走 profile2,兩者不一致就維持原樣,
+#    絕不會因為換來源讓 ROI 比例跑掉。
+#
+# 解碼成本不會因此下降(traffic-api 仍要自己解碼跑 YOLO),省的是對外網路
+# 連線數與相機端負載。分析率不受影響。
+#
+# 關掉:環境變數 TRAFFIC_SHARE_GO2RTC=0
+
+_GO2RTC_API = os.getenv("GO2RTC_API", "http://127.0.0.1:1984")
+_GO2RTC_RTSP = os.getenv("GO2RTC_RTSP", "rtsp://127.0.0.1:8554").rstrip("/")
+_GO2RTC_CACHE_TTL = 30.0
+
+# {producer_url: stream_name},30 秒快取;查不到 go2rtc 就是空 dict → 不切換
+_go2rtc_cache: dict[str, Any] = {"ts": 0.0, "map": {}}
+# {restream_url: 原始直連 url},給開流失敗時退回直連用
+_go2rtc_reverse: dict[str, str] = {}
+
+
+def _normalize_rtsp_url(url: str) -> str:
+    """比對用的正規化:把 path 裡重複的斜線收成一個。
+
+    現場 87 的 DB 存的是 `:554//axis-media/media.amp`(雙斜線),而 go2rtc
+    自己記的是 `:554/axis-media/media.amp`(單斜線) —— 同一支相機、同一條流,
+    但嚴格字串比對不相符,不正規化的話這個共用機制在 production 會整個空轉。
+    只收斜線,不動 host/query,兩條真的不同的流不可能因此被誤判成同一條。
+    """
+    parts = urlsplit(_as_text(url))
+    path = re.sub(r"/{2,}", "/", parts.path)
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
+def _go2rtc_producer_map() -> dict[str, str]:
+    """向 go2rtc 問各 stream 的 producer URL。失敗一律回空 dict(= 不切換)。"""
+    now = time.time()
+    if now - float(_go2rtc_cache["ts"]) < _GO2RTC_CACHE_TTL:
+        return _go2rtc_cache["map"]
+    mapping: dict[str, str] = {}
+    try:
+        resp = requests.get(f"{_GO2RTC_API}/api/streams", timeout=2.0)
+        if resp.status_code == 200:
+            for name, info in (resp.json() or {}).items():
+                for producer in (info.get("producers") or []):
+                    url = _as_text(producer.get("url"))
+                    if url:
+                        mapping[_normalize_rtsp_url(url)] = name
+    except Exception:
+        mapping = {}
+    _go2rtc_cache["ts"] = now
+    _go2rtc_cache["map"] = mapping
+    return mapping
+
+
+def resolve_shared_source(source: Any) -> str:
+    """能共用 go2rtc restream 就回 restream 位址,否則原樣回傳。"""
+    text = _as_text(source)
+    if not text or not _has_rtsp_scheme(text):
+        return text
+    if os.getenv("TRAFFIC_SHARE_GO2RTC", "1") == "0":
+        return text
+    if text.startswith(_GO2RTC_RTSP):     # 已經是 restream,別再包一層
+        return text
+    name = _go2rtc_producer_map().get(_normalize_rtsp_url(text))
+    if not name:
+        return text
+    shared = f"{_GO2RTC_RTSP}/{name}"
+    _go2rtc_reverse[shared] = text
+    return shared
+
+
+def direct_source_for(source: Any) -> str:
+    """restream 位址 → 原始直連位址。不是 restream 就原樣回傳。
+    給開流連續失敗時退回直連用,確保 go2rtc 掛掉不會拖垮分析。"""
+    text = _as_text(source)
+    return _go2rtc_reverse.get(text, text)
+
+
+def resolve_analysis_source(camera: Any) -> str:
+    return resolve_shared_source(_resolve_analysis_source_raw(camera))
