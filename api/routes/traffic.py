@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
+import os
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import desc, text
 from sqlalchemy.exc import OperationalError
@@ -314,7 +315,9 @@ def get_traffic_events(
 
 
 # 從 Frigate 錄影擷取事件當下的截圖（cv2 first frame extraction，磁碟快取）
-_EVENT_SNAPSHOT_CACHE_DIR = "/tmp/event_snapshots"
+# 事件快照 cache。預設 /tmp 在 eMMC 上,現場實測兩天就累積 9.5 萬檔 / 2.4GB,
+# 把 54G 的系統碟推到 85%。用 EVENT_SNAPSHOT_DIR 指到 NVMe 即可。
+_EVENT_SNAPSHOT_CACHE_DIR = os.getenv("EVENT_SNAPSHOT_DIR", "/tmp/event_snapshots")
 
 
 @router.get("/events/{event_id}/snapshot.jpg")
