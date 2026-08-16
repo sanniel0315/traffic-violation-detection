@@ -1218,6 +1218,7 @@ def generate_frames_overlay(
     high_quality: bool = False,
     target_width: int = 0,
     fps_cap: float = 0.0,
+    jpeg_quality: int = 0,
 ):
     """產生即時 MJPEG 串流，可選擇是否繪製辨識疊加。
     high_quality=True: 輸出 1080p JPEG Q75；否則輸出 720p JPEG Q60。
@@ -1372,7 +1373,7 @@ def generate_frames_overlay(
                 out = cv2.resize(frame, (_tw, int(fh0 * s0)))
             else:
                 out = frame
-            _q = 55 if _tw <= 800 else 75
+            _q = int(jpeg_quality) if int(jpeg_quality or 0) > 0 else (55 if _tw <= 800 else 75)
             _, buffer = cv2.imencode('.jpg', out, [cv2.IMWRITE_JPEG_QUALITY, _q])
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
@@ -1492,7 +1493,8 @@ def generate_frames_overlay(
         fh, fw = frame.shape[:2]
         _target_w = int(target_width) if int(target_width or 0) > 0 else (1920 if high_quality else 1280)
         # 縮圖尺寸再用 Q75 沒有意義（檔案大但看不出差），小圖降到 Q55 省一半
-        _jpg_q = 75 if high_quality else (55 if _target_w <= 800 else 60)
+        _jpg_q = int(jpeg_quality) if int(jpeg_quality or 0) > 0 else (
+            75 if high_quality else (55 if _target_w <= 800 else 60))
         if fw > _target_w:
             scale = _target_w / fw
             frame = cv2.resize(frame, (_target_w, int(fh * scale)))
@@ -1511,7 +1513,7 @@ def generate_frames_overlay(
 
 
 @router.get("/{camera_id}/live")
-async def live_stream(camera_id: int, w: int = 0, fps: float = 0.0,
+async def live_stream(camera_id: int, w: int = 0, fps: float = 0.0, jq: int = 0,
                       db: Session = Depends(get_db)):
     """即時影像串流 (MJPEG，背景仍持續分析但不畫辨識框)
 
@@ -1532,6 +1534,7 @@ async def live_stream(camera_id: int, w: int = 0, fps: float = 0.0,
             camera_id=camera_id,
             target_width=max(0, min(1920, int(w or 0))),
             fps_cap=max(0.0, min(15.0, float(fps or 0))),
+            jpeg_quality=max(0, min(95, int(jq or 0))),
         ),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
@@ -1539,7 +1542,7 @@ async def live_stream(camera_id: int, w: int = 0, fps: float = 0.0,
 
 @router.get("/{camera_id}/live-overlay")
 async def live_stream_overlay(camera_id: int, q: str = "low", roi: str = "0",
-                              w: int = 0, fps: float = 0.0,
+                              w: int = 0, fps: float = 0.0, jq: int = 0,
                               db: Session = Depends(get_db)):
     """即時影像串流 (MJPEG + AI 辨識框)
 
@@ -1569,6 +1572,7 @@ async def live_stream_overlay(camera_id: int, q: str = "low", roi: str = "0",
             high_quality=hq,
             target_width=max(0, min(1920, int(w or 0))),
             fps_cap=max(0.0, min(15.0, float(fps or 0))),
+            jpeg_quality=max(0, min(95, int(jq or 0))),
         ),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
