@@ -3345,6 +3345,11 @@
         .camera-preview { position: relative; background: #000; height: 240px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
         .camera-preview img,
         .camera-preview video { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; }
+        /* go2rtc H.264 播放器外殼。<video-stream> 內部自己放一個 <video>,
+           上面那條 .camera-preview video 會套到它,這裡只要讓外殼撐滿。 */
+        .camera-preview .go2rtc-host,
+        .monitor-zoom-stage .go2rtc-host { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+        .go2rtc-host video-stream { width: 100%; height: 100%; display: block; }
         .camera-preview .badge { position: absolute; top: 8px; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
         .camera-preview .status-badge { right: 8px; }
         .camera-preview .detection-badge { left: 8px; background: #0d6e9f; color: #fff; }
@@ -5044,8 +5049,20 @@
                                 <div v-if="!c.enabled" style="position:absolute;inset:0;background:rgba(15,23,42,.62);z-index:3;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700">
                                     攝影機已關閉
                                 </div>
+                                <!-- 非疊加改走 go2rtc H.264(WebSocket + MSE)。
+                                     MJPEG 兩個成本:頻寬(實測 960 寬 4.72 Mbps、1920 Q75 14.70 Mbps,
+                                     而原生 1080p H.264 只要 3.55 Mbps),以及每路佔一條 HTTP 長連線
+                                     —— 瀏覽器對同一 origin 只有 6 條,佔滿就是 SERVICE OFFLINE 的成因。
+                                     H.264 走 WebSocket(Chrome 上限 255 條),連線壓力直接消失,
+                                     而且 traffic-api 完全不參與編碼(每多一個觀看者 +15% CPU → 0)。
+                                     疊加維持 MJPEG:偵測框是後端燒進畫面的。 -->
+                                <div
+                                    v-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='h264'"
+                                    class="go2rtc-host"
+                                    v-go2rtc="getGo2rtcWsUrl(c)"
+                                ></div>
                                 <video
-                                    v-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='video'"
+                                    v-else-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='video'"
                                     :src="getMonitorMediaUrl(c)"
                                     autoplay
                                     muted
@@ -5121,8 +5138,15 @@
                             </div>
                         </template>
                         <div class="monitor-zoom-stage">
+                            <!-- 放大也走 H.264:原生就是 1080p,不必像 MJPEG 那樣
+                                 分割格送小張、放大再換一條高解析度串流。 -->
+                            <div
+                                v-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera)==='h264'"
+                                class="go2rtc-host"
+                                v-go2rtc="getGo2rtcWsUrl(monitorZoomCamera)"
+                            ></div>
                             <video
-                                v-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera)==='video'"
+                                v-else-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera)==='video'"
                                 :src="getMonitorMediaUrl(monitorZoomCamera, {highQuality:true})"
                                 autoplay
                                 muted
@@ -9871,6 +9895,35 @@ const NxCameraViewer=defineComponent({
         };
     }
 });
+
+// ── go2rtc 播放器掛載(必須在 createApp 外,app.directive 才看得到 vGo2rtc) ──
+let go2rtcPlayerReady=null;
+const ensureGo2rtcPlayer=()=>{
+    if(!go2rtcPlayerReady){
+        go2rtcPlayerReady=import('/api/go2rtc/video-stream.js')
+            .then(()=>customElements.whenDefined('video-stream'))
+            .catch(e=>{ go2rtcPlayerReady=null; throw e; });
+    }
+    return go2rtcPlayerReady;
+};
+const attachGo2rtc=(el,url)=>{
+    if(!url){ el.innerHTML=''; return; }
+    ensureGo2rtcPlayer().then(()=>{
+        let node=el.querySelector('video-stream');
+        if(!node){ node=document.createElement('video-stream'); el.appendChild(node); }
+        node.src=url;   // 🛑 property,不是 attribute
+    }).catch(()=>{ el.innerHTML=''; });
+};
+// v-go2rtc:用指令掛載,而不是直接在模板寫 <video-stream>。
+// 🛑 原因:video-rtc.js 的 src 是 property setter 且沒有 observedAttributes,
+//    Vue 在自訂元素「還沒註冊」時建立節點,會把 src 當 attribute 設,
+//    元素之後被升級時那個值直接被忽略 → 永遠沒畫面(headless 實測過)。
+//    指令可以先 await customElements.whenDefined 再用 property 指派,沒有競態。
+const vGo2rtc={
+    mounted(el,binding){ attachGo2rtc(el,binding.value); },
+    updated(el,binding){ if(binding.value!==binding.oldValue)attachGo2rtc(el,binding.value); },
+    unmounted(el){ el.innerHTML=''; }
+};
 
 const app=createApp({
     setup(){
@@ -15162,7 +15215,33 @@ const app=createApp({
         };
         const getDirectCameraSourceUrl=(camera,key)=>withCacheBust(camera?.source||'', key);
         const shouldUseDirectMonitorVideo=(camera)=>!camera?.monitorSnapshotMode && resolveCameraStreamMode(camera)==='raw' && isMp4Camera(camera);
-        const getMonitorMediaKind=(camera)=>shouldUseDirectMonitorVideo(camera)?'video':'image';
+        // ── go2rtc H.264 即時播放 ──────────────────────────────────────
+        // 只給「非疊加」用。疊加的偵測框是後端燒進畫面的,還是得走 MJPEG。
+        const go2rtcStreams=ref(new Set());
+        const loadGo2rtcStreams=async()=>{
+            try{
+                const r=await fetch('/api/go2rtc/api/streams');
+                if(!r.ok)return;
+                go2rtcStreams.value=new Set(Object.keys(await r.json()||{}));
+            }catch(_){ /* go2rtc 不可用 → 全部維持 MJPEG,不影響現有行為 */ }
+        };
+        loadGo2rtcStreams();
+        const go2rtcStreamName=(camera)=>camera?.id?`cam_${camera.id}`:'';
+        const hasGo2rtcStream=(camera)=>go2rtcStreams.value.has(go2rtcStreamName(camera));
+        const getGo2rtcWsUrl=(camera)=>{
+            const name=go2rtcStreamName(camera);
+            if(!name)return '';
+            const proto=location.protocol==='https:'?'wss:':'ws:';
+            return `${proto}//${location.host}/api/go2rtc/api/ws?src=${encodeURIComponent(name)}`;
+        };
+        const getMonitorMediaKind=(camera)=>{
+            if(shouldUseDirectMonitorVideo(camera))return 'video';   // 上傳的 mp4 直接播檔案
+            // 非疊加 + go2rtc 有這支 → H.264。疊加、快照降級、go2rtc 沒有的都維持 MJPEG。
+            if(!camera?.monitorSnapshotMode
+               && resolveCameraStreamMode(camera)!=='overlay'
+               && hasGo2rtcStream(camera))return 'h264';
+            return 'image';
+        };
         // 串流 URL 的 cache-busting tick。
         // 原本是 `camera._zoomReloadTick || streamKey`，但 _zoomReloadTick 在關閉放大時
         // 被設定後就永遠黏著、優先於 streamKey —— 若那次重連剛好失敗(MJPEG 長連線
@@ -15324,6 +15403,9 @@ const app=createApp({
                     return;
                 }
                 if(getMonitorMediaKind(c)==='video')return;   // mp4 直連檔案，不佔 API 的連線池
+                // H.264 走 WebSocket(Chrome 上限 255 條),不佔 HTTP/1.1 那 6 條,
+                // 不需要為了保連線給 API 而把它降級成快照。
+                if(getMonitorMediaKind(c)==='h264')return;
                 if(budget>0){
                     budget-=1;
                     // 只還原「被預算擠掉」的，不去動因錯誤/逾時降級的那些
@@ -18939,7 +19021,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
@@ -19055,6 +19137,7 @@ async function __applyI18n(){
   }
 }
 
+app.directive('go2rtc', vGo2rtc);
 app.use(ElementPlus).mount('#app');
 // 初次載入若記憶為英文,套用全站翻譯
 if (__lang.value === 'en') setTimeout(__applyI18n, 300);
