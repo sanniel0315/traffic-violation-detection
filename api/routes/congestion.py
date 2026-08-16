@@ -446,7 +446,52 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                     print(f"⚠️ congestion cam_{camera_id} (file) analyze error: {e}", flush=True)
                     time.sleep(1.0)
                 continue
-            # 以下為 RTSP/HTTP 路徑（保持原邏輯）
+            # RTSP/HTTP 路徑:優先共用 detection worker 已解好的 frame。
+            # 🛑 這裡每秒只分析一次(analyze_interval_sec 預設 1.0),但自己開的
+            #    cap 對著 30fps 的來源 —— 每秒讀 1 幀、積 29 幀,核心緩衝一路漲。
+            #    現場實測 traffic-api 對攝影機的連線積壓 16~20 MB,這是最大來源。
+            #    detection worker 本來就在解同一路影像,共用它即可:
+            #    省一條 RTSP、省一次解碼、積壓直接消失。
+            #    detection 沒跑時才退回自己讀(維持原行為,不會沒畫面)。
+            if not is_file_source:
+                try:
+                    from api.routes.stream import _shared_frames as _sf_rtsp
+                except Exception:
+                    _sf_rtsp = {}
+                _sf2 = _sf_rtsp.get(camera_id) or {}
+                _f2 = _sf2.get("frame")
+                _t2 = float(_sf2.get("ts", 0) or 0)
+                if _f2 is not None and _t2 > 0 and (time.time() - _t2) < 5.0:
+                    if _t2 == _last_shared_ts:
+                        time.sleep(0.05)
+                        continue
+                    _last_shared_ts = _t2
+                    last_ok = time.time()
+                    last_success = time.time()
+                    reconnect_count = 0
+                    if cap is not None:
+                        # 已經有共用畫面可用,自己那條 RTSP 就不必再佔著
+                        try:
+                            cap.release()
+                        except Exception:
+                            pass
+                        cap = None
+                        print(f"🔗 congestion cam_{camera_id} 改用 detection 共用畫面,釋放自有 RTSP", flush=True)
+                    try:
+                        result = analyze_with_lock(_f2, zones, camera_id)
+                        congestion_results[camera_id] = result
+                        congestion_services[camera_id]['last_update'] = datetime.now().isoformat()
+                        _si = float(get_effective_params(camera_id).get("analyze_interval_sec", 1.0))
+                        _store_congestion_samples(camera_id, camera_name, result, _si)
+                        time.sleep(_si)
+                    except Exception as e:
+                        print(f"⚠️ congestion cam_{camera_id} (shared) analyze error: {e}", flush=True)
+                        time.sleep(1.0)
+                    continue
+                if cap is None:
+                    # 共用畫面不可用(detection 沒跑或過期)→ 退回自己讀
+                    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                    last_ok = time.time()
             if not cap.isOpened() or (time.time() - last_ok) > 10.0:
                 try:
                     cap.release()
