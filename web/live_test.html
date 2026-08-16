@@ -156,9 +156,14 @@ async function run() {
     });
     if (!customElements.get('video-stream')) throw new Error('元件沒有註冊（ES module 被擋或載入失敗）');
     const el = document.createElement('video-stream');
-    el.setAttribute('src', `${wsBase()}/api/ws?src=${encodeURIComponent(cam)}`);
     el.style.cssText = 'width:100%;height:100%';
     $('b-box').appendChild(el);
+    // 🛑 src 是 JS property setter,而且 video-rtc.js 沒有 observedAttributes /
+    //    attributeChangedCallback —— 用 setAttribute('src',...) 那個 setter
+    //    永遠不會被呼叫,這就是先前 B 一直「沒有畫面」的原因。
+    //    而且 setter 內部會直接 onconnect(),要在 appendChild 之後才設,
+    //    否則 isConnected 還是 false,連線會被擋掉。
+    el.src = `${wsBase()}/api/ws?src=${encodeURIComponent(cam)}`;
     const t = setInterval(() => {
       const v = (el.shadowRoot || el).querySelector('video');
       if (v) { clearInterval(t); watchVideo('b', v, Date.now()); }
