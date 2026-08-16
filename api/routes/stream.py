@@ -2783,7 +2783,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     if _is_snapshot_enabled_for_cam(camera_id):
                         try:
                             import os as _os
-                            SNAP_DIR = "/tmp/event_snapshots"
+                            SNAP_DIR = os.getenv("EVENT_SNAPSHOT_DIR", "/tmp/event_snapshots")
                             _os.makedirs(SNAP_DIR, exist_ok=True)
                             last_snap_ts = _per_cam_last_snap_ts.get(camera_id, 0.0)
                             if (cur_ts - last_snap_ts) >= 2.0 and rows and row_to_vehicle:
