@@ -5080,16 +5080,9 @@
                                      全部小寫成 viewbox,而 SVG 屬性是大小寫敏感的,加了也是死的。
                                      這裡不需要 —— SVG 元素的尺寸就設成影片實際顯示的矩形,
                                      座標也已經換算成該矩形的像素,user unit 與 CSS px 本來就是 1:1。 -->
-                                <!-- 網格只畫 ROI(靜態,座標永遠正確),不畫偵測框。
-                                     框會動,而影片是即時 H.264、框是輪詢來的偵測結果,
-                                     兩條時間軸不同步 → 車在動框就追不上。要看框請放大,
-                                     放大走 MJPEG 用後端燒錄的框(與車同一時間點)。 -->
-                                <svg class="ovl-layer" v-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='h264'"
-                                     :style="overlaySvgStyle(c.id)">
-                                    <polygon v-for="(z, zi) in overlayZonesFor(c.id)" :key="`z${c.id}-${zi}`"
-                                             :points="ovlPoly(c.id, z.points)" fill="none"
-                                             :stroke="z.color" stroke-width="2" vector-effect="non-scaling-stroke"></polygon>
-                                </svg>
+                                <!-- 疊加(含 ROI 與偵測框)一律由後端燒進 MJPEG 畫面,前端不再疊 SVG。
+                                     overlay-data 端點與 ovlPoly/ovlBox 等 helper 保留,
+                                     供之後做時間戳對齊版的 H.264 疊加使用。 -->
                                 <video
                                     v-else-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='video'"
                                     :src="getMonitorMediaUrl(c)"
@@ -15419,18 +15412,20 @@ const app=createApp({
             },250);
         };
         const stopOverlayPoll=()=>{ if(overlayTimer){clearInterval(overlayTimer);overlayTimer=null;} };
-        // opts.zoom=true 代表放大視窗。
-        // 方案 C(2026-08-17,使用者選定):
-        //   網格 → 一律 H.264。每格只有 533x300,偵測框本來就小到看不清楚,
-        //          而 4 路 MJPEG 會把瀏覽器 6 條連線吃滿 → 頁面整個卡
-        //          (現場實測 87 的 :8000 有 6 條全來自同一台電腦)。
-        //   放大 → 疊加模式走 MJPEG,用後端燒錄的框(frame 與 bbox 綁成一組,
-        //          與車同一時間點),而且只佔 1 條連線。
-        // 網格上仍然畫 ROI —— ROI 是靜態的,不受雙時間源影響,座標永遠正確;
-        // 會動的偵測框才有時間差問題,所以網格不畫框。
+        // 2026-08-17 使用者選定:疊加一律走 MJPEG(網格與放大都是)。
+        //   疊加 → MJPEG。偵測框由後端燒進畫面,frame 與 bbox 是綁成一組原子
+        //          寫入 _shared_frames 的,框與車永遠同一時間點 —— 這是原本
+        //          「追車追得很準」的行為,準確度優先。
+        //   非疊加 → H.264。沒有框就沒有時間差問題,可享有不佔瀏覽器 6 條連線、
+        //          原生 1080p、traffic-api 零編碼成本。
+        // 🛑 已知代價(使用者知情並選擇承受):疊加開四台 = 4 條 MJPEG 長連線,
+        //    會把瀏覽器對同一 origin 的 6 條上限吃滿,剩 2 條給 API → 頁面變卡、
+        //    可能顯示 SERVICE 異常。這是 HTTP/1.1 的物理上限,調參解不掉。
+        //    真正的解是時間戳對齊後改走 H.264+SVG(video.currentTime 對 detection ts,
+        //    或後端在 H.264 SEI 帶時間戳),那是另一個題目。
         const getMonitorMediaKind=(camera, opts={})=>{
             if(shouldUseDirectMonitorVideo(camera))return 'video';   // 上傳的 mp4 直接播檔案
-            if(opts.zoom && resolveCameraStreamMode(camera)==='overlay')return 'image';
+            if(resolveCameraStreamMode(camera)==='overlay')return 'image';
             // 非疊加 + go2rtc 有這支 → H.264。疊加、快照降級、go2rtc 沒有的都維持 MJPEG。
             // 🛑 這裡不可以看 monitorSnapshotMode。快照降級是為了「省 HTTP 長連線」
             //    才存在的補丁,而 H.264 走 WebSocket 根本不佔那 6 條。看了它會變成
