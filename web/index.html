@@ -15453,13 +15453,19 @@ const app=createApp({
             // 必然降級成快照;而 monitor_mode 預設就是 overlay,所以現場看到的
             // 一直是快照。改成 h264+SVG 之後「疊加」與「即時」才能並存。
             //
-            // 🛑 2026-08-17 暫時預設關閉。現場回報監控格「一格被分割成兩個」,
-            //    但 104 上用 1280/1600/1920 三種視窗寬度都重現不出來
-            //    (量到的都是 video=1、video-stream=1、填滿整格)。
-            //    在查清楚之前先退回原本的 MJPEG 路徑,不要讓現場卡在壞掉的畫面。
-            //    要開回來:主控台執行 localStorage.setItem('tvd_h264_live','1') 後重整,
-            //    或把下面的預設值改成 '1'。程式全部保留,不是移除。
-            if(h264LiveEnabled.value && hasGo2rtcStream(camera))return 'h264';
+            // 🛑 2026-08-17 撤回:疊加模式改回 MJPEG,只有「非疊加」才走 h264。
+            //    現場回報「box 追車不準,原本追得很準」—— 這是我引進的雙時間源問題。
+            //    後端疊加是把 frame 與 bbox「綁成一組」原子寫入 _shared_frames,
+            //    疊加只讀這一組,所以框與車永遠是同一個時間點(見 _shared_frames 註解)。
+            //    改成前端 SVG 之後,影片是即時 H.264、框是每 250ms 輪詢來的偵測結果,
+            //    兩條時間軸各走各的 → 車在動框就追不上,越快的車偏得越多。
+            //    要真正解決得做時間戳對齊(video currentTime 對 detection ts),
+            //    在那之前準確度優先,疊加就走原本的後端燒錄。
+            //    非疊加沒有框,沒有這個問題,繼續享受 h264 的好處(不佔 6 條連線、
+            //    原生 1080p、traffic-api 零編碼成本)。
+            if(h264LiveEnabled.value
+               && resolveCameraStreamMode(camera)!=='overlay'
+               && hasGo2rtcStream(camera))return 'h264';
             return 'image';
         };
         // 串流 URL 的 cache-busting tick。
