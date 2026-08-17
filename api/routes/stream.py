@@ -1604,6 +1604,118 @@ def generate_frames_overlay(
         cap.release()
 
 
+# 前端 SVG 疊加用的顏色,跟後端燒進畫面時用的 BGR 對齊(這裡是 CSS 十六進位)
+_OVERLAY_ZONE_COLORS = {
+    "detection": "#50c840",
+    "flow_detection": "#50c840",
+    "speed": "#ff8c00",
+    "speed_roi": "#ff8c00",
+    "speed_line_in": "#0078ff",
+    "speed_line_out": "#ff50b4",
+    "lane_left": "#783cdc",
+    "lane_straight": "#ebaa1e",
+    "lane_right": "#ffbe00",
+}
+_OVERLAY_CONGESTION_COLOR = "#ffe066"
+_OVERLAY_VEHICLE_ZH = {
+    "car": "小客車", "motorcycle": "機車", "truck": "大貨車", "bus": "公車",
+    "heavy_truck": "重型貨車", "light_truck": "小貨車",
+    "person": "行人", "bicycle": "自行車",
+}
+
+
+def _overlay_payload_for(camera) -> dict:
+    """把某台相機的偵測框與 ROI 整理成前端可直接畫的結構。
+
+    🛑 座標一律正規化成 0~1。之前試過前端疊 SVG 會錯位,原因就是基準不同:
+       影像是 object-fit:contain 置中留黑邊,SVG 卻撐滿整個容器 —— 同一個框
+       會出現在兩個位置。改送 0~1,前端乘上「影片實際顯示的矩形」(扣掉黑邊)
+       就不會偏,而且跟輸出解析度、縮放比例全都脫鉤。
+    """
+    cid = int(getattr(camera, "id", 0) or 0)
+    sf = _shared_frames.get(cid) or {}
+    ts = float(sf.get("ts") or 0.0)
+    frame = sf.get("frame")
+    if frame is not None and getattr(frame, "size", 0) > 0:
+        fh, fw = frame.shape[:2]
+    else:
+        fw, fh = 1920, 1080
+
+    zones_out = []
+    for z in (getattr(camera, "zones", None) or []):
+        pts = z.get("points") or []
+        if len(pts) < 2:
+            continue
+        # zone 的點是存在 source_width/height 的基準上,先換算回這一幀再正規化
+        sw = int(z.get("source_width") or 0) or fw
+        sh = int(z.get("source_height") or 0) or fh
+        ztype = str(z.get("type") or z.get("zone_type") or "")
+        color = (_OVERLAY_CONGESTION_COLOR if str(z.get("scope") or "") == SCOPE_CONGESTION
+                 else _OVERLAY_ZONE_COLORS.get(ztype, "#8c8c8c"))
+        try:
+            norm = [[max(0.0, min(1.0, float(pt[0]) / sw)),
+                     max(0.0, min(1.0, float(pt[1]) / sh))] for pt in pts]
+        except (TypeError, ValueError, IndexError, ZeroDivisionError):
+            continue
+        zones_out.append({
+            "name": str(z.get("name") or ""),
+            "type": ztype,
+            "scope": str(z.get("scope") or ""),
+            "color": color,
+            "closed": len(norm) >= 3,
+            "points": norm,
+        })
+
+    dets_out = []
+    for det in (sf.get("detections") or []):
+        b = det.get("bbox") or {}
+        try:
+            x1, y1 = float(b["x1"]) / fw, float(b["y1"]) / fh
+            x2, y2 = float(b["x2"]) / fw, float(b["y2"]) / fh
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            continue
+        truck_cls = det.get("truck_cls") or {}
+        label = (str(truck_cls.get("label")) if truck_cls.get("label")
+                 else _OVERLAY_VEHICLE_ZH.get(det.get("class_name"), str(det.get("class_name") or "")))
+        speed = det.get("speed_kmh")
+        dets_out.append({
+            "x": max(0.0, min(1.0, x1)),
+            "y": max(0.0, min(1.0, y1)),
+            "w": max(0.0, min(1.0, x2 - x1)),
+            "h": max(0.0, min(1.0, y2 - y1)),
+            "label": label,
+            "speed_kmh": round(float(speed), 1) if isinstance(speed, (int, float)) and speed > 0 else None,
+        })
+
+    return {
+        "ts": ts,
+        "age_sec": round(time.time() - ts, 2) if ts > 0 else None,
+        "source": {"width": fw, "height": fh},
+        "zones": zones_out,
+        "detections": dets_out,
+    }
+
+
+@router.get("/overlay-data")
+async def overlay_data(ids: str = "", db: Session = Depends(get_db)):
+    """一次回多台相機的疊加資料(偵測框 + ROI),座標正規化 0~1。
+
+    給「H.264 影片 + 前端 SVG 疊加」用。相對於 MJPEG 把框燒進畫面:
+    影片走 go2rtc 不佔 traffic-api 的 CPU,這支只回幾 KB JSON,
+    疊加照樣看得到,而且底圖是原生 1080p。
+
+    一次收所有相機是刻意的 —— 四格各自輪詢會變成每秒十幾個請求。
+    """
+    try:
+        want = [int(x) for x in str(ids or "").split(",") if str(x).strip().isdigit()]
+    except ValueError:
+        want = []
+    q = db.query(Camera).filter(Camera.enabled == True)  # noqa: E712
+    if want:
+        q = q.filter(Camera.id.in_(want))
+    return {str(c.id): _overlay_payload_for(c) for c in q.all()}
+
+
 @router.get("/{camera_id}/live")
 async def live_stream(camera_id: int, w: int = 0, fps: float = 0.0, jq: int = 0,
                       db: Session = Depends(get_db)):
