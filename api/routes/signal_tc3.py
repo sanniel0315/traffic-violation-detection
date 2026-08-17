@@ -46,8 +46,9 @@ STEP_SPECIAL = {
     0xCF: "綠綠衝突閃光", 0xDF: "現場操作閃光", 0xEF: "電源異常閃光",
     0xFF: "時制異常閃光",
 }
+# 設備碼(協定 3-2/3-3 實查):0F 共用、5F 號誌、6F 車輛偵測器、AF 資訊可變標誌
 DEVICE_NAMES = {0x0F: "設備共用", 0x5F: "號誌控制器",
-                0x6F: "車輛偵測器", 0x8F: "資訊可變標誌"}
+                0x6F: "車輛偵測器", 0xAF: "資訊可變標誌"}
 
 _state: dict = {
     "enabled": SIGNAL_ENABLED,
@@ -64,6 +65,29 @@ _state: dict = {
 _frames: deque = deque(maxlen=300)      # 最近訊框(raw + 解碼)
 _coverage: Counter = Counter()          # 每個 device+cmd 看過幾次
 _lock = threading.Lock()
+
+
+def _find_etx(buf: bytes, start: int) -> int:
+    """從 start 逐位元組找 DLE ETX(AA CC),正確跳過 byte stuffing 的成對 AA。
+
+    🛑 不能直接 find(AA CC)。INFO 裡若本來就有 0xAA,傳送時會被重複成 AA AA
+       (協定 2-8);當它後面剛好接著 0xCC,線上就是 ... AA AA CC ...,單純 find 會在
+       「第二個 AA」命中而把訊框砍短。CKS 會擋下錯資料,但那一整框會靜默消失。
+       StepSec 是 2 bytes,0xAACC 在值域內,真的會遇到。
+    """
+    i, n = start, len(buf)
+    while i < n - 1:
+        if buf[i] != 0xAA:
+            i += 1
+            continue
+        nxt = buf[i + 1]
+        if nxt == 0xAA:      # 成對 AA = 資料裡的 0xAA,整組跳過
+            i += 2
+            continue
+        if nxt == 0xCC:      # 真正的 DLE ETX
+            return i
+        i += 1               # AA 接別的(BB/DD/EE...),不是結尾
+    return -1
 
 
 def _unstuff(info: bytes) -> bytes:
@@ -167,7 +191,7 @@ def _recorder_loop() -> None:
                         if len(buf) > 65536:
                             buf = b""       # 垃圾資料不要無限長大
                         break
-                    j = buf.find(b"\xaa\xcc", i + 2)
+                    j = _find_etx(buf, i + 2)
                     if j < 0 or len(buf) < j + 3:
                         if i > 0:
                             buf = buf[i:]
@@ -180,13 +204,17 @@ def _recorder_loop() -> None:
                     with _lock:
                         _state["frames_total"] += 1
                         _state["last_frame_at"] = rec["ts"]
+                        _frames.append(rec)      # 壞框也留著,方便查線路品質
                         if not rec["cks_ok"]:
+                            # 🛑 CKS 不對就到此為止。不可以拿它更新「目前燈態」或覆蓋矩陣 ——
+                            #    壞掉的框會變成前端顯示的當前燈態,也會讓驗收矩陣記到
+                            #    根本沒發生過的訊息碼。
                             _state["cks_bad"] += 1
+                            continue
                         if rec.get("code"):
                             _coverage[rec["code"]] += 1
                         if rec.get("phase"):
                             _state["latest"] = rec
-                        _frames.append(rec)
         except Exception as exc:
             with _lock:
                 _state["connected"] = False
