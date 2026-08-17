@@ -2136,24 +2136,54 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     def _zone_key(zone: dict) -> int:
         return id(zone)
     def _zone_occupancy(zone: dict, vehicle_list: list) -> float | None:
+        """佔用率 = 車輛 bbox「聯集 ∩ ROI」/ ROI 面積,值域 0~1。
+
+        與 detection/congestion_detector.py 的算法一致 —— 兩邊本來各算各的,
+        同一個名詞在 VD 報表與壅塞報表會給出不同數字,對外 API 也就分叉成兩種
+        「佔有率」定義。統一成同一套之後,兩邊可以直接互相對照。
+
+        🛑 舊版是把 bbox 面積「加總」,而且只要 bbox 中心落在多邊形內就把整個
+           bbox 算進去,有三重高估:
+             ① 車輛重疊的部分被重複計入
+             ② 超出 ROI 邊界的部分照樣計入
+             ③ 斜停/長車的軸對齊 bbox 遠大於車體
+           壅塞那邊改用遮罩後實測從 100% 降到 45%(近鏡頭兩台大車就灌爆)。
+           畫成遮罩再 countNonZero,重疊自動取聯集、超界自動被 ROI 切掉。
+
+        遮罩只開 ROI 的外接矩形大小(不是整幀),省記憶體也省時間;
+        畫車輛矩形時的座標一起平移,超出邊界由 OpenCV 自行裁切。
+        """
         pts = zone.get("points", [])
         if len(pts) < 3:
             return None
-        poly = np.array(pts, dtype=np.float32).reshape(-1, 1, 2)
-        zone_area = float(cv2.contourArea(poly))
-        if zone_area <= 0:
+        poly = np.array(pts, dtype=np.int32).reshape(-1, 1, 2)
+        x0, y0, bw, bh = cv2.boundingRect(poly)
+        if bw <= 0 or bh <= 0:
             return None
-        vehicle_area = 0.0
+        roi_mask = np.zeros((bh, bw), dtype=np.uint8)
+        cv2.fillPoly(roi_mask, [poly - np.array([[x0, y0]], dtype=np.int32)], 255)
+        roi_area = int(cv2.countNonZero(roi_mask))
+        if roi_area <= 0:
+            return None
+        veh_mask = np.zeros((bh, bw), dtype=np.uint8)
+        drew = False
         for veh in vehicle_list:
             b = veh.get("bbox", {}) or {}
-            cx = int((b.get("x1", 0) + b.get("x2", 0)) / 2)
-            cy = int((b.get("y1", 0) + b.get("y2", 0)) / 2)
-            if cv2.pointPolygonTest(poly, (float(cx), float(cy)), False) < 0:
+            try:
+                x1 = int(b.get("x1", 0)) - x0
+                y1 = int(b.get("y1", 0)) - y0
+                x2 = int(b.get("x2", 0)) - x0
+                y2 = int(b.get("y2", 0)) - y0
+            except (TypeError, ValueError):
                 continue
-            width = max(0.0, float(b.get("width", 0) or (b.get("x2", 0) - b.get("x1", 0))))
-            height = max(0.0, float(b.get("height", 0) or (b.get("y2", 0) - b.get("y1", 0))))
-            vehicle_area += width * height
-        return min(vehicle_area / zone_area, 1.0)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            cv2.rectangle(veh_mask, (x1, y1), (x2, y2), 255, -1)
+            drew = True
+        if not drew:
+            return 0.0
+        covered = int(cv2.countNonZero(cv2.bitwise_and(veh_mask, roi_mask)))
+        return min(covered / roi_area, 1.0)
     def _parse_lane_no(zone: dict):
         raw = zone.get("lane_no")
         if raw is None:

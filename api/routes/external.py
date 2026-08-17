@@ -1110,9 +1110,13 @@ def external_congestion_realtime(
 
     與 /congestion-report 的差別:
 
-    - **/congestion-report** 讀聚合表 `congestion_report_aggs`,有聚合延遲,
-      且該表有已知缺口(實測缺 765/1014 小時)→ 會少報。
-    - **本端點**直接讀原始表 `congestion_samples`,沒有延遲也沒有缺口。
+    - **/congestion-report** 讀聚合表 `congestion_report_aggs`,有約 1 分鐘的
+      聚合延遲。
+      ⚠️ 該表可能有歷史缺口:服務首次啟動只回填近 7 天
+      (api/main.py `_REPORT_AGG_BACKFILL_DAYS`),而且只在沒有 job state 時
+      跑一次 —— 更早的資料不會被聚合。104 實測缺 767/1038 小時(覆蓋 26%)。
+      補洞用 `scripts/aggregate_reports.py --start ... --end ... --chunk-hours 12`。
+    - **本端點**直接讀原始表 `congestion_samples`,沒有延遲也不受上述缺口影響。
 
     記錄格式與 /congestion-report 相同,客戶端不必改解析。
 
@@ -1121,9 +1125,16 @@ def external_congestion_realtime(
     - `max_occupancy_pct` — 該分鐘的最大瞬時佔有率
     - `avg_raw_occupancy_pct` — 未經 queue/density 加權的原始面積佔有率
 
-    ⚠️ 這裡的佔有率是**壅塞演算法**的定義(ROI 面積被車輛覆蓋的比例,再經
-    queue/density 加權),與 /realtime、/vd-report 裡 VD 的 `avg_occupancy_pct`
-    (車輛偵測事件記錄的佔用率)定義不同,兩者數字不會一樣,不要混用。
+    佔有率的底層算法已與 VD 統一:兩邊都是「車輛 bbox 聯集 ∩ ROI / ROI 面積」
+    (2026-08-17 起。舊版 VD 是 bbox 面積加總,重疊與超出 ROI 的部分會重複計入,
+    實測高估近 2 倍)。
+
+    ⚠️ 算法雖然相同,兩者仍**不可直接互換**:
+    - 本端點是固定間隔取樣,`avg_occupancy_pct` 還經過平滑;
+      `avg_raw_occupancy_pct` 才是未平滑的瞬時值。
+    - /realtime、/vd-report 的 VD `avg_occupancy_pct` 是「該筆車流事件寫入
+      那一瞬間」的快照,而且同一 track 同一 zone 有 30 秒冷卻,取樣點不均勻。
+    要做時間序列分析請用本端點。
 
     只回「已結束」的分鐘:當前分鐘還在累積,數字會變,拿去存檔會前後不一致。
     """
