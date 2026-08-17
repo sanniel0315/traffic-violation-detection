@@ -1185,9 +1185,13 @@ def _draw_roi_labels(frame, zones: list):
         "lane_straight": (30, 170, 235),
         "lane_right": (0, 190, 255),
     }
-    pil_img = None
-    pil_draw = None
-    font = None
+    # 🛑 兩輪:先把所有多邊形畫完,第二輪才畫文字。
+    #    原本是同一個迴圈 —— 第一個「中文名稱」的 zone 會把當下的 frame 快照成
+    #    PIL 影像,之後的 zone 仍然 cv2.polylines 畫在 frame 上,但函式結尾
+    #    `frame[:] = PIL` 會整片蓋回去,於是第一個之後的框全部被抹掉,只剩標籤
+    #    (標籤是畫在 PIL 上的所以活著)。名稱是 ASCII 就不會踩到,現場 zone 全是
+    #    中文所以每台都中。實測 cam_8 兩個車流區只出現一個框(2026-08-17)。
+    pending_labels = []
     for z in zones:
         poly = _zone_points_for_frame(z, w, h)
         if poly is None:
@@ -1206,7 +1210,13 @@ def _draw_roi_labels(frame, zones: list):
         if not name:
             continue
         x, y = poly.reshape(-1, 2)[0]
-        tx, ty = int(x), max(18, int(y) - 8)
+        pending_labels.append((name, int(x), max(18, int(y) - 8), color))
+
+    # 第二輪:所有框都畫完了,這時才快照成 PIL 畫中文,合成回去不會蓋掉任何框
+    pil_img = None
+    pil_draw = None
+    font = None
+    for name, tx, ty, color in pending_labels:
         if name.isascii() or not _PIL_AVAILABLE:
             (tw, th), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 2)
             cv2.rectangle(frame, (tx - 2, ty - th - 6), (tx + tw + 6, ty + 4), color, -1)
