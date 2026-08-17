@@ -15338,6 +15338,11 @@ const app=createApp({
         // ── go2rtc H.264 即時播放 ──────────────────────────────────────
         // 只給「非疊加」用。疊加的偵測框是後端燒進畫面的,還是得走 MJPEG。
         const go2rtcStreams=ref(new Set());
+        // H.264 即時播放總開關(見 getMonitorMediaKind 的說明)。
+        // 預設 '0' = 沿用原本的 MJPEG 行為。
+        const h264LiveEnabled=ref((()=>{
+            try{ return localStorage.getItem('tvd_h264_live')==='1'; }catch(_){ return false; }
+        })());
         const loadGo2rtcStreams=async()=>{
             try{
                 const r=await fetch('/api/go2rtc/api/streams');
@@ -15437,7 +15442,14 @@ const app=createApp({
             // (階段3)。之前疊加只能走 MJPEG,四台就把瀏覽器 6 條連線吃滿,
             // 必然降級成快照;而 monitor_mode 預設就是 overlay,所以現場看到的
             // 一直是快照。改成 h264+SVG 之後「疊加」與「即時」才能並存。
-            if(hasGo2rtcStream(camera))return 'h264';
+            //
+            // 🛑 2026-08-17 暫時預設關閉。現場回報監控格「一格被分割成兩個」,
+            //    但 104 上用 1280/1600/1920 三種視窗寬度都重現不出來
+            //    (量到的都是 video=1、video-stream=1、填滿整格)。
+            //    在查清楚之前先退回原本的 MJPEG 路徑,不要讓現場卡在壞掉的畫面。
+            //    要開回來:主控台執行 localStorage.setItem('tvd_h264_live','1') 後重整,
+            //    或把下面的預設值改成 '1'。程式全部保留,不是移除。
+            if(h264LiveEnabled.value && hasGo2rtcStream(camera))return 'h264';
             return 'image';
         };
         // 串流 URL 的 cache-busting tick。
