@@ -4677,6 +4677,7 @@
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='permission_admin'}" @click="page='permission_admin'"><svg class="nav-icon"><use href="#i-lock"/></svg><span>{{ $t('nav_permission') }}</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='io_panel'}" @click="page='io_panel'"><svg class="nav-icon"><use href="#i-zap"/></svg><span>{{ $t('nav_io') }}</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='lock'}" @click="page='lock'"><svg class="nav-icon"><use href="#i-lock"/></svg><span>{{ $t('nav_lock') }}</span></div>
+            <div v-if="isAdmin" class="menu-item" :class="{active:page==='nport'}" @click="page='nport'"><svg class="nav-icon"><use href="#i-server"/></svg><span>MOXA NPort</span></div>
             </div><!-- /sidebar-menu-area -->
 
             <!-- sidebar 底部 status (動態 health 切換 online / fault) -->
@@ -6350,6 +6351,177 @@
                 </div>
 
                 <!-- MQTT 管理 -->
+                <div v-if="page==='nport'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use :href="'#'+currentPageIcon"/></svg></div>
+                                <h1 class="ds-section-title">MOXA <b>NPort</b></h1>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>狀態 <b>{{ npResult ? (npResult.reachable?'已找到':'無回應') : '尚未搜尋' }}</b></span>
+                                <span v-if="npResult && npResult.mac">MAC <b>{{ npResult.mac }}</b></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 搜尋 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-search"/></svg>搜尋設備</span>
+                            <el-tag size="small" type="info">號誌控制器 RS-232 經 NPort 上傳交控中心</el-tag>
+                        </div>
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">
+                                NPort 通常掛在分析器的另一個網段,你的瀏覽器(尤其遠端)到不了。
+                                這裡的探測與網頁轉入都由後端代理,所以在哪裡都能用。
+                            </div>
+                            <el-form inline label-width="72px" style="margin-top:8px">
+                                <el-form-item label="IP">
+                                    <el-input v-model="npForm.host" size="small" style="width:150px" placeholder="192.168.1.42"></el-input>
+                                </el-form-item>
+                                <el-form-item label="資料埠">
+                                    <el-input-number v-model="npForm.port" :min="1" :max="65535" size="small" controls-position="right" style="width:120px"></el-input-number>
+                                </el-form-item>
+                                <el-form-item label="網頁埠">
+                                    <el-input-number v-model="npForm.web_port" :min="1" :max="65535" size="small" controls-position="right" style="width:110px"></el-input-number>
+                                </el-form-item>
+                                <el-form-item>
+                                    <el-button type="primary" size="small" :loading="npProbing" @click="npProbe">搜尋</el-button>
+                                    <el-button size="small" :loading="npDiscovering" @click="npDiscover">廣播搜尋</el-button>
+                                </el-form-item>
+                            </el-form>
+                            <div class="analysis-setting-tip" style="margin-bottom:8px">
+                                🛑 IP 設錯的設備只有「廣播搜尋」找得到。廣播走 L2 不需要路由;
+                                若設備的 IP／遮罩／閘道設在別的子網,它收到 ping 之後會把回覆送去
+                                那個不存在的閘道,單播就永遠回不來 —— 看起來像設備死了,其實是活的。
+                            </div>
+                            <div v-if="npDiscovered" style="margin-bottom:12px">
+                                <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
+                                    <el-tag size="small" :type="npDiscovered.count?'success':'info'">廣播找到 {{ npDiscovered.count }} 台</el-tag>
+                                    <el-tag size="small" type="danger" v-for="(e,ei) in (npDiscovered.errors||[])" :key="'e'+ei">{{ e }}</el-tag>
+                                </div>
+                                <el-alert v-if="npDiscovered.hint" type="warning" :closable="false" show-icon
+                                          :title="npDiscovered.hint" style="margin-bottom:8px"></el-alert>
+                                <el-table :data="npDiscovered.devices || []" size="small" style="width:100%">
+                                    <el-table-column prop="mac" label="MAC" width="150"></el-table-column>
+                                    <el-table-column label="設備回報 IP" width="130">
+                                        <template #default="sc">
+                                            <b>{{ sc.row.ip || '-' }}</b>
+                                        </template>
+                                    </el-table-column>
+                                    <el-table-column prop="from" label="封包來源" width="130"></el-table-column>
+                                    <el-table-column label="廠牌" width="90">
+                                        <template #default="sc">
+                                            <el-tag size="small" :type="sc.row.is_moxa?'success':'info'">{{ sc.row.is_moxa?'Moxa':'其他' }}</el-tag>
+                                        </template>
+                                    </el-table-column>
+                                    <el-table-column label="" width="100">
+                                        <template #default="sc">
+                                            <el-button size="small" @click="npForm.host=sc.row.ip; npProbe()">帶入探測</el-button>
+                                        </template>
+                                    </el-table-column>
+                                    <el-table-column prop="raw" label="RAW"></el-table-column>
+                                </el-table>
+                            </div>
+
+                            <div v-if="npResult" style="margin-top:4px">
+                                <el-alert v-if="!npResult.reachable" type="warning" :closable="false" show-icon
+                                          title="設備沒有回應" :description="npResult.hint"></el-alert>
+                                <div v-else style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+                                    <el-tag size="small" :type="npResult.is_moxa?'success':'info'">
+                                        {{ npResult.is_moxa ? 'Moxa 設備' : '廠牌未確認' }}
+                                    </el-tag>
+                                    <el-tag size="small" :type="npResult.data_port_open?'success':'danger'">資料埠 {{ npResult.data_port }} {{ npResult.data_port_open?'開':'關' }}</el-tag>
+                                    <el-tag size="small" :type="npResult.cmd_port_open?'success':'info'">命令埠 {{ npResult.cmd_port_open?'開':'關' }}</el-tag>
+                                    <el-tag size="small" :type="npResult.web.status===200?'success':'info'">網頁 HTTP {{ npResult.web.status }}</el-tag>
+                                    <el-tag size="small" type="info" v-if="npResult.mac">MAC {{ npResult.mac }}</el-tag>
+                                    <el-tag size="small" type="info">序列埠 {{ npResult.serial_ports.length ? npResult.serial_ports.join('/') : '僅偵測到指定埠' }}</el-tag>
+                                    <el-tag size="small" type="info">耗時 {{ npResult.elapsed_ms }} ms</el-tag>
+                                </div>
+                                <div v-if="npResult.hint && npResult.reachable" style="font-size:12px;color:#64748b">{{ npResult.hint }}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 登入並轉入網頁介面 -->
+                    <div class="card" v-if="npResult && npResult.reachable">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-lock"/></svg>登入並轉入管理介面</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <el-button size="small" @click="npOpenFrame(false)">直接轉入</el-button>
+                                <el-button size="small" type="primary" :loading="npLogging" @click="npOpenFrame(true)">送出帳密並轉入</el-button>
+                                <el-button size="small" v-if="npFrameUrl" @click="npFrameUrl=''">關閉</el-button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <el-form inline label-width="72px">
+                                <el-form-item label="帳號">
+                                    <el-input v-model="npForm.username" size="small" style="width:140px" autocomplete="off"></el-input>
+                                </el-form-item>
+                                <el-form-item label="密碼">
+                                    <el-input v-model="npForm.password" type="password" show-password size="small" style="width:150px" autocomplete="off"></el-input>
+                                </el-form-item>
+                                <el-form-item label="登入路徑">
+                                    <el-input v-model="npForm.login_path" size="small" style="width:180px" placeholder="moxa/Login.htm"></el-input>
+                                </el-form-item>
+                            </el-form>
+                            <div class="analysis-setting-tip">
+                                各機種與韌體的登入路徑/欄位名稱不同,自動送出不保證成功。
+                                若送出後仍停在登入頁,直接在下方框內手動登入即可 —— 代理會帶著同一個 session。
+                                帳密只即時轉送給設備,後端不儲存。
+                            </div>
+                            <div v-if="npLoginMsg" style="margin-top:8px">
+                                <el-alert :type="npLoginOk?'success':'warning'" :closable="false" show-icon :title="npLoginMsg"></el-alert>
+                            </div>
+                            <div v-if="npFrameUrl" style="margin-top:12px;border:1px solid var(--gov-border);border-radius:8px;overflow:hidden">
+                                <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f1f5f9;font-size:12px;color:#475569">
+                                    <span>{{ npForm.host }}:{{ npForm.web_port }}</span>
+                                    <span style="flex:1;word-break:break-all;font-family:ui-monospace,monospace">{{ npFrameUrl }}</span>
+                                    <el-button size="small" @click="npReloadFrame">重新載入</el-button>
+                                </div>
+                                <iframe :src="npFrameUrl" style="width:100%;height:620px;border:0;background:#fff"></iframe>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 唯讀擷取資料埠 -->
+                    <div class="card" v-if="npResult && npResult.data_port_open">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-activity"/></svg>資料埠唯讀擷取</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <el-input-number v-model="npForm.seconds" :min="1" :max="30" size="small" controls-position="right" style="width:110px"></el-input-number>
+                                <el-button size="small" type="primary" :loading="npTapping" @click="npTap">開始擷取</el-button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">
+                                只接收、不送出任何位元組。都市交通控制通訊協定的號誌控制器是主動週期上傳,
+                                不需要輪詢也不該對它發送東西。訊框依 AA BB … AA CC 切開並驗算 CKS(逐 byte XOR)。
+                            </div>
+                            <div v-if="npTapResult" style="margin-top:8px">
+                                <div style="display:flex;gap:8px;margin-bottom:8px">
+                                    <el-tag size="small" :type="npTapResult.ok?'success':'danger'">{{ npTapResult.ok?'擷取完成':'連線失敗' }}</el-tag>
+                                    <el-tag size="small" type="info" v-if="npTapResult.ok">{{ npTapResult.seconds }} 秒 / {{ npTapResult.count }} 個訊框</el-tag>
+                                    <el-tag size="small" type="danger" v-if="npTapResult.error">{{ npTapResult.error }}</el-tag>
+                                </div>
+                                <el-table :data="npTapResult.frames || []" size="small" max-height="300" style="width:100%">
+                                    <el-table-column prop="t" label="秒" width="70"></el-table-column>
+                                    <el-table-column label="CKS" width="70">
+                                        <template #default="sc">
+                                            <el-tag size="small" :type="sc.row.cks_ok?'success':'danger'">{{ sc.row.cks_ok?'OK':'錯' }}</el-tag>
+                                        </template>
+                                    </el-table-column>
+                                    <el-table-column prop="hex" label="RAW HEX"></el-table-column>
+                                </el-table>
+                                <p v-if="npTapResult.ok && !npTapResult.count" style="font-size:12px;color:#64748b;margin-top:8px">
+                                    連線成功但沒有資料 —— 對方可能是被動應答模式(要有人先發輪詢),或該埠未接設備。
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div v-if="page==='mqtt'">
                     <div class="ds-page-hero">
                         <div class="ds-page-hero-row">
@@ -10626,6 +10798,7 @@ const app=createApp({
             frigate:             'i-server',
             lpr:                 'i-scan',
             hwmonitor:           'i-activity',
+            nport:               'i-server',
         }[page.value] || 'i-dot'));
         const cameraPageHero=computed(()=>({
             cameras:               {num:'04 / CAMERA OPERATIONS',  sub:'攝影機新增 / 編輯、RTSP 來源、ROI 區域與偵測啟停管理'},
@@ -18769,6 +18942,86 @@ const app=createApp({
             });
         };
         
+        // ── MOXA NPort 管理面板 ──────────────────────────────────────────
+        // NPort 掛在分析器的另一個網段(87 的 enP5p4s0 / 192.168.1.x),使用者遠端
+        // 經 Tailscale 進來時瀏覽器到不了,所以探測與網頁轉入都由後端代理。
+        const npForm=reactive({
+            host:'192.168.1.42', port:4001, web_port:80,
+            username:'', password:'', login_path:'moxa/Login.htm', seconds:10
+        });
+        const npResult=ref(null);
+        const npProbing=ref(false);
+        const npFrameUrl=ref('');
+        const npLogging=ref(false);
+        const npLoginMsg=ref('');
+        const npLoginOk=ref(false);
+        const npTapping=ref(false);
+        const npTapResult=ref(null);
+        const npProbe=async()=>{
+            npProbing.value=true; npResult.value=null; npFrameUrl.value=''; npTapResult.value=null;
+            try{
+                const r=await fetch('/api/nport/probe',{method:'POST',credentials:'include',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({host:npForm.host,port:npForm.port,web_port:npForm.web_port})});
+                if(!r.ok)throw new Error('HTTP '+r.status);
+                npResult.value=await r.json();
+                if(!npResult.value.reachable)ElementPlus.ElMessage.warning('設備沒有回應');
+                else ElementPlus.ElMessage.success('找到設備');
+            }catch(e){ ElementPlus.ElMessage.error('探測失敗: '+e.message); }
+            finally{ npProbing.value=false; }
+        };
+        const npDiscovering=ref(false);
+        const npDiscovered=ref(null);
+        const npDiscover=async()=>{
+            npDiscovering.value=true; npDiscovered.value=null;
+            try{
+                const r=await fetch('/api/nport/discover',{method:'POST',credentials:'include',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({broadcast:'255.255.255.255',seconds:3})});
+                if(!r.ok)throw new Error('HTTP '+r.status);
+                npDiscovered.value=await r.json();
+                const n=npDiscovered.value.count||0;
+                if(n)ElementPlus.ElMessage.success(`廣播找到 ${n} 台`);
+                else ElementPlus.ElMessage.warning('廣播沒有回應 —— 設備可能不在本廣播域或已斷電');
+            }catch(e){ ElementPlus.ElMessage.error('廣播搜尋失敗: '+e.message); }
+            finally{ npDiscovering.value=false; }
+        };
+        const npProxyBase=()=>`/api/nport/web/${encodeURIComponent(npForm.host)}/${npForm.web_port}`;
+        const npOpenFrame=async(withLogin)=>{
+            npLoginMsg.value='';
+            if(withLogin){
+                npLogging.value=true;
+                try{
+                    // 帳密直接 POST 給設備的登入路徑,只轉送不儲存
+                    const path=String(npForm.login_path||'').replace(/^\/+/,'');
+                    const body=new URLSearchParams({Username:npForm.username,Password:npForm.password,
+                        username:npForm.username,password:npForm.password}).toString();
+                    const r=await fetch(`${npProxyBase()}/${path}`,{method:'POST',credentials:'include',
+                        headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
+                    npLoginOk.value=r.ok;
+                    npLoginMsg.value=r.ok
+                        ? `已送出帳密(HTTP ${r.status})。若下方仍停在登入頁,請直接在框內登入。`
+                        : `送出失敗 HTTP ${r.status} —— 請直接在框內手動登入。`;
+                }catch(e){
+                    npLoginOk.value=false;
+                    npLoginMsg.value='送出失敗: '+e.message+' —— 請直接在框內手動登入。';
+                }finally{ npLogging.value=false; }
+            }
+            npFrameUrl.value=`${npProxyBase()}/?t=${Date.now()}`;
+        };
+        const npReloadFrame=()=>{ npFrameUrl.value=`${npProxyBase()}/?t=${Date.now()}`; };
+        const npTap=async()=>{
+            npTapping.value=true; npTapResult.value=null;
+            try{
+                const r=await fetch('/api/nport/tap',{method:'POST',credentials:'include',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({host:npForm.host,port:npForm.port,seconds:npForm.seconds})});
+                if(!r.ok)throw new Error('HTTP '+r.status);
+                npTapResult.value=await r.json();
+            }catch(e){ ElementPlus.ElMessage.error('擷取失敗: '+e.message); }
+            finally{ npTapping.value=false; }
+        };
+
         let statsTimer=null;
         const stopStatsAutoTimer=()=>{
             if(statsTimer){
@@ -19243,7 +19496,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
