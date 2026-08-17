@@ -2156,15 +2156,26 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         pts = zone.get("points", [])
         if len(pts) < 3:
             return None
-        poly = np.array(pts, dtype=np.int32).reshape(-1, 1, 2)
-        x0, y0, bw, bh = cv2.boundingRect(poly)
-        if bw <= 0 or bh <= 0:
-            return None
-        roi_mask = np.zeros((bh, bw), dtype=np.uint8)
-        cv2.fillPoly(roi_mask, [poly - np.array([[x0, y0]], dtype=np.int32)], 255)
-        roi_area = int(cv2.countNonZero(roi_mask))
-        if roi_area <= 0:
-            return None
+        # 🛑 ROI 遮罩只跟多邊形有關,每一幀重建是純浪費。
+        #    zone 有 5 個、ROI 外接矩形接近 1900x900(約 170 萬像素)時,
+        #    每幀要做 5 次 fillPoly + countNonZero —— 實測 87 分析率因此腰斬
+        #    (5.17 -> 2.2 frame/s)。快取在 zone dict 自己身上,points 變了就重建。
+        _sig = (id(pts), len(pts), str(pts[0]), str(pts[-1]))
+        _cached = zone.get("_occ_mask_cache")
+        if _cached is not None and _cached[0] == _sig:
+            _, x0, y0, roi_mask, roi_area = _cached
+        else:
+            poly = np.array(pts, dtype=np.int32).reshape(-1, 1, 2)
+            x0, y0, bw, bh = cv2.boundingRect(poly)
+            if bw <= 0 or bh <= 0:
+                return None
+            roi_mask = np.zeros((bh, bw), dtype=np.uint8)
+            cv2.fillPoly(roi_mask, [poly - np.array([[x0, y0]], dtype=np.int32)], 255)
+            roi_area = int(cv2.countNonZero(roi_mask))
+            if roi_area <= 0:
+                return None
+            zone["_occ_mask_cache"] = (_sig, x0, y0, roi_mask, roi_area)
+        bh, bw = roi_mask.shape[:2]
         veh_mask = np.zeros((bh, bw), dtype=np.uint8)
         drew = False
         for veh in vehicle_list:
