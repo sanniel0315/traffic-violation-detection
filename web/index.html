@@ -5070,7 +5070,7 @@
                                      全部小寫成 viewbox,而 SVG 屬性是大小寫敏感的,加了也是死的。
                                      這裡不需要 —— SVG 元素的尺寸就設成影片實際顯示的矩形,
                                      座標也已經換算成該矩形的像素,user unit 與 CSS px 本來就是 1:1。 -->
-                                <svg v-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='h264' && resolveCameraStreamMode(c)==='overlay'"
+                                <svg class="ovl-layer" v-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='h264' && resolveCameraStreamMode(c)==='overlay'"
                                      :style="overlaySvgStyle(c.id)">
                                     <polygon v-for="(z, zi) in overlayZonesFor(c.id)" :key="`z${c.id}-${zi}`"
                                              :points="ovlPoly(c.id, z.points)" fill="none"
@@ -5170,7 +5170,7 @@
                                 data-ovl-host="zoom"
                                 v-go2rtc="getGo2rtcWsUrl(monitorZoomCamera)"
                             ></div>
-                            <svg v-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera)==='h264' && resolveCameraStreamMode(monitorZoomCamera)==='overlay'"
+                            <svg class="ovl-layer" v-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera)==='h264' && resolveCameraStreamMode(monitorZoomCamera)==='overlay'"
                                  :style="overlaySvgStyle('zoom')">
                                 <polygon v-for="(z, zi) in overlayZonesFor(monitorZoomCamera.id)" :key="`zz${zi}`"
                                          :points="ovlPoly('zoom', z.points)" fill="none"
