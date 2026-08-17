@@ -22,6 +22,8 @@ from zoneinfo import ZoneInfo
 from api.models import init_db
 from api.routes import auth, frigate, lpr, lpr_stream, lpr_visual, violations, cameras, stream, traffic, nx
 from api.routes import go2rtc as go2rtc_route
+from api.routes import nport as nport_route
+from api.routes import signal_tc3 as signal_tc3_route
 from api.routes.auth import get_admin_user
 from api.routes import congestion
 from api.routes import logs, system
@@ -298,6 +300,13 @@ async def lifespan(app: FastAPI):
     logs.add_log("info", "系統日誌服務啟動", "system")
     os.makedirs("./output/violations", exist_ok=True)
     threading.Thread(target=_resume_services_in_background, daemon=True, name="resume-services").start()
+    # 號誌控制器抄錄器(TC3 3.0):只讀不寫,獨立執行緒,不影響推論。
+    # 來源掉線會自行退避重連;交控中心接上時(MiiNePort MaxConnect=1)會被拒絕,
+    # 退避到最多 30 秒讓中心優先。
+    try:
+        signal_tc3_route.start_recorder()
+    except Exception as _e:
+        print(f"⚠️ [signal-tc3] 啟動失敗: {_e}", flush=True)
     threading.Thread(target=_service_watchdog, daemon=True, name="service-watchdog").start()
     threading.Thread(target=_report_aggregation_worker, daemon=True, name="report-aggregation").start()
     # 啟動 MQTT bridge (讀 config，自動連 broker)
@@ -387,6 +396,8 @@ app.include_router(traffic.router)
 app.include_router(auth.router)
 app.include_router(frigate.router)
 app.include_router(go2rtc_route.router)
+app.include_router(nport_route.router)
+app.include_router(signal_tc3_route.router)
 app.include_router(nx.router)
 app.include_router(lpr.router)
 app.include_router(lpr_stream.router)
