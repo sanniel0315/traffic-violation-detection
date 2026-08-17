@@ -5062,8 +5062,29 @@
                                 <div
                                     v-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='h264'"
                                     class="go2rtc-host"
+                                    :data-ovl-host="c.id"
                                     v-go2rtc="getGo2rtcWsUrl(c)"
                                 ></div>
+                                <!-- 階段3:偵測框與 ROI 用 SVG 畫在影片上,不再由後端燒進畫面。
+                                     🛑 不要加 viewBox / preserveAspectRatio:in-DOM 模板會被 HTML parser
+                                     全部小寫成 viewbox,而 SVG 屬性是大小寫敏感的,加了也是死的。
+                                     這裡不需要 —— SVG 元素的尺寸就設成影片實際顯示的矩形,
+                                     座標也已經換算成該矩形的像素,user unit 與 CSS px 本來就是 1:1。 -->
+                                <svg v-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='h264' && resolveCameraStreamMode(c)==='overlay'"
+                                     :style="overlaySvgStyle(c.id)">
+                                    <polygon v-for="(z, zi) in overlayZonesFor(c.id)" :key="`z${c.id}-${zi}`"
+                                             :points="ovlPoly(c.id, z.points)" fill="none"
+                                             :stroke="z.color" stroke-width="2" vector-effect="non-scaling-stroke"></polygon>
+                                    <g v-for="(d, di) in overlayDetsFor(c.id)" :key="`d${c.id}-${di}`">
+                                        <rect :x="ovlBox(c.id,d).x" :y="ovlBox(c.id,d).y"
+                                              :width="ovlBox(c.id,d).w" :height="ovlBox(c.id,d).h"
+                                              fill="none" stroke="#00c800" stroke-width="2"
+                                              vector-effect="non-scaling-stroke"></rect>
+                                        <text :x="ovlBox(c.id,d).x" :y="ovlBox(c.id,d).y - 3"
+                                              fill="#00c800" font-size="12" font-weight="700"
+                                              paint-order="stroke" stroke="#000" stroke-width="3">{{ overlayDetLabel(d) }}</text>
+                                    </g>
+                                </svg>
                                 <video
                                     v-else-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='video'"
                                     :src="getMonitorMediaUrl(c)"
@@ -5146,8 +5167,24 @@
                             <div
                                 v-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera)==='h264'"
                                 class="go2rtc-host"
+                                data-ovl-host="zoom"
                                 v-go2rtc="getGo2rtcWsUrl(monitorZoomCamera)"
                             ></div>
+                            <svg v-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera)==='h264' && resolveCameraStreamMode(monitorZoomCamera)==='overlay'"
+                                 :style="overlaySvgStyle('zoom')">
+                                <polygon v-for="(z, zi) in overlayZonesFor(monitorZoomCamera.id)" :key="`zz${zi}`"
+                                         :points="ovlPoly('zoom', z.points)" fill="none"
+                                         :stroke="z.color" stroke-width="2" vector-effect="non-scaling-stroke"></polygon>
+                                <g v-for="(d, di) in overlayDetsFor(monitorZoomCamera.id)" :key="`zd${di}`">
+                                    <rect :x="ovlBox('zoom',d).x" :y="ovlBox('zoom',d).y"
+                                          :width="ovlBox('zoom',d).w" :height="ovlBox('zoom',d).h"
+                                          fill="none" stroke="#00c800" stroke-width="2"
+                                          vector-effect="non-scaling-stroke"></rect>
+                                    <text :x="ovlBox('zoom',d).x" :y="ovlBox('zoom',d).y - 4"
+                                          fill="#00c800" font-size="15" font-weight="700"
+                                          paint-order="stroke" stroke="#000" stroke-width="3">{{ overlayDetLabel(d) }}</text>
+                                </g>
+                            </svg>
                             <video
                                 v-else-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera)==='video'"
                                 :src="getMonitorMediaUrl(monitorZoomCamera, {highQuality:true})"
@@ -15299,6 +15336,76 @@ const app=createApp({
             const proto=location.protocol==='https:'?'wss:':'ws:';
             return `${proto}//${location.host}/api/go2rtc/api/ws?src=${encodeURIComponent(name)}`;
         };
+        // ── 階段3:H.264 影片 + 前端 SVG 疊加 ────────────────────────────
+        // 後端 /api/stream/overlay-data 回正規化 0~1 的偵測框與 ROI。
+        // 🛑 一定要正規化再乘上「影片實際顯示的矩形」。先前試過前端疊 SVG
+        //    會錯位,原因是基準不同:video 是 object-fit:contain 置中留黑邊,
+        //    SVG 卻撐滿整個容器 —— 同一個框會出現在兩個位置。
+        const overlayData=ref({});    // {camId: {zones, detections, ...}}
+        const overlayRects=ref({});   // {camId: {x,y,w,h}} 影片實際顯示的矩形
+        let overlayTimer=null;
+        const overlayHostFor=(cid)=>document.querySelector(`[data-ovl-host="${cid}"]`);
+        const measureOverlayRect=(cid)=>{
+            const host=overlayHostFor(cid);
+            const v=host&&host.querySelector('video');
+            if(!v||!v.videoWidth||!v.videoHeight)return null;
+            const cw=host.clientWidth, ch=host.clientHeight;
+            if(!cw||!ch)return null;
+            // object-fit:contain 的實際繪製區 = 等比縮到放得下,再置中
+            const sc=Math.min(cw/v.videoWidth, ch/v.videoHeight);
+            const dw=v.videoWidth*sc, dh=v.videoHeight*sc;
+            return {x:(cw-dw)/2, y:(ch-dh)/2, w:dw, h:dh};
+        };
+        const overlaySvgStyle=(cid)=>{
+            const r=overlayRects.value[cid];
+            if(!r)return {display:'none'};
+            return {position:'absolute', left:r.x+'px', top:r.y+'px',
+                    width:r.w+'px', height:r.h+'px', pointerEvents:'none', zIndex:2};
+        };
+        // 正規化座標 → 目前顯示尺寸的像素
+        const ovlPoly=(cid,pts)=>{
+            const r=overlayRects.value[cid];
+            if(!r||!pts)return '';
+            return pts.map(pt=>`${(pt[0]*r.w).toFixed(1)},${(pt[1]*r.h).toFixed(1)}`).join(' ');
+        };
+        const ovlBox=(cid,d)=>{
+            const r=overlayRects.value[cid];
+            if(!r)return {x:0,y:0,w:0,h:0};
+            return {x:d.x*r.w, y:d.y*r.h, w:d.w*r.w, h:d.h*r.h};
+        };
+        const overlayZonesFor=(cid)=>(overlayShowRoi.value?(overlayData.value[cid]?.zones||[]):[]);
+        const overlayDetsFor=(cid)=>(overlayData.value[cid]?.detections||[]);
+        const overlayDetLabel=(d)=>(d.speed_kmh?`${d.label} ${d.speed_kmh}`:d.label);
+        // 哪幾台正在用 h264 且要疊加 → 只有這些才需要拉資料
+        const overlayActiveIds=()=>cameras.value
+            .filter(c=>c?.enabled&&c?.showStream
+                     &&getMonitorMediaKind(c)==='h264'
+                     &&resolveCameraStreamMode(c)==='overlay')
+            .map(c=>Number(c.id)).filter(Boolean);
+        const tickOverlay=async()=>{
+            const ids=overlayActiveIds();
+            const rects={};
+            ids.forEach(id=>{ const r=measureOverlayRect(id); if(r)rects[id]=r; });
+            if(monitorZoomVisible.value&&monitorZoomCamera.value?.id){
+                const zr=measureOverlayRect('zoom'); if(zr)rects['zoom']=zr;
+            }
+            overlayRects.value=rects;
+            if(!ids.length)return;
+            try{
+                const r=await fetch(`/api/stream/overlay-data?ids=${ids.join(',')}`);
+                if(r.ok)overlayData.value=await r.json();
+            }catch(_){ /* 拉不到就沿用上一輪,不要把框清掉造成閃爍 */ }
+        };
+        const startOverlayPoll=()=>{
+            if(overlayTimer)return;
+            // 偵測管線本身約 6 fps,250ms 已經足夠跟上,又不會把 API 打爆
+            overlayTimer=setInterval(()=>{
+                if(!isPageVisible())return;
+                if(page.value!=='monitor'&&!monitorZoomVisible.value)return;
+                tickOverlay();
+            },250);
+        };
+        const stopOverlayPoll=()=>{ if(overlayTimer){clearInterval(overlayTimer);overlayTimer=null;} };
         const getMonitorMediaKind=(camera)=>{
             if(shouldUseDirectMonitorVideo(camera))return 'video';   // 上傳的 mp4 直接播檔案
             // 非疊加 + go2rtc 有這支 → H.264。疊加、快照降級、go2rtc 沒有的都維持 MJPEG。
@@ -15308,8 +15415,11 @@ const app=createApp({
             //    → watchdog 30 秒後標記快照 → 這裡回 'image' → 永遠回不到 h264
             //    (快照模式下拿不到 live frame,旗標也就永遠清不掉)。
             //    現場實測 87 開頁 30 秒後四台全部掉回快照(2026-08-17)。
-            if(resolveCameraStreamMode(camera)!=='overlay'
-               && hasGo2rtcStream(camera))return 'h264';
+            // 疊加模式也走 h264 —— 偵測框與 ROI 改由前端 SVG 畫在影片上
+            // (階段3)。之前疊加只能走 MJPEG,四台就把瀏覽器 6 條連線吃滿,
+            // 必然降級成快照;而 monitor_mode 預設就是 overlay,所以現場看到的
+            // 一直是快照。改成 h264+SVG 之後「疊加」與「即時」才能並存。
+            if(hasGo2rtcStream(camera))return 'h264';
             return 'image';
         };
         // 串流 URL 的 cache-busting tick。
@@ -15637,6 +15747,7 @@ const app=createApp({
         const RECYCLE_INTERVAL_MS=60*1000;
         const STALE_THRESHOLD_MS=45*1000;
         const ensureMonitorWatchdog=()=>{
+            startOverlayPoll();
             if(monitorWatchTimer)return;
             monitorWatchTimer=setInterval(()=>{
                 if(page.value!=='monitor' || !isPageVisible())return;
@@ -19103,7 +19214,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
