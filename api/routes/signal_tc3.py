@@ -34,6 +34,12 @@ router = APIRouter(prefix="/api/signal", tags=["signal"])
 SIGNAL_HOST = os.getenv("SIGNAL_TC3_HOST", "10.42.38.35")
 SIGNAL_PORT = int(os.getenv("SIGNAL_TC3_PORT", "1001") or 1001)
 SIGNAL_ENABLED = os.getenv("SIGNAL_TC3_ENABLED", "1") != "0"
+# 連上之後多久沒看到任何 TC3 訊框就判定「打到錯的機器」並主動斷線重試。
+# 🛑 為什麼需要:10.42.38.35 這個 IP 在現場兩個網段各有一台設備(號誌模組
+#    00:90:e8:89:11:42 與另一台只開 80 的機器)。ARP 被攪動時封包會打到錯的
+#    那台,TCP 連得上卻永遠沒有資料 —— 沒有這道檢查就會傻等到天亮。
+#    號誌是每 2 秒主動上傳,45 秒沒有任何訊框已經遠超正常間隔。
+SIGNAL_PEER_TIMEOUT = float(os.getenv("SIGNAL_TC3_PEER_TIMEOUT", "45") or 45)
 
 # 燈態方向(協定 P5-22 SignalMap bit map)
 DIRECTIONS = ["北", "東北", "東", "東南", "南", "西南", "西", "西北"]
@@ -61,6 +67,8 @@ _state: dict = {
     "cks_bad": 0,
     "reconnects": 0,
     "latest": None,          # 最近一筆解出來的燈態
+    "bad_peer": 0,           # 連上但不是 TC3 來源(打到別台機器)的次數
+    "peer_note": "",
 }
 _frames: deque = deque(maxlen=300)      # 最近訊框(raw + 解碼)
 _coverage: Counter = Counter()          # 每個 device+cmd 看過幾次
@@ -176,10 +184,21 @@ def _recorder_loop() -> None:
                 _state["last_error"] = ""
             backoff = 2.0
             buf = b""
+            connected_at = time.time()
+            got_tc3 = False
             while not shutdown_event.is_set():
                 try:
                     d = sock.recv(4096)
                 except socket.timeout:
+                    # 連上但一直沒有 TC3 訊框 → 對方不是號誌來源,主動換一次
+                    if not got_tc3 and (time.time() - connected_at) > SIGNAL_PEER_TIMEOUT:
+                        with _lock:
+                            _state["bad_peer"] += 1
+                            _state["peer_note"] = (
+                                f"連上 {SIGNAL_HOST}:{SIGNAL_PORT} 但 "
+                                f"{int(SIGNAL_PEER_TIMEOUT)} 秒內沒有任何 TC3 訊框 —— "
+                                "很可能打到同 IP 的另一台設備(檢查 ARP/路由)")
+                        raise ConnectionError("peer 不是 TC3 來源")
                     continue
                 if not d:
                     raise ConnectionError("對方關閉連線")
@@ -201,6 +220,7 @@ def _recorder_loop() -> None:
                     rec = decode_frame(frame)
                     if rec is None:
                         continue
+                    got_tc3 = True      # 切出合法碼框 = 對方確實是 TC3 來源
                     with _lock:
                         _state["frames_total"] += 1
                         _state["last_frame_at"] = rec["ts"]
@@ -213,6 +233,7 @@ def _recorder_loop() -> None:
                             continue
                         if rec.get("code"):
                             _coverage[rec["code"]] += 1
+                            _state["peer_note"] = ""
                         if rec.get("phase"):
                             _state["latest"] = rec
         except Exception as exc:
@@ -253,7 +274,8 @@ async def status(_user=Depends(get_current_user)):
     age = (now - s["last_frame_at"]) if s["last_frame_at"] else None
     return {
         **{k: s[k] for k in ("enabled", "host", "port", "connected",
-                             "frames_total", "cks_bad", "reconnects", "last_error")},
+                             "frames_total", "cks_bad", "reconnects", "last_error",
+                             "bad_peer", "peer_note")},
         "age_sec": round(age, 2) if age is not None else None,
         # 超過 30 秒沒新訊框就標 stale —— 來源掉了要看得出來,不要顯示假的舊狀態
         "stale": (age is None or age > 30.0),

@@ -1,0 +1,31 @@
+[Unit]
+# 讓 87 能連上號誌控制器裡的 MiiNePort(10.42.38.35)。
+#
+# 為什麼需要:那台模組的 IP 是 10.42.38.35 /20、閘道 10.42.32.254,但網線接在
+# 192.168.1.x 這段。它收到單播後要回覆時會查自己的路由表 → 送去 10.42.32.254
+# → 那個閘道不在這個廣播域 → 回不來。解法是在 enP5p4s0 上給一個「它認為同子網」
+# 的來源位址(10.42.38.200/32),它就會直接 ARP 回來,完全不經過閘道。
+#
+# 🛑 為什麼要「持續校正」而不是開機套用一次:
+#    10.42.38.35 這個 IP 在兩個網段各有一台設備 ——
+#      enP5p4s0(192.168.1 段) 00:90:e8:89:11:42  MiiNePort(號誌)
+#      enP5p5s0(相機段)       cc:82:7f:b7:92:7c  另一台(Go 程式,只開 80)
+#    ARP 表被攪動(例如對相機網段做 ping sweep、或手動 ip neigh del)之後,
+#    封包就會改走相機段打到錯的那台 —— 現象是 web 從 307→Login.htm 變成
+#    HTTP 404、1001/4900/23 全部 REFUSED。2026-08-18 實際踩過。
+#    所以改成常駐迴圈,每 30 秒確認 ARP 仍指向 MiiNePort 的 MAC,不對就修回來。
+#
+# 🛑 一律用 /32 與單一主機路由,不建立 10.42.32.0/20 的子網路由 ——
+#    相機網段走 enP5p5s0(10.42.40.21/20),絕不能被搶走。
+Description=MiiNePort (10.42.38.35) 單播繞道:/32 位址 + 主機路由 + 靜態 ARP(持續校正)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+ExecStart=/usr/local/sbin/miineport-route.sh
+
+[Install]
+WantedBy=multi-user.target
