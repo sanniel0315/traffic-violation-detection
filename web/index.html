@@ -3342,7 +3342,13 @@
             color: var(--gov-muted);
             text-transform: uppercase;
         }
-        .camera-preview { position: relative; background: #000; height: 240px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        /* 格子做成 16:9,跟影像原生比例一致 —— 這樣 object-fit:contain 剛好填滿,
+           不會出現左右黑邊(格子原本固定 240px 高,寬度隨版面變動,
+           1920 視窗下是 533x240 = 2.22:1,而影像是 16:9 → 左右各留 53px 黑邊,
+           現場回報「兩側有黑邊,正常要填滿」)。
+           🛑 不要改用 object-fit:cover:那會裁掉畫面邊緣(邊緣的車就看不到了),
+           而且 SVG 疊加層的座標換算是照 contain 算的,改 cover 框會整個偏掉。 */
+        .camera-preview { position: relative; background: #000; aspect-ratio: 16 / 9; height: auto; min-height: 160px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
         .camera-preview img,
         .camera-preview video { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; }
         /* go2rtc H.264 播放器外殼。<video-stream> 內部自己放一個 <video>,
@@ -15340,8 +15346,12 @@ const app=createApp({
         const go2rtcStreams=ref(new Set());
         // H.264 即時播放總開關(見 getMonitorMediaKind 的說明)。
         // 預設 '0' = 沿用原本的 MJPEG 行為。
+        // 預設開啟。先前暫時關掉是因為現場回報「一格分割成兩個」,後來查明那是
+        // 格子與影像比例不一致造成的左右黑邊(見 .camera-preview 的 aspect-ratio),
+        // 與 h264 無關;h264 自身那個重複節點的 bug 已在 8377816 修掉。
+        // 要退回 MJPEG:localStorage.setItem('tvd_h264_live','0') 後重整。
         const h264LiveEnabled=ref((()=>{
-            try{ return localStorage.getItem('tvd_h264_live')==='1'; }catch(_){ return false; }
+            try{ return localStorage.getItem('tvd_h264_live')!=='0'; }catch(_){ return true; }
         })());
         const loadGo2rtcStreams=async()=>{
             try{
