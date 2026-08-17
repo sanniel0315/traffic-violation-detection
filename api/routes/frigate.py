@@ -179,6 +179,21 @@ def _get_frigate(path: str, timeout: int = 5, params: Optional[Dict[str, Any]] =
     return None, None, last_error
 
 
+def _post_frigate(path: str, json_body: Optional[Dict[str, Any]] = None, timeout: int = 20):
+    """Try Frigate POST across candidate base URLs; return (response, url, error)。
+    只要有連上就回傳 response(status 交給呼叫者判斷),全部連線失敗才回 error。"""
+    last_error = None
+    p = path if path.startswith("/") else f"/{path}"
+    for base in _frigate_base_urls():
+        url = f"{base}{p}"
+        try:
+            r = requests.post(url, json=json_body, timeout=timeout)
+            return r, url, None
+        except Exception as e:
+            last_error = e
+    return None, None, last_error
+
+
 def _parse_time_to_epoch(raw: Optional[str]) -> Optional[float]:
     if raw is None:
         return None
@@ -1059,6 +1074,123 @@ async def get_nvr_recordings(
         raise
     except Exception as e:
         return {"items": [], "error": str(e)}
+
+
+@router.post("/recordings/export")
+def start_recording_export(
+    camera: str = Query(..., description="攝影機名稱"),
+    start: int = Query(..., description="起始 Unix 秒"),
+    end: int = Query(..., description="結束 Unix 秒"),
+    playback: str = Query("realtime", description="realtime 或 timelapse_25x"),
+):
+    """發起任意時間範圍的錄影匯出。
+
+    Frigate 會用 ffmpeg 把該範圍多段錄影**合併成單一 mp4**(clip.mp4 只認精確段界、
+    任意範圍會失敗,所以「拖範圍導出」必須走這條)。此端點非阻塞:立刻回傳,
+    前端再輪詢 GET /recordings/exports 等 in_progress=false 後下載。
+    """
+    if end <= start:
+        raise HTTPException(status_code=400, detail="end 必須晚於 start")
+    if end - start > 3600:
+        raise HTTPException(status_code=400, detail="單次匯出上限 1 小時")
+    body = {"playback": playback}
+    r, _url, err = _post_frigate(
+        f"/api/export/{camera}/start/{int(start)}/end/{int(end)}", json_body=body, timeout=20,
+    )
+    if r is None:
+        raise HTTPException(status_code=502, detail=f"連不到 Frigate:{err}")
+    if r.status_code not in (200, 202):
+        raise HTTPException(status_code=r.status_code, detail=f"匯出失敗:{r.text[:200]}")
+    try:
+        data = r.json()
+    except Exception:
+        data = {"raw": (r.text or "")[:200]}
+    # Frigate 版本差異:export_id / id 都試著撈出來給前端配對
+    export_id = None
+    if isinstance(data, dict):
+        export_id = data.get("export_id") or data.get("id")
+    return {"ok": True, "export_id": export_id, "result": data}
+
+
+@router.get("/recordings/exports")
+def list_recording_exports():
+    """列出所有匯出(含 in_progress 狀態),前端輪詢用;download_src 可直接餵給 /recordings/play。"""
+    r, _url, err = _get_frigate("/api/exports", timeout=10)
+    if r is None or r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"讀取匯出清單失敗:{err or (r.status_code if r else '')}")
+    try:
+        items = r.json() or []
+    except Exception:
+        items = []
+    out: List[Dict[str, Any]] = []
+    for it in (items if isinstance(items, list) else []):
+        if not isinstance(it, dict):
+            continue
+        vpath = it.get("video_path") or ""
+        fname = os.path.basename(vpath) if vpath else ""
+        out.append({
+            "id": it.get("id"),
+            "camera": it.get("camera"),
+            "name": it.get("name"),
+            "in_progress": bool(it.get("in_progress")),
+            "video_path": vpath,
+            # 直接指向專用下載端點(不走 /recordings/play,避免 localhost/::1 回 SPA)
+            "download_src": f"/api/frigate/recordings/export-file?name={quote(fname, safe='')}" if fname else "",
+        })
+    return {"items": out, "total": len(out)}
+
+
+@router.api_route("/recordings/export-file", methods=["GET", "HEAD"])
+def download_export_file(name: str, request: Request):
+    """下載已完成的匯出檔(從 Frigate /exports/<name> 取,支援 Range)。
+
+    為何不共用 /recordings/play:play 代理會停在第一個回 200 的 base,而
+    localhost(常解析成 IPv6 ::1)對 /exports 會回 Frigate 的 SPA HTML(200)。
+    這裡明確**跳過 text/html**,只接受真正的影片回應,才拿得到 mp4。
+    """
+    base_name = os.path.basename(str(name or "").strip())
+    if not base_name or ".." in base_name:
+        raise HTTPException(status_code=400, detail="不合法的檔名")
+    is_head = request.method == "HEAD"
+    upstream_headers = {}
+    rng = request.headers.get("range")
+    if rng:
+        upstream_headers["Range"] = rng
+    upstream = None
+    for base in _frigate_base_urls():
+        try:
+            r = requests.get(f"{base}/exports/{base_name}", timeout=20, stream=True, headers=upstream_headers)
+            ct = r.headers.get("content-type", "")
+            if r.status_code in (200, 206) and not ct.startswith("text/html"):
+                upstream = r
+                break
+            r.close()
+        except Exception:
+            pass
+    if upstream is None:
+        raise HTTPException(status_code=404, detail="找不到匯出檔")
+    headers = {"Cache-Control": "no-store", "Accept-Ranges": "bytes"}
+    for k in ("Content-Length", "Content-Range", "ETag", "Last-Modified"):
+        v = upstream.headers.get(k)
+        if v:
+            headers[k] = v
+    ct = upstream.headers.get("content-type", "video/mp4")
+    if is_head:
+        try:
+            upstream.close()
+        except Exception:
+            pass
+        return Response(status_code=upstream.status_code, headers=headers, media_type=ct)
+
+    def _iter():
+        try:
+            for chunk in upstream.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    return StreamingResponse(_iter(), media_type=ct, headers=headers, status_code=upstream.status_code)
 
 
 @router.api_route("/recordings/play", methods=["GET", "HEAD"])
