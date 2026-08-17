@@ -15237,8 +15237,13 @@ const app=createApp({
         const getMonitorMediaKind=(camera)=>{
             if(shouldUseDirectMonitorVideo(camera))return 'video';   // 上傳的 mp4 直接播檔案
             // 非疊加 + go2rtc 有這支 → H.264。疊加、快照降級、go2rtc 沒有的都維持 MJPEG。
-            if(!camera?.monitorSnapshotMode
-               && resolveCameraStreamMode(camera)!=='overlay'
+            // 🛑 這裡不可以看 monitorSnapshotMode。快照降級是為了「省 HTTP 長連線」
+            //    才存在的補丁,而 H.264 走 WebSocket 根本不佔那 6 條。看了它會變成
+            //    單向閂鎖:h264 的 v-go2rtc 容器沒有 load 事件 → lastFrameAt 不更新
+            //    → watchdog 30 秒後標記快照 → 這裡回 'image' → 永遠回不到 h264
+            //    (快照模式下拿不到 live frame,旗標也就永遠清不掉)。
+            //    現場實測 87 開頁 30 秒後四台全部掉回快照(2026-08-17)。
+            if(resolveCameraStreamMode(camera)!=='overlay'
                && hasGo2rtcStream(camera))return 'h264';
             return 'image';
         };
@@ -15405,7 +15410,15 @@ const app=createApp({
                 if(getMonitorMediaKind(c)==='video')return;   // mp4 直連檔案，不佔 API 的連線池
                 // H.264 走 WebSocket(Chrome 上限 255 條),不佔 HTTP/1.1 那 6 條,
                 // 不需要為了保連線給 API 而把它降級成快照。
-                if(getMonitorMediaKind(c)==='h264')return;
+                if(getMonitorMediaKind(c)==='h264'){
+                    // 把先前降級留下的旗標清掉,否則狀態列會一直顯示「快照」
+                    if(c.monitorSnapshotMode||c._budgetSnapshot){
+                        c.monitorSnapshotMode=false;
+                        c._budgetSnapshot=false;
+                        c.lastFrameAt=now;
+                    }
+                    return;
+                }
                 if(budget>0){
                     budget-=1;
                     // 只還原「被預算擠掉」的，不去動因錯誤/逾時降級的那些
@@ -15568,6 +15581,9 @@ const app=createApp({
                 cameras.value.forEach(c=>{
                     if(!c?.showStream)return;
                     if(getMonitorMediaKind(c)==='video')return;
+                    // h264 沒有 img/video 的 load 事件可以更新 lastFrameAt,
+                    // 拿「30 秒沒新畫面」判它等於必定誤殺。它也不佔連線,不需要降級。
+                    if(getMonitorMediaKind(c)==='h264')return;
                     if(!c.monitorSnapshotMode && now-Number(c.lastFrameAt||0)>30000){
                         c.monitorSnapshotMode=true;
                         c.thumbKey=now;
@@ -15592,6 +15608,7 @@ const app=createApp({
                     cameras.value.forEach(c=>{
                         if(!c?.enabled || c.monitorSnapshotMode)return;
                         if(getMonitorMediaKind(c)==='video')return;
+                        if(getMonitorMediaKind(c)==='h264')return;   // recycle 是 MJPEG 長連線專用
                         // 🛑 放大視窗那一台不要 recycle。它的網格串流是被 openMonitorZoom
                         //    刻意停掉的,這裡重掛會變成同一台開兩條 RTSP,放大畫面直接死掉;
                         //    而且 bump _zoomReloadTick 會連放大視窗的 <img> 一起換 src。
