@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 from datetime import datetime, timedelta
 
 from api.models import SessionLocal
@@ -61,18 +62,38 @@ def main() -> int:
     total: dict = {}
     cur = start
     n_chunks = 0
+    failed = []
     while cur < end:
         nxt = min(cur + timedelta(hours=chunk), end)
-        db = SessionLocal()
-        try:
-            res = run_incremental_report_aggregation(db, start_time=cur, end_time=nxt)
-        finally:
-            db.close()
-        _merge(total, res or {})
-        n_chunks += 1
-        print(f"  [{n_chunks}] {cur} ~ {nxt}  {res}", flush=True)
+        # 聚合會先 DELETE 該區間再重寫,和即時事件寫入搶同一把寫鎖。
+        # 實測 104 跑到第 8 塊就 "database is locked" 整個腳本掛掉,
+        # 前面的成果還在但後面全沒跑。退避重試,真的過不了就記下來跳過,
+        # 讓其餘區間照補完,最後一次列出來。
+        res = None
+        for attempt in range(5):
+            db = SessionLocal()
+            try:
+                res = run_incremental_report_aggregation(db, start_time=cur, end_time=nxt)
+                break
+            except Exception as exc:
+                if "locked" not in str(exc).lower() or attempt == 4:
+                    print(f"  [!] {cur} ~ {nxt} 失敗: {type(exc).__name__} {exc}", flush=True)
+                    failed.append((cur, nxt))
+                    break
+                time.sleep(2 * (attempt + 1))
+            finally:
+                db.close()
+        if res is not None:
+            _merge(total, res)
+            n_chunks += 1
+            print(f"  [{n_chunks}] {cur} ~ {nxt}  {res}", flush=True)
         cur = nxt
     print("aggregation_result", total, f"({n_chunks} chunks)")
+    if failed:
+        print(f"  ⚠️ {len(failed)} 塊未完成,可單獨重跑:", flush=True)
+        for a, b in failed:
+            print(f"     --start {a.isoformat()} --end {b.isoformat()}", flush=True)
+        return 1
     return 0
 
 
