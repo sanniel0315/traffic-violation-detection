@@ -9950,11 +9950,25 @@ const ensureGo2rtcPlayer=()=>{
 };
 const attachGo2rtc=(el,url)=>{
     if(!url){ el.innerHTML=''; return; }
+    // 🛑 這支是非同步的。mounted 與 updated 可能在 ensureGo2rtcPlayer() 還沒
+    //    resolve 之前接連被呼叫,兩個 callback 都查不到既有節點 → 各自 append
+    //    一個 <video-stream> → 同一格出現兩個影片疊著(現場回報「一個視窗有
+    //    兩個」)。用 el 上的旗標擋掉重入,url 只記最後一次,resolve 後套最新值。
+    el.__go2rtcUrl = url;
+    if (el.__go2rtcPending) return;
+    el.__go2rtcPending = true;
     ensureGo2rtcPlayer().then(()=>{
-        let node=el.querySelector('video-stream');
+        el.__go2rtcPending = false;
+        // 保險:若先前已經多生出來,只留第一個
+        const nodes = el.querySelectorAll('video-stream');
+        for (let i = 1; i < nodes.length; i++) nodes[i].remove();
+        let node = nodes[0];
         if(!node){ node=document.createElement('video-stream'); el.appendChild(node); }
-        node.src=url;   // 🛑 property,不是 attribute
-    }).catch(()=>{ el.innerHTML=''; });
+        if(node.__go2rtcSrc !== el.__go2rtcUrl){
+            node.__go2rtcSrc = el.__go2rtcUrl;
+            node.src = el.__go2rtcUrl;   // 🛑 property,不是 attribute
+        }
+    }).catch(()=>{ el.__go2rtcPending = false; el.innerHTML=''; });
 };
 // v-go2rtc:用指令掛載,而不是直接在模板寫 <video-stream>。
 // 🛑 原因:video-rtc.js 的 src 是 property setter 且沒有 observedAttributes,
