@@ -3350,6 +3350,10 @@
         .camera-preview .go2rtc-host,
         .monitor-zoom-stage .go2rtc-host { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
         .go2rtc-host video-stream { width: 100%; height: 100%; display: block; }
+        /* go2rtc 播放器自帶的狀態列(左上 status、右上 mode 會顯示 RTC/MSE)。
+           系統本身已經有「線上/離線」「偵測中」標籤,這條只是疊上去互相打架,
+           而且 RTC 這種字串對使用者沒有意義。整條藏掉。 */
+        .go2rtc-host video-stream .info { display: none !important; }
         .camera-preview .badge { position: absolute; top: 8px; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
         .camera-preview .status-badge { right: 8px; }
         .camera-preview .detection-badge { left: 8px; background: #0d6e9f; color: #fff; }
