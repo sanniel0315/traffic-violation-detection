@@ -5080,20 +5080,15 @@
                                      全部小寫成 viewbox,而 SVG 屬性是大小寫敏感的,加了也是死的。
                                      這裡不需要 —— SVG 元素的尺寸就設成影片實際顯示的矩形,
                                      座標也已經換算成該矩形的像素,user unit 與 CSS px 本來就是 1:1。 -->
-                                <svg class="ovl-layer" v-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='h264' && resolveCameraStreamMode(c)==='overlay'"
+                                <!-- 網格只畫 ROI(靜態,座標永遠正確),不畫偵測框。
+                                     框會動,而影片是即時 H.264、框是輪詢來的偵測結果,
+                                     兩條時間軸不同步 → 車在動框就追不上。要看框請放大,
+                                     放大走 MJPEG 用後端燒錄的框(與車同一時間點)。 -->
+                                <svg class="ovl-layer" v-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='h264'"
                                      :style="overlaySvgStyle(c.id)">
                                     <polygon v-for="(z, zi) in overlayZonesFor(c.id)" :key="`z${c.id}-${zi}`"
                                              :points="ovlPoly(c.id, z.points)" fill="none"
                                              :stroke="z.color" stroke-width="2" vector-effect="non-scaling-stroke"></polygon>
-                                    <g v-for="(d, di) in overlayDetsFor(c.id)" :key="`d${c.id}-${di}`">
-                                        <rect :x="ovlBox(c.id,d).x" :y="ovlBox(c.id,d).y"
-                                              :width="ovlBox(c.id,d).w" :height="ovlBox(c.id,d).h"
-                                              fill="none" stroke="#00c800" stroke-width="2"
-                                              vector-effect="non-scaling-stroke"></rect>
-                                        <text :x="ovlBox(c.id,d).x" :y="ovlBox(c.id,d).y - 3"
-                                              fill="#00c800" font-size="12" font-weight="700"
-                                              paint-order="stroke" stroke="#000" stroke-width="3">{{ overlayDetLabel(d) }}</text>
-                                    </g>
                                 </svg>
                                 <video
                                     v-else-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='video'"
@@ -5175,35 +5170,22 @@
                             <!-- 放大也走 H.264:原生就是 1080p,不必像 MJPEG 那樣
                                  分割格送小張、放大再換一條高解析度串流。 -->
                             <div
-                                v-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera)==='h264'"
+                                v-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera,{zoom:true})==='h264'"
                                 class="go2rtc-host"
                                 data-ovl-host="zoom"
                                 v-go2rtc="getGo2rtcWsUrl(monitorZoomCamera)"
                             ></div>
-                            <svg class="ovl-layer" v-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera)==='h264' && resolveCameraStreamMode(monitorZoomCamera)==='overlay'"
-                                 :style="overlaySvgStyle('zoom')">
-                                <polygon v-for="(z, zi) in overlayZonesFor(monitorZoomCamera.id)" :key="`zz${zi}`"
-                                         :points="ovlPoly('zoom', z.points)" fill="none"
-                                         :stroke="z.color" stroke-width="2" vector-effect="non-scaling-stroke"></polygon>
-                                <g v-for="(d, di) in overlayDetsFor(monitorZoomCamera.id)" :key="`zd${di}`">
-                                    <rect :x="ovlBox('zoom',d).x" :y="ovlBox('zoom',d).y"
-                                          :width="ovlBox('zoom',d).w" :height="ovlBox('zoom',d).h"
-                                          fill="none" stroke="#00c800" stroke-width="2"
-                                          vector-effect="non-scaling-stroke"></rect>
-                                    <text :x="ovlBox('zoom',d).x" :y="ovlBox('zoom',d).y - 4"
-                                          fill="#00c800" font-size="15" font-weight="700"
-                                          paint-order="stroke" stroke="#000" stroke-width="3">{{ overlayDetLabel(d) }}</text>
-                                </g>
-                            </svg>
+                            <!-- 放大視窗不再疊 SVG:疊加模式走 MJPEG,ROI 與偵測框都由後端燒進畫面,
+                                 框與車是同一時間點。非疊加模式本來就不需要框。 -->
                             <video
-                                v-else-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera)==='video'"
-                                :src="getMonitorMediaUrl(monitorZoomCamera, {highQuality:true})"
+                                v-else-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera,{zoom:true})==='video'"
+                                :src="getMonitorMediaUrl(monitorZoomCamera, {highQuality:true, zoom:true})"
                                 autoplay
                                 muted
                                 controls
                                 playsinline
                             ></video>
-                            <img v-else-if="monitorZoomCamera" :src="getMonitorMediaUrl(monitorZoomCamera, {highQuality:true})" @error="() => { if(monitorZoomCamera){ monitorZoomCamera._zoomReloadTick = Date.now(); } }">
+                            <img v-else-if="monitorZoomCamera" :src="getMonitorMediaUrl(monitorZoomCamera, {highQuality:true, zoom:true})" @error="() => { if(monitorZoomCamera){ monitorZoomCamera._zoomReloadTick = Date.now(); } }">
                             <!-- ROI 由後端燒進 overlay 串流,前端不再疊 SVG(基準不同會錯位,見網格區註解)。
                                  移掉 SVG 後,下面這個 v-else 才會正確接回上面的 <img v-else-if> ——
                                  原本它是接在 SVG 的 v-if 上,ROI 沒顯示時就會冒出「沒有可顯示的畫面」。 -->
@@ -15411,9 +15393,7 @@ const app=createApp({
         const overlayDetLabel=(d)=>(d.speed_kmh?`${d.label} ${d.speed_kmh}`:d.label);
         // 哪幾台正在用 h264 且要疊加 → 只有這些才需要拉資料
         const overlayActiveIds=()=>cameras.value
-            .filter(c=>c?.enabled&&c?.showStream
-                     &&getMonitorMediaKind(c)==='h264'
-                     &&resolveCameraStreamMode(c)==='overlay')
+            .filter(c=>c?.enabled&&c?.showStream&&getMonitorMediaKind(c)==='h264')
             .map(c=>Number(c.id)).filter(Boolean);
         const tickOverlay=async()=>{
             const ids=overlayActiveIds();
@@ -15439,8 +15419,18 @@ const app=createApp({
             },250);
         };
         const stopOverlayPoll=()=>{ if(overlayTimer){clearInterval(overlayTimer);overlayTimer=null;} };
-        const getMonitorMediaKind=(camera)=>{
+        // opts.zoom=true 代表放大視窗。
+        // 方案 C(2026-08-17,使用者選定):
+        //   網格 → 一律 H.264。每格只有 533x300,偵測框本來就小到看不清楚,
+        //          而 4 路 MJPEG 會把瀏覽器 6 條連線吃滿 → 頁面整個卡
+        //          (現場實測 87 的 :8000 有 6 條全來自同一台電腦)。
+        //   放大 → 疊加模式走 MJPEG,用後端燒錄的框(frame 與 bbox 綁成一組,
+        //          與車同一時間點),而且只佔 1 條連線。
+        // 網格上仍然畫 ROI —— ROI 是靜態的,不受雙時間源影響,座標永遠正確;
+        // 會動的偵測框才有時間差問題,所以網格不畫框。
+        const getMonitorMediaKind=(camera, opts={})=>{
             if(shouldUseDirectMonitorVideo(camera))return 'video';   // 上傳的 mp4 直接播檔案
+            if(opts.zoom && resolveCameraStreamMode(camera)==='overlay')return 'image';
             // 非疊加 + go2rtc 有這支 → H.264。疊加、快照降級、go2rtc 沒有的都維持 MJPEG。
             // 🛑 這裡不可以看 monitorSnapshotMode。快照降級是為了「省 HTTP 長連線」
             //    才存在的補丁,而 H.264 走 WebSocket 根本不佔那 6 條。看了它會變成
@@ -15463,9 +15453,7 @@ const app=createApp({
             //    在那之前準確度優先,疊加就走原本的後端燒錄。
             //    非疊加沒有框,沒有這個問題,繼續享受 h264 的好處(不佔 6 條連線、
             //    原生 1080p、traffic-api 零編碼成本)。
-            if(h264LiveEnabled.value
-               && resolveCameraStreamMode(camera)!=='overlay'
-               && hasGo2rtcStream(camera))return 'h264';
+            if(h264LiveEnabled.value && hasGo2rtcStream(camera))return 'h264';
             return 'image';
         };
         // 串流 URL 的 cache-busting tick。
@@ -15511,7 +15499,7 @@ const app=createApp({
             return `/api/stream/${camera.id}/${route}?t=${tick}${roiParam}${qParam}${lite}`;
         };
         const getMonitorMediaUrl=(camera, opts={})=>{
-            if(getMonitorMediaKind(camera)==='video'){
+            if(getMonitorMediaKind(camera, opts)==='video'){
                 // mp4 video src 也走同一套 tick 規則，讓關閉放大時可強制 reload
                 return getDirectCameraSourceUrl(camera, monitorStreamTick(camera));
             }
