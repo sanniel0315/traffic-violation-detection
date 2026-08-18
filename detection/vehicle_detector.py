@@ -13,6 +13,7 @@ from collections import deque as _deque_stats
 
 from model_paths import get_detect_model_pt
 from detection.gpu_lock import GPU_INFERENCE_LOCK
+from detection.leader_batch import LEADER as _LEADER
 
 
 # ── 鎖內細部計時 ────────────────────────────────────────────────────────
@@ -250,36 +251,14 @@ class VehicleDetector:
         #    2026-08-18 實測 87:飽和度 1.0、每台等鎖 160~200ms,而 GPU 只跑到
         #    34~85% —— 鎖住不需要鎖的純 CPU 工作,等於直接把分析率砍掉。
         #    機車誤判過濾只讀 python dict,搬到鎖外,結果一模一樣。
-        # ── 為什麼不做「多相機合批推論」(2026-08-18 實測後放棄) ──────────
-        # 離線量測批次確實划算:4 張分開跑 121.0ms、一次批次 68.1ms(1.78x),
-        # 因為 ultralytics 每次呼叫有固定開銷(predictor 設定/Results 物件/NMS)。
-        # 但實際接上去之後在 104 A/B(負載相當,飽和度 0.708 vs 0.696):
-        #     批次開啟  分析率 3.17 / 3.01   detection 佔通道 30%
-        #     批次關閉  分析率 5.66 / 4.49   detection 佔通道 39%
-        # 反而掉了約 35%。原因有兩個,都是架構性的:
-        #   ① 批次器把所有 VehicleDetector 呼叫收斂成「一條」執行緒,它跟 LPR
-        #      搶 GPU_INFERENCE_LOCK 時從 2 條對 1 條變成 1 條對 1 條,
-        #      detection 分到的通道直接變少。
-        #   ② 到達率低於處理量時佇列根本不會積,批次大小實測就是 1.0,
-        #      沒有任何合批來補償①。
-        # 要做對得改成 leader-follower(先拿到鎖的那條執行緒順手撈走其他待處理
-        # 的畫面),才能同時保留 N 個競爭者又拿到合批 —— 那是另一個題目。
-        with GPU_INFERENCE_LOCK:
-            # 🛑 計時起點一定要在拿到鎖「之後」。放在 with 之前會把等鎖時間算進
-            #    model,量出來的 model_ms 會比 hold_ms 還大(實測 54.4 > 38.1),
-            #    那是不可能的數字,也會讓人誤判瓶頸在模型而不是排隊。
-            _t0 = _time_stats.perf_counter()
-            results = self.model(
-                frame,
-                conf=self.conf_threshold,
-                verbose=False,
-                device=self.runtime_device,
-            )
-            # 先記 model 時間,_parse_result 內才會把同一次的兩段接起來
-            _record_model_time(_time_stats.perf_counter() - _t0)
-            detections: List[Dict[str, Any]] = []
-            for result in results:
-                detections = self._parse_result(result, frame)
+        # ── 合批推論:leader-follower(2026-08-18)────────────────────────
+        # 先做過「中央批次執行緒」版本,實測反而讓分析率掉約 35% —— 它把 N 條
+        # 偵測執行緒收斂成 1 條,跟 LPR 搶鎖時從 N 對 1 變成 1 對 1。
+        # 現在這版每個呼叫端仍然各自去搶 GPU_INFERENCE_LOCK(競爭者數量不變),
+        # 只是先拿到鎖的那條順手把其他已登記的畫面一起做掉。
+        # 完整的量測與失敗原因見 detection/leader_batch.py。
+        detections = _LEADER.run(self.model, self.conf_threshold,
+                                 self.runtime_device, frame, self._parse_result)
         return self._filter_motorcycle_artifacts(detections, frame.shape[:2])
 
     def _parse_result(self, result, frame: np.ndarray) -> List[Dict[str, Any]]:
