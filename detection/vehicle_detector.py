@@ -182,10 +182,16 @@ class VehicleDetector:
         Returns:
             偵測結果列表
         """
-        # 整個 inference + tensor→cpu 轉換 + truck_classifier 都序列化過 GPU lock
-        # 避免多 cam VehicleDetector instance 同時打 GPU 造成 CUDA stream race SEGV
+        # inference + tensor→cpu 轉換 + truck_classifier 序列化過 GPU lock,
+        # 避免多 cam VehicleDetector instance 同時打 GPU 造成 CUDA stream race SEGV。
+        #
+        # 🛑 鎖裡只放「碰得到 GPU」的東西。這把鎖是全 process 唯一的推論通道,
+        #    2026-08-18 實測 87:飽和度 1.0、每台等鎖 160~200ms,而 GPU 只跑到
+        #    34~85% —— 鎖住不需要鎖的純 CPU 工作,等於直接把分析率砍掉。
+        #    機車誤判過濾只讀 python dict,搬到鎖外,結果一模一樣。
         with GPU_INFERENCE_LOCK:
-            return self._detect_locked(frame)
+            detections = self._detect_locked(frame)
+        return self._filter_motorcycle_artifacts(detections, frame.shape[:2])
 
     def _detect_locked(self, frame: np.ndarray) -> List[Dict[str, Any]]:
         # 執行推論
@@ -199,15 +205,25 @@ class VehicleDetector:
         detections = []
         for result in results:
             boxes = result.boxes
-            for box in boxes:
-                class_id = int(box.cls[0])
+            if boxes is None or len(boxes) == 0:
+                continue
+            # 🛑 一次把整批搬回 CPU,不要每個框各搬一次。
+            #    原本 int(box.cls[0]) / box.xyxy[0].cpu() / float(box.conf[0])
+            #    是「每框三次」GPU→CPU 同步,10 台車就是 30 次,而且全在
+            #    GPU_INFERENCE_LOCK 裡面 —— 排隊的其他相機全都在等這個。
+            #    改成整批三次,取值與原本逐框完全相同。
+            _cls = boxes.cls.cpu().numpy()
+            _xyxy = boxes.xyxy.cpu().numpy()
+            _conf = boxes.conf.cpu().numpy()
+            for _i in range(len(_cls)):
+                class_id = int(_cls[_i])
 
                 # 只保留交通相關類別
                 if class_id not in self.vehicle_classes:
                     continue
 
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                confidence = float(box.conf[0])
+                x1, y1, x2, y2 = _xyxy[_i]
+                confidence = float(_conf[_i])
                 
                 det = {
                     'class_id': class_id,
@@ -241,14 +257,22 @@ class VehicleDetector:
 
                 detections.append(det)
 
-        # ── 機車類誤判防護 (只動 motorcycle,不影響其他車種計數) ──────────
-        # 國8(demo 影片)實測:車輛駛出畫面邊緣時,殘缺車尾+紅尾燈被誤判成機車,
-        # bbox 緊貼邊緣、信心 0.13~0.75。兩道防護:
-        #   ① 貼畫面邊緣(出畫殘影,分類不可靠) → 丟
-        #   ② 信心低於門檻 → 丟
-        # 門檻可用環境變數 MOTO_EDGE_MARGIN_PX / MOTO_MIN_CONF 調整。
-        # 台62 等有真機車的點位:完整在畫面內且信心足者仍保留。
-        ih, iw = frame.shape[:2]
+        return detections
+
+    def _filter_motorcycle_artifacts(self, detections: List[Dict[str, Any]],
+                                     shape: tuple) -> List[Dict[str, Any]]:
+        """機車類誤判防護 (只動 motorcycle,不影響其他車種計數)。
+
+        國8(demo 影片)實測:車輛駛出畫面邊緣時,殘缺車尾+紅尾燈被誤判成機車,
+        bbox 緊貼邊緣、信心 0.13~0.75。兩道防護:
+          ① 貼畫面邊緣(出畫殘影,分類不可靠) → 丟
+          ② 信心低於門檻 → 丟
+        門檻可用環境變數 MOTO_EDGE_MARGIN_PX / MOTO_MIN_CONF 調整。
+        台62 等有真機車的點位:完整在畫面內且信心足者仍保留。
+
+        純 python dict 運算,碰不到 GPU,所以在 GPU_INFERENCE_LOCK 外面跑。
+        """
+        ih, iw = shape[:2]
         _edge = int(os.getenv("MOTO_EDGE_MARGIN_PX", "6"))
         _moto_min_conf = float(os.getenv("MOTO_MIN_CONF", "0.30"))
         filtered = []
