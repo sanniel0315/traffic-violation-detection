@@ -2402,7 +2402,8 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             if camera_id in _ANNOTATED_STREAM_CAM_IDS:
                 try:
                     from detection.annotated_streamer import push_frame as _push_f
-                    _push_f(camera_id, frm)
+                    # 帶時間戳 —— 疊加串流靠它把框畫回「屬於它的那張畫面」
+                    _push_f(camera_id, frm, _latest["ts"])
                 except Exception:
                     pass
             # file source 限速到實時播放（~30 fps）。RTSP/HTTP 自然由 server 推送速度限速；
@@ -3555,7 +3556,8 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         if camera_id in _ANNOTATED_STREAM_CAM_IDS:
             try:
                 from detection.annotated_streamer import update_detections as _upd_det
-                _upd_det(camera_id, detections)
+                # cur_ts 是「這組偵測結果所算的那張畫面」的時間戳,配對用
+                _upd_det(camera_id, detections, cur_ts)
                 if frame_count % 80 == 1:
                     print(f"[annotated_dets] cam={camera_id} frame={frame_count} dets={len(detections or [])}", flush=True)
             except Exception as _e:
