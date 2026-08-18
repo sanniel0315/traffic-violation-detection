@@ -2001,8 +2001,13 @@ async def gpu_lock_stats_endpoint():
                    if k in v}
         for cid, v in detection_services.items() if v.get("running")
     }
+    try:
+        from detection.annotated_streamer import _streamers as _annot_streamers
+        _annot = {str(k): v.align_stats() for k, v in _annot_streamers.items()}
+    except Exception:
+        _annot = {}
     return {"gpu_lock": gpu_lock_stats(), "detect_timing": _timing,
-            "per_camera": per_cam}
+            "annotated": _annot, "per_camera": per_cam}
 
 
 @router.get("/debug/shared-frames")

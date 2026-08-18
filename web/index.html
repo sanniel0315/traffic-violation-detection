@@ -10333,6 +10333,17 @@ const attachGo2rtc=(el,url)=>{
         let node = nodes[0];
         if(!node){ node=document.createElement('video-stream'); el.appendChild(node); }
         if(node.__go2rtcSrc !== el.__go2rtcUrl){
+            // 🛑 換串流一定要重建元素,不能只改 src。
+            //    疊加與原始現在都是同一個 <video-stream>(只差 WS 網址),
+            //    切「原始畫面」時若沿用舊元素,go2rtc 播放器不會乾淨重連 ——
+            //    畫面還是上一條 cam_N_annotated,看起來就是「切了原始還有疊加」
+            //    (2026-08-18 現場回報)。以前疊加是 <img>、原始是 <video>,
+            //    切換等於換元素才沒踩到。
+            if(node.__go2rtcSrc){
+                node.remove();
+                node = document.createElement('video-stream');
+                el.appendChild(node);
+            }
             node.__go2rtcSrc = el.__go2rtcUrl;
             node.src = el.__go2rtcUrl;   // 🛑 property,不是 attribute
         }

@@ -65,7 +65,9 @@ STREAM_ENCODER = os.getenv("ANNOTATED_STREAM_ENCODER", "libx264") or "libx264"
 #   在 30fps 順暢畫面上非常明顯;MJPEG 只有 10fps 時比較看不出來)。
 #   把畫面壓在延遲線裡等偵測追上,再用時間戳配對,框就畫在「它自己那張」上。
 #   代價是畫面延遲這麼久 —— 監看用途可以接受,換來的是框準。
-STREAM_DELAY_SEC = float(os.getenv("ANNOTATED_STREAM_DELAY", "0.6") or 0.6)
+# 0 = 自動(依實測偵測延遲自己調,建議);>0 = 固定值
+STREAM_DELAY_SEC = float(os.getenv("ANNOTATED_STREAM_DELAY", "0") or 0)
+DELAY_MIN, DELAY_MAX = 0.25, 1.20
 
 
 def enabled_camera_ids() -> set:
@@ -124,7 +126,8 @@ class AnnotatedStreamer:
         # reader 只放「最新原始畫面的參照」,加工全部在 pacer 做 ——
         # 不可以在 reader thread 做 resize/畫框,那是偵測的取像路徑。
         # 延遲線:(ts, frame, sx, sy),依時間排序。長度剛好蓋住延遲 + 一點餘裕。
-        self._frames = deque(maxlen=max(4, int(self.fps * (STREAM_DELAY_SEC + 0.5)) + 2))
+        # 環形緩衝要蓋得住最大延遲 + 餘裕
+        self._frames = deque(maxlen=max(4, int(self.fps * (DELAY_MAX + 0.5)) + 2))
         self._frame_lock = threading.Lock()
         self._last_sent_ts = 0.0
 
@@ -142,6 +145,9 @@ class AnnotatedStreamer:
         self._supply_t0 = time.monotonic()
         self._supply_fps = 0.0
         self._warned_supply = False
+        # 對齊品質統計:偵測延遲(結果何時才追上那張畫面)與實際配對誤差
+        self._det_lat = deque(maxlen=120)     # update_detections 時 now - 該幀 ts
+        self._match_gap = deque(maxlen=300)   # 送出時 該幀 ts - 配到的偵測 ts
         self._stopped = False
         self._restart_count = 0
         self._max_restart = 200
@@ -216,8 +222,10 @@ class AnnotatedStreamer:
 
     def update_detections(self, detections: list, ts: float = 0.0):
         """worker 呼叫。ts 是「這組結果所屬那張畫面」的時間戳,配對用。"""
+        d_ts = float(ts) if ts else time.time()
+        self._det_lat.append(max(0.0, time.time() - d_ts))
         with self._dets_lock:
-            self._dets.append((float(ts) if ts else time.time(), list(detections or [])))
+            self._dets.append((d_ts, list(detections or [])))
         try:
             if detections:
                 self._dbg_n = getattr(self, '_dbg_n', 0) + 1
@@ -228,23 +236,70 @@ class AnnotatedStreamer:
             pass
 
     def _dets_for(self, ts: float) -> list:
-        """取「不晚於這張畫面」的最新一組偵測結果。
+        """取「時間上最接近這張畫面」的一組偵測結果。
 
-        配不到(偵測還沒追上)就回空 —— 寧可暫時沒有框,也不要畫上屬於別張畫面的框。
+        🛑 為什麼是最接近而不是「不晚於」:
+           偵測只有約 6.6 次/秒,而影像是 30 幀/秒 —— 兩次偵測之間的畫面只能沿用
+           鄰近那組。若只往回看,誤差是 0~150ms 且永遠落後(2026-08-18 實測
+           中位 70.5ms、p95 401.8ms);取最接近的話誤差變成 ±75ms 左右,
+           而且不再是單向落後。延遲線本來就壓著畫面等,所以「稍後那組」通常已經到了。
+        配不到任何一組(剛啟動)才回空 —— 寧可暫時沒有框,也不要亂畫。
         """
         with self._dets_lock:
             items = list(self._dets)
-        best = []
+        best, best_ts = [], None
+        best_d = None
         for d_ts, dets in items:
-            if d_ts <= ts + 0.02:      # 20ms 容差,同一張畫面的時間戳可能有微小差異
-                best = dets
-            else:
-                break
+            d = abs(d_ts - ts)
+            if best_d is None or d < best_d:
+                best, best_ts, best_d = dets, d_ts, d
+            elif d_ts > ts:
+                break      # 已經越走越遠(deque 依時間遞增),不必再看
+        # 配到的偵測跟這張畫面差多久 —— 這就是「框比車慢多少」
+        # 記絕對誤差:現在可能配到稍後那組,負號沒有意義
+        self._match_gap.append(abs(ts - best_ts) if best_ts is not None else -1.0)
         return best
+
+    def align_stats(self) -> dict:
+        lat = sorted(self._det_lat)
+        gap = sorted(g for g in self._match_gap if g >= 0)
+        miss = sum(1 for g in self._match_gap if g < 0)
+        def pct(a, q):
+            return round(a[min(len(a) - 1, int(len(a) * q))] * 1000, 1) if a else None
+        return {
+            "delay_sec": round(self._effective_delay(), 3),
+            "delay_mode": "fixed" if STREAM_DELAY_SEC > 0 else "auto",
+            "supply_fps": round(self._supply_fps, 1),
+            # 偵測結果要多久才追上那張畫面 → 延遲線至少要大於這個
+            "det_latency_ms_med": pct(lat, 0.5), "det_latency_ms_p95": pct(lat, 0.95),
+            # 實際送出時,框比畫面舊多少 → 這就是使用者看到的「框比車慢」
+            "match_gap_ms_med": pct(gap, 0.5), "match_gap_ms_p95": pct(gap, 0.95),
+            "unmatched": miss,
+        }
+
+    def _effective_delay(self) -> float:
+        """延遲線要壓多久。
+
+        🛑 這個值是「框準不準」與「畫面慢不慢」的唯一旋鈕,手動猜不準:
+           太短 → 稍後那組偵測還沒到,只能沿用舊的,尾端誤差變大
+                 (104 實測 0.45s:中位 28.7ms 但 p95 210.6ms)
+           太長 → 畫面白白變慢
+                 (0.6s:中位 44.8ms、p95 134.9ms)
+        所以改成依實測偵測延遲自己調:取 p95 再加 100ms 餘裕。
+        機器閒時自動變短(畫面更即時),忙時自動變長(框仍然準)。
+        ANNOTATED_STREAM_DELAY 設 >0 就改用固定值。
+        """
+        if STREAM_DELAY_SEC > 0:
+            return STREAM_DELAY_SEC
+        lat = sorted(self._det_lat)
+        if len(lat) < 20:
+            return 0.6                      # 樣本不足時先用保守值
+        p95 = lat[min(len(lat) - 1, int(len(lat) * 0.95))]
+        return min(DELAY_MAX, max(DELAY_MIN, p95 + 0.10))
 
     def _take_delayed(self):
         """從延遲線取一張「已經等夠久」的畫面。沒有就回 None(pacer 會重送上一張)。"""
-        target = time.time() - STREAM_DELAY_SEC
+        target = time.time() - self._effective_delay()
         with self._frame_lock:
             pick = None
             for item in self._frames:
