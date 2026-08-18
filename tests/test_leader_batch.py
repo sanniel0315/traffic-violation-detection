@@ -79,6 +79,31 @@ def main() -> int:
         fail.append(f'鎖只被取得 {acquired} 次 < 呼叫端 {N} 個 —— 競爭者被收斂了,'
                     f'會重演中央批次器的公平性損失')
 
+    # ⑤ 🛑 不同的 model 物件、相同的 model_key 必須能合成一批。
+    #    每台相機各自 new 一個 VehicleDetector,四台就是四個 model 物件 ——
+    #    2026-08-18 在 87 實測 batch_size 恆為 1.0,就是因為分組鍵用了
+    #    id(model)。這條沒有斷言的話,同樣的錯會再犯一次。
+    models = [_FakeModel(delay=0.04) for _ in range(4)]
+    got = {}
+
+    def worker_multi(i):
+        got[i] = LEADER.run(models[i], 0.15, 'cuda:0', f'm{i}', parse,
+                            model_key='/models/yolov8n.engine')
+
+    tm = [threading.Thread(target=worker_multi, args=(i,)) for i in range(4)]
+    for t in tm:
+        t.start()
+    for t in tm:
+        t.join(timeout=20)
+    calls = [c for m in models for c in m.calls]
+    biggest_multi = max(calls) if calls else 0
+    print(f"  4 個不同 model 物件、同一個 model_key:批次大小 {calls},最大 {biggest_multi}")
+    if biggest_multi < 2:
+        fail.append(f'不同 model 物件沒有合批(最大 {biggest_multi})—— 分組鍵又壞了')
+    for i in range(4):
+        if got.get(i) != [{'from': f'm{i}', 'result': f'rm{i}'}]:
+            fail.append(f'跨 model 合批結果錯亂:{i} -> {got.get(i)}')
+
     # ④ 例外傳回,且不影響其他人
     class _Boom:
         def __call__(self, *a, **k):

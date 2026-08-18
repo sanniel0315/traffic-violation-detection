@@ -60,14 +60,13 @@ def detect_timing_stats() -> dict:
     return {
         "samples": n,
         "window_sec": round(span, 1),
-        # model = ultralytics 那一呼叫(含 CPU letterbox + GPU forward + NMS)
-        "model_ms_avg": round(sum(i[1] for i in items) / n * 1000, 1),
+        # model 時間改由 leader_batch 統計(model_ms_per_image),因為合批之後
+        # 那一呼叫是整批共用的,記在單張這裡沒有意義。
         # parse = tensor→CPU 搬運 + 組 dict
         "parse_ms_avg": round(sum(i[2] for i in items) / n * 1000, 1),
         # truck = 大型車細分類(只有出現 truck/bus 才會跑)
         "truck_ms_avg": round(sum(i[3] for i in items) / n * 1000, 1),
         "boxes_avg": round(sum(i[4] for i in items) / n, 1),
-        "model_share": round(sum(i[1] for i in items) / max(1e-9, tot), 3),
         "parse_share": round(sum(i[2] for i in items) / max(1e-9, tot), 3),
         "truck_share": round(sum(i[3] for i in items) / max(1e-9, tot), 3),
     }
@@ -152,6 +151,12 @@ class VehicleDetector:
             print(f"⚡ 偵測到 TensorRT engine，切換到 {engine_path}")
             model_path = engine_path
         self.model = YOLO(model_path, task='detect')
+        # 合批分組鍵。🛑 不可以用 id(self.model):每台相機各自 new 一個
+        #    VehicleDetector,四台就是四個不同的物件 → 永遠湊不成批
+        #    (2026-08-18 在 87 實測 batch_size 恆為 1.0,就是踩這個)。
+        #    用「解析後的模型檔路徑」才是真正決定權重是否相同的東西;
+        #    路徑相同 = 權重相同 = 可以由任何一台的 model 一次跑完整批。
+        self.model_key = str(model_path)
         self.conf_threshold = conf_threshold
         self.device = os.getenv("DEVICE", "cuda:0")
         self.runtime_device = "cpu"
@@ -258,7 +263,8 @@ class VehicleDetector:
         # 只是先拿到鎖的那條順手把其他已登記的畫面一起做掉。
         # 完整的量測與失敗原因見 detection/leader_batch.py。
         detections = _LEADER.run(self.model, self.conf_threshold,
-                                 self.runtime_device, frame, self._parse_result)
+                                 self.runtime_device, frame, self._parse_result,
+                                 model_key=getattr(self, "model_key", None))
         return self._filter_motorcycle_artifacts(detections, frame.shape[:2])
 
     def _parse_result(self, result, frame: np.ndarray) -> List[Dict[str, Any]]:
