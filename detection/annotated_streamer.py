@@ -200,15 +200,13 @@ class AnnotatedStreamer:
         except Exception:
             pass
 
-    def _encode_frame(self, frame: np.ndarray) -> Optional[bytes]:
-        """resize + 畫框 + 轉 bytes。只在 pacer thread 呼叫。"""
+    def _encode_frame(self, item) -> Optional[bytes]:
+        """畫框 + 轉 bytes。只在 pacer thread 呼叫。
+
+        收到的畫面已經在 push_frame 裡脫離過 cap.read() 的緩衝(見那裡的說明)。
+        """
         try:
-            h, w = frame.shape[:2]
-            sx = self.width / w if w else 1.0
-            sy = self.height / h if h else 1.0
-            if w != self.width or h != self.height:
-                frame = cv2.resize(frame, (self.width, self.height))
-                sx = sy = 1.0 if (w == self.width and h == self.height) else sx
+            frame, sx, sy = item
             with self._dets_lock:
                 dets = self._latest_dets
             annotated = _draw_overlay(frame, dets, sx, sy)
@@ -219,12 +217,33 @@ class AnnotatedStreamer:
             return None
 
     def push_frame(self, frame: np.ndarray):
-        """reader thread 呼叫。🛑 只存參照,不做任何加工 —— 這是偵測的取像路徑,
-        在這裡 resize/畫框會直接拖慢分析率。"""
+        """reader thread 呼叫。
+
+        🛑 這裡「一定」要複製或 resize,不可以只存參照。
+           傳進來的 ndarray 是 cv2.VideoCapture.read() 的輸出,那塊記憶體會被
+           解碼器回收重用;pacer 最多 40ms 後才碰它,就是跨執行緒 use-after-free。
+           2026-08-18 實測:改成只存參照後 104 出現兩次
+               Fatal Python error: Segmentation fault
+               reader 停在 stream.py cap.read()、pacer 停在用那個 ndarray
+           resize 本身就會配置新陣列,所以尺寸不同時不必再多複製一次;
+           尺寸剛好相同時才走 copy()。
+           繪製與 tobytes(較貴的部分)仍留在 pacer,不佔偵測的取像路徑。
+        """
         if self._stopped or frame is None:
             return
+        try:
+            h, w = frame.shape[:2]
+            if w != self.width or h != self.height:
+                out = cv2.resize(frame, (self.width, self.height))
+                sx = self.width / w if w else 1.0
+                sy = self.height / h if h else 1.0
+            else:
+                out = frame.copy()
+                sx = sy = 1.0
+        except Exception:
+            return
         with self._frame_lock:
-            self._latest_raw = frame
+            self._latest_raw = (out, sx, sy)
 
     def push(self, frame: np.ndarray):
         self.push_frame(frame)
