@@ -7,8 +7,69 @@ from ultralytics import YOLO
 from typing import List, Dict, Any, Optional
 import numpy as np
 import os
+import threading as _th_stats
+import time as _time_stats
+from collections import deque as _deque_stats
+
 from model_paths import get_detect_model_pt
 from detection.gpu_lock import GPU_INFERENCE_LOCK
+
+
+# ── 鎖內細部計時 ────────────────────────────────────────────────────────
+# GPU_INFERENCE_LOCK 的 hold 時間是全 process 分析率的分母,但「hold 37ms」
+# 不足以決定下一步:如果是模型 forward 就得換模型/降解析度,如果是 ultralytics
+# 的 CPU letterbox 或結果搬運,那是可以搬到鎖外的浪費。所以把鎖內再拆三段。
+_STAT_LOCK = _th_stats.Lock()
+_STAT_BUF = _deque_stats()          # (ts, model_sec, parse_sec, truck_sec, n_box)
+_STAT_WINDOW = 60.0
+
+
+# model 時間與 parse/truck 是分開量的(前者在 detect,後者在 _parse_result),
+# 要把同一次偵測的兩段接起來。
+# 🛑 必須是 thread-local:四台相機各有自己的 worker,共用一個 list 會張冠李戴
+#    —— 實測過,會出現 model_ms(49.6) 比 hold(40.2) 還大的不可能數字。
+_MODEL_LAST = _th_stats.local()
+
+
+def _record_model_time(model_s: float) -> None:
+    _MODEL_LAST.value = model_s
+
+
+def _record_detect_stats(parse_s: float, truck_s: float, n_box: int) -> None:
+    now = _time_stats.time()
+    with _STAT_LOCK:
+        _STAT_BUF.append((now, getattr(_MODEL_LAST, "value", 0.0),
+                          parse_s, truck_s, n_box))
+        cut = now - _STAT_WINDOW
+        while _STAT_BUF and _STAT_BUF[0][0] < cut:
+            _STAT_BUF.popleft()
+
+
+def detect_timing_stats() -> dict:
+    """鎖內時間的組成。給 /api/stream/gpu-lock-stats 用。"""
+    with _STAT_LOCK:
+        items = list(_STAT_BUF)
+    if len(items) < 2:
+        return {"samples": len(items)}
+    span = items[-1][0] - items[0][0]
+    n = len(items)
+    if span <= 0:
+        return {"samples": n}
+    tot = sum(i[1] + i[2] + i[3] for i in items)
+    return {
+        "samples": n,
+        "window_sec": round(span, 1),
+        # model = ultralytics 那一呼叫(含 CPU letterbox + GPU forward + NMS)
+        "model_ms_avg": round(sum(i[1] for i in items) / n * 1000, 1),
+        # parse = tensor→CPU 搬運 + 組 dict
+        "parse_ms_avg": round(sum(i[2] for i in items) / n * 1000, 1),
+        # truck = 大型車細分類(只有出現 truck/bus 才會跑)
+        "truck_ms_avg": round(sum(i[3] for i in items) / n * 1000, 1),
+        "boxes_avg": round(sum(i[4] for i in items) / n, 1),
+        "model_share": round(sum(i[1] for i in items) / max(1e-9, tot), 3),
+        "parse_share": round(sum(i[2] for i in items) / max(1e-9, tot), 3),
+        "truck_share": round(sum(i[3] for i in items) / max(1e-9, tot), 3),
+    }
 
 
 class VehicleDetector:
@@ -189,29 +250,57 @@ class VehicleDetector:
         #    2026-08-18 實測 87:飽和度 1.0、每台等鎖 160~200ms,而 GPU 只跑到
         #    34~85% —— 鎖住不需要鎖的純 CPU 工作,等於直接把分析率砍掉。
         #    機車誤判過濾只讀 python dict,搬到鎖外,結果一模一樣。
+        # ── 為什麼不做「多相機合批推論」(2026-08-18 實測後放棄) ──────────
+        # 離線量測批次確實划算:4 張分開跑 121.0ms、一次批次 68.1ms(1.78x),
+        # 因為 ultralytics 每次呼叫有固定開銷(predictor 設定/Results 物件/NMS)。
+        # 但實際接上去之後在 104 A/B(負載相當,飽和度 0.708 vs 0.696):
+        #     批次開啟  分析率 3.17 / 3.01   detection 佔通道 30%
+        #     批次關閉  分析率 5.66 / 4.49   detection 佔通道 39%
+        # 反而掉了約 35%。原因有兩個,都是架構性的:
+        #   ① 批次器把所有 VehicleDetector 呼叫收斂成「一條」執行緒,它跟 LPR
+        #      搶 GPU_INFERENCE_LOCK 時從 2 條對 1 條變成 1 條對 1 條,
+        #      detection 分到的通道直接變少。
+        #   ② 到達率低於處理量時佇列根本不會積,批次大小實測就是 1.0,
+        #      沒有任何合批來補償①。
+        # 要做對得改成 leader-follower(先拿到鎖的那條執行緒順手撈走其他待處理
+        # 的畫面),才能同時保留 N 個競爭者又拿到合批 —— 那是另一個題目。
         with GPU_INFERENCE_LOCK:
-            detections = self._detect_locked(frame)
+            # 🛑 計時起點一定要在拿到鎖「之後」。放在 with 之前會把等鎖時間算進
+            #    model,量出來的 model_ms 會比 hold_ms 還大(實測 54.4 > 38.1),
+            #    那是不可能的數字,也會讓人誤判瓶頸在模型而不是排隊。
+            _t0 = _time_stats.perf_counter()
+            results = self.model(
+                frame,
+                conf=self.conf_threshold,
+                verbose=False,
+                device=self.runtime_device,
+            )
+            # 先記 model 時間,_parse_result 內才會把同一次的兩段接起來
+            _record_model_time(_time_stats.perf_counter() - _t0)
+            detections: List[Dict[str, Any]] = []
+            for result in results:
+                detections = self._parse_result(result, frame)
         return self._filter_motorcycle_artifacts(detections, frame.shape[:2])
 
-    def _detect_locked(self, frame: np.ndarray) -> List[Dict[str, Any]]:
-        # 執行推論
-        results = self.model(
-            frame,
-            conf=self.conf_threshold,
-            verbose=False,
-            device=self.runtime_device,
-        )
+    def _parse_result(self, result, frame: np.ndarray) -> List[Dict[str, Any]]:
+        """把單一張的推論結果轉成 detection dict。
+
+        由批次閘門在 GPU_INFERENCE_LOCK 內逐張呼叫 —— 這裡會讀 GPU tensor,
+        而且大型車細分類要再進 GPU,所以不能搬到鎖外。
+        """
+        _t_truck = 0.0
+        _n_box = 0
+        _t1 = _time_stats.perf_counter()
 
         detections = []
-        for result in results:
-            boxes = result.boxes
-            if boxes is None or len(boxes) == 0:
-                continue
+        boxes = result.boxes
+        if boxes is not None and len(boxes) > 0:
             # 🛑 一次把整批搬回 CPU,不要每個框各搬一次。
             #    原本 int(box.cls[0]) / box.xyxy[0].cpu() / float(box.conf[0])
             #    是「每框三次」GPU→CPU 同步,10 台車就是 30 次,而且全在
             #    GPU_INFERENCE_LOCK 裡面 —— 排隊的其他相機全都在等這個。
             #    改成整批三次,取值與原本逐框完全相同。
+            _n_box += len(boxes)
             _cls = boxes.cls.cpu().numpy()
             _xyxy = boxes.xyxy.cpu().numpy()
             _conf = boxes.conf.cpu().numpy()
@@ -243,11 +332,13 @@ class VehicleDetector:
                 if (self.truck_classifier
                         and det['class_name'] in self._RECLASSIFY_CLASSES):
                     _tc_lock = VehicleDetector._shared_truck_classifier_lock
+                    _tt0 = _time_stats.perf_counter()
                     if _tc_lock is not None:
                         with _tc_lock:
                             cls_result = self.truck_classifier.classify(frame, det['bbox'])
                     else:
                         cls_result = self.truck_classifier.classify(frame, det['bbox'])
+                    _t_truck += _time_stats.perf_counter() - _tt0
                     if cls_result['class_name'] == 'non_truck':
                         det['class_name'] = 'car'
                         det['truck_cls'] = cls_result
@@ -257,6 +348,8 @@ class VehicleDetector:
 
                 detections.append(det)
 
+        _t_parse = _time_stats.perf_counter() - _t1 - _t_truck
+        _record_detect_stats(_t_parse, _t_truck, _n_box)
         return detections
 
     def _filter_motorcycle_artifacts(self, detections: List[Dict[str, Any]],

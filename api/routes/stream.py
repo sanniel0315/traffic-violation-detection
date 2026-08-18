@@ -1990,13 +1990,19 @@ async def gpu_lock_stats_endpoint():
     wait 遠大於 hold = 需求超過通道容量;hold 本身就大 = 模型/前後處理慢。
     """
     from detection.gpu_lock import gpu_lock_stats
+    try:
+        from detection.vehicle_detector import detect_timing_stats
+        _timing = detect_timing_stats()
+    except Exception:
+        _timing = {}
     per_cam = {
         str(cid): {k: v.get(k) for k in
                    ("analysis_fps", "infer_ms", "lock_wait_ms", "stats_window_sec")
                    if k in v}
         for cid, v in detection_services.items() if v.get("running")
     }
-    return {"gpu_lock": gpu_lock_stats(), "per_camera": per_cam}
+    return {"gpu_lock": gpu_lock_stats(), "detect_timing": _timing,
+            "per_camera": per_cam}
 
 
 @router.get("/debug/shared-frames")
