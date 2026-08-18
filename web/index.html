@@ -3353,6 +3353,17 @@
         .camera-preview video { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; }
         /* go2rtc H.264 播放器外殼。<video-stream> 內部自己放一個 <video>,
            上面那條 .camera-preview video 會套到它,這裡只要讓外殼撐滿。 */
+        /* 號誌燈態:每個方向一張卡,燈色直接由協定的 SignalStatus 位元決定 */
+        .sig-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:12px; }
+        .sig-card { border:1px solid var(--gov-border); border-radius:10px; padding:12px; background:#fff; }
+        .sig-dir { font-size:15px; font-weight:700; color:var(--gov-text); margin-bottom:8px; }
+        .sig-lamp { width:16px; height:16px; border-radius:50%; display:inline-block; margin-right:6px; vertical-align:middle; border:1px solid rgba(0,0,0,.15); }
+        .sig-lamp.red { background:#e5342a; box-shadow:0 0 8px rgba(229,52,42,.6); }
+        .sig-lamp.amber { background:#f0a020; box-shadow:0 0 8px rgba(240,160,32,.6); }
+        .sig-lamp.green { background:#2fb344; box-shadow:0 0 8px rgba(47,179,68,.6); }
+        .sig-lamp.off { background:#cbd5e1; }
+        .sig-text { font-size:13px; color:#475569; }
+        .sig-hex { font-size:11px; color:#94a3b8; font-family:ui-monospace,monospace; margin-top:6px; }
         .camera-preview .go2rtc-host,
         .monitor-zoom-stage .go2rtc-host { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
         .go2rtc-host video-stream { width: 100%; height: 100%; display: block; }
@@ -4678,6 +4689,7 @@
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='io_panel'}" @click="page='io_panel'"><svg class="nav-icon"><use href="#i-zap"/></svg><span>{{ $t('nav_io') }}</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='lock'}" @click="page='lock'"><svg class="nav-icon"><use href="#i-lock"/></svg><span>{{ $t('nav_lock') }}</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='nport'}" @click="page='nport'"><svg class="nav-icon"><use href="#i-server"/></svg><span>MOXA NPort</span></div>
+            <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal'}" @click="page='signal';loadSignal();startSignalTimer()"><svg class="nav-icon"><use href="#i-zap"/></svg><span>號誌燈態</span></div>
             </div><!-- /sidebar-menu-area -->
 
             <!-- sidebar 底部 status (動態 health 切換 online / fault) -->
@@ -6351,6 +6363,108 @@
                 </div>
 
                 <!-- MQTT 管理 -->
+                <div v-if="page==='signal'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use :href="'#'+currentPageIcon"/></svg></div>
+                                <h1 class="ds-section-title">號誌<b>燈態</b></h1>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>來源 <b>{{ sigStatus.host }}:{{ sigStatus.port }}</b></span>
+                                <span>訊框 <b>{{ sigStatus.frames_total||0 }}</b></span>
+                                <span>CKS 錯 <b>{{ sigStatus.cks_bad||0 }}</b></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-zap"/></svg>即時燈態</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <el-tag size="small" :type="sigStatus.connected?'success':'danger'">{{ sigStatus.connected?'已連線':'未連線' }}</el-tag>
+                                <el-tag size="small" :type="sigStatus.stale?'warning':'success'">{{ sigStatus.stale?'資料過期':'即時' }}</el-tag>
+                                <el-switch v-model="sigAuto" size="small" @change="startSignalTimer"></el-switch>
+                                <el-button size="small" @click="loadSignal">重新載入</el-button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">
+                                都市交通控制通訊協定 3.0,號誌控制器主動回報(5F+03 時相資料)。
+                                只讀不寫 —— 這是運作中的號誌通道,不對它送出任何位元組。
+                            </div>
+                            <el-alert v-if="!sigStatus.enabled" type="info" :closable="false" show-icon
+                                      title="本機未啟用抄錄器" description="此主機沒有號誌來源(SIGNAL_TC3_ENABLED=0)。"></el-alert>
+                            <el-alert v-else-if="sigStatus.peer_note" type="warning" :closable="false" show-icon
+                                      title="來源可能不對" :description="sigStatus.peer_note"></el-alert>
+                            <el-alert v-else-if="!sigStatus.connected" type="warning" :closable="false" show-icon
+                                      title="尚未連上號誌來源" :description="sigStatus.last_error||'重連中'"></el-alert>
+
+                            <div v-if="sigPhase" style="margin-top:12px">
+                                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+                                    <el-tag size="small" type="primary">分相 {{ sigPhase.sub_phase_id }}</el-tag>
+                                    <el-tag size="small" type="warning">{{ sigPhase.step_desc }}</el-tag>
+                                    <el-tag size="small" type="info">{{ sigPhase.step_sec }} 秒</el-tag>
+                                    <el-tag size="small" type="info">岔路 {{ sigPhase.signal_count }}</el-tag>
+                                    <el-tag size="small" type="info">時相類型 {{ sigPhase.phase_order }}</el-tag>
+                                </div>
+                                <div class="sig-grid">
+                                    <div class="sig-card" v-for="(L, li) in sigPhase.lights" :key="'sl'+li">
+                                        <div class="sig-dir">{{ L.dir }}</div>
+                                        <div><span class="sig-lamp" :class="sigLampClass(L)"></span><span class="sig-text">{{ L.text }}</span></div>
+                                        <div class="sig-hex">{{ sigHex(L.value) }}</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <p v-else-if="sigStatus.enabled" style="font-size:13px;color:#64748b;margin-top:10px">尚未收到時相資料。</p>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>命令覆蓋矩陣</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <el-tag size="small" type="info">訊框 {{ sigCoverage.frames_total||0 }}</el-tag>
+                                <el-tag size="small" type="success">相異訊息碼 {{ sigCoverage.distinct_codes||0 }}</el-tag>
+                                <el-button size="small" @click="loadSignalCoverage">重新載入</el-button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">
+                                線上實際看到過的訊息碼。讓現場把圖控操作跑一輪,就能得到「這套系統實際用到哪些命令」——
+                                驗收覆蓋率的第一手證據。
+                            </div>
+                            <el-table :data="sigCoverage.codes || []" size="small" max-height="320" style="width:100%;margin-top:8px">
+                                <el-table-column prop="code" label="訊息碼" width="100"></el-table-column>
+                                <el-table-column prop="device" label="設備碼" width="90"></el-table-column>
+                                <el-table-column prop="cmd" label="指令碼" width="90"></el-table-column>
+                                <el-table-column prop="device_name" label="設備" width="130"></el-table-column>
+                                <el-table-column prop="count" label="次數"></el-table-column>
+                            </el-table>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-activity"/></svg>最近訊框</span>
+                            <el-button size="small" @click="loadSignalFrames">重新載入</el-button>
+                        </div>
+                        <div class="card-body">
+                            <el-table :data="sigFrames" size="small" max-height="300" style="width:100%">
+                                <el-table-column prop="seq" label="SEQ" width="70"></el-table-column>
+                                <el-table-column prop="code" label="訊息碼" width="90"></el-table-column>
+                                <el-table-column prop="len" label="LEN" width="70"></el-table-column>
+                                <el-table-column label="CKS" width="70">
+                                    <template #default="sc">
+                                        <el-tag size="small" :type="sc.row.cks_ok?'success':'danger'">{{ sc.row.cks_ok?'OK':'錯' }}</el-tag>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column prop="raw" label="RAW HEX"></el-table-column>
+                            </el-table>
+                        </div>
+                    </div>
+                </div>
+
                 <div v-if="page==='nport'">
                     <div class="ds-page-hero">
                         <div class="ds-page-hero-row">
@@ -10799,6 +10913,7 @@ const app=createApp({
             lpr:                 'i-scan',
             hwmonitor:           'i-activity',
             nport:               'i-server',
+            signal:              'i-zap',
         }[page.value] || 'i-dot'));
         const cameraPageHero=computed(()=>({
             cameras:               {num:'04 / CAMERA OPERATIONS',  sub:'攝影機新增 / 編輯、RTSP 來源、ROI 區域與偵測啟停管理'},
@@ -18942,6 +19057,54 @@ const app=createApp({
             });
         };
         
+        // ── 號誌燈態(TC3 3.0 抄錄器前端) ────────────────────────────────
+        const sigStatus=ref({host:'',port:0,connected:false,stale:true,enabled:true,age_sec:null,peer_note:'',last_error:''});
+        const sigCoverage=ref({});
+        const sigFrames=ref([]);
+        const sigAuto=ref(true);
+        let sigTimer=null;
+        const sigPhase=computed(()=>sigStatus.value&&sigStatus.value.latest?sigStatus.value.latest.phase:null);
+        // 燈色取最顯著的一個:紅 > 黃 > 綠(位元定義見協定 P5-22)
+        const sigLampClass=(L)=>{
+            const v=Number((L&&L.value)||0);
+            if(v & 0x01)return 'red';
+            if(v & 0x02)return 'amber';
+            if(v & 0x3C)return 'green';   // 圓頭綠/左綠/直綠/右綠
+            return 'off';
+        };
+        const sigHex=(v)=>{
+            const n=Number(v||0);
+            return '0x'+n.toString(16).toUpperCase().padStart(2,'0')+' = '+n.toString(2).padStart(8,'0')+'b';
+        };
+        const loadSignal=async()=>{
+            try{
+                const r=await fetch('/api/signal/status',{credentials:'include'});
+                if(r.ok)sigStatus.value=await r.json();
+            }catch(_){ }
+        };
+        const loadSignalCoverage=async()=>{
+            try{
+                const r=await fetch('/api/signal/coverage',{credentials:'include'});
+                if(r.ok)sigCoverage.value=await r.json();
+            }catch(_){ }
+        };
+        const loadSignalFrames=async()=>{
+            try{
+                const r=await fetch('/api/signal/frames?limit=30',{credentials:'include'});
+                if(r.ok)sigFrames.value=(await r.json()).frames||[];
+            }catch(_){ }
+        };
+        const startSignalTimer=()=>{
+            if(sigTimer){ clearInterval(sigTimer); sigTimer=null; }
+            loadSignalCoverage(); loadSignalFrames();
+            if(!sigAuto.value)return;
+            // 號誌每 2 秒上傳一次,1 秒輪詢足夠,狀態 JSON 只有幾 KB
+            sigTimer=setInterval(()=>{
+                if(page.value!=='signal' || !isPageVisible())return;
+                loadSignal();
+            },1000);
+        };
+
         // ── MOXA NPort 管理面板 ──────────────────────────────────────────
         // NPort 掛在分析器的另一個網段(87 的 enP5p4s0 / 192.168.1.x),使用者遠端
         // 經 Tailscale 進來時瀏覽器到不了,所以探測與網頁轉入都由後端代理。
@@ -19496,7 +19659,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,sigStatus,sigCoverage,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
