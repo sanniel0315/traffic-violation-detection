@@ -13,7 +13,6 @@ from collections import deque as _deque_stats
 
 from model_paths import get_detect_model_pt
 from detection.gpu_lock import GPU_INFERENCE_LOCK
-from detection.leader_batch import LEADER as _LEADER
 
 
 # ── 鎖內細部計時 ────────────────────────────────────────────────────────
@@ -60,13 +59,14 @@ def detect_timing_stats() -> dict:
     return {
         "samples": n,
         "window_sec": round(span, 1),
-        # model 時間改由 leader_batch 統計(model_ms_per_image),因為合批之後
-        # 那一呼叫是整批共用的,記在單張這裡沒有意義。
+        # model = ultralytics 那一呼叫(含 CPU letterbox + GPU forward + NMS)
+        "model_ms_avg": round(sum(i[1] for i in items) / n * 1000, 1),
         # parse = tensor→CPU 搬運 + 組 dict
         "parse_ms_avg": round(sum(i[2] for i in items) / n * 1000, 1),
         # truck = 大型車細分類(只有出現 truck/bus 才會跑)
         "truck_ms_avg": round(sum(i[3] for i in items) / n * 1000, 1),
         "boxes_avg": round(sum(i[4] for i in items) / n, 1),
+        "model_share": round(sum(i[1] for i in items) / max(1e-9, tot), 3),
         "parse_share": round(sum(i[2] for i in items) / max(1e-9, tot), 3),
         "truck_share": round(sum(i[3] for i in items) / max(1e-9, tot), 3),
     }
@@ -151,12 +151,6 @@ class VehicleDetector:
             print(f"⚡ 偵測到 TensorRT engine，切換到 {engine_path}")
             model_path = engine_path
         self.model = YOLO(model_path, task='detect')
-        # 合批分組鍵。🛑 不可以用 id(self.model):每台相機各自 new 一個
-        #    VehicleDetector,四台就是四個不同的物件 → 永遠湊不成批
-        #    (2026-08-18 在 87 實測 batch_size 恆為 1.0,就是踩這個)。
-        #    用「解析後的模型檔路徑」才是真正決定權重是否相同的東西;
-        #    路徑相同 = 權重相同 = 可以由任何一台的 model 一次跑完整批。
-        self.model_key = str(model_path)
         self.conf_threshold = conf_threshold
         self.device = os.getenv("DEVICE", "cuda:0")
         self.runtime_device = "cpu"
@@ -256,15 +250,52 @@ class VehicleDetector:
         #    2026-08-18 實測 87:飽和度 1.0、每台等鎖 160~200ms,而 GPU 只跑到
         #    34~85% —— 鎖住不需要鎖的純 CPU 工作,等於直接把分析率砍掉。
         #    機車誤判過濾只讀 python dict,搬到鎖外,結果一模一樣。
-        # ── 合批推論:leader-follower(2026-08-18)────────────────────────
-        # 先做過「中央批次執行緒」版本,實測反而讓分析率掉約 35% —— 它把 N 條
-        # 偵測執行緒收斂成 1 條,跟 LPR 搶鎖時從 N 對 1 變成 1 對 1。
-        # 現在這版每個呼叫端仍然各自去搶 GPU_INFERENCE_LOCK(競爭者數量不變),
-        # 只是先拿到鎖的那條順手把其他已登記的畫面一起做掉。
-        # 完整的量測與失敗原因見 detection/leader_batch.py。
-        detections = _LEADER.run(self.model, self.conf_threshold,
-                                 self.runtime_device, frame, self._parse_result,
-                                 model_key=getattr(self, "model_key", None))
+        # ── 🛑 不要再嘗試「多相機合批推論」(2026-08-18 兩次實測 + 一次線上事故)──
+        # 最硬的理由:現場用的 TensorRT engine 是「batch=1 固定」建出來的。
+        #     AssertionError: input size torch.Size([2,3,640,640])
+        #                     not equal to max model size (1,3,640,640)
+        #   線上只要真的湊成 2 張就直接丟例外。2026-08-18 14:44 在 87 實際發生,
+        #   55 分鐘內 1680 筆錯誤,LPR 與壅塞的分析同時被打斷、即時影像抖動。
+        #   要合批得先把 engine 用 dynamic batch 重建 —— 那是模型的決定,不是這裡。
+        #
+        # 就算 engine 支援,收益也幾乎沒有。實測單張 1920x1080 的組成:
+        #     preprocess(CPU letterbox) 6.10ms + inference(TensorRT GPU) 7.29ms
+        #     + postprocess(NMS) 3.97ms = 17.36ms,wall 18.00ms
+        #   → ultralytics Python 層的固定開銷只有 0.64ms(4%)。
+        #   先前量到「批次 1.78x」是拿 .pt 檔量的(沒走 engine 替換),量錯對象。
+        #   合批能攤掉的就是那 4%,不值得。
+        #
+        # 也試過中央批次執行緒:把 N 條偵測執行緒收斂成 1 條,跟 LPR 搶鎖時
+        # 從 N 對 1 變 1 對 1,104 A/B 分析率反而掉約 35%。
+        # 離線量測批次確實划算:4 張分開跑 121.0ms、一次批次 68.1ms(1.78x),
+        # 因為 ultralytics 每次呼叫有固定開銷(predictor 設定/Results 物件/NMS)。
+        # 但實際接上去之後在 104 A/B(負載相當,飽和度 0.708 vs 0.696):
+        #     批次開啟  分析率 3.17 / 3.01   detection 佔通道 30%
+        #     批次關閉  分析率 5.66 / 4.49   detection 佔通道 39%
+        # 反而掉了約 35%。原因有兩個,都是架構性的:
+        #   ① 批次器把所有 VehicleDetector 呼叫收斂成「一條」執行緒,它跟 LPR
+        #      搶 GPU_INFERENCE_LOCK 時從 2 條對 1 條變成 1 條對 1 條,
+        #      detection 分到的通道直接變少。
+        #   ② 到達率低於處理量時佇列根本不會積,批次大小實測就是 1.0,
+        #      沒有任何合批來補償①。
+        # 要做對得改成 leader-follower(先拿到鎖的那條執行緒順手撈走其他待處理
+        # 的畫面),才能同時保留 N 個競爭者又拿到合批 —— 那是另一個題目。
+        with GPU_INFERENCE_LOCK:
+            # 🛑 計時起點一定要在拿到鎖「之後」。放在 with 之前會把等鎖時間算進
+            #    model,量出來的 model_ms 會比 hold_ms 還大(實測 54.4 > 38.1),
+            #    那是不可能的數字,也會讓人誤判瓶頸在模型而不是排隊。
+            _t0 = _time_stats.perf_counter()
+            results = self.model(
+                frame,
+                conf=self.conf_threshold,
+                verbose=False,
+                device=self.runtime_device,
+            )
+            # 先記 model 時間,_parse_result 內才會把同一次的兩段接起來
+            _record_model_time(_time_stats.perf_counter() - _t0)
+            detections: List[Dict[str, Any]] = []
+            for result in results:
+                detections = self._parse_result(result, frame)
         return self._filter_motorcycle_artifacts(detections, frame.shape[:2])
 
     def _parse_result(self, result, frame: np.ndarray) -> List[Dict[str, Any]]:
