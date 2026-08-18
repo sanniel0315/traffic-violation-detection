@@ -1995,14 +1995,19 @@ async def gpu_lock_stats_endpoint():
         _timing = detect_timing_stats()
     except Exception:
         _timing = {}
+    try:
+        from detection.leader_batch import leader_batch_stats
+        _batch = leader_batch_stats()
+    except Exception:
+        _batch = {}
     per_cam = {
         str(cid): {k: v.get(k) for k in
                    ("analysis_fps", "infer_ms", "lock_wait_ms", "stats_window_sec")
                    if k in v}
         for cid, v in detection_services.items() if v.get("running")
     }
-    return {"gpu_lock": gpu_lock_stats(), "detect_timing": _timing,
-            "per_camera": per_cam}
+    return {"gpu_lock": gpu_lock_stats(), "leader_batch": _batch,
+            "detect_timing": _timing, "per_camera": per_cam}
 
 
 @router.get("/debug/shared-frames")
