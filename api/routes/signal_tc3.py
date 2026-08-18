@@ -17,7 +17,9 @@
 """
 from __future__ import annotations
 
+import csv
 import os
+import pathlib
 import socket
 import threading
 import time
@@ -40,6 +42,13 @@ SIGNAL_ENABLED = os.getenv("SIGNAL_TC3_ENABLED", "1") != "0"
 #    那台,TCP 連得上卻永遠沒有資料 —— 沒有這道檢查就會傻等到天亮。
 #    號誌是每 2 秒主動上傳,45 秒沒有任何訊框已經遠超正常間隔。
 SIGNAL_PEER_TIMEOUT = float(os.getenv("SIGNAL_TC3_PEER_TIMEOUT", "45") or 45)
+# 已經抄到過訊框、之後卻長時間靜默 → 一樣要斷線重連。
+# 🛑 為什麼需要:原本的 peer 檢查只在「從頭到尾沒收到訊框」時才觸發。一旦
+#    got_tc3=True,recv 逾時就無條件 continue —— socket 還開著、connected 仍是
+#    True,但資料可以停在 45 分鐘前。2026-08-18 在 87 實際踩到:抄到 29 框後
+#    靜默,狀態頁顯示「已連線」卻是 45 分鐘前的燈態。
+#    號誌是每 2 秒主動上傳,60 秒沒有任何訊框就是不正常。
+SIGNAL_STALL_TIMEOUT = float(os.getenv("SIGNAL_TC3_STALL_TIMEOUT", "60") or 60)
 
 # 燈態方向(協定 P5-22 SignalMap bit map)
 DIRECTIONS = ["北", "東北", "東", "東南", "南", "西南", "西", "西北"]
@@ -56,6 +65,49 @@ STEP_SPECIAL = {
 DEVICE_NAMES = {0x0F: "設備共用", 0x5F: "號誌控制器",
                 0x6F: "車輛偵測器", 0xAF: "資訊可變標誌"}
 
+# 協定 3.0 全部 105 條訊息(33 條設備共用 + 72 條號誌控制器),由規範逐條抄錄。
+# 用途:覆蓋矩陣要能回答「規範這 105 條,現場實際跑到哪幾條」—— 只列抄到的
+# 沒有意義,驗收要看的是分母。CSV 放版控,改規範版本時只要換這個檔。
+CATALOG_PATH = os.getenv(
+    "SIGNAL_TC3_CATALOG",
+    str(pathlib.Path(__file__).resolve().parents[2] / "config" / "tc3" / "command_catalog.csv"),
+)
+_catalog: Optional[list] = None
+
+
+def load_catalog() -> list:
+    """讀命令目錄(快取)。檔案不在就回空表,覆蓋矩陣退回「只列抄到的」。"""
+    global _catalog
+    if _catalog is not None:
+        return _catalog
+    rows: list = []
+    try:
+        with open(CATALOG_PATH, "r", encoding="utf-8-sig", newline="") as fh:
+            for r in csv.DictReader(fh):
+                code = (r.get("code") or "").strip().upper()
+                if len(code) != 4:
+                    continue
+                rows.append({
+                    "code": code,
+                    "device": code[:2],
+                    "cmd": code[2:],
+                    "device_name": DEVICE_NAMES.get(int(code[:2], 16), ""),
+                    "scope": (r.get("scope") or "").strip(),
+                    "category": (r.get("category") or "").strip(),
+                    "message_type": (r.get("message_type") or "").strip(),
+                    # 等級沿用規範原表的 A / B / O,不自行解釋
+                    "level": (r.get("level") or "").strip(),
+                    "spec_page": (r.get("spec_page") or "").strip(),
+                    "center_command": (r.get("center_command") or "").strip().lower() == "true",
+                })
+    except FileNotFoundError:
+        rows = []
+    except Exception as exc:                       # 目錄壞掉不該讓抄錄器整個掛掉
+        print(f"[signal_tc3] 命令目錄讀取失敗 {CATALOG_PATH}: {exc}")
+        rows = []
+    _catalog = rows
+    return rows
+
 _state: dict = {
     "enabled": SIGNAL_ENABLED,
     "host": SIGNAL_HOST,
@@ -68,6 +120,7 @@ _state: dict = {
     "reconnects": 0,
     "latest": None,          # 最近一筆解出來的燈態
     "bad_peer": 0,           # 連上但不是 TC3 來源(打到別台機器)的次數
+    "stalls": 0,             # 連線還在、但來源靜默而主動重連的次數
     "peer_note": "",
 }
 _frames: deque = deque(maxlen=300)      # 最近訊框(raw + 解碼)
@@ -185,20 +238,32 @@ def _recorder_loop() -> None:
             backoff = 2.0
             buf = b""
             connected_at = time.time()
+            last_rx = connected_at      # 最近一次切出合法碼框的時間(停擺看門狗用)
             got_tc3 = False
             while not shutdown_event.is_set():
                 try:
                     d = sock.recv(4096)
                 except socket.timeout:
+                    now = time.time()
                     # 連上但一直沒有 TC3 訊框 → 對方不是號誌來源,主動換一次
-                    if not got_tc3 and (time.time() - connected_at) > SIGNAL_PEER_TIMEOUT:
+                    if not got_tc3:
+                        if (now - connected_at) > SIGNAL_PEER_TIMEOUT:
+                            with _lock:
+                                _state["bad_peer"] += 1
+                                _state["peer_note"] = (
+                                    f"連上 {SIGNAL_HOST}:{SIGNAL_PORT} 但 "
+                                    f"{int(SIGNAL_PEER_TIMEOUT)} 秒內沒有任何 TC3 訊框 —— "
+                                    "很可能打到同 IP 的另一台設備(檢查 ARP/路由)")
+                            raise ConnectionError("peer 不是 TC3 來源")
+                    # 抄到過但停了 → socket 沒斷不代表資料還在,重連一次比較誠實
+                    elif (now - last_rx) > SIGNAL_STALL_TIMEOUT:
                         with _lock:
-                            _state["bad_peer"] += 1
+                            _state["stalls"] += 1
                             _state["peer_note"] = (
-                                f"連上 {SIGNAL_HOST}:{SIGNAL_PORT} 但 "
-                                f"{int(SIGNAL_PEER_TIMEOUT)} 秒內沒有任何 TC3 訊框 —— "
-                                "很可能打到同 IP 的另一台設備(檢查 ARP/路由)")
-                        raise ConnectionError("peer 不是 TC3 來源")
+                                f"已連線但 {int(now - last_rx)} 秒沒有新訊框 —— "
+                                "來源停止上傳(可能被交控中心佔用 MaxConnect,或序列線中斷),"
+                                "已主動重連")
+                        raise ConnectionError("來源靜默")
                     continue
                 if not d:
                     raise ConnectionError("對方關閉連線")
@@ -221,6 +286,7 @@ def _recorder_loop() -> None:
                     if rec is None:
                         continue
                     got_tc3 = True      # 切出合法碼框 = 對方確實是 TC3 來源
+                    last_rx = rec["ts"]
                     with _lock:
                         _state["frames_total"] += 1
                         _state["last_frame_at"] = rec["ts"]
@@ -275,7 +341,7 @@ async def status(_user=Depends(get_current_user)):
     return {
         **{k: s[k] for k in ("enabled", "host", "port", "connected",
                              "frames_total", "cks_bad", "reconnects", "last_error",
-                             "bad_peer", "peer_note")},
+                             "bad_peer", "stalls", "peer_note")},
         "age_sec": round(age, 2) if age is not None else None,
         # 超過 30 秒沒新訊框就標 stale —— 來源掉了要看得出來,不要顯示假的舊狀態
         "stale": (age is None or age > 30.0),
@@ -291,12 +357,61 @@ async def frames(limit: int = 50, _user=Depends(get_current_user)):
     return {"count": len(items), "frames": list(reversed(items))}
 
 
-@router.get("/coverage", summary="TC3 命令覆蓋矩陣(抄到哪些訊息碼)")
+@router.get("/coverage", summary="TC3 命令覆蓋矩陣(規範 105 條 vs 實際抄到)")
 async def coverage(_user=Depends(get_current_user)):
+    """規範全表 join 實際抄到的次數。
+
+    驗收要的是「規範 105 條裡跑到哪幾條」,所以分母一律是目錄,不是抄到的那幾條。
+    抄到但不在目錄裡的訊息碼也會列出(extra=True)—— 那代表現場用了規範外的東西,
+    是要被看見的事,不能被 join 吃掉。
+    """
     with _lock:
         cov = dict(_coverage)
         total = _state["frames_total"]
-    rows = [{"code": k, "device": k[:2], "cmd": k[2:],
-             "device_name": DEVICE_NAMES.get(int(k[:2], 16), ""),
-             "count": v} for k, v in sorted(cov.items(), key=lambda x: -x[1])]
-    return {"frames_total": total, "distinct_codes": len(rows), "codes": rows}
+    catalog = load_catalog()
+    known = {r["code"] for r in catalog}
+
+    rows = []
+    for r in catalog:
+        n = cov.get(r["code"], 0)
+        rows.append({**r, "count": n, "seen": n > 0, "extra": False})
+    for code, n in cov.items():
+        if code in known:
+            continue
+        rows.append({"code": code, "device": code[:2], "cmd": code[2:],
+                     "device_name": DEVICE_NAMES.get(int(code[:2], 16), ""),
+                     "scope": "", "category": "(不在規範目錄)", "message_type": "",
+                     "level": "", "spec_page": "", "center_command": False,
+                     "count": n, "seen": True, "extra": True})
+    # 抄到的排前面(次數多到少),沒抄到的照規範順序排在後
+    rows.sort(key=lambda r: (not r["seen"], -r["count"]))
+
+    # seen_total 只算規範內的,extra 另計 —— 分母是 105,不要被規範外的訊息碼灌水
+    seen_rows = [r for r in rows if r["seen"] and not r["extra"]]
+    by_level: dict = {}
+    for r in rows:
+        if r["extra"]:
+            continue
+        lv = r["level"] or "-"
+        b = by_level.setdefault(lv, {"level": lv, "total": 0, "seen": 0})
+        b["total"] += 1
+        b["seen"] += 1 if r["seen"] else 0
+    by_scope: dict = {}
+    for r in rows:
+        if r["extra"]:
+            continue
+        sc = r["scope"] or "-"
+        b = by_scope.setdefault(sc, {"scope": sc, "total": 0, "seen": 0})
+        b["total"] += 1
+        b["seen"] += 1 if r["seen"] else 0
+
+    return {
+        "frames_total": total,
+        "catalog_total": len(catalog),
+        "seen_total": len(seen_rows),
+        "extra_total": sum(1 for r in rows if r["extra"]),
+        "distinct_codes": len(cov),
+        "by_level": sorted(by_level.values(), key=lambda x: x["level"]),
+        "by_scope": sorted(by_scope.values(), key=lambda x: x["scope"]),
+        "codes": rows,
+    }
