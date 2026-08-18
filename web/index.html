@@ -10278,6 +10278,44 @@ const ensureGo2rtcPlayer=()=>{
     }
     return go2rtcPlayerReady;
 };
+// ── go2rtc 播放器的「追邊緣」會把畫面弄得一頓一頓 ────────────────────────
+// go2rtc 的 video-rtc.js 是這樣追即時邊緣的:
+//     const gap = end - this.video.currentTime;
+//     this.video.playbackRate = gap > 0.1 ? gap : 0.1;
+// 也就是「播放速率 = 緩衝秒數」。緩衝 0.3 秒就用 0.3 倍速播(慢動作)、
+// 緩衝見底掉到 0.1 倍速(近乎凍結)、緩衝多了又加速追。
+// 來源只要有抖動,速率就在 0.1~1.5 之間來回跳 —— 使用者看到的「不順」是這個,
+// 不是掉幀。2026-08-18 實測 104:相機走公網(RTT 52~169ms、mdev 52ms),
+// 串流有 300~700ms 的停頓,速率因此持續震盪。
+//
+// 修法:把速率鉗在 0.94~1.06。仍然保留緩慢的追趕(專業低延遲播放器就是這樣做),
+// 但不會再有肉眼可見的忽快忽慢;抖動改由緩衝吸收。
+// 🛑 覆寫的是「這個 video 元素自己的」屬性,不動 HTMLMediaElement.prototype,
+//    以免影響頁面上其他影片(違規影片播放、NVR 回放)。
+const RATE_MIN = 0.94, RATE_MAX = 1.06;
+const clampGo2rtcPlaybackRate = (node, tries = 0) => {
+    const v = node && node.querySelector && node.querySelector('video');
+    if (!v) {
+        if (tries < 20) setTimeout(() => clampGo2rtcPlaybackRate(node, tries + 1), 100);
+        return;
+    }
+    if (v.__rateClamped) return;
+    const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'playbackRate');
+    if (!desc || !desc.set) return;
+    try {
+        Object.defineProperty(v, 'playbackRate', {
+            configurable: true,
+            get() { return desc.get.call(this); },
+            set(r) {
+                const n = Number(r);
+                desc.set.call(this, !isFinite(n) ? 1
+                    : Math.min(RATE_MAX, Math.max(RATE_MIN, n)));
+            },
+        });
+        v.__rateClamped = true;
+        v.playbackRate = 1;
+    } catch (_) { /* 覆寫失敗就維持原行為,不要讓播放器整個掛掉 */ }
+};
 const attachGo2rtc=(el,url)=>{
     if(!url){ el.innerHTML=''; return; }
     // 🛑 這支是非同步的。mounted 與 updated 可能在 ensureGo2rtcPlayer() 還沒
@@ -10298,6 +10336,7 @@ const attachGo2rtc=(el,url)=>{
             node.__go2rtcSrc = el.__go2rtcUrl;
             node.src = el.__go2rtcUrl;   // 🛑 property,不是 attribute
         }
+        clampGo2rtcPlaybackRate(node);
     }).catch(()=>{ el.__go2rtcPending = false; el.innerHTML=''; });
 };
 // v-go2rtc:用指令掛載,而不是直接在模板寫 <video-stream>。
