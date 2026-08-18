@@ -4675,7 +4675,7 @@
                 <div v-if="hasPerm('repeat')" class="menu-item" :class="{active:page==='repeat'}" @click="page='repeat'"><svg class="nav-icon"><use href="#i-repeat"/></svg><span>{{ $t('nav_repeat') }}</span></div>
             </div>
             <div v-if="canReviewTickets" class="menu-item" :class="{active:page==='review'}" @click="page='review';loadPendingViolations()"><svg class="nav-icon"><use href="#i-clipboard"/></svg><span>{{ $t('nav_review') }}</span></div>
-            <div v-if="hasPerm('monitor')" class="menu-item" :class="{active:page==='monitor'}" @click="page='monitor';loadCameras()"><svg class="nav-icon"><use href="#i-monitor"/></svg><span>{{ $t('nav_monitor') }}</span></div>
+            <div v-if="hasPerm('monitor')" class="menu-item" :class="{active:page==='monitor'}" @click="page='monitor';loadCameras();ensureBandwidthProbe()"><svg class="nav-icon"><use href="#i-monitor"/></svg><span>{{ $t('nav_monitor') }}</span></div>
             <div v-if="hasPerm('lpr')" class="menu-item" :class="{active:page==='lpr'}" @click="page='lpr';loadLprStatus();loadLprHistory()"><svg class="nav-icon"><use href="#i-scan"/></svg><span>{{ $t('nav_lpr') }}</span></div>
             <div v-if="canOpenAnalysisMenu" class="menu-item" :class="{active:isAnalysisPage}" @click="menuOpen.analysis=!menuOpen.analysis"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>{{ $t('nav_analysis_group') }}</span><span class="arrow" :class="{open:menuOpen.analysis}">▶</span></div>
             <div v-if="canOpenAnalysisMenu" class="submenu" v-show="menuOpen.analysis">
@@ -15886,9 +15886,38 @@ const app=createApp({
             }catch(_){ return 0; }
         })();
         // < 400 KB/s(約 3 Mbps)視為窄頻上行:只留 1 路即時,其餘走快照輪詢。
-        // 0 = 量不到(快取命中等),不做判斷。
-        const IS_LOW_BANDWIDTH=_pageKBps>0 && _pageKBps<400;
-        const _MJPEG_BASE=IS_LOW_BANDWIDTH?1:(IS_MULTIPLEXED?99:(BROWSER_CONN_LIMIT-API_CONN_RESERVE));
+        // 0 = 量不到(快取命中等)。
+        //
+        // 🛑 「量不到就不判斷」是不夠的 —— 2026-08-18 現場實測踩到:
+        //    使用者走 Tailscale 遠端(現場上行實測 2.09 Mbps),四路疊加同時開,
+        //    後端要送 41 Mbps(每路 1280 寬、每幀 158KB、15.8 Mbps)。
+        //    線塞爆 → 畫面很不順,而且 API 也擠不出去 → 側欄「SERVICE 連線異常」。
+        //    後端當時 /api/health 只要 4ms,重啟服務完全無效。
+        //    當下沒有降級,就是因為 transferSize 量不到(快取/304)而放棄判斷。
+        // 所以量不到時改成「主動探針」:抓一個既有靜態檔(帶 cache-bust)實測,
+        // 慢就降級。探針只跑一次,而且只在量不到時才跑。
+        const lowBandwidth=ref(_pageKBps>0 && _pageKBps<400);
+        const bandwidthKBps=ref(_pageKBps);
+        const BW_LOW_KBPS=400;
+        const probeBandwidth=async()=>{
+            if(_pageKBps>0)return;            // navigation 量得到就不必探針
+            try{
+                const url='/web/lib/element-plus.css?bwprobe='+Date.now();
+                const t0=performance.now();
+                const r=await fetch(url,{cache:'no-store'});
+                const buf=await r.arrayBuffer();
+                const secs=(performance.now()-t0)/1000;
+                if(buf.byteLength>100000 && secs>0){
+                    const kbps=(buf.byteLength/1024)/secs;
+                    bandwidthKBps.value=kbps;
+                    lowBandwidth.value=kbps<BW_LOW_KBPS;
+                }
+            }catch(_){ }
+        };
+        // 窄頻只留 1 路即時。用 computed 讓探針回來之後預算會自動重算。
+        const mjpegBase=computed(()=>lowBandwidth.value
+            ? 1
+            : (IS_MULTIPLEXED?99:(BROWSER_CONN_LIMIT-API_CONN_RESERVE)));
         // 🛑 6 條連線上限是「整個瀏覽器對同一來源」共用的,但這個預算是每個分頁
         //    各自算的 —— 開兩個分頁,各自守著 3 路,合起來就把 6 條佔滿,
         //    /api/health 排不到 socket → SERVICE OFFLINE。
@@ -15922,10 +15951,26 @@ const app=createApp({
             try{ const a=_readTabs(); delete a[_TAB_ID]; localStorage.setItem(_TAB_KEY,JSON.stringify(a)); }catch(_){}
         });
         const MAX_LIVE_MJPEG_REF=computed(()=>{
-            if(IS_MULTIPLEXED)return _MJPEG_BASE;         // 多工不受 6 條限制
+            const base=mjpegBase.value;
+            // 窄頻時 1 路就是 1 路,不再被分頁數除下去(除完還是 1,但語意清楚)
+            if(lowBandwidth.value)return 1;
+            if(IS_MULTIPLEXED)return base;               // 多工不受 6 條限制
             const n=Math.max(1,Number(liveTabCount.value||1));
-            return Math.max(1,Math.floor(_MJPEG_BASE/n));
+            return Math.max(1,Math.floor(base/n));
         });
+        // 探針只跑一次。回來之後預算是 computed,會自動重算,但快照/即時的分配
+        // 要靠 enforceStreamBudget 重跑一次才會套用到每一台。
+        let _bwProbed=false;
+        const ensureBandwidthProbe=()=>{
+            if(_bwProbed)return;
+            _bwProbed=true;
+            probeBandwidth().then(()=>{
+                if(lowBandwidth.value){
+                    console.info(`[bw] 實測 ${Math.round(bandwidthKBps.value)} KB/s → 窄頻模式,只留 1 路即時`);
+                }
+                enforceStreamBudget();
+            });
+        };
         const enforceStreamBudget=()=>{
             const now=Date.now();
             const zoomId=monitorZoomVisible.value?Number(monitorZoomCamera.value?.id||0):0;
@@ -16134,7 +16179,7 @@ const app=createApp({
                     // 被連線預算擠掉的用 2 秒輪詢(接近即時)，因錯誤降級的維持 5 秒
                     // 🛑 窄頻(4G)要拉長:一張 1080p 快照約 600KB,四台每 2 秒 = 9.6 Mbps,
                     //    比 4G 上行(實測 11.4 Mbps)還接近上限,會跟即時串流互相搶。
-                    const _tick=IS_LOW_BANDWIDTH?8000:(c._budgetSnapshot?2000:5000);
+                    const _tick=lowBandwidth.value?8000:(c._budgetSnapshot?2000:5000);
                     if(c.monitorSnapshotMode && now-Number(c.snapshotTickAt||0)>_tick){
                         c.thumbKey=now;
                         c.snapshotTickAt=now;
@@ -19544,6 +19589,18 @@ const app=createApp({
                 return;
             }
             _healthFailStreak++;
+            // 🛑 /api/health 連續逾時,絕大多數不是後端掛了,而是「頻寬或連線被
+            //    MJPEG 佔滿,API 擠不出去」。2026-08-18 現場:使用者遠端(上行實測
+            //    2.09 Mbps)開四路疊加,後端要送 41 Mbps,結果畫面很不順 + 側欄
+            //    顯示 SERVICE 連線異常,而後端 /api/health 只要 4ms。
+            //    以前只是把狀態改成離線,使用者只能自己去關串流。改成「症狀直接
+            //    驅動降級」:連續失敗就把即時串流砍到 1 路,其餘轉快照輪詢。
+            //    這條不依賴任何頻寬量測是否成功,是最後一道保險。
+            if(_healthFailStreak===2 && !lowBandwidth.value){
+                lowBandwidth.value=true;
+                console.warn('[bw] /api/health 連續逾時 → 自動降為窄頻模式(只留 1 路即時)');
+                try{ enforceStreamBudget(); }catch(_){ }
+            }
             if(_healthFailStreak<3){
                 // 還在容錯區間，保留上一次狀態文字（不切 fault），不更動 UI
                 return;
@@ -19721,7 +19778,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
