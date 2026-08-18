@@ -21,7 +21,7 @@ sys.path.insert(0, '/workspace')
 from model_paths import get_detect_model_engine, get_detect_model_pt
 from api.models import SessionLocal, Camera, LPRCameraStat, LPRRecord
 from api.utils.feature_state import get_feature_state, set_feature_state
-from api.utils.camera_stream import resolve_analysis_source
+from api.utils.camera_stream import capture_open_guard, resolve_analysis_source
 from detection.violation_detector import VehicleTracker
 
 router = APIRouter(prefix="/api/lpr/stream", tags=["lpr-stream"])
@@ -214,9 +214,9 @@ def _open_capture(source: str):
     src = str(source or "").strip()
     src_lc = src.lower()
     is_rtsp = src_lc.startswith("rtsp://")
-    if is_rtsp:
-        # 強制 RTSP TCP transport 避免封包遺失，加 socket timeout 避免 read 卡死
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
+    # 強制 RTSP TCP transport 避免封包遺失，加 socket timeout 避免 read 卡死
+    # (LPR 這條的參數跟 detection/congestion 不同,靠 capture_open_guard 保證不互相蓋掉)
+    _LPR_RTSP_OPTS = "rtsp_transport;tcp|stimeout;5000000|buffer_size;65536"
 
     backends = []
     if src_lc.startswith("http://") or src_lc.startswith("https://"):
@@ -234,30 +234,32 @@ def _open_capture(source: str):
         backends.append(None)
 
     last_cap = None
-    for backend in backends:
-        try:
-            cap = cv2.VideoCapture(src) if backend is None else cv2.VideoCapture(src, backend)
-        except Exception:
-            cap = None
-        if cap is not None and cap.isOpened():
+    # 整段嘗試都在閘門內 —— 設參數與開啟必須是同一個原子動作，見 capture_open_guard
+    with capture_open_guard(_LPR_RTSP_OPTS if is_rtsp else None):
+        for backend in backends:
             try:
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                cap = cv2.VideoCapture(src) if backend is None else cv2.VideoCapture(src, backend)
             except Exception:
-                pass
-            # 設 read/open timeout（OpenCV 4.x 支援）
-            try:
-                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-            except Exception:
-                pass
-            return cap
-        if cap is not None:
-            last_cap = cap
-            try:
-                cap.release()
-            except Exception:
-                pass
-    return last_cap if last_cap is not None else cv2.VideoCapture(src)
+                cap = None
+            if cap is not None and cap.isOpened():
+                try:
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
+                # 設 read/open timeout（OpenCV 4.x 支援）
+                try:
+                    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+                    cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+                except Exception:
+                    pass
+                return cap
+            if cap is not None:
+                last_cap = cap
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+        return last_cap if last_cap is not None else cv2.VideoCapture(src)
 
 
 def _order_quad_points(pts: np.ndarray) -> np.ndarray:

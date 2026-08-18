@@ -20,7 +20,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, '/workspace')
 
-from api.utils.camera_stream import resolve_analysis_source
+from api.utils.camera_stream import open_capture, resolve_analysis_source
 
 router = APIRouter(prefix="/api/vision_eye", tags=["vision-eye"])
 
@@ -106,7 +106,7 @@ def _fetch_frame(camera) -> np.ndarray:
             frame = None
     if frame is None:
         try:
-            cap = cv2.VideoCapture(resolve_analysis_source(camera))
+            cap = open_capture(resolve_analysis_source(camera))
             ret, frame = cap.read()
             cap.release()
             if not ret:

@@ -11,6 +11,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from api.models import TrafficEvent, get_db
+from api.utils.camera_stream import open_capture
 from api.utils.report_aggregation import (
     build_vd_report_rows,
     normalize_bucket_size,
@@ -387,7 +388,7 @@ def get_event_snapshot(event_id: int, db: Session = Depends(get_db)):
         with open(tmp_clip, "wb") as f:
             f.write(r.content)
         import cv2
-        cap = cv2.VideoCapture(tmp_clip)
+        cap = open_capture(tmp_clip)
         ok, frame = cap.read()
         cap.release()
         if not ok or frame is None:

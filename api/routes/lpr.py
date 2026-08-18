@@ -10,7 +10,7 @@ import base64
 import os
 import re
 import sys
-from api.utils.camera_stream import resolve_analysis_source
+from api.utils.camera_stream import open_capture, resolve_analysis_source
 
 sys.path.insert(0, '/workspace')
 
@@ -229,7 +229,7 @@ def recognize_from_camera(camera_id: int):
         if not camera:
             raise HTTPException(status_code=404, detail="攝影機不存在")
         
-        cap = cv2.VideoCapture(resolve_analysis_source(camera))
+        cap = open_capture(resolve_analysis_source(camera))
         ret, frame = cap.read()
         cap.release()
         

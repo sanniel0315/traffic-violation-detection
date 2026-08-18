@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
+from api.utils.camera_stream import open_capture
 from services.parking_occupancy import (
     evaluate_occupancy, fetch_frame, load_slots, get_source_meta,
     auto_session_start, auto_session_status, auto_session_stop_and_get,
@@ -631,7 +632,7 @@ def stream_parking(source: str = Query(..., description="source key"),
         cap = None
         if stream_url:
             try:
-                cap = cv2.VideoCapture(stream_url)
+                cap = open_capture(stream_url)
                 try:
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 except Exception:
@@ -646,7 +647,7 @@ def stream_parking(source: str = Query(..., description="source key"),
                     if not ret or frame is None:
                         # cap 斷線 retry
                         cap.release()
-                        cap = cv2.VideoCapture(stream_url)
+                        cap = open_capture(stream_url)
                         time.sleep(0.5)
                         continue
                 else:

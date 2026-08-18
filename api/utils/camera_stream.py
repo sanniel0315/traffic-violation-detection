@@ -5,7 +5,9 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlsplit, urlunsplit
@@ -15,6 +17,65 @@ import requests
 
 def _as_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+# ── VideoCapture 開啟閘門 ────────────────────────────────────────────────
+# 🛑 為什麼需要:OpenCV 的 FFmpeg backend 是在「open 的當下」才去
+#    getenv("OPENCV_FFMPEG_CAPTURE_OPTIONS") 讀參數,而我們全部是用
+#    os.environ[...] = ... 把參數塞進去的。os.environ 的寫入等同 setenv(),
+#    glibc 的 setenv 可能 realloc 整個 environ 陣列 —— 跟另一條 thread 正在
+#    進行的 getenv() 併發就是 use-after-free,直接原生 SEGV,Python 層攔不到。
+#
+#    2026-08-18 08:33 在 87 實際炸掉:cam_2/3/4/5 四條串流在同一秒 30 秒逾時
+#    → 四條 reader 同時走重連路徑 → 同時 setenv + VideoCapture()
+#    → Fatal Python error: Segmentation fault,整個 traffic-api 被 systemd 重啟。
+#    faulthandler 印出來的兩條 reader 剛好一條停在 cap.grab()、一條停在
+#    cv2.VideoCapture(...) —— 正是這個併發組合。
+#
+#    順帶治好第二件事:這個環境變數是「整個 process 共用」,而
+#    stream / congestion / lpr_stream 三個模組各自要不同的參數
+#    (congestion 要 threads;1、LPR 要 stimeout;5000000)。沒有鎖的話
+#    誰後寫誰贏,開出來的 cap 可能吃到別的模組的參數。鎖讓「設參數 → 開」
+#    變成一個原子動作,各自要的參數才真的生效。
+#
+#    代價:同時間只能有一條 thread 在開 cap。開 RTSP 最久會卡到 stimeout(10 秒),
+#    所以重連風暴時會變成排隊而不是並行 —— 這是刻意的取捨,重連本來就罕見,
+#    而且比整個服務掛掉好太多。穩態(沒有人在重連)完全不受影響。
+_CAP_OPEN_LOCK = threading.RLock()
+
+
+@contextmanager
+def capture_open_guard(options: str | None = None):
+    """把「設 FFmpeg 參數 → cv2.VideoCapture(...)」包成序列化的原子區段。
+
+    用法:
+        with capture_open_guard(OPTS if is_rtsp else None):
+            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+
+    options 給 None 就只上鎖、不動環境變數(非 RTSP 來源不需要那些參數)。
+    RLock:同一條 thread 巢狀進入不會自鎖。
+    """
+    with _CAP_OPEN_LOCK:
+        if options:
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = options
+        yield
+
+
+def open_capture(source: Any, backend: Any = None, options: str | None = None):
+    """cv2.VideoCapture 的替身 —— 開啟動作全程序序列化。
+
+    等價於 `with capture_open_guard(options): cv2.VideoCapture(source[, backend])`,
+    做成函式是為了讓呼叫端只要換函式名、不必改縮排。
+
+    🛑 為什麼「沒有設參數的開啟」也要進閘門:race 的兩邊是 setenv 與 getenv,
+       OpenCV 在每一次 open 都會 getenv。只鎖住寫的那一側沒有用 —— 讀的那一側
+       同樣要排隊,否則照樣 use-after-free。
+    """
+    import cv2  # 延遲載入:camera_stream 也被沒有 cv2 的路徑 import
+    with capture_open_guard(options):
+        if backend is None:
+            return cv2.VideoCapture(source)
+        return cv2.VideoCapture(source, backend)
 
 
 def _encode_rtsp_credential(value: Any) -> str:
