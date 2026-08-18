@@ -15830,11 +15830,14 @@ const app=createApp({
             //    現場遠端上行實測只有約 2 Mbps,照樣塞爆、API 照樣擠不出去。
             //    2026-08-18 實測 Send-Q 六條全積(最多 2.37MB)、rtt 從 80ms 漲到
             //    670ms、重傳率 2~10%。所以窄頻時解析度與幀率都要一起降。
-            //    實測 w=640 每幀 48.5KB → 2 fps 約 0.78 Mbps,在 2 Mbps 的線上
-            //    留一半以上給 API,UI 才不會被餓死。
-            //    「幀率不可降」那條現場要求是針對本機看的情境;遠端窄頻下的
-            //    替代方案是「什麼都動不了」,所以這裡以可用性優先。
-            const narrow=(!opts.highQuality && lowBandwidth.value)?'&w=640&fps=2':'';
+            //    🛑 要砍的是解析度不是幀率。順暢度是判讀車流的基礎,降到 2~4fps
+            //    等於看不出車輛動態(2026-08-18 使用者明確要求「影像一定要順,
+            //    切疊加也要順」)。實測 87 上單路疊加各組合(15fps 為前提):
+            //        w=640 4.94 Mbps / w=480 2.51 / w=400 2.00 / w=320 1.34
+            //    現場對外上行實測只有 1.2~1.5 Mbps(下行 28.6),所以 MJPEG 想
+            //    同時「順」又「看得清」在這條線上做不到 —— w=400 是折衷,
+            //    真正的解是把疊加改成 H.264(見 detection/annotated_streamer.py)。
+            const narrow=(!opts.highQuality && lowBandwidth.value)?'&w=400&jq=40':'';
             const tick=monitorStreamTick(camera);
             return `/api/stream/${camera.id}/${route}?t=${tick}${roiParam}${qParam}${narrow||lite}`;
         };
