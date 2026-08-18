@@ -3363,6 +3363,13 @@
         .sig-lamp.green { background:#2fb344; box-shadow:0 0 8px rgba(47,179,68,.6); }
         .sig-lamp.off { background:#cbd5e1; }
         .sig-text { font-size:13px; color:#475569; }
+        .sig-cov-sum { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+        .sig-cov-chip { display:flex; align-items:baseline; gap:6px; padding:5px 10px; border-radius:8px;
+                        background:var(--gov-bg-soft,#f1f5f9); border:1px solid var(--gov-border); }
+        .sig-cov-k { font-size:12px; color:#64748b; }
+        .sig-cov-v { font-size:13px; font-weight:700; color:var(--gov-text); font-family:ui-monospace,monospace; }
+        .el-table .sig-row-miss { color:#94a3b8; }
+        .el-table .sig-row-extra { background:#fef2f2; }
         .sig-hex { font-size:11px; color:#94a3b8; font-family:ui-monospace,monospace; margin-top:6px; }
         .camera-preview .go2rtc-host,
         .monitor-zoom-stage .go2rtc-host { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
@@ -6374,6 +6381,8 @@
                                 <span>來源 <b>{{ sigStatus.host }}:{{ sigStatus.port }}</b></span>
                                 <span>訊框 <b>{{ sigStatus.frames_total||0 }}</b></span>
                                 <span>CKS 錯 <b>{{ sigStatus.cks_bad||0 }}</b></span>
+                                <span>重連 <b>{{ sigStatus.reconnects||0 }}</b></span>
+                                <span>停擺 <b>{{ sigStatus.stalls||0 }}</b></span>
                             </div>
                         </div>
                     </div>
@@ -6384,6 +6393,7 @@
                             <div style="display:flex;gap:8px;align-items:center">
                                 <el-tag size="small" :type="sigStatus.connected?'success':'danger'">{{ sigStatus.connected?'已連線':'未連線' }}</el-tag>
                                 <el-tag size="small" :type="sigStatus.stale?'warning':'success'">{{ sigStatus.stale?'資料過期':'即時' }}</el-tag>
+                                <el-tag size="small" type="info">{{ sigStatus.age_sec==null ? '尚無資料' : (sigStatus.age_sec.toFixed(1)+' 秒前') }}</el-tag>
                                 <el-switch v-model="sigAuto" size="small" @change="startSignalTimer"></el-switch>
                                 <el-button size="small" @click="loadSignal">重新載入</el-button>
                             </div>
@@ -6424,22 +6434,60 @@
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-list"/></svg>命令覆蓋矩陣</span>
                             <div style="display:flex;gap:8px;align-items:center">
+                                <el-tag size="small" type="success">已抄到 {{ sigCoverage.seen_total||0 }} / {{ sigCoverage.catalog_total||0 }}</el-tag>
+                                <el-tag v-if="sigCoverage.extra_total" size="small" type="danger">規範外 {{ sigCoverage.extra_total }}</el-tag>
                                 <el-tag size="small" type="info">訊框 {{ sigCoverage.frames_total||0 }}</el-tag>
-                                <el-tag size="small" type="success">相異訊息碼 {{ sigCoverage.distinct_codes||0 }}</el-tag>
                                 <el-button size="small" @click="loadSignalCoverage">重新載入</el-button>
                             </div>
                         </div>
                         <div class="card-body">
                             <div class="analysis-setting-tip">
-                                線上實際看到過的訊息碼。讓現場把圖控操作跑一輪,就能得到「這套系統實際用到哪些命令」——
-                                驗收覆蓋率的第一手證據。
+                                分母是協定 3.0 規範的 {{ sigCoverage.catalog_total||105 }} 條訊息(設備共用 + 號誌控制器),
+                                分子是這條線實際抄到的。讓現場把圖控操作跑一輪就能拿到覆蓋率的第一手證據。
+                                <br>
+                                「中心下達」那欄是規範定義由交控中心送出的命令 —— 我們是單向抄錄號誌控制器上傳的資料,
+                                這類命令在這條線上結構性看不到,不是漏抄。
                             </div>
-                            <el-table :data="sigCoverage.codes || []" size="small" max-height="320" style="width:100%;margin-top:8px">
-                                <el-table-column prop="code" label="訊息碼" width="100"></el-table-column>
-                                <el-table-column prop="device" label="設備碼" width="90"></el-table-column>
-                                <el-table-column prop="cmd" label="指令碼" width="90"></el-table-column>
-                                <el-table-column prop="device_name" label="設備" width="130"></el-table-column>
-                                <el-table-column prop="count" label="次數"></el-table-column>
+                            <div class="sig-cov-sum">
+                                <div class="sig-cov-chip" v-for="(b, bi) in (sigCoverage.by_level||[])" :key="'lv'+bi">
+                                    <span class="sig-cov-k">等級 {{ b.level }}</span>
+                                    <span class="sig-cov-v">{{ b.seen }} / {{ b.total }}</span>
+                                </div>
+                                <div class="sig-cov-chip" v-for="(b, bi) in (sigCoverage.by_scope||[])" :key="'sc'+bi">
+                                    <span class="sig-cov-k">{{ b.scope==='IC' ? '號誌控制器' : '設備共用' }}</span>
+                                    <span class="sig-cov-v">{{ b.seen }} / {{ b.total }}</span>
+                                </div>
+                            </div>
+                            <div style="display:flex;gap:8px;align-items:center;margin:10px 0">
+                                <el-radio-group v-model="sigCovFilter" size="small">
+                                    <el-radio-button label="all">全部</el-radio-button>
+                                    <el-radio-button label="seen">已抄到</el-radio-button>
+                                    <el-radio-button label="miss">未抄到</el-radio-button>
+                                </el-radio-group>
+                                <el-input v-model="sigCovQuery" size="small" clearable placeholder="搜尋訊息碼或類別" style="max-width:240px"></el-input>
+                                <span style="font-size:12px;color:#94a3b8">顯示 {{ sigCovRows.length }} 筆</span>
+                            </div>
+                            <el-table :data="sigCovRows" size="small" max-height="420" style="width:100%"
+                                      :row-class-name="sigCovRowClass">
+                                <el-table-column label="狀態" width="80">
+                                    <template #default="sc">
+                                        <el-tag size="small" :type="sc.row.extra ? 'danger' : (sc.row.seen ? 'success' : 'info')">
+                                            {{ sc.row.extra ? '規範外' : (sc.row.seen ? '已抄到' : '未見') }}
+                                        </el-tag>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column prop="code" label="訊息碼" width="88"></el-table-column>
+                                <el-table-column prop="device_name" label="設備" width="110"></el-table-column>
+                                <el-table-column prop="category" label="功能類別" min-width="200"></el-table-column>
+                                <el-table-column prop="message_type" label="訊息型態" width="150"></el-table-column>
+                                <el-table-column prop="level" label="等級" width="70"></el-table-column>
+                                <el-table-column label="中心下達" width="90">
+                                    <template #default="sc">
+                                        <span style="font-size:12px;color:#64748b">{{ sc.row.center_command ? '是' : '—' }}</span>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column prop="spec_page" label="規範頁" width="80"></el-table-column>
+                                <el-table-column prop="count" label="次數" width="90"></el-table-column>
                             </el-table>
                         </div>
                     </div>
@@ -19082,6 +19130,20 @@ const app=createApp({
                 if(r.ok)sigStatus.value=await r.json();
             }catch(_){ }
         };
+        const sigCovFilter=ref('all');
+        const sigCovQuery=ref('');
+        const sigCovRows=computed(()=>{
+            const all=(sigCoverage.value&&sigCoverage.value.codes)||[];
+            const q=sigCovQuery.value.trim().toLowerCase();
+            return all.filter(r=>{
+                if(sigCovFilter.value==='seen' && !r.seen)return false;
+                if(sigCovFilter.value==='miss' && r.seen)return false;
+                if(!q)return true;
+                return (r.code+' '+(r.category||'')+' '+(r.message_type||'')+' '+(r.device_name||''))
+                    .toLowerCase().includes(q);
+            });
+        });
+        const sigCovRowClass=({row})=>row.extra?'sig-row-extra':(row.seen?'':'sig-row-miss');
         const loadSignalCoverage=async()=>{
             try{
                 const r=await fetch('/api/signal/coverage',{credentials:'include'});
@@ -19659,7 +19721,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,sigStatus,sigCoverage,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
