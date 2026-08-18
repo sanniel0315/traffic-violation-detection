@@ -2091,7 +2091,18 @@ def resume_detection_services() -> dict:
 
 
 # Option D 啟用名單：哪些 cam 要把 annotated frame 推 go2rtc 給 WebRTC
-_ANNOTATED_STREAM_CAM_IDS = set()  # confirmed annotated_streamer triggers SEGV race
+# H.264 疊加串流要開哪幾台。由 ANNOTATED_STREAM_CAMS 指定,預設空 = 全關。
+# 原本寫死 set() 並註記「confirmed annotated_streamer triggers SEGV race」;
+# 2026-08-18 針對那個 race 做了處理(subprocess spawn 納入 capture_open_guard、
+# 繪製移出 reader thread),改成可由環境變數逐台開啟,方便先在 staging 壓測。
+# 詳見 detection/annotated_streamer.py 檔頭。
+try:
+    from detection.annotated_streamer import enabled_camera_ids as _annot_cams
+    _ANNOTATED_STREAM_CAM_IDS = _annot_cams()
+except Exception:
+    _ANNOTATED_STREAM_CAM_IDS = set()
+if _ANNOTATED_STREAM_CAM_IDS:
+    print(f"🎬 H.264 疊加串流啟用: cam {sorted(_ANNOTATED_STREAM_CAM_IDS)}", flush=True)
 
 
 def run_detection(camera_id: int, source: str, location: str, detection_config: dict, zones: list = []):

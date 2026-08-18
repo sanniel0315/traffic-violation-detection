@@ -1,14 +1,49 @@
 """把偵測過的 frame（含 bbox）即時編碼推 RTSP 給 go2rtc，前端走 WebRTC 拉。
-v3：分離畫面源 (30 fps) 跟 detection (8 fps)。
-- reader thread 每幀都 push (push_frame) → 畫面順
-- worker 只更新最新 dets (update_detections) → bbox 不卡 detection
-- pacer 用 wall-clock 餵 ffmpeg → 跟 detection/reader 都解耦"""
+
+為什麼需要(2026-08-18 量出來的)
+────────────────────────────────────────────────────────────────────────
+疊加原本走 MJPEG。現場 87 對外上行實測只有 1.2~1.5 Mbps(下行 28.6),而一路
+1280 寬的疊加 MJPEG 就要 15.8~19.8 Mbps —— 遠端看必定不順,連 /api/health 都
+擠不出去。MJPEG 想同時「順」又「看得清」在這條線上做不到:保 15fps 要壓進
+1.4 Mbps 只能降到 w=320,那是縮圖。
+H.264 同畫質約只要 MJPEG 的 1/20 —— 1 Mbps 就能給 720p 順暢畫面。
+
+曾經被停用的原因,以及現在憑什麼重開
+────────────────────────────────────────────────────────────────────────
+stream.py 原本寫死 `_ANNOTATED_STREAM_CAM_IDS = set()`,註解只留一句
+「confirmed annotated_streamer triggers SEGV race」。
+本次重開做了兩件對應處理:
+  ① _spawn() 的 subprocess.Popen 在 fork/exec 時要讀整份 environ,而偵測執行緒
+     重連時會寫 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"](= setenv)。
+     glibc 的 setenv 可能 realloc environ 陣列,跟併發的讀就是 use-after-free
+     → 原生 SEGV。2026-08-18 已在 api/utils/camera_stream.py 用
+     capture_open_guard 把「寫」序列化,這裡把「spawn」也納入同一把鎖。
+  ② 繪製(resize + 畫框 + tobytes)原本在 reader thread 做,等於每一幀都在
+     偵測的取像路徑上加工 —— 既拖慢分析,也讓 reader 與 ffmpeg 生命週期糾纏。
+     改成 reader 只放最新畫面的參照,全部加工搬到 pacer thread。
+🛑 這兩項都不是「猜測的修法」,①有今天實際修掉同類 race 的證據,②是把工作
+   移出關鍵路徑。但仍必須在 104 壓測數小時確認不再 SEGV 才可上 87。
+
+架構(不變)
+- reader thread 每幀 push_frame → 只存參照,不做加工
+- worker 每次推論後 update_detections → bbox 不卡 detection
+- pacer 用 wall-clock 加工並餵 ffmpeg → 跟 detection/reader 都解耦
+
+環境變數
+    ANNOTATED_STREAM_CAMS=7,8      要開哪幾台(空 = 全部關閉,預設關閉)
+    ANNOTATED_STREAM_BITRATE=1M    編碼位元率
+    ANNOTATED_STREAM_WIDTH=1280 / _HEIGHT=720 / _FPS=25
+    ANNOTATED_STREAM_ENCODER=libx264   Jetson 可試 h264_v4l2m2m(硬體編碼)
+"""
 
 import logging
+import os
 import subprocess
 import threading
 import time
 from typing import Optional
+
+from api.utils.camera_stream import capture_open_guard
 
 import cv2
 import numpy as np
@@ -17,6 +52,23 @@ log = logging.getLogger(__name__)
 
 _streamers: dict = {}
 _streamers_lock = threading.Lock()
+
+STREAM_WIDTH = int(os.getenv("ANNOTATED_STREAM_WIDTH", "1280") or 1280)
+STREAM_HEIGHT = int(os.getenv("ANNOTATED_STREAM_HEIGHT", "720") or 720)
+STREAM_FPS = int(os.getenv("ANNOTATED_STREAM_FPS", "25") or 25)
+STREAM_BITRATE = os.getenv("ANNOTATED_STREAM_BITRATE", "1M") or "1M"
+STREAM_ENCODER = os.getenv("ANNOTATED_STREAM_ENCODER", "libx264") or "libx264"
+
+
+def enabled_camera_ids() -> set:
+    """要開 H.264 疊加串流的相機。預設空 = 全部關閉,必須明確指定才會啟用。"""
+    raw = (os.getenv("ANNOTATED_STREAM_CAMS", "") or "").strip()
+    out = set()
+    for part in raw.replace(";", ",").split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.add(int(part))
+    return out
 
 _LABELS = {
     "car": "Car", "motorcycle": "Moto", "truck": "Truck", "bus": "Bus",
@@ -61,7 +113,9 @@ class AnnotatedStreamer:
         self.proc: Optional[subprocess.Popen] = None
         self._proc_lock = threading.Lock()
 
-        self._latest_frame: Optional[bytes] = None
+        # reader 只放「最新原始畫面的參照」,加工全部在 pacer 做 ——
+        # 不可以在 reader thread 做 resize/畫框,那是偵測的取像路徑。
+        self._latest_raw = None
         self._frame_lock = threading.Lock()
 
         self._latest_dets: list = []
@@ -82,20 +136,24 @@ class AnnotatedStreamer:
             "-s", f"{self.width}x{self.height}",
             "-r", str(self.fps),
             "-i", "-",
-            "-c:v", "libx264",
+            "-c:v", STREAM_ENCODER,
             "-preset", "ultrafast", "-tune", "zerolatency",
-            "-b:v", "2M", "-maxrate", "2M", "-bufsize", "2M",
+            "-b:v", STREAM_BITRATE, "-maxrate", STREAM_BITRATE,
+            "-bufsize", STREAM_BITRATE,
             "-g", str(self.fps * 2),
             "-pix_fmt", "yuv420p",
             "-f", "rtsp", "-rtsp_transport", "tcp",
             rtsp_url,
         ]
         try:
-            self.proc = subprocess.Popen(
-                cmd, stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                close_fds=True,
-            )
+            # 🛑 進閘門:fork/exec 會讀整份 environ,而偵測重連那條路徑會 setenv。
+            #    兩者併發就是 use-after-free → 原生 SEGV(這正是當初停用的原因)。
+            with capture_open_guard():
+                self.proc = subprocess.Popen(
+                    cmd, stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    close_fds=True,
+                )
             log.info(f"AnnotatedStreamer cam_{self.camera_id} spawned pid={self.proc.pid}")
         except Exception as e:
             log.error(f"AnnotatedStreamer cam_{self.camera_id} spawn failed: {e}")
@@ -116,7 +174,8 @@ class AnnotatedStreamer:
         while not self._stopped:
             next_tick += self.frame_interval
             with self._frame_lock:
-                buf = self._latest_frame
+                raw = self._latest_raw
+            buf = self._encode_frame(raw) if raw is not None else None
             if buf is not None and self._ensure_proc():
                 try:
                     self.proc.stdin.write(buf)
@@ -141,22 +200,31 @@ class AnnotatedStreamer:
         except Exception:
             pass
 
+    def _encode_frame(self, frame: np.ndarray) -> Optional[bytes]:
+        """resize + 畫框 + 轉 bytes。只在 pacer thread 呼叫。"""
+        try:
+            h, w = frame.shape[:2]
+            sx = self.width / w if w else 1.0
+            sy = self.height / h if h else 1.0
+            if w != self.width or h != self.height:
+                frame = cv2.resize(frame, (self.width, self.height))
+                sx = sy = 1.0 if (w == self.width and h == self.height) else sx
+            with self._dets_lock:
+                dets = self._latest_dets
+            annotated = _draw_overlay(frame, dets, sx, sy)
+            if not annotated.flags['C_CONTIGUOUS']:
+                annotated = np.ascontiguousarray(annotated)
+            return annotated.tobytes()
+        except Exception:
+            return None
+
     def push_frame(self, frame: np.ndarray):
+        """reader thread 呼叫。🛑 只存參照,不做任何加工 —— 這是偵測的取像路徑,
+        在這裡 resize/畫框會直接拖慢分析率。"""
         if self._stopped or frame is None:
             return
-        h, w = frame.shape[:2]
-        sx = self.width / w if w else 1.0
-        sy = self.height / h if h else 1.0
-        if w != self.width or h != self.height:
-            frame = cv2.resize(frame, (self.width, self.height))
-        with self._dets_lock:
-            dets = self._latest_dets
-        annotated = _draw_overlay(frame, dets, sx, sy)
-        if not annotated.flags['C_CONTIGUOUS']:
-            annotated = np.ascontiguousarray(annotated)
-        buf = annotated.tobytes()
         with self._frame_lock:
-            self._latest_frame = buf
+            self._latest_raw = frame
 
     def push(self, frame: np.ndarray):
         self.push_frame(frame)
@@ -180,11 +248,15 @@ class AnnotatedStreamer:
                 self.proc = None
 
 
-def get_streamer(camera_id: int, width: int = 1280, height: int = 720, fps: int = 25) -> AnnotatedStreamer:
+def get_streamer(camera_id: int, width: int = 0, height: int = 0, fps: int = 0) -> AnnotatedStreamer:
+    """0 = 用環境變數的預設值(呼叫端不必知道尺寸)。"""
     with _streamers_lock:
         s = _streamers.get(camera_id)
         if s is None:
-            s = AnnotatedStreamer(camera_id, width, height, fps)
+            s = AnnotatedStreamer(camera_id,
+                                  width or STREAM_WIDTH,
+                                  height or STREAM_HEIGHT,
+                                  fps or STREAM_FPS)
             _streamers[camera_id] = s
         return s
 

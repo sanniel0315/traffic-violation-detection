@@ -5093,7 +5093,7 @@
                                     v-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='h264'"
                                     class="go2rtc-host"
                                     :data-ovl-host="c.id"
-                                    v-go2rtc="getGo2rtcWsUrl(c)"
+                                    v-go2rtc="getMonitorWsUrl(c)"
                                 ></div>
                                 <!-- 階段3:偵測框與 ROI 用 SVG 畫在影片上,不再由後端燒進畫面。
                                      🛑 不要加 viewBox / preserveAspectRatio:in-DOM 模板會被 HTML parser
@@ -5186,7 +5186,7 @@
                                 v-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera,{zoom:true})==='h264'"
                                 class="go2rtc-host"
                                 data-ovl-host="zoom"
-                                v-go2rtc="getGo2rtcWsUrl(monitorZoomCamera)"
+                                v-go2rtc="getMonitorWsUrl(monitorZoomCamera)"
                             ></div>
                             <!-- 放大視窗不再疊 SVG:疊加模式走 MJPEG,ROI 與偵測框都由後端燒進畫面,
                                  框與車是同一時間點。非疊加模式本來就不需要框。 -->
@@ -15664,22 +15664,46 @@ const app=createApp({
         const h264LiveEnabled=ref((()=>{
             try{ return localStorage.getItem('tvd_h264_live')!=='0'; }catch(_){ return true; }
         })());
+        // 有「實際推流中」的串流。🛑 疊加串流一定要看 producer,不能只看名稱有沒有:
+        //    cam_N_annotated 必須先在 go2rtc 設定裡宣告成空串流,ffmpeg 才推得進去,
+        //    所以「名稱存在」對未啟用的相機也成立 —— 只看名稱會讓那幾台切到一條
+        //    沒有資料的 H.264,畫面是 0x0 全黑(實測 104 的 cam_8 就這樣)。
+        const go2rtcLive=ref(new Set());
         const loadGo2rtcStreams=async()=>{
             try{
                 const r=await fetch('/api/go2rtc/api/streams');
                 if(!r.ok)return;
-                go2rtcStreams.value=new Set(Object.keys(await r.json()||{}));
+                const d=await r.json()||{};
+                go2rtcStreams.value=new Set(Object.keys(d));
+                go2rtcLive.value=new Set(Object.keys(d).filter(k=>((d[k]||{}).producers||[]).length>0));
             }catch(_){ /* go2rtc 不可用 → 全部維持 MJPEG,不影響現有行為 */ }
         };
         loadGo2rtcStreams();
+        // 疊加串流是隨偵測服務起停的,要定期重查,否則啟用後要重整頁面才看得到
+        setInterval(loadGo2rtcStreams, 30000);
         const go2rtcStreamName=(camera)=>camera?.id?`cam_${camera.id}`:'';
         const hasGo2rtcStream=(camera)=>go2rtcStreams.value.has(go2rtcStreamName(camera));
-        const getGo2rtcWsUrl=(camera)=>{
-            const name=go2rtcStreamName(camera);
+        // ── 疊加也走 H.264 ────────────────────────────────────────────────
+        // 後端(detection/annotated_streamer.py)把畫好框的畫面編成 H.264 推去
+        // go2rtc 的 cam_N_annotated。實測 104:
+        //     疊加 MJPEG      12.12 Mbps (11.7 fps)
+        //     疊加 H.264       0.92 Mbps  ← 省 13 倍
+        // 現場 87 對外上行只有 1.2~1.5 Mbps,MJPEG 疊加遠端必定不順;
+        // 這條才塞得下,而且是後端燒錄的框,不會有前端 SVG 那種雙時間源錯位。
+        // 沒有這條串流(未啟用的機器)時自動退回原本的 MJPEG,行為不變。
+        const go2rtcAnnotatedName=(camera)=>camera?.id?`cam_${camera.id}_annotated`:'';
+        const hasGo2rtcAnnotated=(camera)=>go2rtcLive.value.has(go2rtcAnnotatedName(camera));
+        const getGo2rtcWsUrl=(camera, opts={})=>{
+            const name=(opts.annotated && hasGo2rtcAnnotated(camera))
+                ? go2rtcAnnotatedName(camera)
+                : go2rtcStreamName(camera);
             if(!name)return '';
             const proto=location.protocol==='https:'?'wss:':'ws:';
             return `${proto}//${location.host}/api/go2rtc/api/ws?src=${encodeURIComponent(name)}`;
         };
+        // 監控格用:疊加模式優先拿疊加串流
+        const getMonitorWsUrl=(camera)=>getGo2rtcWsUrl(camera,
+            {annotated: resolveCameraStreamMode(camera)==='overlay'});
         // ── 階段3:H.264 影片 + 前端 SVG 疊加 ────────────────────────────
         // 後端 /api/stream/overlay-data 回正規化 0~1 的偵測框與 ROI。
         // 🛑 一定要正規化再乘上「影片實際顯示的矩形」。先前試過前端疊 SVG
@@ -15761,7 +15785,12 @@ const app=createApp({
         //    或後端在 H.264 SEI 帶時間戳),那是另一個題目。
         const getMonitorMediaKind=(camera, opts={})=>{
             if(shouldUseDirectMonitorVideo(camera))return 'video';   // 上傳的 mp4 直接播檔案
-            if(resolveCameraStreamMode(camera)==='overlay')return 'image';
+            if(resolveCameraStreamMode(camera)==='overlay'){
+                // 有 H.264 疊加串流就走它(頻寬只要 MJPEG 的 1/13,而且框是後端
+                // 燒錄的,沒有前端 SVG 的雙時間源問題);沒有才退回 MJPEG。
+                if(h264LiveEnabled.value && hasGo2rtcAnnotated(camera))return 'h264';
+                return 'image';
+            }
             // 非疊加 + go2rtc 有這支 → H.264。疊加、快照降級、go2rtc 沒有的都維持 MJPEG。
             // 🛑 這裡不可以看 monitorSnapshotMode。快照降級是為了「省 HTTP 長連線」
             //    才存在的補丁,而 H.264 走 WebSocket 根本不佔那 6 條。看了它會變成
@@ -19790,7 +19819,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,hasGo2rtcAnnotated,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
