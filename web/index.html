@@ -15826,8 +15826,17 @@ const app=createApp({
             //   分割格 疊加   1280 寬(原本就是 1280,不動)
             //   放大視窗      不套用 → 1920x1080 Q75
             const lite=opts.highQuality?'':(route==='live-overlay'?'':'&w=960');
+            // 🛑 窄頻模式:只砍預算(留 1 路)是不夠的 —— 一路疊加就要 15.8 Mbps,
+            //    現場遠端上行實測只有約 2 Mbps,照樣塞爆、API 照樣擠不出去。
+            //    2026-08-18 實測 Send-Q 六條全積(最多 2.37MB)、rtt 從 80ms 漲到
+            //    670ms、重傳率 2~10%。所以窄頻時解析度與幀率都要一起降。
+            //    實測 w=640 每幀 48.5KB → 2 fps 約 0.78 Mbps,在 2 Mbps 的線上
+            //    留一半以上給 API,UI 才不會被餓死。
+            //    「幀率不可降」那條現場要求是針對本機看的情境;遠端窄頻下的
+            //    替代方案是「什麼都動不了」,所以這裡以可用性優先。
+            const narrow=(!opts.highQuality && lowBandwidth.value)?'&w=640&fps=2':'';
             const tick=monitorStreamTick(camera);
-            return `/api/stream/${camera.id}/${route}?t=${tick}${roiParam}${qParam}${lite}`;
+            return `/api/stream/${camera.id}/${route}?t=${tick}${roiParam}${qParam}${narrow||lite}`;
         };
         const getMonitorMediaUrl=(camera, opts={})=>{
             if(getMonitorMediaKind(camera, opts)==='video'){
