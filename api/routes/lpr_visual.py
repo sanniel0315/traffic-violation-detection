@@ -12,7 +12,7 @@ import re
 
 sys.path.insert(0, '/workspace')
 
-from api.utils.camera_stream import resolve_analysis_source
+from api.utils.camera_stream import open_capture, resolve_analysis_source
 from api.utils.shutdown import shutdown_event
 
 router = APIRouter(prefix="/api/lpr/visual", tags=["lpr-visual"])
@@ -309,7 +309,7 @@ def _recognize_plate_ensemble(frame, x1: int, y1: int, x2: int, y2: int, recogni
 
 def generate_frames(source: str):
     """產生視覺化串流"""
-    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+    cap = open_capture(source, cv2.CAP_FFMPEG)
     try:
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     except Exception:
@@ -339,7 +339,7 @@ def generate_frames(source: str):
             if time.time() - last_ok > 2.0:
                 cap.release()
                 time.sleep(0.1)
-                cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                cap = open_capture(source, cv2.CAP_FFMPEG)
                 try:
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 except Exception:
@@ -530,7 +530,7 @@ def visual_snapshot(camera_id: int):
         if frame is None:
             # fallback 2: cap.read (非 frigate 管理的 camera 或 file source)
             try:
-                cap = cv2.VideoCapture(resolve_analysis_source(camera))
+                cap = open_capture(resolve_analysis_source(camera))
                 ret, frame = cap.read()
                 cap.release()
                 if not ret:

@@ -25,7 +25,7 @@ import requests
 
 from api.routes.logs import add_log
 from api.models import get_db, Camera
-from api.utils.camera_stream import resolve_capture_source
+from api.utils.camera_stream import open_capture, resolve_capture_source
 from api.utils.feature_state import set_feature_state
 
 router = APIRouter(prefix="/api/cameras", tags=["攝影機"])
@@ -655,7 +655,7 @@ async def auto_calibrate_camera(camera_id: int, lane_width_m: float = 3.5, rect_
         # Try snapshot via cv2
         try:
             import cv2 as _cv2
-            cap = _cv2.VideoCapture(c.source, _cv2.CAP_FFMPEG)
+            cap = open_capture(c.source, _cv2.CAP_FFMPEG)
             ret, frame = cap.read()
             cap.release()
             if not ret:
@@ -712,7 +712,7 @@ async def auto_calibrate_apply(camera_id: int, lane_width_m: float = 3.5, rect_l
     if frame is None:
         try:
             import cv2 as _cv2
-            cap = _cv2.VideoCapture(c.source, _cv2.CAP_FFMPEG)
+            cap = open_capture(c.source, _cv2.CAP_FFMPEG)
             ret, frame = cap.read()
             cap.release()
             if not ret:
@@ -1145,7 +1145,7 @@ def analyze_source(data: AnalyzeSourceRequest):
         except Exception:
             requested_time = None
     resolved = resolve_capture_source(source)
-    cap = cv2.VideoCapture(resolved)
+    cap = open_capture(resolved)
     if not cap.isOpened():
         raise HTTPException(status_code=503, detail="無法分析來源")
 
@@ -1800,7 +1800,7 @@ def _test_source(url: str, camera_name: str = None) -> dict:
     if resolved.startswith("http://") or resolved.startswith("https://"):
         return _test_http_source(resolved, name)
     try:
-        cap = cv2.VideoCapture(resolved)
+        cap = open_capture(resolved)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not cap.isOpened():
             add_log("error", f"無法連線: {name}", "camera")

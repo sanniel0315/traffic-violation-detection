@@ -28,7 +28,14 @@ from api.models import get_db, Camera, SessionLocal, TrafficEvent
 from api.routes.logs import add_log
 from api.utils.roi_scope import SCOPE_TRAFFIC, SCOPE_SPEED, SCOPE_CONGESTION, select_zones
 from api.utils.feature_state import get_feature_enabled, set_feature_state
-from api.utils.camera_stream import direct_source_for, resolve_analysis_source, resolve_capture_source, resolve_local_api_source
+from api.utils.camera_stream import capture_open_guard, direct_source_for, resolve_analysis_source, resolve_capture_source, resolve_local_api_source
+
+# OpenCV FFmpeg backend 的 RTSP 參數。原本三個開啟點各自寫一份一模一樣的
+# 字串,抽成常數避免改一處漏兩處。實際套用時機見 capture_open_guard。
+_FFMPEG_RTSP_OPTS = (
+    "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072"
+    "|allowed_media_types;video|analyzeduration;1000000|probesize;1000000"
+)
 from api.utils.shutdown import shutdown_event
 
 router = APIRouter(prefix="/api/stream", tags=["串流"])
@@ -726,9 +733,6 @@ def _open_capture(source: str):
     source = resolve_capture_source(source)
     source_lc = str(source or "").lower()
     is_rtsp = source_lc.startswith("rtsp://")
-    if is_rtsp:
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072|allowed_media_types;video|analyzeduration;1000000|probesize;1000000"
-
     backends = []
     is_http = source_lc.startswith("http://") or source_lc.startswith("https://")
     is_http_mjpeg = is_http and ("mpjpeg" in source_lc or source_lc.endswith(".mjpg") or source_lc.endswith(".mjpeg"))
@@ -747,21 +751,23 @@ def _open_capture(source: str):
         backends.append(None)
 
     last_cap = None
-    for backend in backends:
-        try:
-            cap = cv2.VideoCapture(source) if backend is None else cv2.VideoCapture(source, backend)
-        except Exception:
-            cap = None
-        if cap is not None and cap.isOpened():
-            return cap
-        if cap is not None:
-            last_cap = cap
+    # 整段嘗試都在閘門內 —— 設參數與開啟必須是同一個原子動作,見 capture_open_guard
+    with capture_open_guard(_FFMPEG_RTSP_OPTS if is_rtsp else None):
+        for backend in backends:
             try:
-                cap.release()
+                cap = cv2.VideoCapture(source) if backend is None else cv2.VideoCapture(source, backend)
             except Exception:
-                pass
+                cap = None
+            if cap is not None and cap.isOpened():
+                return cap
+            if cap is not None:
+                last_cap = cap
+                try:
+                    cap.release()
+                except Exception:
+                    pass
 
-    return last_cap if last_cap is not None else cv2.VideoCapture(source)
+        return last_cap if last_cap is not None else cv2.VideoCapture(source)
 
 
 def _is_http_mjpeg_source(source: str) -> bool:
@@ -2041,9 +2047,8 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         detector = VehicleDetector(conf_threshold=0.5)
     add_log("info", f"cam_{camera_id} 偵測器 device: {getattr(detector, 'runtime_device', 'unknown')}", "detection")
     _src_lc = str(source or "").lower()
-    if _src_lc.startswith("rtsp://"):
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072|allowed_media_types;video|analyzeduration;1000000|probesize;1000000"
-    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+    with capture_open_guard(_FFMPEG_RTSP_OPTS if _src_lc.startswith("rtsp://") else None):
+        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
     speed_kmh_per_pxps = float(detection_config.get("speed_kmh_per_pxps", 0.12) or 0.12)
     speed_smooth_alpha = float(detection_config.get("speed_smooth_alpha", 0.35) or 0.35)
     # track_ttl 從 1.2 → 5 秒：塞車場景偶爾 1 frame detection miss 不會讓 track
@@ -2284,7 +2289,8 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         cap.release()
                     except Exception:
                         pass
-                    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                    with capture_open_guard():
+                        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                     _read_fail_count[0] = 0
                     continue
                 # RTSP/HTTP：連線真的斷了 → reconnect
@@ -2303,9 +2309,10 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 except Exception:
                     pass
                 time.sleep(2)
-                if _src_lc_outer.startswith("rtsp://"):
-                    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072|allowed_media_types;video|analyzeduration;1000000|probesize;1000000"
-                cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                # 🛑 四台同時逾時就會四條 thread 同時走到這裡,setenv/getenv 併發
+                #    會 native SEGV(2026-08-18 實際發生)。閘門把它排成一條。
+                with capture_open_guard(_FFMPEG_RTSP_OPTS if _src_lc_outer.startswith("rtsp://") else None):
+                    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                 continue
             _read_fail_count[0] = 0
             _latest["frame"] = frm

@@ -15,7 +15,7 @@ from api.models import CongestionSample, get_db, Camera, SessionLocal
 from api.utils.roi_scope import SCOPE_CONGESTION, SCOPE_TRAFFIC, select_zones
 from api.utils.shutdown import shutdown_event
 from api.utils.feature_state import get_feature_state, set_feature_state
-from api.utils.camera_stream import resolve_analysis_source
+from api.utils.camera_stream import open_capture, resolve_analysis_source
 
 router = APIRouter(prefix="/api/congestion", tags=["壅塞偵測"])
 _OFFLINE_MAX_RECONNECT = 8  # 連續 N 次 reconnect 都失敗(約2分鐘)→ 判定相機離線,自動停壅塞,不再無限硬撐
@@ -295,7 +295,7 @@ def congestion_snapshot(camera_id: int, db: Session = Depends(get_db)):
     if not bool(camera.enabled):
         raise HTTPException(status_code=409, detail="攝影機已關閉")
     
-    cap = cv2.VideoCapture(resolve_analysis_source(camera))
+    cap = open_capture(resolve_analysis_source(camera))
     ret, frame = cap.read()
     cap.release()
     
@@ -332,7 +332,7 @@ async def congestion_stream(camera_id: int, db: Session = Depends(get_db)):
 
 def generate_congestion_stream(camera_id: int, source: str, zones: list):
     """產生壅塞偵測串流"""
-    cap = cv2.VideoCapture(source)
+    cap = open_capture(source)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     while True:
@@ -395,10 +395,8 @@ def draw_congestion(frame, result):
 
 def run_congestion_detection(camera_id: int, camera_name: str, source: str, zones: list):
     """背景壅塞偵測任務"""
-    import os as _os
-    # RTSP 強制走 TCP 避免封包掉包
-    if str(source).lower().startswith("rtsp://"):
-        _os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072|allowed_media_types;video|analyzeduration;1000000|probesize;1000000|threads;1"
+    # RTSP 強制走 TCP 避免封包掉包(threads;1 是壅塞這條專用,別的模組不要)
+    _CONGESTION_RTSP_OPTS = "rtsp_transport;tcp|stimeout;10000000|buffer_size;131072|allowed_media_types;video|analyzeduration;1000000|probesize;1000000|threads;1"
     # 判斷是不是檔案來源（相對路徑、/files/... 或副檔名是影片）→ 影響 EOF 處理策略
     _src_lc = str(source or "").lower()
     is_file_source = (
@@ -407,7 +405,7 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
     )
     # file source: 不再自己 open cap，從 detection 的 _shared_frames 取 frame
     # （commit 9c9679e 完成版：避免每個 mkv 被開多條 cap 浪費 CPU）
-    cap = None if is_file_source else cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+    cap = None if is_file_source else open_capture(source, cv2.CAP_FFMPEG, _CONGESTION_RTSP_OPTS)
     _last_shared_ts = 0.0
     print(f"🚦 壅塞偵測啟動: camera_id={camera_id} (file_source={is_file_source}, shared_frames={is_file_source})")
     fail_count = 0
@@ -490,7 +488,7 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                     continue
                 if cap is None:
                     # 共用畫面不可用(detection 沒跑或過期)→ 退回自己讀
-                    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                    cap = open_capture(source, cv2.CAP_FFMPEG, _CONGESTION_RTSP_OPTS)
                     last_ok = time.time()
             if not cap.isOpened() or (time.time() - last_ok) > 10.0:
                 try:
@@ -504,7 +502,7 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                     congestion_services[camera_id]["offline"] = True  # 保留 feature_state(偵測意圖),watchdog 探測影像恢復後自動續偵測
                     break
                 print(f"🔄 congestion cam_{camera_id} reconnect (fail={fail_count}, retry={reconnect_count}/{_OFFLINE_MAX_RECONNECT})", flush=True)
-                cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                cap = open_capture(source, cv2.CAP_FFMPEG, _CONGESTION_RTSP_OPTS)
                 fail_count = 0
                 last_ok = time.time()
                 time.sleep(1.0)
@@ -556,7 +554,7 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                         congestion_services[camera_id]["error"] = f"相機離線(連續{reconnect_count}次重連失敗,自動停止)"
                         congestion_services[camera_id]["offline"] = True  # 保留 feature_state(偵測意圖),watchdog 探測影像恢復後自動續偵測
                         break
-                    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                    cap = open_capture(source, cv2.CAP_FFMPEG, _CONGESTION_RTSP_OPTS)
                     fail_count = 0
                     last_ok = time.time()
                 time.sleep(0.2)
@@ -651,7 +649,7 @@ def _probe_source_online(camera_id) -> bool:
         return True
     cap = None
     try:
-        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        cap = open_capture(source, cv2.CAP_FFMPEG, _CONGESTION_RTSP_OPTS)
         return bool(cap.isOpened() and cap.read()[0])
     except Exception:
         return False
