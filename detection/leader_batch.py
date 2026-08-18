@@ -66,11 +66,20 @@ class _LeaderBatcher:
         self._buf: deque = deque()      # (ts, batch_size, sec, followers)
 
     def run(self, model, conf: float, device: Any, frame,
-            parse: Callable[[Any, Any], list]) -> list:
+            parse: Callable[[Any, Any], list], model_key: Any = None) -> list:
+        """model_key:決定「哪些請求可以合成一批」。
+
+        🛑 一定要傳「權重相同就相同」的鍵(實務上是模型檔路徑),不能用
+           id(model)。每台相機各自 new 一個 VehicleDetector,用 id 的話四台
+           就是四個鍵,永遠湊不成批 —— 2026-08-18 在 87 實測 batch_size
+           恆為 1.0 就是這個原因。權重相同時,由任何一台的 model 一次跑完
+           整批,結果與各自跑完全相同。
+        """
         if not LEADER_BATCH_ENABLED:
             return self._single(model, conf, device, frame, parse)
 
-        req = _Req((id(model), float(conf), str(device)),
+        req = _Req((model_key if model_key is not None else id(model),
+                    float(conf), str(device)),
                    model, conf, device, frame, parse)
         rid = id(req)
         with self._pend_lock:
