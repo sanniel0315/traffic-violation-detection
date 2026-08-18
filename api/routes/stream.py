@@ -7,6 +7,7 @@ import cv2
 import asyncio
 import os
 import threading
+from collections import deque as _deque
 import time
 import requests
 from datetime import datetime, timedelta
@@ -655,6 +656,51 @@ _per_cam_detectors_lock = threading.Lock()
 # 舊的 fallback singleton（給非 cam 上下文呼叫，例如 cameras.py 的 analyze）
 _shared_overlay_detector = None
 _shared_overlay_detector_lock = threading.Lock()
+
+
+class _InferStats:
+    """滾動視窗統計偵測 worker 的分析率與推論成本。
+
+    為什麼要有:「分析功能不可被影響、分析率不可降低」是硬約束,但過去沒有任何
+    地方看得到這個數字 —— 每次懷疑變慢都要臨時加探針,改完也無法回歸比對。
+    這裡記三個數,合起來才能分辨「跑不動」與「被擋住」:
+        analysis_fps  實際 YOLO 輪次頻率
+        infer_ms      單次推論耗時(GPU/模型本身多快)
+        lock_wait_ms  等 _shared_overlay_detector_lock 的時間
+    lock_wait 遠大於 infer 就代表瓶頸是「全 process 一把推論鎖」的排隊,
+    不是機器不夠力 —— 這兩種情況的解法完全不同。
+    """
+
+    __slots__ = ("_win", "_buf", "_lock")
+
+    def __init__(self, window_sec: float = 30.0):
+        self._win = window_sec
+        self._buf = _deque()          # (ts, wait_sec, infer_sec)
+        self._lock = threading.Lock()
+
+    def observe(self, ts: float, wait_sec: float, infer_sec: float) -> None:
+        with self._lock:
+            self._buf.append((ts, wait_sec, infer_sec))
+            cut = ts - self._win
+            while self._buf and self._buf[0][0] < cut:
+                self._buf.popleft()
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            items = list(self._buf)
+        if len(items) < 2:
+            return {}
+        span = items[-1][0] - items[0][0]
+        if span <= 0:
+            return {}
+        n = len(items)
+        return {
+            # n-1 個間隔對應 span 秒
+            "analysis_fps": round((n - 1) / span, 2),
+            "infer_ms": round(sum(i[2] for i in items) / n * 1000.0, 1),
+            "lock_wait_ms": round(sum(i[1] for i in items) / n * 1000.0, 1),
+            "stats_window_sec": round(span, 1),
+        }
 
 def _get_per_cam_detector(camera_id: int):
     """每個 camera 一個獨立 VehicleDetector，避免 4 cams 共享同一 detector 被 lock 序列化。"""
@@ -1934,6 +1980,23 @@ async def detection_status(camera_id: int):
 async def all_detection_status():
     """取得所有偵測服務狀態"""
     return {k: {kk: vv for kk, vv in v.items() if not kk.startswith("_")} for k, v in detection_services.items()}
+
+
+@router.get("/gpu-lock-stats", summary="GPU 推論通道(全 process 唯一)的吞吐與排隊")
+async def gpu_lock_stats_endpoint():
+    """分析率是「跑不動」還是「排不到」,看這裡。
+
+    utilization 逼近 1 = 這把鎖已飽和,再給 CPU 也提不了分析率;
+    wait 遠大於 hold = 需求超過通道容量;hold 本身就大 = 模型/前後處理慢。
+    """
+    from detection.gpu_lock import gpu_lock_stats
+    per_cam = {
+        str(cid): {k: v.get(k) for k in
+                   ("analysis_fps", "infer_ms", "lock_wait_ms", "stats_window_sec")
+                   if k in v}
+        for cid, v in detection_services.items() if v.get("running")
+    }
+    return {"gpu_lock": gpu_lock_stats(), "per_camera": per_cam}
 
 
 @router.get("/debug/shared-frames")
@@ -3389,6 +3452,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     # 限制每 cam 最多 10 FPS 偵測 → 4 cam × 10 = 40 inferences/s，降 GPU 負載（監控夠用）
     _last_proc_ts = 0.0
     _last_infer_wall = 0.0
+    _infer_stats = _InferStats()
     MAX_INFER_FPS = 10.0
     _min_infer_interval = 1.0 / MAX_INFER_FPS
     _frigate_fb_last = 0.0  # frigate fallback throttle (worker-local，不影響 reader_loop)
@@ -3444,8 +3508,15 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                         (_infer_width, max(1, int(_ih * _s))),
                                         interpolation=cv2.INTER_LINEAR)
                 _bbox_scale = 1.0 / _s
+        _t_wait0 = time.time()
         with _shared_overlay_detector_lock:
+            _t_infer0 = time.time()
             detections = detector.detect(_det_input)
+            _t_infer1 = time.time()
+        _infer_stats.observe(_t_infer1, _t_infer0 - _t_wait0, _t_infer1 - _t_infer0)
+        _svc = detection_services.get(camera_id)
+        if _svc is not None:
+            _svc.update(_infer_stats.snapshot())
         if _bbox_scale != 1.0:
             detections = _scale_detections(detections, _bbox_scale)
         # 原子綁定：frame + bbox + ts 一起寫入
