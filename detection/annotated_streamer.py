@@ -38,6 +38,7 @@ stream.py 原本寫死 `_ANNOTATED_STREAM_CAM_IDS = set()`,註解只留一句
 
 import logging
 import os
+from collections import deque
 import subprocess
 import threading
 import time
@@ -58,6 +59,13 @@ STREAM_HEIGHT = int(os.getenv("ANNOTATED_STREAM_HEIGHT", "720") or 720)
 STREAM_FPS = int(os.getenv("ANNOTATED_STREAM_FPS", "25") or 25)
 STREAM_BITRATE = os.getenv("ANNOTATED_STREAM_BITRATE", "1M") or "1M"
 STREAM_ENCODER = os.getenv("ANNOTATED_STREAM_ENCODER", "libx264") or "libx264"
+# 畫面延遲多久才送出。🛑 這是「框追得準」的關鍵:
+#   pacer 若拿最新畫面配最新偵測,那組偵測是好幾百毫秒前那張畫面算出來的,
+#   框就會系統性落後車子(2026-08-18 實測 shared_frames age_sec 0.5,
+#   在 30fps 順暢畫面上非常明顯;MJPEG 只有 10fps 時比較看不出來)。
+#   把畫面壓在延遲線裡等偵測追上,再用時間戳配對,框就畫在「它自己那張」上。
+#   代價是畫面延遲這麼久 —— 監看用途可以接受,換來的是框準。
+STREAM_DELAY_SEC = float(os.getenv("ANNOTATED_STREAM_DELAY", "0.6") or 0.6)
 
 
 def enabled_camera_ids() -> set:
@@ -115,12 +123,25 @@ class AnnotatedStreamer:
 
         # reader 只放「最新原始畫面的參照」,加工全部在 pacer 做 ——
         # 不可以在 reader thread 做 resize/畫框,那是偵測的取像路徑。
-        self._latest_raw = None
+        # 延遲線:(ts, frame, sx, sy),依時間排序。長度剛好蓋住延遲 + 一點餘裕。
+        self._frames = deque(maxlen=max(4, int(self.fps * (STREAM_DELAY_SEC + 0.5)) + 2))
         self._frame_lock = threading.Lock()
+        self._last_sent_ts = 0.0
 
-        self._latest_dets: list = []
+        # 偵測結果也要帶時間戳,才配得起來。留幾組,配對時取「不晚於該幀」的最新一組。
+        self._dets: deque = deque(maxlen=32)      # (ts, detections)
         self._dets_lock = threading.Lock()
 
+        # 供幀率監看。🛑 pacer 是定速餵 ffmpeg 的(rawvideo 的 -r 是固定值),
+        #    所以 reader 供幀率一旦低於這個速率,同一張畫面就會被不均勻地重複送出
+        #    —— 使用者看到的就是「抖動」。2026-08-18 實測:來源 30fps、
+        #    decode_skip_frames=2 只解 1/3 → 供幀 10fps、pacer 送 25fps,
+        #    每張重複 2~3 次,畫面明顯抖。改成 decode_skip=0 + fps 30 才 1:1 順。
+        #    這裡把供幀率量出來並在偏低時明講,不要讓人再從畫面去猜。
+        self._supply_n = 0
+        self._supply_t0 = time.monotonic()
+        self._supply_fps = 0.0
+        self._warned_supply = False
         self._stopped = False
         self._restart_count = 0
         self._max_restart = 200
@@ -173,9 +194,14 @@ class AnnotatedStreamer:
         next_tick = time.monotonic()
         while not self._stopped:
             next_tick += self.frame_interval
-            with self._frame_lock:
-                raw = self._latest_raw
-            buf = self._encode_frame(raw) if raw is not None else None
+            item = self._take_delayed()
+            if item is not None and item[0] != self._last_sent_ts:
+                buf = self._encode_frame(item)
+                self._last_sent_ts = item[0]
+                self._last_buf = buf
+            else:
+                # 還沒有新的「等夠久」的畫面 → 重送上一張,維持定速餵給 ffmpeg
+                buf = getattr(self, "_last_buf", None)
             if buf is not None and self._ensure_proc():
                 try:
                     self.proc.stdin.write(buf)
@@ -188,9 +214,10 @@ class AnnotatedStreamer:
             else:
                 next_tick = time.monotonic()
 
-    def update_detections(self, detections: list):
+    def update_detections(self, detections: list, ts: float = 0.0):
+        """worker 呼叫。ts 是「這組結果所屬那張畫面」的時間戳,配對用。"""
         with self._dets_lock:
-            self._latest_dets = list(detections or [])
+            self._dets.append((float(ts) if ts else time.time(), list(detections or [])))
         try:
             if detections:
                 self._dbg_n = getattr(self, '_dbg_n', 0) + 1
@@ -200,15 +227,41 @@ class AnnotatedStreamer:
         except Exception:
             pass
 
+    def _dets_for(self, ts: float) -> list:
+        """取「不晚於這張畫面」的最新一組偵測結果。
+
+        配不到(偵測還沒追上)就回空 —— 寧可暫時沒有框,也不要畫上屬於別張畫面的框。
+        """
+        with self._dets_lock:
+            items = list(self._dets)
+        best = []
+        for d_ts, dets in items:
+            if d_ts <= ts + 0.02:      # 20ms 容差,同一張畫面的時間戳可能有微小差異
+                best = dets
+            else:
+                break
+        return best
+
+    def _take_delayed(self):
+        """從延遲線取一張「已經等夠久」的畫面。沒有就回 None(pacer 會重送上一張)。"""
+        target = time.time() - STREAM_DELAY_SEC
+        with self._frame_lock:
+            pick = None
+            for item in self._frames:
+                if item[0] <= target:
+                    pick = item
+                else:
+                    break
+            return pick
+
     def _encode_frame(self, item) -> Optional[bytes]:
         """畫框 + 轉 bytes。只在 pacer thread 呼叫。
 
         收到的畫面已經在 push_frame 裡脫離過 cap.read() 的緩衝(見那裡的說明)。
         """
         try:
-            frame, sx, sy = item
-            with self._dets_lock:
-                dets = self._latest_dets
+            ts, frame, sx, sy = item
+            dets = self._dets_for(ts)
             annotated = _draw_overlay(frame, dets, sx, sy)
             if not annotated.flags['C_CONTIGUOUS']:
                 annotated = np.ascontiguousarray(annotated)
@@ -216,7 +269,7 @@ class AnnotatedStreamer:
         except Exception:
             return None
 
-    def push_frame(self, frame: np.ndarray):
+    def push_frame(self, frame: np.ndarray, ts: float = 0.0):
         """reader thread 呼叫。
 
         🛑 這裡「一定」要複製或 resize,不可以只存參照。
@@ -243,7 +296,23 @@ class AnnotatedStreamer:
         except Exception:
             return
         with self._frame_lock:
-            self._latest_raw = (out, sx, sy)
+            self._frames.append((float(ts) if ts else time.time(), out, sx, sy))
+        self._supply_n += 1
+        dt = time.monotonic() - self._supply_t0
+        if dt >= 10.0:
+            self._supply_fps = self._supply_n / dt
+            self._supply_n = 0
+            self._supply_t0 = time.monotonic()
+            if self._supply_fps < self.fps * 0.8 and not self._warned_supply:
+                self._warned_supply = True
+                log.warning(
+                    "AnnotatedStreamer cam_%s 供幀 %.1f fps < 編碼 %d fps —— "
+                    "同一張會被重複送出,畫面會抖。把該台的 decode_skip_frames 設成 0 "
+                    "(或把 ANNOTATED_STREAM_FPS 調到與供幀相同)",
+                    self.camera_id, self._supply_fps, self.fps)
+                print(f"⚠️ [annot] cam_{self.camera_id} 供幀 {self._supply_fps:.1f} fps "
+                      f"< 編碼 {self.fps} fps → 畫面會抖,請把 decode_skip_frames 設 0",
+                      flush=True)
 
     def push(self, frame: np.ndarray):
         self.push_frame(frame)
@@ -280,16 +349,16 @@ def get_streamer(camera_id: int, width: int = 0, height: int = 0, fps: int = 0) 
         return s
 
 
-def update_detections(camera_id: int, detections: list):
-    """Worker thread call after each inference."""
-    get_streamer(camera_id).update_detections(detections)
+def update_detections(camera_id: int, detections: list, ts: float = 0.0):
+    """Worker thread call after each inference。ts = 該組結果所屬畫面的時間戳。"""
+    get_streamer(camera_id).update_detections(detections, ts)
 
 
-def push_frame(camera_id: int, frame: np.ndarray):
-    """Reader thread call per cap.read() — high cadence (~30 fps)."""
+def push_frame(camera_id: int, frame: np.ndarray, ts: float = 0.0):
+    """Reader thread call per cap.read() — high cadence (~30 fps)。ts = 取得該幀的時間。"""
     if frame is None:
         return
-    get_streamer(camera_id).push_frame(frame)
+    get_streamer(camera_id).push_frame(frame, ts)
 
 
 def push_annotated(camera_id: int, frame: np.ndarray, detections: list):
