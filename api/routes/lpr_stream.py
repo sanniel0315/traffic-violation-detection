@@ -2798,7 +2798,11 @@ class LPRStreamTask:
             return
         self.running = True
         self.load_zones()
-        self.thread = threading.Thread(target=self._run, daemon=True)
+        # 一定要給名字:GPU 推論通道的用量是依 thread 名歸戶的,匿名執行緒在
+        # /api/stream/gpu-lock-stats 只會顯示成 "Thread-N (_run)",查不出是誰。
+        # 2026-08-18 就是因為這樣,花了額外工夫才確認吃掉一半通道的是 LPR。
+        self.thread = threading.Thread(target=self._run, daemon=True,
+                                       name=f"lpr-{self.camera_id}")
         self.thread.start()
         print(f"[LPR] 開始: {self.camera_name}")
         
