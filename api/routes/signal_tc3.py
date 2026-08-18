@@ -47,8 +47,13 @@ SIGNAL_PEER_TIMEOUT = float(os.getenv("SIGNAL_TC3_PEER_TIMEOUT", "45") or 45)
 #    got_tc3=True,recv 逾時就無條件 continue —— socket 還開著、connected 仍是
 #    True,但資料可以停在 45 分鐘前。2026-08-18 在 87 實際踩到:抄到 29 框後
 #    靜默,狀態頁顯示「已連線」卻是 45 分鐘前的燈態。
-#    號誌是每 2 秒主動上傳,60 秒沒有任何訊框就是不正常。
-SIGNAL_STALL_TIMEOUT = float(os.getenv("SIGNAL_TC3_STALL_TIMEOUT", "60") or 60)
+# 門檻怎麼定的:2026-08-18 在 87 實測 3.5 分鐘 36 框 —— 平均間隔 6.0 秒、
+# 最大 33.7 秒。上傳不是固定 2 秒一次(還混著中心查詢的回報),所以取實測最大值
+# 的數倍當門檻,寧可晚一點重連也不要在正常間隔就誤斷。
+SIGNAL_STALL_TIMEOUT = float(os.getenv("SIGNAL_TC3_STALL_TIMEOUT", "180") or 180)
+# 前端「資料過期」的判定。同樣照實測:33.7 秒是正常會出現的間隔,
+# 原本寫 30 秒會在正常運作時一直閃紅字。
+SIGNAL_STALE_SEC = float(os.getenv("SIGNAL_TC3_STALE_SEC", "90") or 90)
 
 # 燈態方向(協定 P5-22 SignalMap bit map)
 DIRECTIONS = ["北", "東北", "東", "東南", "南", "西南", "西", "西北"]
@@ -343,8 +348,9 @@ async def status(_user=Depends(get_current_user)):
                              "frames_total", "cks_bad", "reconnects", "last_error",
                              "bad_peer", "stalls", "peer_note")},
         "age_sec": round(age, 2) if age is not None else None,
-        # 超過 30 秒沒新訊框就標 stale —— 來源掉了要看得出來,不要顯示假的舊狀態
-        "stale": (age is None or age > 30.0),
+        # 沒新訊框就標 stale —— 來源掉了要看得出來,不要顯示假的舊狀態。
+        # 門檻見 SIGNAL_STALE_SEC(照現場實測間隔定,不是拍腦袋)
+        "stale": (age is None or age > SIGNAL_STALE_SEC),
         "latest": latest,
     }
 
