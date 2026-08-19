@@ -110,6 +110,16 @@ if _want_hw and not USE_HW:
 # 0 = 自動(依實測偵測延遲自己調,建議);>0 = 固定值
 STREAM_DELAY_SEC = float(os.getenv("ANNOTATED_STREAM_DELAY", "0") or 0)
 DELAY_MIN, DELAY_MAX = 0.25, 1.20
+# 配到的偵測比這張畫面舊超過這麼久就不畫框。0 = 不啟用(預設)。
+# 🛑 預設不啟用是產品決定,不是技術取捨:
+#    「要不要看框」是使用者用「原始畫面 / 辨識疊加」自己選的,
+#    系統不該在他選了疊加之後又自作主張把框藏起來。
+#    這個旋鈕留著給「寧可沒有框也不要錯位框」的場景,要用再開。
+# 參考數據(87 2026-08-19 長時間 A/B):框誤差中位約 98ms,但 p95 常 500~2000ms
+#    —— 分析率低且忽高忽低(10 次取樣 6.6~17.3),一卡住最近鄰只能配到很舊那組。
+#    也就是說 87 的疊加框「有時候會嚴重落後」,這是分析率的物理結果,
+#    使用者選疊加時應該知道,但不該由系統替他決定要不要看。
+MAX_GAP_SEC = float(os.getenv("ANNOTATED_STREAM_MAX_GAP", "0") or 0)
 
 
 def enabled_camera_ids() -> set:
@@ -188,6 +198,7 @@ class AnnotatedStreamer:
         self._supply_fps = 0.0
         self._warned_supply = False
         # 對齊品質統計:偵測延遲(結果何時才追上那張畫面)與實際配對誤差
+        self._dropped = 0                     # 因為太舊而不畫框的幀數
         self._det_lat = deque(maxlen=120)     # update_detections 時 now - 該幀 ts
         self._match_gap = deque(maxlen=300)   # 送出時 該幀 ts - 配到的偵測 ts
         self._stopped = False
@@ -328,7 +339,13 @@ class AnnotatedStreamer:
                 break      # 已經越走越遠(deque 依時間遞增),不必再看
         # 配到的偵測跟這張畫面差多久 —— 這就是「框比車慢多少」
         # 記絕對誤差:現在可能配到稍後那組,負號沒有意義
-        self._match_gap.append(abs(ts - best_ts) if best_ts is not None else -1.0)
+        gap = abs(ts - best_ts) if best_ts is not None else None
+        self._match_gap.append(gap if gap is not None else -1.0)
+        if gap is None:
+            return []          # 完全沒有偵測結果(剛啟動)
+        if MAX_GAP_SEC > 0 and gap > MAX_GAP_SEC:
+            self._dropped += 1
+            return []
         return best
 
     def align_stats(self) -> dict:
@@ -346,6 +363,9 @@ class AnnotatedStreamer:
             # 實際送出時,框比畫面舊多少 → 這就是使用者看到的「框比車慢」
             "match_gap_ms_med": pct(gap, 0.5), "match_gap_ms_p95": pct(gap, 0.95),
             "unmatched": miss,
+            # 因為配到的偵測太舊而選擇不畫框的幀數(門檻 MAX_GAP_SEC)
+            "dropped_stale": self._dropped,
+            "max_gap_sec": MAX_GAP_SEC,
         }
 
     def _effective_delay(self) -> float:
