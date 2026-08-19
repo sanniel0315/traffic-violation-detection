@@ -32,7 +32,8 @@ stream.py 原本寫死 `_ANNOTATED_STREAM_CAM_IDS = set()`,註解只留一句
 環境變數
     ANNOTATED_STREAM_CAMS=7,8      要開哪幾台(空 = 全部關閉,預設關閉)
     ANNOTATED_STREAM_BITRATE=1M    編碼位元率
-    ANNOTATED_STREAM_WIDTH=1280 / _HEIGHT=720 / _FPS=25
+    ANNOTATED_STREAM_WIDTH / _HEIGHT   0 = 不縮放,用來源解析度(預設)
+    ANNOTATED_STREAM_FPS               0 = 自動,依實測供幀率(預設)
     ANNOTATED_STREAM_ENCODER=libx264   Jetson 可試 h264_v4l2m2m(硬體編碼)
 """
 
@@ -54,15 +55,22 @@ log = logging.getLogger(__name__)
 _streamers: dict = {}
 _streamers_lock = threading.Lock()
 
-STREAM_WIDTH = int(os.getenv("ANNOTATED_STREAM_WIDTH", "1280") or 1280)
-STREAM_HEIGHT = int(os.getenv("ANNOTATED_STREAM_HEIGHT", "720") or 720)
+# 0 = 不縮放,直接用來源解析度(預設)。
+# 🛑 不要用「降解析度」來省頻寬。實測同一台相機同一時間:
+#       MJPEG 1280 寬            10.4~17.0 Mbps
+#       H.264 1920x1080(相機原生) 1.53~2.68 Mbps
+#    換編碼方式的效益是 5~10 倍,降解析度只有 2~4 倍而且畫面就毀了。
+#    使用者 2026-08-20 明確要求「不可以降解析度」。
+STREAM_WIDTH = int(os.getenv("ANNOTATED_STREAM_WIDTH", "0") or 0)
+STREAM_HEIGHT = int(os.getenv("ANNOTATED_STREAM_HEIGHT", "0") or 0)
 # 0 = 自動(啟動時先量供幀率再決定,建議);>0 = 固定值
 # 🛑 編碼率必須等於供幀率,否則同一張會被不均勻重複送出 = 抖動。
 #    而供幀率是「來源 fps ÷ (decode_skip_frames+1)」,每台不一樣 ——
 #    87 實測 cam_2 來源 60fps→供幀 20,cam_3/4/5 來源 30fps→供幀 10。
 #    用同一個設定值一定有台會抖,所以改成各自量各自的。
 STREAM_FPS = int(os.getenv("ANNOTATED_STREAM_FPS", "0") or 0)
-STREAM_BITRATE = os.getenv("ANNOTATED_STREAM_BITRATE", "1M") or "1M"
+# 1080p 要給夠,不然畫面會糊 —— 但仍遠低於 MJPEG 的 10~17 Mbps
+STREAM_BITRATE = os.getenv("ANNOTATED_STREAM_BITRATE", "3M") or "3M"
 # libx264 = 軟體(到處都能跑);hw = Jetson 硬體編碼(nvv4l2h264enc)
 # 87 實測 960x540@20fps,只算編碼器本身:
 #     軟體 libx264            20% 一顆核
@@ -249,8 +257,10 @@ class AnnotatedStreamer:
         if USE_HW:
             gst = (
                 f"gst-launch-1.0 -q fdsrc ! "
+                # 🛑 用 I420 不要用 BGRx。1080p 的 BGRx 是每幀 8.3MB,I420 只有 3.1MB
+                #    —— 管線流量少 2.7 倍,而且 NVENC 本來就吃 NV12/I420,少一次轉換。
                 f"rawvideoparse width={self.width} height={self.height} "
-                f"format=bgrx framerate={self.fps}/1 ! "
+                f"format=i420 framerate={self.fps}/1 ! "
                 # 🛑 caps 一定要加引號:括號在 sh -c 裡會被當成子 shell → 語法錯誤
                 f"nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12' ! "
                 f"nvv4l2h264enc bitrate={self._bitrate_bps()} insert-sps-pps=true "
@@ -287,10 +297,19 @@ class AnnotatedStreamer:
         try:
             # 🛑 進閘門:fork/exec 會讀整份 environ,而偵測重連那條路徑會 setenv。
             #    兩者併發就是 use-after-free → 原生 SEGV(這正是當初停用的原因)。
+            # 🛑 stderr 不可以丟 /dev/null:編碼器起不來時完全查不出原因,
+            #    只知道 go2rtc 沒有 producer(2026-08-19/20 各踩一次)。
+            err_path = f"/tmp/annot_cam{self.camera_id}_{variant}.err"
+            try:
+                err_fh = open(err_path, "wb")
+            except Exception:
+                err_fh = subprocess.DEVNULL
+            print(f"🎬 [annot] cam_{self.camera_id}/{variant} spawn "
+                  f"{self.width}x{self.height}@{self.fps} {STREAM_ENCODER}", flush=True)
             with capture_open_guard():
                 self.procs[variant] = subprocess.Popen(
                     cmd, stdin=subprocess.PIPE,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL, stderr=err_fh,
                     close_fds=True,
                 )
             log.info(f"AnnotatedStreamer cam_{self.camera_id}/{variant} "
@@ -330,6 +349,16 @@ class AnnotatedStreamer:
             return False
         self.fps = max(1, min(30, int(round(self._supply_fps))))
         self.frame_interval = 1.0 / self.fps
+        # 🛑 延遲線要重新配置。__init__ 時 fps 還是 0(自動模式),算出來的 maxlen
+        #    只有 4 幀 —— 21fps 下才 0.19 秒,永遠滿足不了 0.6 秒的延遲,
+        #    _take_delayed 一直回 None → 沒有畫面進 slot → 編碼器永遠不會啟動。
+        #    2026-08-20 在 87 就是這樣:解析度與幀率都定案了,卻 0 個 gst 進程。
+        #    記憶體:1080p BGR 每幀約 6.2MB,乘上這裡的長度就是每台的佔用。
+        need = max(8, int(self.fps * (DELAY_MAX + 0.3)) + 2)
+        with self._frame_lock:
+            self._frames = deque(self._frames, maxlen=need)
+        print(f"🎬 [annot] cam_{self.camera_id} 延遲線配置 {need} 幀 "
+              f"(約 {need / self.fps:.1f} 秒)", flush=True)
         print(f"🎬 [annot] cam_{self.camera_id} 供幀 {self._supply_fps:.1f} fps "
               f"→ 編碼率定為 {self.fps} fps", flush=True)
         return True
@@ -344,7 +373,11 @@ class AnnotatedStreamer:
                 continue
             item = self._take_delayed()
             if item is not None and item[0] != self._last_sent_ts:
-                bufs = self._encode_frame(item)
+                try:
+                    bufs = self._encode_frame(item)
+                except Exception as e:
+                    print(f"⚠️ [annot] cam_{self.camera_id} encode 例外: {e!r}", flush=True)
+                    bufs = None
                 self._last_sent_ts = item[0]
                 self._last_buf = bufs
             else:
@@ -509,15 +542,15 @@ class AnnotatedStreamer:
             if "lite" in self._variants:
                 # 不畫框那條:直接用原畫面(_draw_overlay 只有真的要畫才複製,
                 # 所以這裡拿到的 frame 不會被下面污染)
-                lite = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA) if USE_HW else frame
+                lite = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420) if USE_HW else frame
                 if not lite.flags['C_CONTIGUOUS']:
                     lite = np.ascontiguousarray(lite)
                 out["lite"] = lite
             dets = self._dets_for(ts)
             annotated = _draw_overlay(frame, dets, sx, sy)
             if USE_HW:
-                # 硬體路徑吃 BGRx。在這裡轉,GStreamer 就不必插 videoconvert。
-                annotated = cv2.cvtColor(annotated, cv2.COLOR_BGR2BGRA)
+                # 硬體路徑吃 I420(見 _spawn 的說明)。cv2 直接轉,GStreamer 不必再轉。
+                annotated = cv2.cvtColor(annotated, cv2.COLOR_BGR2YUV_I420)
             if not annotated.flags['C_CONTIGUOUS']:
                 annotated = np.ascontiguousarray(annotated)
             # 🛑 回傳 ndarray 而不是 tobytes():那是每幀 1.5~2MB 的複製
@@ -525,7 +558,8 @@ class AnnotatedStreamer:
             #    寫入時直接用 buffer protocol,零複製。
             out["annotated"] = annotated
             return out
-        except Exception:
+        except Exception as e:
+            print(f"⚠️ [annot] cam_{self.camera_id} _encode_frame 失敗: {e!r}", flush=True)
             return None
 
     def push_frame(self, frame: np.ndarray, ts: float = 0.0):
@@ -545,6 +579,11 @@ class AnnotatedStreamer:
             return
         try:
             h, w = frame.shape[:2]
+            if not self.width or not self.height:
+                # 不縮放:第一次收到畫面時把尺寸定成來源尺寸
+                self.width, self.height = w, h
+                print(f"🎬 [annot] cam_{self.camera_id} 解析度沿用來源 {w}x{h}(不縮放)",
+                      flush=True)
             if w != self.width or h != self.height:
                 out = cv2.resize(frame, (self.width, self.height))
                 sx = self.width / w if w else 1.0
