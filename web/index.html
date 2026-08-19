@@ -10292,7 +10292,19 @@ const ensureGo2rtcPlayer=()=>{
 // 但不會再有肉眼可見的忽快忽慢;抖動改由緩衝吸收。
 // 🛑 覆寫的是「這個 video 元素自己的」屬性,不動 HTMLMediaElement.prototype,
 //    以免影響頁面上其他影片(違規影片播放、NVR 回放)。
-const RATE_MIN = 0.94, RATE_MAX = 1.06;
+// go2rtc 傳進 playbackRate 的其實是「緩衝秒數」,不是速率(video-rtc.js):
+//     const gap = end - this.video.currentTime;
+//     this.video.playbackRate = gap > 0.1 ? gap : 0.1;
+// 直接用它當速率會忽快忽慢(緩衝 0.3 秒就 0.3 倍速播放);但單純把速率鉗在 1.0
+// 附近也不對 —— 播放頭追不上即時邊緣,緩衝視窗往前移而播放頭落在後面,
+// go2rtc 就會 `currentTime = start` 強制 seek,畫面就是「跳」一下
+// (2026-08-20 現場回報,是我前一版硬鉗制造成的)。
+//
+// 正解是把那個 gap 當「量測值」餵給一個溫和的控制器:落後多就微幅加速追,
+// 緩衝快見底就微幅放慢,其餘時間維持 1.0。速率變化小到看不出來,
+// 又能讓播放頭穩定停在即時邊緣後方一小段,不會被 seek。
+const BUF_TARGET = 0.35;     // 想維持的緩衝秒數
+const RATE_UP = 1.06, RATE_DOWN = 0.96;
 const clampGo2rtcPlaybackRate = (node, tries = 0) => {
     const v = node && node.querySelector && node.querySelector('video');
     if (!v) {
@@ -10306,10 +10318,14 @@ const clampGo2rtcPlaybackRate = (node, tries = 0) => {
         Object.defineProperty(v, 'playbackRate', {
             configurable: true,
             get() { return desc.get.call(this); },
-            set(r) {
-                const n = Number(r);
-                desc.set.call(this, !isFinite(n) ? 1
-                    : Math.min(RATE_MAX, Math.max(RATE_MIN, n)));
+            set(gapAsRate) {
+                const gap = Number(gapAsRate);
+                let rate = 1.0;
+                if (isFinite(gap)) {
+                    if (gap > BUF_TARGET + 0.25) rate = RATE_UP;        // 落後 → 微幅追
+                    else if (gap < BUF_TARGET - 0.20) rate = RATE_DOWN; // 快見底 → 微幅放慢
+                }
+                desc.set.call(this, rate);
             },
         });
         v.__rateClamped = true;

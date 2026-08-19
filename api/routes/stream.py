@@ -1403,7 +1403,15 @@ def generate_frames_overlay(
                             ret = True
                             last_live_ts = _lts
                             cur_src_ts = _lts
-        _sf_early = _shared_frames.get(camera_id) if (camera_id and not ret) else None
+        # 🛑 只有「live 畫面根本不熱」時才退回 _shared_frames。
+        #    _live_frames 是 reader 的最新畫面,_shared_frames 是 worker 推論用的那張
+        #    —— 後者比較舊。原本只要這一輪 reader 沒更新就退回去拿舊的,輸出就變成
+        #    「新、新、舊、新」,時間往回走,畫面看起來就是跳一下
+        #    (2026-08-20 現場回報「影像會跳」)。
+        #    live 熱著只是這輪沒新幀 → 等下一輪(下面 _shared_warm 那段會 sleep),
+        #    不要混兩個來源。
+        _sf_early = (_shared_frames.get(camera_id)
+                     if (camera_id and not ret and not _shared_warm) else None)
         if _sf_early and _sf_early.get("frame") is not None:
             ts = float(_sf_early.get("ts") or 0.0)
             age = time.time() - ts
