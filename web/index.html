@@ -15957,13 +15957,14 @@ const app=createApp({
             //    現場對外上行實測只有 1.2~1.5 Mbps(下行 28.6),所以 MJPEG 想
             //    同時「順」又「看得清」在這條線上做不到 —— w=400 是折衷,
             //    真正的解是把疊加改成 H.264(見 detection/annotated_streamer.py)。
-            // 🛑 只有「沒有 H.264 低頻寬版本可用」時才降 MJPEG 解析度。
-            //    有 lite/annotated 的機器不該再走這條 —— w=400 糊到不能判讀,
-            //    而且實測 2.0 Mbps 仍超過 1.4 Mbps 上行,兩頭落空
-            //    (2026-08-19 使用者回報「影像解析度不對」就是這個)。
-            const hasH264Alt=hasGo2rtcAnnotated(camera)||hasGo2rtcLite(camera);
-            const narrow=(!opts.highQuality && lowBandwidth.value && !hasH264Alt)
-                ? '&w=400&jq=40' : '';
+            // 🛑 不要因為「量到頻寬低」就降解析度。2026-08-20 查明:那個量測會被
+            //    自己的串流汙染 —— 頁面載入時四條 MJPEG 正把線佔滿,量出來的
+            //    「頻寬」是剩餘量而不是容量。我據此把畫面降到 w=400,使用者回報
+            //    「影像解析度不對」,而實際上行量到 7.53 Mbps(觀看中)+ 另外還能
+            //    再跑 4.14 Mbps 的上傳測試 → 總容量至少 11 Mbps,從來就不缺頻寬。
+            //    真正的限制是 HTTP/1.1 對同一 origin 只有 6 條連線(MJPEG 是長連線),
+            //    那由 enforceStreamBudget 控制「同時幾路即時」來解決,不該動解析度。
+            const narrow='';
             const tick=monitorStreamTick(camera);
             return `/api/stream/${camera.id}/${route}?t=${tick}${roiParam}${qParam}${narrow||lite}`;
         };
@@ -19734,9 +19735,14 @@ const app=createApp({
             //    以前只是把狀態改成離線,使用者只能自己去關串流。改成「症狀直接
             //    驅動降級」:連續失敗就把即時串流砍到 1 路,其餘轉快照輪詢。
             //    這條不依賴任何頻寬量測是否成功,是最後一道保險。
+            // 🛑 /api/health 連續逾時「不是」頻寬不足的證據。
+            //    2026-08-20 查明:現場上行實際有 11 Mbps 以上(觀看中 7.53 Mbps
+            //    + 另可再跑 4.14 Mbps 上傳測試)。逾時的真正原因是 HTTP/1.1 對
+            //    同一 origin 只有 6 條連線,四路 MJPEG 長連線把它佔滿,API 排不到。
+            //    所以要做的是「少開幾路即時」,不是「把畫質降下去」。
             if(_healthFailStreak===2 && !lowBandwidth.value){
                 lowBandwidth.value=true;
-                console.warn('[bw] /api/health 連續逾時 → 自動降為窄頻模式(只留 1 路即時)');
+                console.warn('[conn] /api/health 連續逾時 → 連線被長連線佔滿,只留 1 路即時');
                 try{ enforceStreamBudget(); }catch(_){ }
             }
             if(_healthFailStreak<3){
