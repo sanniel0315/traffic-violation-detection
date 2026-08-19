@@ -56,7 +56,12 @@ _streamers_lock = threading.Lock()
 
 STREAM_WIDTH = int(os.getenv("ANNOTATED_STREAM_WIDTH", "1280") or 1280)
 STREAM_HEIGHT = int(os.getenv("ANNOTATED_STREAM_HEIGHT", "720") or 720)
-STREAM_FPS = int(os.getenv("ANNOTATED_STREAM_FPS", "25") or 25)
+# 0 = 自動(啟動時先量供幀率再決定,建議);>0 = 固定值
+# 🛑 編碼率必須等於供幀率,否則同一張會被不均勻重複送出 = 抖動。
+#    而供幀率是「來源 fps ÷ (decode_skip_frames+1)」,每台不一樣 ——
+#    87 實測 cam_2 來源 60fps→供幀 20,cam_3/4/5 來源 30fps→供幀 10。
+#    用同一個設定值一定有台會抖,所以改成各自量各自的。
+STREAM_FPS = int(os.getenv("ANNOTATED_STREAM_FPS", "0") or 0)
 STREAM_BITRATE = os.getenv("ANNOTATED_STREAM_BITRATE", "1M") or "1M"
 # libx264 = 軟體(到處都能跑);hw = Jetson 硬體編碼(nvv4l2h264enc)
 # 87 實測 960x540@20fps,只算編碼器本身:
@@ -181,8 +186,9 @@ class AnnotatedStreamer:
         self.camera_id = camera_id
         self.width = width
         self.height = height
-        self.fps = max(1, int(fps))
-        self.frame_interval = 1.0 / self.fps
+        # fps=0 → 先不決定,等 _pacer_loop 量到供幀率再定案(見 _resolve_fps)
+        self.fps = max(1, int(fps)) if fps else 0
+        self.frame_interval = 1.0 / (self.fps or 20)
 
         # 每個變體一個編碼子行程:annotated=畫框,lite=不畫框
         self._variants = ["annotated"] + (["lite"] if LITE_ENABLED else [])
@@ -316,10 +322,26 @@ class AnnotatedStreamer:
             self._spawn(variant)
             return self.procs.get(variant) is not None
 
+    def _resolve_fps(self) -> bool:
+        """還沒定案就先量供幀率。量到才開編碼器,避免編碼率與供幀率不匹配。"""
+        if self.fps:
+            return True
+        if self._supply_fps <= 0:
+            return False
+        self.fps = max(1, min(30, int(round(self._supply_fps))))
+        self.frame_interval = 1.0 / self.fps
+        print(f"🎬 [annot] cam_{self.camera_id} 供幀 {self._supply_fps:.1f} fps "
+              f"→ 編碼率定為 {self.fps} fps", flush=True)
+        return True
+
     def _pacer_loop(self):
         next_tick = time.monotonic()
         while not self._stopped:
             next_tick += self.frame_interval
+            if not self._resolve_fps():
+                time.sleep(0.5)          # 還沒量到供幀率,先不要開編碼器
+                next_tick = time.monotonic()
+                continue
             item = self._take_delayed()
             if item is not None and item[0] != self._last_sent_ts:
                 bufs = self._encode_frame(item)
@@ -345,10 +367,11 @@ class AnnotatedStreamer:
 
         每個變體一條 —— 寫入阻塞只會影響自己,不會拖累別條或 pacer。
         """
-        interval = self.frame_interval
+        while not self._stopped and not self.fps:
+            time.sleep(0.5)              # 等 pacer 把 fps 定案
         next_tick = time.monotonic()
         while not self._stopped:
-            next_tick += interval
+            next_tick += self.frame_interval
             with self._slot_lock:
                 buf = self._slots.get(variant)
             if buf is not None and self._ensure_proc(variant):
@@ -535,7 +558,8 @@ class AnnotatedStreamer:
             self._frames.append((float(ts) if ts else time.time(), out, sx, sy))
         self._supply_n += 1
         dt = time.monotonic() - self._supply_t0
-        if dt >= 10.0:
+        # 一開始先用 5 秒快速定出一個值,之後才改成 10 秒視窗
+        if dt >= (5.0 if self._supply_fps <= 0 else 10.0):
             self._supply_fps = self._supply_n / dt
             self._supply_n = 0
             self._supply_t0 = time.monotonic()
@@ -582,7 +606,7 @@ def get_streamer(camera_id: int, width: int = 0, height: int = 0, fps: int = 0) 
             s = AnnotatedStreamer(camera_id,
                                   width or STREAM_WIDTH,
                                   height or STREAM_HEIGHT,
-                                  fps or STREAM_FPS)
+                                  fps if fps else STREAM_FPS)
             _streamers[camera_id] = s
         return s
 
