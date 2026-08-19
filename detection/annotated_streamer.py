@@ -120,6 +120,18 @@ DELAY_MIN, DELAY_MAX = 0.25, 1.20
 #    也就是說 87 的疊加框「有時候會嚴重落後」,這是分析率的物理結果,
 #    使用者選疊加時應該知道,但不該由系統替他決定要不要看。
 MAX_GAP_SEC = float(os.getenv("ANNOTATED_STREAM_MAX_GAP", "0") or 0)
+# 同時再推一條「不畫框」的低頻寬串流 cam_N_lite。
+# 🛑 為什麼需要:87 對外上行只有 1.4 Mbps,而原始 H.264 是原生 1080p 5.08 Mbps
+#    —— 使用者切「原始畫面」遠端還是會頓,只有疊加那條(0.81 Mbps)塞得下。
+#    「完整的影像順暢」代表兩種模式都要順,所以原始也要有低頻寬版本。
+#    重用已經解碼並縮好的畫面,只多一次編碼(硬體約 13% 一顆核),
+#    比讓 go2rtc 另外 decode+encode 便宜得多。
+#    區網使用者不受影響:前端只在窄頻時才改用 lite,平常仍是原生 1080p。
+# 🛑 預設關閉:這條沒有被驗證過。2026-08-19 在 87 開啟時兩條串流一起變得
+#    不穩(0.00~0.61 Mbps、間隔跳到 6 秒),而且 go2rtc 必須先宣告 cam_N_lite
+#    空串流才收得到 —— 104 沒宣告,結果子行程一直死掉重生(寫入只有 8.1 fps)。
+#    要用之前必須先把「單條就穩」這件事做到。
+LITE_ENABLED = os.getenv("ANNOTATED_STREAM_LITE", "0") != "0"
 
 
 def enabled_camera_ids() -> set:
@@ -172,8 +184,16 @@ class AnnotatedStreamer:
         self.fps = max(1, int(fps))
         self.frame_interval = 1.0 / self.fps
 
-        self.proc: Optional[subprocess.Popen] = None
+        # 每個變體一個編碼子行程:annotated=畫框,lite=不畫框
+        self._variants = ["annotated"] + (["lite"] if LITE_ENABLED else [])
+        self.procs: dict = {v: None for v in self._variants}
         self._proc_lock = threading.Lock()
+        # 🛑 每個變體一條寫入執行緒,各自一個「最新畫面」插槽。
+        #    先前是 pacer 同一條執行緒依序寫兩個管線 —— 其中一個阻塞(RTSP 推送
+        #    卡住很常見)就把另一個也拖住,兩條串流一起變 0.00~0.40 Mbps(實測)。
+        #    分開之後一條卡住不影響另一條,而且 pacer 永遠不會被寫入阻塞。
+        self._slots: dict = {v: None for v in self._variants}
+        self._slot_lock = threading.Lock()
 
         # reader 只放「最新原始畫面的參照」,加工全部在 pacer 做 ——
         # 不可以在 reader thread 做 resize/畫框,那是偵測的取像路徑。
@@ -199,6 +219,13 @@ class AnnotatedStreamer:
         self._warned_supply = False
         # 對齊品質統計:偵測延遲(結果何時才追上那張畫面)與實際配對誤差
         self._dropped = 0                     # 因為太舊而不畫框的幀數
+        # 寫入端統計:實際送出幾幀、單次 write 花多久。
+        # 🛑 這是分辨「我們產不出幀」與「下游送不出去」的關鍵:
+        #    write_fps 掉下來 = pacer/writer 被卡(GIL 或 CPU);
+        #    write_fps 正常但觀看端有大間隔 = 卡在 gst/ffmpeg/go2rtc 那側。
+        #    87 實測疊加串流間隔會跳到 1.6~5.3 秒,但 104 同一份程式連跑 20 小時穩定,
+        #    沒有這個數字就只能猜。
+        self._wr = {}                         # variant -> (n, t0, fps, max_write_ms)
         self._det_lat = deque(maxlen=120)     # update_detections 時 now - 該幀 ts
         self._match_gap = deque(maxlen=300)   # 送出時 該幀 ts - 配到的偵測 ts
         self._stopped = False
@@ -207,9 +234,12 @@ class AnnotatedStreamer:
 
         self._pacer = threading.Thread(target=self._pacer_loop, name=f"annot-pacer-{camera_id}", daemon=True)
         self._pacer.start()
+        for _v in self._variants:
+            threading.Thread(target=self._writer_loop, args=(_v,),
+                             name=f"annot-{_v}-{camera_id}", daemon=True).start()
 
-    def _spawn(self):
-        rtsp_url = f"rtsp://127.0.0.1:8554/cam_{self.camera_id}_annotated"
+    def _spawn(self, variant: str = "annotated"):
+        rtsp_url = f"rtsp://127.0.0.1:8554/cam_{self.camera_id}_{variant}"
         if USE_HW:
             gst = (
                 f"gst-launch-1.0 -q fdsrc ! "
@@ -218,10 +248,17 @@ class AnnotatedStreamer:
                 # 🛑 caps 一定要加引號:括號在 sh -c 裡會被當成子 shell → 語法錯誤
                 f"nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12' ! "
                 f"nvv4l2h264enc bitrate={self._bitrate_bps()} insert-sps-pps=true "
-                f"iframeinterval={self.fps * 2} ! h264parse ! fdsink"
+                # 🛑 關鍵幀間隔 1 秒。設 2 秒的話 MSE 觀看端要等最多 2 秒才拿得到
+                #    第一個可解碼的段,看起來就像「連上了但沒畫面」。
+                f"iframeinterval={self.fps} ! h264parse ! "
+                # 🛑 一定要用 mpegts 承載,不要送裸 H.264。裸流沒有時間戳,
+                #    ffmpeg 只能照 -r 硬編 PTS,時序一亂 go2rtc 的 MSE 分段就壞掉
+                #    —— 症狀是 go2rtc 明明持續收到 1.0 Mbps,送給觀看端卻只有
+                #    0.0~0.4 Mbps 且忽有忽無(2026-08-19 在 87 實測)。
+                f"mpegtsmux ! fdsink"
             )
             ff = (
-                f"ffmpeg -hide_banner -loglevel error -f h264 -r {self.fps} -i - "
+                f"ffmpeg -hide_banner -loglevel error -f mpegts -i - "
                 f"-c copy -f rtsp -rtsp_transport tcp {rtsp_url}"
             )
             cmd = ["sh", "-c", f"{gst} | {ff}"]
@@ -245,15 +282,16 @@ class AnnotatedStreamer:
             # 🛑 進閘門:fork/exec 會讀整份 environ,而偵測重連那條路徑會 setenv。
             #    兩者併發就是 use-after-free → 原生 SEGV(這正是當初停用的原因)。
             with capture_open_guard():
-                self.proc = subprocess.Popen(
+                self.procs[variant] = subprocess.Popen(
                     cmd, stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     close_fds=True,
                 )
-            log.info(f"AnnotatedStreamer cam_{self.camera_id} spawned pid={self.proc.pid}")
+            log.info(f"AnnotatedStreamer cam_{self.camera_id}/{variant} "
+                     f"spawned pid={self.procs[variant].pid}")
         except Exception as e:
-            log.error(f"AnnotatedStreamer cam_{self.camera_id} spawn failed: {e}")
-            self.proc = None
+            log.error(f"AnnotatedStreamer cam_{self.camera_id}/{variant} spawn failed: {e}")
+            self.procs[variant] = None
 
     def _bitrate_bps(self) -> int:
         """nvv4l2h264enc 的 bitrate 要 bps 整數,ffmpeg 吃 "1M" 這種字串。"""
@@ -267,15 +305,16 @@ class AnnotatedStreamer:
         except Exception:
             return 1_000_000
 
-    def _ensure_proc(self) -> bool:
+    def _ensure_proc(self, variant: str = "annotated") -> bool:
         with self._proc_lock:
-            if self.proc is not None and self.proc.poll() is None:
+            proc = self.procs.get(variant)
+            if proc is not None and proc.poll() is None:
                 return True
             if self._restart_count >= self._max_restart:
                 return False
             self._restart_count += 1
-            self._spawn()
-            return self.proc is not None
+            self._spawn(variant)
+            return self.procs.get(variant) is not None
 
     def _pacer_loop(self):
         next_tick = time.monotonic()
@@ -283,19 +322,52 @@ class AnnotatedStreamer:
             next_tick += self.frame_interval
             item = self._take_delayed()
             if item is not None and item[0] != self._last_sent_ts:
-                buf = self._encode_frame(item)
+                bufs = self._encode_frame(item)
                 self._last_sent_ts = item[0]
-                self._last_buf = buf
+                self._last_buf = bufs
             else:
-                # 還沒有新的「等夠久」的畫面 → 重送上一張,維持定速餵給 ffmpeg
-                buf = getattr(self, "_last_buf", None)
-            if buf is not None and self._ensure_proc():
+                # 還沒有新的「等夠久」的畫面 → 重送上一張,維持定速餵給編碼器
+                bufs = getattr(self, "_last_buf", None)
+            if bufs:
+                with self._slot_lock:
+                    for variant in self._variants:
+                        b = bufs.get(variant)
+                        if b is not None:
+                            self._slots[variant] = b
+            sleep_for = next_tick - time.monotonic()
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+            else:
+                next_tick = time.monotonic()
+
+    def _writer_loop(self, variant: str):
+        """把最新畫面定速餵給該變體的編碼子行程。
+
+        每個變體一條 —— 寫入阻塞只會影響自己,不會拖累別條或 pacer。
+        """
+        interval = self.frame_interval
+        next_tick = time.monotonic()
+        while not self._stopped:
+            next_tick += interval
+            with self._slot_lock:
+                buf = self._slots.get(variant)
+            if buf is not None and self._ensure_proc(variant):
+                t_w = time.monotonic()
                 try:
-                    self.proc.stdin.write(memoryview(buf).cast("B")
-                                          if hasattr(buf, "flags") else buf)
+                    self.procs[variant].stdin.write(
+                        memoryview(buf).cast("B") if hasattr(buf, "flags") else buf)
                 except (BrokenPipeError, IOError, ValueError, AttributeError):
                     with self._proc_lock:
-                        self.proc = None
+                        self.procs[variant] = None
+                w_ms = (time.monotonic() - t_w) * 1000
+                st = self._wr.get(variant) or [0, time.monotonic(), 0.0, 0.0]
+                st[0] += 1
+                st[3] = max(st[3], w_ms)
+                dt = time.monotonic() - st[1]
+                if dt >= 10.0:
+                    st[2] = st[0] / dt
+                    st[0], st[1], st[3] = 0, time.monotonic(), 0.0
+                self._wr[variant] = st
             sleep_for = next_tick - time.monotonic()
             if sleep_for > 0:
                 time.sleep(sleep_for)
@@ -365,6 +437,9 @@ class AnnotatedStreamer:
             "unmatched": miss,
             # 因為配到的偵測太舊而選擇不畫框的幀數(門檻 MAX_GAP_SEC)
             "dropped_stale": self._dropped,
+            # 實際送進編碼器的幀率(應等於設定 fps);單次 write 最久多少毫秒
+            "write_fps": {k: round(v[2], 1) for k, v in self._wr.items()},
+            "write_ms_max": {k: round(v[3], 1) for k, v in self._wr.items()},
             "max_gap_sec": MAX_GAP_SEC,
         }
 
@@ -407,6 +482,14 @@ class AnnotatedStreamer:
         """
         try:
             ts, frame, sx, sy = item
+            out = {}
+            if "lite" in self._variants:
+                # 不畫框那條:直接用原畫面(_draw_overlay 只有真的要畫才複製,
+                # 所以這裡拿到的 frame 不會被下面污染)
+                lite = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA) if USE_HW else frame
+                if not lite.flags['C_CONTIGUOUS']:
+                    lite = np.ascontiguousarray(lite)
+                out["lite"] = lite
             dets = self._dets_for(ts)
             annotated = _draw_overlay(frame, dets, sx, sy)
             if USE_HW:
@@ -417,7 +500,8 @@ class AnnotatedStreamer:
             # 🛑 回傳 ndarray 而不是 tobytes():那是每幀 1.5~2MB 的複製
             #    (20fps = 31MB/s),而且複製時抓著 GIL,會跟偵測執行緒搶。
             #    寫入時直接用 buffer protocol,零複製。
-            return annotated
+            out["annotated"] = annotated
+            return out
         except Exception:
             return None
 
@@ -472,20 +556,22 @@ class AnnotatedStreamer:
     def close(self):
         self._stopped = True
         with self._proc_lock:
-            if self.proc:
+            for variant, proc in list(self.procs.items()):
+                if not proc:
+                    continue
                 try:
-                    self.proc.stdin.close()
+                    proc.stdin.close()
                 except Exception:
                     pass
                 try:
-                    self.proc.terminate()
-                    self.proc.wait(timeout=2)
+                    proc.terminate()
+                    proc.wait(timeout=2)
                 except Exception:
                     try:
-                        self.proc.kill()
+                        proc.kill()
                     except Exception:
                         pass
-                self.proc = None
+                self.procs[variant] = None
 
 
 def get_streamer(camera_id: int, width: int = 0, height: int = 0, fps: int = 0) -> AnnotatedStreamer:
