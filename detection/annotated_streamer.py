@@ -58,7 +58,49 @@ STREAM_WIDTH = int(os.getenv("ANNOTATED_STREAM_WIDTH", "1280") or 1280)
 STREAM_HEIGHT = int(os.getenv("ANNOTATED_STREAM_HEIGHT", "720") or 720)
 STREAM_FPS = int(os.getenv("ANNOTATED_STREAM_FPS", "25") or 25)
 STREAM_BITRATE = os.getenv("ANNOTATED_STREAM_BITRATE", "1M") or "1M"
+# libx264 = 軟體(到處都能跑);hw = Jetson 硬體編碼(nvv4l2h264enc)
+# 87 實測 960x540@20fps,只算編碼器本身:
+#     軟體 libx264            20% 一顆核
+#     硬體 nvv4l2h264enc      9% 一顆核   ← BGRx 直入,不經 videoconvert
+# 🛑 一定要餵 BGRx。餵 BGR 就得插 videoconvert,那層 CPU 會把省下來的吃光
+#    (先前量到「硬體只差 16%」就是踩這個)。
+# 🛑 gst-plugins-bad 的 rtspclientsink 在 87 上沒有,所以 GStreamer 只負責編碼,
+#    再用管線交給 ffmpeg 純封裝成 RTSP(-c copy,不重編碼,CPU 可忽略)。
 STREAM_ENCODER = os.getenv("ANNOTATED_STREAM_ENCODER", "libx264") or "libx264"
+
+
+def _hw_available() -> bool:
+    """實際跑一次極小的編碼管線來判斷硬體路徑可不可用。
+
+    🛑 不要用「/dev/v4l2-nvenc 存不存在/是不是真裝置」來判斷 ——
+       那個節點在 Jetson host 上本來就是 1,3(等於 /dev/null)的 stub,
+       但硬體編碼是好的(87 實測產出 383KB、log 顯示 NvVideo: NVENC)。
+       用節點判斷會在 87 誤判成不可用。
+    環境差異很大,設定值不能當保證:
+       87  traffic-api 跑在 host(systemd)→ 有 gst-launch-1.0,硬體可用
+       104 traffic-api 跑在 Docker      → 容器裡連 gst-launch-1.0 都沒有
+    設了 hw 卻沒退回的話,結果是「完全沒有串流」而不是「慢一點」,所以一定要探。
+    """
+    import shutil
+    if not shutil.which("gst-launch-1.0"):
+        return False
+    probe = ("gst-launch-1.0 -q videotestsrc num-buffers=3 ! "
+             "video/x-raw,width=320,height=240,format=BGRx ! nvvidconv ! "
+             "'video/x-raw(memory:NVMM),format=NV12' ! nvv4l2h264enc ! fakesink")
+    try:
+        r = subprocess.run(["sh", "-c", probe], timeout=20,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+_want_hw = STREAM_ENCODER.lower() in ("hw", "nvv4l2h264enc", "nvenc")
+USE_HW = _want_hw and _hw_available()
+if _want_hw and not USE_HW:
+    print("⚠️ [annot] 要求硬體編碼但環境不支援(缺 gst-launch-1.0 或 /dev/v4l2-nvenc)"
+          " → 退回 libx264 軟體編碼", flush=True)
+    STREAM_ENCODER = "libx264"
 # 畫面延遲多久才送出。🛑 這是「框追得準」的關鍵:
 #   pacer 若拿最新畫面配最新偵測,那組偵測是好幾百毫秒前那張畫面算出來的,
 #   框就會系統性落後車子(2026-08-18 實測 shared_frames age_sec 0.5,
@@ -157,7 +199,23 @@ class AnnotatedStreamer:
 
     def _spawn(self):
         rtsp_url = f"rtsp://127.0.0.1:8554/cam_{self.camera_id}_annotated"
-        cmd = [
+        if USE_HW:
+            gst = (
+                f"gst-launch-1.0 -q fdsrc ! "
+                f"rawvideoparse width={self.width} height={self.height} "
+                f"format=bgrx framerate={self.fps}/1 ! "
+                # 🛑 caps 一定要加引號:括號在 sh -c 裡會被當成子 shell → 語法錯誤
+                f"nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12' ! "
+                f"nvv4l2h264enc bitrate={self._bitrate_bps()} insert-sps-pps=true "
+                f"iframeinterval={self.fps * 2} ! h264parse ! fdsink"
+            )
+            ff = (
+                f"ffmpeg -hide_banner -loglevel error -f h264 -r {self.fps} -i - "
+                f"-c copy -f rtsp -rtsp_transport tcp {rtsp_url}"
+            )
+            cmd = ["sh", "-c", f"{gst} | {ff}"]
+        else:
+            cmd = [
             "ffmpeg", "-y", "-loglevel", "error",
             "-f", "rawvideo", "-pix_fmt", "bgr24",
             "-s", f"{self.width}x{self.height}",
@@ -171,7 +229,7 @@ class AnnotatedStreamer:
             "-pix_fmt", "yuv420p",
             "-f", "rtsp", "-rtsp_transport", "tcp",
             rtsp_url,
-        ]
+            ]
         try:
             # 🛑 進閘門:fork/exec 會讀整份 environ,而偵測重連那條路徑會 setenv。
             #    兩者併發就是 use-after-free → 原生 SEGV(這正是當初停用的原因)。
@@ -185,6 +243,18 @@ class AnnotatedStreamer:
         except Exception as e:
             log.error(f"AnnotatedStreamer cam_{self.camera_id} spawn failed: {e}")
             self.proc = None
+
+    def _bitrate_bps(self) -> int:
+        """nvv4l2h264enc 的 bitrate 要 bps 整數,ffmpeg 吃 "1M" 這種字串。"""
+        v = str(STREAM_BITRATE).strip().upper()
+        try:
+            if v.endswith("M"):
+                return int(float(v[:-1]) * 1_000_000)
+            if v.endswith("K"):
+                return int(float(v[:-1]) * 1_000)
+            return int(float(v))
+        except Exception:
+            return 1_000_000
 
     def _ensure_proc(self) -> bool:
         with self._proc_lock:
@@ -210,7 +280,8 @@ class AnnotatedStreamer:
                 buf = getattr(self, "_last_buf", None)
             if buf is not None and self._ensure_proc():
                 try:
-                    self.proc.stdin.write(buf)
+                    self.proc.stdin.write(memoryview(buf).cast("B")
+                                          if hasattr(buf, "flags") else buf)
                 except (BrokenPipeError, IOError, ValueError, AttributeError):
                     with self._proc_lock:
                         self.proc = None
@@ -318,9 +389,15 @@ class AnnotatedStreamer:
             ts, frame, sx, sy = item
             dets = self._dets_for(ts)
             annotated = _draw_overlay(frame, dets, sx, sy)
+            if USE_HW:
+                # 硬體路徑吃 BGRx。在這裡轉,GStreamer 就不必插 videoconvert。
+                annotated = cv2.cvtColor(annotated, cv2.COLOR_BGR2BGRA)
             if not annotated.flags['C_CONTIGUOUS']:
                 annotated = np.ascontiguousarray(annotated)
-            return annotated.tobytes()
+            # 🛑 回傳 ndarray 而不是 tobytes():那是每幀 1.5~2MB 的複製
+            #    (20fps = 31MB/s),而且複製時抓著 GIL,會跟偵測執行緒搶。
+            #    寫入時直接用 buffer protocol,零複製。
+            return annotated
         except Exception:
             return None
 
