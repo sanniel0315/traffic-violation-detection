@@ -15754,17 +15754,32 @@ const app=createApp({
         // 沒有這條串流(未啟用的機器)時自動退回原本的 MJPEG,行為不變。
         const go2rtcAnnotatedName=(camera)=>camera?.id?`cam_${camera.id}_annotated`:'';
         const hasGo2rtcAnnotated=(camera)=>go2rtcLive.value.has(go2rtcAnnotatedName(camera));
+        // 原始畫面的低頻寬版本(同樣是後端編好的 H.264,只是不畫框)。
+        // 🛑 為什麼原始也需要:87 實測原生 cam_N 是 1080p60 = 21.43 Mbps,
+        //    而現場對外上行只有 1.4 Mbps —— 遠端切「原始畫面」根本不可能順。
+        //    lite 是 1.12 Mbps,塞得下,而且解析度 960x540 仍然看得清
+        //    (先前用 MJPEG w=400 降級是糊到不能用,而且 2.0 Mbps 還是超標)。
+        const go2rtcLiteName=(camera)=>camera?.id?`cam_${camera.id}_lite`:'';
+        const hasGo2rtcLite=(camera)=>go2rtcLive.value.has(go2rtcLiteName(camera));
         const getGo2rtcWsUrl=(camera, opts={})=>{
-            const name=(opts.annotated && hasGo2rtcAnnotated(camera))
-                ? go2rtcAnnotatedName(camera)
-                : go2rtcStreamName(camera);
+            let name;
+            if(opts.annotated && hasGo2rtcAnnotated(camera)){
+                name=go2rtcAnnotatedName(camera);
+            }else if(opts.lite && hasGo2rtcLite(camera)){
+                name=go2rtcLiteName(camera);   // 窄頻的原始畫面
+            }else{
+                name=go2rtcStreamName(camera);
+            }
             if(!name)return '';
             const proto=location.protocol==='https:'?'wss:':'ws:';
             return `${proto}//${location.host}/api/go2rtc/api/ws?src=${encodeURIComponent(name)}`;
         };
         // 監控格用:疊加模式優先拿疊加串流
-        const getMonitorWsUrl=(camera)=>getGo2rtcWsUrl(camera,
-            {annotated: resolveCameraStreamMode(camera)==='overlay'});
+        // 疊加 → 有框那條;原始 + 窄頻 → 不畫框的低頻寬那條;其餘 → 原生
+        const getMonitorWsUrl=(camera)=>getGo2rtcWsUrl(camera, {
+            annotated: resolveCameraStreamMode(camera)==='overlay',
+            lite: resolveCameraStreamMode(camera)!=='overlay' && lowBandwidth.value,
+        });
         // ── 階段3:H.264 影片 + 前端 SVG 疊加 ────────────────────────────
         // 後端 /api/stream/overlay-data 回正規化 0~1 的偵測框與 ROI。
         // 🛑 一定要正規化再乘上「影片實際顯示的矩形」。先前試過前端疊 SVG
@@ -15856,6 +15871,11 @@ const app=createApp({
         //    或後端在 H.264 SEI 帶時間戳),那是另一個題目。
         const getMonitorMediaKind=(camera, opts={})=>{
             if(shouldUseDirectMonitorVideo(camera))return 'video';   // 上傳的 mp4 直接播檔案
+            // 窄頻 + 有 lite:原始畫面走 H.264 低頻寬版本,不要再降級成 400px MJPEG
+            if(resolveCameraStreamMode(camera)!=='overlay'
+               && lowBandwidth.value && h264LiveEnabled.value && hasGo2rtcLite(camera)){
+                return 'h264';
+            }
             if(resolveCameraStreamMode(camera)==='overlay'){
                 // 有 H.264 疊加串流就走它(頻寬只要 MJPEG 的 1/13,而且框是後端
                 // 燒錄的,沒有前端 SVG 的雙時間源問題);沒有才退回 MJPEG。
@@ -15937,7 +15957,13 @@ const app=createApp({
             //    現場對外上行實測只有 1.2~1.5 Mbps(下行 28.6),所以 MJPEG 想
             //    同時「順」又「看得清」在這條線上做不到 —— w=400 是折衷,
             //    真正的解是把疊加改成 H.264(見 detection/annotated_streamer.py)。
-            const narrow=(!opts.highQuality && lowBandwidth.value)?'&w=400&jq=40':'';
+            // 🛑 只有「沒有 H.264 低頻寬版本可用」時才降 MJPEG 解析度。
+            //    有 lite/annotated 的機器不該再走這條 —— w=400 糊到不能判讀,
+            //    而且實測 2.0 Mbps 仍超過 1.4 Mbps 上行,兩頭落空
+            //    (2026-08-19 使用者回報「影像解析度不對」就是這個)。
+            const hasH264Alt=hasGo2rtcAnnotated(camera)||hasGo2rtcLite(camera);
+            const narrow=(!opts.highQuality && lowBandwidth.value && !hasH264Alt)
+                ? '&w=400&jq=40' : '';
             const tick=monitorStreamTick(camera);
             return `/api/stream/${camera.id}/${route}?t=${tick}${roiParam}${qParam}${narrow||lite}`;
         };
@@ -19890,7 +19916,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,hasGo2rtcAnnotated,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
