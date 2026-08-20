@@ -736,6 +736,17 @@ def _get_shared_overlay_detector():
         except Exception as e:
             add_log("warning", f"overlay 共用偵測器初始化失敗: {e}", "stream")
         return _shared_overlay_detector
+# 單張截圖的 JPEG 品質。
+# 🛑 cv2.imencode 不帶這個參數的話 OpenCV 預設是 95,1080p 一張要 500~650KB。
+#    現場對外上行只有 2.1~2.6 Mbps,2026-08-20 從遠端實測 ROI 編輯頁的底圖:
+#        cam_2 648KB 13.8s   cam_3 654KB 16.9s
+#        cam_4 228KB 30.0s(30 秒上限打滿都沒傳完 → 畫面永遠空白)
+#        cam_5 500KB  6.8s
+#    使用者回報「roi 疊加影像出不來」就是這個 —— 不是壞掉,是根本傳不完。
+# 🛑 這裡調的是「壓縮率」不是「尺寸」。解析度一律維持原樣,
+#    因為 ROI 的座標是依影像尺寸換算的,縮圖會讓標好的框整個跑掉。
+SNAPSHOT_JPEG_QUALITY = max(30, min(95, int(os.getenv("SNAPSHOT_JPEG_QUALITY", "78") or 78)))
+
 snapshot_cache: Dict[int, dict] = {}
 snapshot_locks: Dict[int, asyncio.Lock] = {}
 snapshot_warm_tasks: Dict[int, asyncio.Task] = {}
@@ -1014,7 +1025,8 @@ def _capture_snapshot_bytes(source: str, camera_id: int = None, overlay_zones: l
                     cv2.putText(annotated, _ZH.get(cls, cls), (int(b["x1"]), max(20, int(b["y1"]) - 4)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 0), 2)
                 frame_out = annotated
-            ok, buffer = cv2.imencode(".jpg", frame_out)
+            ok, buffer = cv2.imencode(".jpg", frame_out,
+                                      [cv2.IMWRITE_JPEG_QUALITY, SNAPSHOT_JPEG_QUALITY])
             if ok:
                 return buffer.tobytes()
     # 嘗試 Frigate snapshot API（比重新建立 RTSP 連線快很多）
@@ -1052,7 +1064,8 @@ def _capture_snapshot_bytes(source: str, camera_id: int = None, overlay_zones: l
         ret, frame = cap.read()
         if not ret:
             return None
-        ok, buffer = cv2.imencode(".jpg", frame)
+        ok, buffer = cv2.imencode(".jpg", frame,
+                                  [cv2.IMWRITE_JPEG_QUALITY, SNAPSHOT_JPEG_QUALITY])
         if not ok:
             return None
         return buffer.tobytes()
