@@ -2845,7 +2845,13 @@ class LPRStreamTask:
             # cam_2 (台62基隆段隧道口) 同走 go2rtc relay (上游 111.70.34.183),今日上游不穩
             # → cap.read 對 go2rtc output 同樣 native SEGV (全天 169 次,啟動約 57s 後崩);
             #   frigate cam_2 latest.jpg 實測 200/155KB 可用,比照 cam_6 改 shared_frames。
-            _SHARED_FRAME_LPR_CAMS = {2, 6}
+            # cam_3/4/5 加入(2026-08-20):這三台走 cap.read + watchdog,
+            # 而 watchdog 是「從另一條執行緒對進行中的 cap 呼叫 release()」——
+            # cv2.VideoCapture 不是執行緒安全的,那是 use-after-free。
+            # 87 實測 3 天內 7 次 SIGSEGV 把整個 traffic-api 帶走(core dump 共 4.6G,
+            # 把 eMMC 從 72% 撐到 84%),兩次 Current thread 都停在本檔 _run 的 cap.read。
+            # 原註解寫「強制 release 會讓 read() 拋例外或回 ret=False」—— 那個假設是錯的。
+            _SHARED_FRAME_LPR_CAMS = {2, 3, 4, 5, 6}
             use_shared = self.camera_id in _SHARED_FRAME_LPR_CAMS
             cap = None
 
@@ -2900,12 +2906,21 @@ class LPRStreamTask:
             last_frigate_fetch = 0.0  # cam_6 fallback rate-limit
             while self.running:
                 if use_shared:
-                    # 從 detection 寫的 _shared_frames 取最新 frame
+                    # 🛑 優先吃 _live_frames,不要吃 _shared_frames。
+                    #    _live_frames 是 reader 每讀到一幀就寫 → 等於供幀率(15~20fps);
+                    #    _shared_frames 是 worker 跑完 YOLO 才寫 → 只有分析率(約 3fps)。
+                    #    吃後者等於把車牌捕獲率砍成三分之一,而現場明令車牌不可降捕獲。
+                    #    改吃 _live_frames 之後捕獲率比原本的 cap.read(10fps)還高。
                     try:
-                        from api.routes.stream import _shared_frames as _SF
-                        sf = _SF.get(self.camera_id) or {}
-                        sf_ts = float(sf.get("ts") or 0.0)
-                        sf_frame = sf.get("frame")
+                        from api.routes.stream import (_live_frames as _LF,
+                                                       _shared_frames as _SF)
+                        lf = _LF.get(self.camera_id) or {}
+                        sf_ts = float(lf.get("ts") or 0.0)
+                        sf_frame = lf.get("frame")
+                        if sf_frame is None:            # reader 還沒起來 → 退而求其次
+                            sf = _SF.get(self.camera_id) or {}
+                            sf_ts = float(sf.get("ts") or 0.0)
+                            sf_frame = sf.get("frame")
                     except Exception:
                         sf_ts, sf_frame = 0.0, None
                     # shared_frames 可用且新 → 用；不可用 → fallback frigate latest.jpg 直抓
@@ -2916,6 +2931,12 @@ class LPRStreamTask:
                     if _sf_ok:
                         frame = sf_frame
                         last_shared_ts = sf_ts
+                    elif sf_frame is not None and (time.time() - sf_ts) <= 10:
+                        # 🛑 有畫面、只是還沒輪到下一幀 —— 供幀 15~20fps,等 20ms 就有。
+                        #    不要掉進下面的 frigate fallback(那條被限速在 2fps,
+                        #    掉進去等於自己把捕獲率壓死)。
+                        time.sleep(0.02)
+                        continue
                     else:
                         _now = time.time()
                         if _now - last_frigate_fetch < 0.5:  # rate-limit 2fps，避免過勞
@@ -2938,7 +2959,8 @@ class LPRStreamTask:
                         except Exception:
                             time.sleep(0.5)
                             continue
-                    last_shared_ts = sf_ts
+                    # 🛑 這裡原本又寫一次 last_shared_ts = sf_ts,會把 frigate fallback
+                    #    剛設好的值蓋回舊的(甚至 0.0)。上面兩條分支都已經各自設好了。
                     self.last_frame_at = time.time()
                     self._increment_debug_counter("total_frames")
                     self.recent_frames.append(frame.copy())
