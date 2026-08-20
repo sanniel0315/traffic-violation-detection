@@ -91,6 +91,45 @@ def detect_timing_stats() -> dict:
 TRUCK_CLS_CACHE = os.getenv("TRUCK_CLS_CACHE", "1") != "0"
 TRUCK_CLS_CACHE_SEC = float(os.getenv("TRUCK_CLS_CACHE_SEC", "2.0") or 2.0)
 TRUCK_CLS_CACHE_IOU = float(os.getenv("TRUCK_CLS_CACHE_IOU", "0.6") or 0.6)
+# 影子稽核:命中快取時「照樣真的跑一次分類」,比對沿用的標籤跟現算的一不一致。
+# 這是唯一能證明快取在真實車流上安全的方法 —— 單元測試只能證明它照邏輯運作,
+# 證明不了 IoU 0.6 / 2 秒這組參數不會把「另一台車」誤認成同一台。
+# 🛑 開著會讓細分類的工作量加倍(命中也要算),只在驗證時開,驗完要關。
+TRUCK_CLS_AUDIT = os.getenv("TRUCK_CLS_AUDIT", "0") != "0"
+# by_conf: 以「存快取時的信心」分桶(0.0~0.1 為 0,依此類推)→ [一致, 不一致]
+_TC_AUDIT = {"agree": 0, "differ": 0, "samples": [], "by_conf": {}, "by_iou": {}}
+_TC_AUDIT_LOCK = _th_stats.Lock()
+
+
+def truck_cls_audit_stats() -> dict:
+    """影子稽核結果:快取沿用的標籤有多少比例跟現算的一致。"""
+    with _TC_AUDIT_LOCK:
+        a, d = _TC_AUDIT["agree"], _TC_AUDIT["differ"]
+        samples = list(_TC_AUDIT["samples"])
+        by_conf = {k: list(v) for k, v in _TC_AUDIT["by_conf"].items()}
+        by_iou = {k: list(v) for k, v in _TC_AUDIT["by_iou"].items()}
+    n = a + d
+    return {
+        "enabled": TRUCK_CLS_AUDIT,
+        "checked": n,
+        "agree": a,
+        "differ": d,
+        "agree_rate": round(a / n, 4) if n else None,
+        # 不一致的實例,給人判斷是「快取抓錯車」還是「分類器本身在跳」
+        "differ_samples": samples[-20:],
+        # 依「存快取時的信心」分桶的一致率 —— 用來判斷加信心門檻有沒有用
+        "agree_by_cached_conf": {
+            f"{k/10:.1f}-{(k+1)/10:.1f}": {
+                "checked": sum(v), "agree_rate": round(v[0] / sum(v), 3) if sum(v) else None}
+            for k, v in sorted(by_conf.items())
+        },
+        # 依「配對時的 IoU」分桶 —— IoU 低代表可能配到別台車,用來訂門檻
+        "agree_by_iou": {
+            f"{k/20:.2f}-{(k+1)/20:.2f}": {
+                "checked": sum(v), "agree_rate": round(v[0] / sum(v), 3) if sum(v) else None}
+            for k, v in sorted(by_iou.items())
+        },
+    }
 
 
 def _bbox_iou(a: dict, b: dict) -> float:
@@ -240,12 +279,45 @@ class VehicleDetector:
                 best, best_iou = ent, iou
         self._tc_cache = keep
         if best is not None and best_iou >= TRUCK_CLS_CACHE_IOU:
+            if TRUCK_CLS_AUDIT:
+                self._audit_hit(frame, bbox, best["res"], best_iou)
             # bbox 跟著車走,但 ts 不動 —— 保證每 TTL 秒重驗一次
             best["bbox"] = dict(bbox)
             return best["res"], True
         res = self._truck_cls_raw(frame, bbox)
-        self._tc_cache.append({"bbox": dict(bbox), "res": res, "ts": now})
+        # 🛑 沒有結論的不要存。_default_result() 回的是 class_name="unknown"、
+        #    confidence=0(信心不足或裁切失敗),那是「這次判不出來」,不是判斷結果。
+        #    存了會讓這台車接下來 TTL 秒內都拿不到細分類 —— 下一幀角度稍微變一下
+        #    本來就可能判得出來。2026-08-20 影子稽核實測:信心 0.0~0.1 這一桶
+        #    一致率是 0.000(14 次全部不一致),就是這個 bug。
+        if (res or {}).get("class_name") not in (None, "unknown"):
+            self._tc_cache.append({"bbox": dict(bbox), "res": res, "ts": now})
         return res, False
+
+    def _audit_hit(self, frame, bbox: dict, cached_res, iou: float):
+        """影子稽核:這次命中如果改成現算,結果會不會不一樣。"""
+        try:
+            fresh = self._truck_cls_raw(frame, bbox)
+        except Exception:
+            return
+        same = (fresh or {}).get("class_name") == (cached_res or {}).get("class_name")
+        conf_bucket = int(min(0.999, float((cached_res or {}).get("confidence") or 0)) * 10)
+        iou_bucket = int(min(0.999, float(iou)) * 20)      # 0.05 一格,門檻要訂得準
+        with _TC_AUDIT_LOCK:
+            _TC_AUDIT["by_conf"].setdefault(conf_bucket, [0, 0])[0 if same else 1] += 1
+            _TC_AUDIT["by_iou"].setdefault(iou_bucket, [0, 0])[0 if same else 1] += 1
+            if same:
+                _TC_AUDIT["agree"] += 1
+            else:
+                _TC_AUDIT["differ"] += 1
+                if len(_TC_AUDIT["samples"]) < 200:
+                    _TC_AUDIT["samples"].append({
+                        "cached": (cached_res or {}).get("class_name"),
+                        "cached_conf": (cached_res or {}).get("confidence"),
+                        "fresh": (fresh or {}).get("class_name"),
+                        "fresh_conf": (fresh or {}).get("confidence"),
+                        "iou": round(iou, 3),
+                    })
 
     def _truck_cls_raw(self, frame, bbox: dict):
         """真的跑一次細分類(共用 instance,要加鎖避免多 cam 併發)。"""
