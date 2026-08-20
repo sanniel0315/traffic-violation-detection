@@ -19703,6 +19703,9 @@ const app=createApp({
         // 持續健康度探測 — sidebar service-state + nav bar h-status-pill 同步切換
         // 加防誤判保險：單次失敗不立刻 fault，連續 3 次才切換 (避免暫時負載高造成閃爍)
         let _healthFailStreak = 0;
+        // 這次的 lowBandwidth 是不是「health 逾時」打開的(而不是實測頻寬不足)。
+        // 只有這種才可以在 health 恢復時自動收回。
+        let _bwLatchedByHealth = false;
         const probeServiceHealth=async()=>{
             const state=document.getElementById('service-state');
             const txt=document.getElementById('online-text');
@@ -19742,6 +19745,18 @@ const app=createApp({
                 last=await tryOne(8000);  // 4s → 8s，給 Jetson 高負載時喘息
             }catch{ last={ok:false, status:0, aborted:true}; }
             if(last.ok){
+                // 🛑 health 恢復時一定要把「因為 health 逾時而降級」那件事收回來。
+                //    否則它是單向閂鎖:後端只要重啟一次(health 必然連續逾時),
+                //    畫面就永久卡在「1 路即時、其餘全部快照」,除非使用者自己重整。
+                //    2026-08-20 現場回報「串流顯示為快照」就是這樣來的。
+                //    只收回自己設的那次 —— probeBandwidth 量到的真.窄頻不能清掉,
+                //    那是實測結果不是誤判。
+                if(_bwLatchedByHealth){
+                    _bwLatchedByHealth=false;
+                    lowBandwidth.value=false;
+                    console.info('[conn] /api/health 恢復 → 解除連線降級,還原即時串流');
+                    try{ enforceStreamBudget(); }catch(_){ }
+                }
                 _healthFailStreak=0;
                 // ping 通 → 再看四個真實子服務(樂觀:未載入的不算異常,對齊 systemAllHealthy)
                 const down=[];
@@ -19767,6 +19782,7 @@ const app=createApp({
             //    所以要做的是「少開幾路即時」,不是「把畫質降下去」。
             if(_healthFailStreak===2 && !lowBandwidth.value){
                 lowBandwidth.value=true;
+                _bwLatchedByHealth=true;
                 console.warn('[conn] /api/health 連續逾時 → 連線被長連線佔滿,只留 1 路即時');
                 try{ enforceStreamBudget(); }catch(_){ }
             }
