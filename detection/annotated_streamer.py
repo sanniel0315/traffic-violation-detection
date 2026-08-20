@@ -277,7 +277,15 @@ class AnnotatedStreamer:
                 f"nvv4l2h264enc bitrate={self._bitrate_bps()} insert-sps-pps=true "
                 # 🛑 關鍵幀間隔 1 秒。設 2 秒的話 MSE 觀看端要等最多 2 秒才拿得到
                 #    第一個可解碼的段,看起來就像「連上了但沒畫面」。
-                f"iframeinterval={self.fps} ! h264parse ! "
+                # 🛑 idrinterval 一定要一起設,只設 iframeinterval 沒有用。
+                #    nvv4l2h264enc 這兩個是不同東西:iframeinterval 產生 I 影格,
+                #    idrinterval 才產生 IDR。瀏覽器的 MSE 必須從 IDR 才能起始解碼,
+                #    而 idrinterval 預設是 256 幀 —— 在 16 fps 下等於 16 秒才一個。
+                #    症狀:go2rtc 送出 mse 協商與 ftyp/moov 初始化片段之後就沒有
+                #    媒體片段了,前端「連上了但永遠黑畫面」;剛好在 IDR 那一刻連上
+                #    才會通,所以是時好時壞。2026-08-20 在 87 實測:6 秒內 81 個
+                #    影格、關鍵影格 0 個(ffprobe show_entries frame=key_frame)。
+                f"iframeinterval={self.fps} idrinterval={self.fps} ! h264parse ! "
                 # 🛑 一定要用 mpegts 承載,不要送裸 H.264。裸流沒有時間戳,
                 #    ffmpeg 只能照 -r 硬編 PTS,時序一亂 go2rtc 的 MSE 分段就壞掉
                 #    —— 症狀是 go2rtc 明明持續收到 1.0 Mbps,送給觀看端卻只有
