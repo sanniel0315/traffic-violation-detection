@@ -3,8 +3,14 @@
 來源:號誌控制器 RS-232 → Moxa MiiNePort E1 → TCP。現場實測參數:
     IP 10.42.38.35   TCPDataPort 1001   Mode TCP / Role TCP Server   MaxConnect 1
 
-🛑 只讀不寫。協定的號誌控制器是主動週期上傳(5F+03 時相資料主動回報),
-   不需要輪詢,所以絕不對它送出任何位元組 —— 這是運作中的號誌通道。
+抄錄(接收)是無條件開著的。協定的號誌控制器是主動週期上傳
+(5F+03 時相資料主動回報),不需要輪詢就看得到燈態。
+
+🛑 號控(下傳)是另一回事,預設關閉。這是「對運轉中的號誌控制器送出位元組」——
+   送錯一則 5F15(時制計畫)或 5F10(控制策略)會直接改變路口的實際號誌運轉。
+   要啟用必須明確設 SIGNAL_TC3_CONTROL=1;而且預設再加一層
+   SIGNAL_TC3_CONTROL_QUERY_ONLY=1,只准查詢類(不改變運轉)。
+   見檔案末段 control_prepare / control_send。
 
 🛑 MaxConnect=1:交控中心一旦接上,我們會被拒絕或踢掉。因此重連要退避、
    要能長期無資料而不噴錯,讓中心優先。
@@ -20,15 +26,17 @@ from __future__ import annotations
 import csv
 import os
 import pathlib
+import secrets
 import socket
 import threading
 import time
 from collections import Counter, deque
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from api.routes.auth import get_current_user
+from api.routes.logs import add_log
 from api.utils.shutdown import shutdown_event
 
 router = APIRouter(prefix="/api/signal", tags=["signal"])
@@ -128,6 +136,27 @@ _state: dict = {
     "stalls": 0,             # 連線還在、但來源靜默而主動重連的次數
     "peer_note": "",
 }
+# ── 號控(下傳)──────────────────────────────────────────────────────────
+# 🛑 這是「對運轉中的號誌控制器送出位元組」的能力。送錯一則 5F15(時制計畫)
+#    或 5F10(控制策略)會直接改變路口的實際號誌運轉,不是「沒反應」而已。
+#    所以三道關卡:
+#      ① 總開關預設關閉。沒有明確設 SIGNAL_TC3_CONTROL=1 一律拒絕。
+#      ② 預設只准查詢類(指令碼高位元組 4~6)。查詢不改變運轉,
+#         而且是驗證這條線 TX 到底通不通的最小風險方式。
+#      ③ 兩段式送出:先 prepare 拿到解碼預覽與 token,再帶 token 送出。
+#         「按錯一個按鈕就送出去」不會發生。
+#    每一次送出都留完整紀錄(誰、何時、什麼碼、原始位元組、結果)。
+CONTROL_ENABLED = os.getenv("SIGNAL_TC3_CONTROL", "0") == "1"
+CONTROL_QUERY_ONLY = os.getenv("SIGNAL_TC3_CONTROL_QUERY_ONLY", "1") == "1"
+CONTROL_ADDR = int(os.getenv("SIGNAL_TC3_ADDR", "0") or 0)   # 0 = 用抄到的位址
+_PREPARE_TTL = 60.0                     # token 有效期,過了要重新確認
+
+_send_lock = threading.Lock()           # 同時只有一個送出
+_sock_ref: dict = {"sock": None}        # 抄錄器把目前的 socket 放這裡給送出用
+_pending: dict = {}                     # token -> 準備好的送出內容
+_sent_log: deque = deque(maxlen=200)    # 送出紀錄(稽核用)
+_seq_next: dict = {"n": 0}              # 送出用的序號,逐次遞增
+
 _frames: deque = deque(maxlen=300)      # 最近訊框(raw + 解碼)
 _coverage: Counter = Counter()          # 每個 device+cmd 看過幾次
 _lock = threading.Lock()
@@ -166,6 +195,64 @@ def _unstuff(info: bytes) -> bytes:
         else:
             i += 1
     return bytes(out)
+
+
+# 碼框的四個控制位元組。用具名常數而不是字面值,一來讀得懂,
+# 二來避免在多層字串裡被跳脫吃掉(2026-08-21 實際踩過)。
+DLE = 0xAA
+STX = 0xBB
+ETX = 0xCC
+
+
+def _stuff(info: bytes) -> bytes:
+    """_unstuff 的反向:INFO 裡的 0xAA 要重複成 0xAA 0xAA(協定 2-8)。
+
+    不做這件事的話,INFO 裡只要出現一個 0xAA,接收端就會把它當成 DLE,
+    整個碼框從那裡被切斷。
+    """
+    out = bytearray()
+    for b in info:
+        out.append(b)
+        if b == 0xAA:
+            out.append(0xAA)
+    return bytes(out)
+
+
+def build_frame(addr: int, seq: int, info: bytes) -> bytes:
+    """組一個 TC3 碼框。decode_frame 的反向。
+
+        DLE STX SEQ ADDR LEN INFO DLE ETX CKS
+        AA  BB  1B  2B   2B  N    AA  CC  1B
+
+    🛑 LEN 是「整個碼框的長度」(10 + INFO 長度),不是 INFO 長度 ——
+       這點是拿現場實際抄到的訊框逐一比對過的(21/21 相符)。
+       而且要用 **stuffing 之後** 的 INFO 長度,LEN 才會等於真正送出去的位元組數。
+    🛑 CKS = XOR(DLE .. ETX),含頭尾但不含自己。
+    """
+    # 🛑 這支會把位元組送進運轉中的號誌通道,寧可在這裡擋下來也不要送出去。
+    #    INFO 至少要有「設備碼 + 指令碼」兩個位元組 —— 少於這個就不是有意義的
+    #    命令,decode_frame 也會拒收(它要求整框 >= 11)。
+    info = bytes(info)
+    if len(info) < 2:
+        raise ValueError("INFO 至少要有設備碼與指令碼兩個位元組")
+    if not (0 <= int(addr) <= 0xFFFF):
+        raise ValueError(f"位址超出範圍: {addr}")
+    if not (0 <= int(seq) <= 0xFF):
+        raise ValueError(f"序號超出範圍: {seq}")
+    body = _stuff(info)
+    total = 10 + len(body)
+    frame = bytearray()
+    frame += bytes((DLE, STX))
+    frame.append(seq & 0xFF)
+    frame += int(addr).to_bytes(2, "big")
+    frame += int(total).to_bytes(2, "big")
+    frame += body
+    frame += bytes((DLE, ETX))
+    cks = 0
+    for b in frame:
+        cks ^= b
+    frame.append(cks)
+    return bytes(frame)
 
 
 def _light_text(b: int) -> str:
@@ -237,6 +324,9 @@ def _recorder_loop() -> None:
         try:
             sock = socket.create_connection((SIGNAL_HOST, SIGNAL_PORT), timeout=8)
             sock.settimeout(3.0)
+            # 把目前這條 socket 交出去給號控用。TCP 的收送方向是獨立的,
+            # 從別的執行緒 send 不會干擾這裡的 recv。
+            _sock_ref["sock"] = sock
             with _lock:
                 _state["connected"] = True
                 _state["last_error"] = ""
@@ -313,6 +403,8 @@ def _recorder_loop() -> None:
                 _state["last_error"] = f"{type(exc).__name__}: {exc}"[:160]
                 _state["reconnects"] += 1
         finally:
+            # 🛑 先把交出去的參照清掉再關 socket,否則號控可能拿到已關閉的 fd。
+            _sock_ref["sock"] = None
             if sock is not None:
                 try:
                     sock.close()
@@ -420,4 +512,312 @@ async def coverage(_user=Depends(get_current_user)):
         "by_level": sorted(by_level.values(), key=lambda x: x["level"]),
         "by_scope": sorted(by_scope.values(), key=lambda x: x["scope"]),
         "codes": rows,
+    }
+
+
+# ── 號控:下傳命令 ──────────────────────────────────────────────────────
+# 兩段式。prepare 只組碼框並回傳解碼預覽,不碰 socket;send 才真的送出。
+
+
+def _kind_by_nibble(cmd: int) -> str:
+    """只看指令碼高位元組的粗略判斷(協定 3-3)。
+
+    🛑 這個規則有例外,不要單獨拿它當安全閘門的依據 —— 見 _kind_of。
+       用 105 條目錄實際比對:高位元組 8 那格是混的
+       (0F8E 密碼代碼「設定」和 0F8F「設定回報」都落在 8)。
+    """
+    hi = (int(cmd) >> 4) & 0xF
+    if hi == 0:
+        return "主動回報"
+    if 1 <= hi <= 3:
+        return "設定"
+    if 4 <= hi <= 6:
+        return "查詢"
+    if 8 <= hi <= 0xB:
+        return "設定回報"
+    if 0xC <= hi <= 0xE:
+        return "查詢回報"
+    return f"未知({hi:X})"
+
+
+def _kind_of(cmd: int, device: int = 0x5F) -> str:
+    """這則訊息是什麼型態。**以規範目錄為準**,目錄查不到才退回位元組規則。
+
+    🛑 為什麼不直接用高位元組:它有例外。安全閘門是靠這個判斷「能不能送」的,
+       用一個有例外的規則去擋,例外就是漏洞。目錄是逐條抄規範來的,它說了算。
+    """
+    code = f"{int(device):02X}{int(cmd):02X}"
+    for row in load_catalog():
+        if row.get("code") == code:
+            mt = (row.get("message_type") or "").strip()
+            if mt:
+                # 「設定/解除」「設定、查詢」這種複合的,取第一段當主型態
+                for sep in ("/", "、"):
+                    if sep in mt:
+                        return mt.split(sep)[0].strip()
+                return mt
+            break
+    return _kind_by_nibble(cmd)
+
+
+def _control_guard(cmd: int, device: int = 0x5F) -> Optional[str]:
+    """能不能送。回錯誤訊息表示不能,回 None 表示可以。"""
+    if not CONTROL_ENABLED:
+        return ("號控未啟用。這台預設不對號誌通道送出任何位元組;"
+                "要啟用請設 SIGNAL_TC3_CONTROL=1 並重啟服務。")
+    kind = _kind_of(cmd, device)
+    if kind in ("主動回報", "設定回報", "查詢回報"):
+        return f"{kind} 是控制器回給中心的,中心不送這類訊息。"
+    if CONTROL_QUERY_ONLY and kind != "查詢":
+        return (f"目前限制為「只准查詢」,{kind} 類被擋下。"
+                "查詢不改變控制器運轉;要開放設定類請設 "
+                "SIGNAL_TC3_CONTROL_QUERY_ONLY=0。")
+    return None
+
+
+def _target_addr() -> Optional[int]:
+    """送給誰。優先用設定值,否則用最近抄到的位址 —— 猜錯位址等於送給別的路口。"""
+    if CONTROL_ADDR:
+        return CONTROL_ADDR
+    with _lock:
+        items = list(_frames)
+    for it in reversed(items):
+        a = (it or {}).get("addr")
+        if isinstance(a, int):
+            return a
+    return None
+
+
+@router.get("/control/status", summary="號控狀態(是否啟用、限制、最近送出紀錄)")
+async def control_status(_user=Depends(get_current_user)):
+    addr = _target_addr()
+    return {
+        "enabled": CONTROL_ENABLED,
+        "query_only": CONTROL_QUERY_ONLY,
+        "link_connected": bool(_sock_ref.get("sock")),
+        "target_addr": addr,
+        "target_addr_hex": f"0x{addr:04X}" if addr is not None else None,
+        "addr_source": "設定" if CONTROL_ADDR else "由抄錄到的訊框推得",
+        "prepare_ttl_sec": _PREPARE_TTL,
+        "recent": list(reversed(list(_sent_log)))[:30],
+    }
+
+
+@router.post("/control/prepare", summary="準備下傳(只組碼框與預覽,不送出)")
+async def control_prepare(body: dict, _user=Depends(get_current_user)):
+    """把要送的內容組成碼框並解回來給人看,確認無誤再用 token 送出。
+
+    body: {"code": "5F45", "info_hex": "05"}   info_hex 是設備碼/指令碼之後的參數
+    """
+    code = str((body or {}).get("code") or "").strip().upper()
+    if len(code) != 4:
+        raise HTTPException(status_code=400, detail="code 要是 4 個十六進位字元,例如 5F45")
+    try:
+        dev = int(code[:2], 16)
+        cmd = int(code[2:], 16)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"code 不是十六進位: {code}")
+
+    why = _control_guard(cmd, dev)
+    if why:
+        raise HTTPException(status_code=403, detail=why)
+
+    # 兩種給參數的方式:
+    #   values = {...}  結構化 → 用 utc-tc3 的 encoder 照 schema 組(前端表單走這條)
+    #   info_hex        原始十六進位 → 手動指定(進階/schema 不可用時的後路)
+    # 🛑 兩者只能擇一,同時給會混淆「到底送了什麼」,直接擋。
+    values = (body or {}).get("values")
+    raw_hex = str((body or {}).get("info_hex") or "").replace(" ", "")
+    if values is not None and raw_hex:
+        raise HTTPException(status_code=400, detail="values 與 info_hex 只能擇一")
+
+    if values is not None:
+        if not isinstance(values, dict):
+            raise HTTPException(status_code=400, detail="values 要是物件")
+        schemas = load_command_schemas()
+        try:
+            import sys
+            if UTC_TC3_PATH and UTC_TC3_PATH not in sys.path:
+                sys.path.insert(0, UTC_TC3_PATH)
+            from utc import messages as _M       # type: ignore
+            msg = next((m for m in _M.ALL if m.code == code), None)
+            if msg is None:
+                raise HTTPException(status_code=400, detail=f"schema 裡沒有 {code}")
+            info = msg.encode(values)             # 回傳含設備碼+指令碼的完整 INFO
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400,
+                                detail=f"依 schema 組不出來:{type(exc).__name__}: {exc}")
+        # encode 已含 dev+cmd,frame 直接用;下面 build_frame 的 [dev,cmd]+params 不走
+        addr = _target_addr()
+        if addr is None:
+            raise HTTPException(status_code=409,
+                                detail="不知道要送給哪個位址:還沒抄到訊框,也沒設 SIGNAL_TC3_ADDR。")
+        seq = (_seq_next["n"] + 1) & 0xFF
+        try:
+            frame = build_frame(addr, seq, info)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return _finish_prepare(frame, code, cmd, dev, addr, seq)
+
+    try:
+        params = bytes.fromhex(raw_hex) if raw_hex else b""
+    except ValueError:
+        raise HTTPException(status_code=400, detail="info_hex 不是合法的十六進位字串")
+
+    addr = _target_addr()
+    if addr is None:
+        raise HTTPException(status_code=409,
+                            detail="不知道要送給哪個位址:還沒抄到任何訊框,也沒設 SIGNAL_TC3_ADDR。")
+
+    seq = (_seq_next["n"] + 1) & 0xFF
+    try:
+        frame = build_frame(addr, seq, bytes([dev, cmd]) + params)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return _finish_prepare(frame, code, cmd, dev, addr, seq)
+
+
+def _finish_prepare(frame, code, cmd, dev, addr, seq):
+    """產生 token 並回傳預覽。兩條參數路徑(結構化 / info_hex)共用。"""
+    token = secrets.token_urlsafe(16)
+    now = time.time()
+    for k in [k for k, v in _pending.items() if now - v["ts"] > _PREPARE_TTL]:
+        _pending.pop(k, None)
+    _pending[token] = {"ts": now, "frame": frame, "code": code, "seq": seq, "addr": addr}
+    return {
+        "token": token,
+        "expires_in": _PREPARE_TTL,
+        "code": code,
+        "kind": _kind_of(cmd, dev),
+        "addr": addr,
+        "addr_hex": f"0x{addr:04X}",
+        "seq": seq,
+        "bytes": len(frame),
+        "raw": frame.hex(" ").upper(),
+        # 用自己的解析器解回來 —— 送出去的東西長什麼樣,人要看得到
+        "decoded": decode_frame(frame),
+    }
+
+
+@router.post("/control/send", summary="真的送出(要帶 prepare 拿到的 token)")
+async def control_send(body: dict, _user=Depends(get_current_user)):
+    token = str((body or {}).get("token") or "")
+    item = _pending.pop(token, None)
+    if not item:
+        raise HTTPException(status_code=400, detail="token 無效或已過期,請重新準備。")
+    if time.time() - item["ts"] > _PREPARE_TTL:
+        raise HTTPException(status_code=400, detail="token 已過期,請重新準備。")
+
+    dev_cmd = item["code"]
+    why = _control_guard(int(dev_cmd[2:], 16), int(dev_cmd[:2], 16))
+    if why:                                  # 準備到送出之間設定可能變了
+        raise HTTPException(status_code=403, detail=why)
+
+    sock = _sock_ref.get("sock")
+    if sock is None:
+        raise HTTPException(status_code=409, detail="號誌通道目前沒有連線,無法送出。")
+
+    user = getattr(_user, "username", None) or str(_user)
+    rec = {
+        "ts": time.time(),
+        "user": user,
+        "code": item["code"],
+        "kind": _kind_of(int(item["code"][2:], 16), int(item["code"][:2], 16)),
+        "addr": item["addr"],
+        "seq": item["seq"],
+        "raw": item["frame"].hex(" ").upper(),
+        "ok": False,
+        "error": "",
+    }
+    with _send_lock:
+        try:
+            sock.sendall(item["frame"])
+            _seq_next["n"] = item["seq"]
+            rec["ok"] = True
+        except Exception as exc:
+            rec["error"] = f"{type(exc).__name__}: {exc}"[:160]
+
+    _sent_log.append(rec)
+    # 🛑 送出一定要留在系統日誌,不能只存在記憶體裡 —— 服務重啟就沒了,
+    #    而「誰在什麼時候對號誌送了什麼」是要能事後查的。
+    print(f"[signal-tc3][控制] user={user} code={rec['code']} kind={rec['kind']} "
+          f"addr=0x{rec['addr']:04X} seq={rec['seq']} ok={rec['ok']} "
+          f"raw={rec['raw']}{(' err=' + rec['error']) if rec['error'] else ''}",
+          flush=True)
+    add_log("warning" if not rec["ok"] else "info",
+            f"號控下傳 {rec['code']}({rec['kind']}) → 0x{rec['addr']:04X} "
+            f"{'成功' if rec['ok'] else '失敗: ' + rec['error']}", "signal")
+
+    if not rec["ok"]:
+        raise HTTPException(status_code=502, detail=f"送出失敗: {rec['error']}")
+    return {"ok": True, "sent": rec,
+            "note": "已送出。控制器若有回應會出現在訊框清單(查詢類會回查詢回報)。"}
+
+
+# ── 命令 schema(欄位定義)──────────────────────────────────────────────
+# 前端要照每則命令的參數欄位產生表單,那份定義在另一個專案 utc-tc3
+# (協定模擬器)的 utc.messages.ALL 裡,每則 .schema() 就是前端要的 JSON。
+# 🛑 不把那 700 行 codec DSL 抄一份進來 —— 抄了兩邊會漂移,而號控送錯欄位
+#    是會改到路口號誌的。改成執行時去 import,以那個專案為單一真相來源。
+#    找不到就回空表,前端退回「手輸 info_hex」,不會整頁壞掉。
+_SCHEMA_CACHE: Optional[dict] = None
+UTC_TC3_PATH = os.getenv("UTC_TC3_PATH", "/home/ubuntu/utc-tc3")
+
+
+def load_command_schemas() -> dict:
+    """{code: schema dict}。匯入 utc-tc3;不可用就回空表。"""
+    global _SCHEMA_CACHE
+    if _SCHEMA_CACHE is not None:
+        return _SCHEMA_CACHE
+    out: dict = {}
+    try:
+        import sys
+        if UTC_TC3_PATH and UTC_TC3_PATH not in sys.path:
+            sys.path.insert(0, UTC_TC3_PATH)
+        from utc import messages as _M       # type: ignore
+        for m in _M.ALL:
+            sc = m.schema() if callable(getattr(m, "schema", None)) else None
+            if sc and sc.get("code"):
+                out[sc["code"]] = sc
+    except Exception as exc:
+        print(f"[signal_tc3] 命令 schema 匯入失敗({UTC_TC3_PATH}): {exc};"
+              f"前端將退回手輸 info_hex", flush=True)
+        out = {}
+    _SCHEMA_CACHE = out
+    return out
+
+
+@router.get("/control/schemas", summary="每則命令的參數欄位定義(給前端產表單)")
+async def control_schemas(_user=Depends(get_current_user)):
+    """回可下傳的命令清單與其欄位。已套安全過濾:回不了的類別不列。"""
+    schemas = load_command_schemas()
+    items = []
+    for code, sc in schemas.items():
+        try:
+            dev = int(code[:2], 16)
+            cmd = int(code[2:], 16)
+        except (ValueError, IndexError):
+            continue
+        # 只列「中心送得出去」的:總開關關著就全空;只准查詢就只列查詢
+        if _control_guard(cmd, dev) is not None:
+            continue
+        items.append({
+            "code": code,
+            "name": sc.get("name"),
+            "kind": _kind_of(cmd, dev),
+            "level": sc.get("level"),
+            "group": sc.get("group"),
+            "page": sc.get("page"),
+            "fields": sc.get("fields", []),
+        })
+    items.sort(key=lambda x: x["code"])
+    return {
+        "available": bool(schemas),
+        "control_enabled": CONTROL_ENABLED,
+        "query_only": CONTROL_QUERY_ONLY,
+        "count": len(items),
+        "commands": items,
     }
