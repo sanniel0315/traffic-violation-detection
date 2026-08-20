@@ -35,11 +35,12 @@ def _record_model_time(model_s: float) -> None:
     _MODEL_LAST.value = model_s
 
 
-def _record_detect_stats(parse_s: float, truck_s: float, n_box: int) -> None:
+def _record_detect_stats(parse_s: float, truck_s: float, n_box: int,
+                         tc_call: int = 0, tc_hit: int = 0) -> None:
     now = _time_stats.time()
     with _STAT_LOCK:
         _STAT_BUF.append((now, getattr(_MODEL_LAST, "value", 0.0),
-                          parse_s, truck_s, n_box))
+                          parse_s, truck_s, n_box, tc_call, tc_hit))
         cut = now - _STAT_WINDOW
         while _STAT_BUF and _STAT_BUF[0][0] < cut:
             _STAT_BUF.popleft()
@@ -66,10 +67,43 @@ def detect_timing_stats() -> dict:
         # truck = 大型車細分類(只有出現 truck/bus 才會跑)
         "truck_ms_avg": round(sum(i[3] for i in items) / n * 1000, 1),
         "boxes_avg": round(sum(i[4] for i in items) / n, 1),
+        # 細分類被要求幾次、其中幾次靠快取免掉了推論
+        "truck_calls_per_frame": round(sum(i[5] for i in items) / n, 2),
+        "truck_cache_hit_rate": round(
+            sum(i[6] for i in items) / max(1, sum(i[5] for i in items)), 3),
         "model_share": round(sum(i[1] for i in items) / max(1e-9, tot), 3),
         "parse_share": round(sum(i[2] for i in items) / max(1e-9, tot), 3),
         "truck_share": round(sum(i[3] for i in items) / max(1e-9, tot), 3),
     }
+
+
+# ── 大型車細分類的重複呼叫快取 ─────────────────────────────────────────
+# 🛑 為什麼需要:一台車的車種不會變,但先前每一幀都重跑一次細分類。
+#    一台車在畫面裡待 5 秒、分析率 2.5 fps → 同一台重複分類 12 次,
+#    後 11 次的結果必然跟第 1 次相同,純粹是浪費 GPU 通道。
+#    2026-08-20 在 87 量到:細分類佔 detection 鎖持有時間的 24%(11.7/49.8ms),
+#    而 GPU 鎖飽和度 0.99 —— 省下來的直接變成分析率。
+# 🛑 這裡沒有 track_id 可用(走的是 model(frame) 不是 model.track),
+#    所以用 bbox 重疊比對來認「同一台車」。命中時把 bbox 更新成新位置
+#    (跟著車走),但**不更新時間戳** —— 每台車至少每 TTL 秒重驗一次,
+#    萬一第一次分錯也不會永久留著。
+# 順帶的好處:同一台車的標籤在連續幀之間會穩定下來,不會忽大貨車忽小客車。
+TRUCK_CLS_CACHE = os.getenv("TRUCK_CLS_CACHE", "1") != "0"
+TRUCK_CLS_CACHE_SEC = float(os.getenv("TRUCK_CLS_CACHE_SEC", "2.0") or 2.0)
+TRUCK_CLS_CACHE_IOU = float(os.getenv("TRUCK_CLS_CACHE_IOU", "0.6") or 0.6)
+
+
+def _bbox_iou(a: dict, b: dict) -> float:
+    """兩個 bbox 的交集/聯集。給「這是不是同一台車」用。"""
+    ix1, iy1 = max(a["x1"], b["x1"]), max(a["y1"], b["y1"])
+    ix2, iy2 = min(a["x2"], b["x2"]), min(a["y2"], b["y2"])
+    iw, ih = ix2 - ix1, iy2 - iy1
+    if iw <= 0 or ih <= 0:
+        return 0.0
+    inter = iw * ih
+    union = ((a["x2"] - a["x1"]) * (a["y2"] - a["y1"])
+             + (b["x2"] - b["x1"]) * (b["y2"] - b["y1"]) - inter)
+    return inter / union if union > 0 else 0.0
 
 
 class VehicleDetector:
@@ -135,7 +169,8 @@ class VehicleDetector:
     }
     
     def __init__(self, model_path: str = None, conf_threshold: float = 0.5,
-                 enable_truck_cls: bool = True):
+                 enable_truck_cls: bool = True,
+                 cls_cache: bool = False):
         """
         初始化偵測器
 
@@ -173,10 +208,52 @@ class VehicleDetector:
             except Exception as e:
                 print(f"⚠️  大型車分類器載入失敗: {e}")
 
+        # 細分類快取:每台相機各自一份。
+        # 🛑 預設關閉,只有「一個 instance 固定服務一個來源」的偵測器才可以開
+        #    (api/routes/stream.py 的 _get_per_cam_detector)。
+        #    共用的 fallback singleton 會被多台相機輪流呼叫,兩台在同一像素位置
+        #    的車會互相沿用標籤 —— 那是錯的,所以那條路徑維持原本每幀重算。
+        self._tc_cache = []
+        self._tc_cache_on = bool(cls_cache)
+
         print(f"✅ 車輛偵測器初始化完成 (模型: {model_path}, device: {self.runtime_device})")
         print(f"✅ 車種類別映射: {self.vehicle_classes}")
         if self.truck_classifier:
             print(f"✅ 大型車細分類: 啟用")
+
+    def _truck_cls_cached(self, frame, bbox: dict):
+        """細分類,同一台車在 TTL 內重複出現就沿用上次結果。
+
+        回傳 (結果, 是否命中快取)。
+        """
+        if not (TRUCK_CLS_CACHE and self._tc_cache_on):
+            return self._truck_cls_raw(frame, bbox), False
+        now = _time_stats.perf_counter()
+        # 掃一次:順手丟掉過期的,並找重疊最大的那一筆
+        keep, best, best_iou = [], None, 0.0
+        for ent in self._tc_cache:
+            if now - ent["ts"] > TRUCK_CLS_CACHE_SEC:
+                continue
+            keep.append(ent)
+            iou = _bbox_iou(ent["bbox"], bbox)
+            if iou > best_iou:
+                best, best_iou = ent, iou
+        self._tc_cache = keep
+        if best is not None and best_iou >= TRUCK_CLS_CACHE_IOU:
+            # bbox 跟著車走,但 ts 不動 —— 保證每 TTL 秒重驗一次
+            best["bbox"] = dict(bbox)
+            return best["res"], True
+        res = self._truck_cls_raw(frame, bbox)
+        self._tc_cache.append({"bbox": dict(bbox), "res": res, "ts": now})
+        return res, False
+
+    def _truck_cls_raw(self, frame, bbox: dict):
+        """真的跑一次細分類(共用 instance,要加鎖避免多 cam 併發)。"""
+        _tc_lock = VehicleDetector._shared_truck_classifier_lock
+        if _tc_lock is not None:
+            with _tc_lock:
+                return self.truck_classifier.classify(frame, bbox)
+        return self.truck_classifier.classify(frame, bbox)
 
     @classmethod
     def _normalize_label(cls, value: str) -> str:
@@ -306,6 +383,8 @@ class VehicleDetector:
         """
         _t_truck = 0.0
         _n_box = 0
+        _n_tc_call = 0      # 這一幀要求了幾次細分類
+        _n_tc_hit = 0       # 其中幾次靠快取免掉推論
         _t1 = _time_stats.perf_counter()
 
         detections = []
@@ -347,14 +426,12 @@ class VehicleDetector:
                 # 大型車細分類（共用 instance，加 lock 保護避免多 cam 併發）
                 if (self.truck_classifier
                         and det['class_name'] in self._RECLASSIFY_CLASSES):
-                    _tc_lock = VehicleDetector._shared_truck_classifier_lock
                     _tt0 = _time_stats.perf_counter()
-                    if _tc_lock is not None:
-                        with _tc_lock:
-                            cls_result = self.truck_classifier.classify(frame, det['bbox'])
-                    else:
-                        cls_result = self.truck_classifier.classify(frame, det['bbox'])
+                    cls_result, _tc_hit_one = self._truck_cls_cached(frame, det['bbox'])
                     _t_truck += _time_stats.perf_counter() - _tt0
+                    _n_tc_call += 1
+                    if _tc_hit_one:
+                        _n_tc_hit += 1
                     if cls_result['class_name'] == 'non_truck':
                         det['class_name'] = 'car'
                         det['truck_cls'] = cls_result
@@ -365,7 +442,7 @@ class VehicleDetector:
                 detections.append(det)
 
         _t_parse = _time_stats.perf_counter() - _t1 - _t_truck
-        _record_detect_stats(_t_parse, _t_truck, _n_box)
+        _record_detect_stats(_t_parse, _t_truck, _n_box, _n_tc_call, _n_tc_hit)
         return detections
 
     def _filter_motorcycle_artifacts(self, detections: List[Dict[str, Any]],
