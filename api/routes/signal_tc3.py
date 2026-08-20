@@ -821,3 +821,55 @@ async def control_schemas(_user=Depends(get_current_user)):
         "count": len(items),
         "commands": items,
     }
+
+
+# ── 訊框深度解碼(欄位對照)──────────────────────────────────────────────
+# decode_frame 在抄錄熱迴圈裡跑,只硬解了最常用的 5F03 燈態。其餘訊息
+# (時制查詢回報、時相資料…)要看具名欄位,靠 utc-tc3 的 decoder 在「讀取時」解 ——
+# 那是 API 執行緒,慢一點沒關係,不拖累抄錄。
+
+
+def _decode_fields(code: str, raw_hex: str) -> Optional[list]:
+    """把一個訊框解成 [{name, value, desc}] 的欄位表。解不出來回 None。"""
+    try:
+        import sys
+        if UTC_TC3_PATH and UTC_TC3_PATH not in sys.path:
+            sys.path.insert(0, UTC_TC3_PATH)
+        from utc import messages as _M       # type: ignore
+        msg = next((m for m in _M.ALL if m.code == code), None)
+        if msg is None:
+            return None
+        raw = bytes.fromhex(str(raw_hex).replace(" ", ""))
+        info = _unstuff(raw[7:-3])           # 去框頭尾 + 還原 stuffing
+        vals = msg.decode(info)
+        if not isinstance(vals, dict):
+            return None
+        # 欄位順序照 schema,值照解出來的;附上 desc 讓表格看得懂
+        desc_map = {f.get("name"): f.get("desc") for f in msg.schema().get("fields", [])}
+        out = []
+        for k, v in vals.items():
+            out.append({"name": k, "value": v, "desc": desc_map.get(k, "")})
+        return out
+    except Exception:
+        return None
+
+
+@router.get("/frames/decoded", summary="最近訊框(含 utc-tc3 深度解碼的欄位表)")
+async def frames_decoded(limit: int = 30, _user=Depends(get_current_user)):
+    """跟 /frames 一樣,但每一框多帶 fields(欄位名→值),給前端做對照表。"""
+    n = max(1, min(200, int(limit or 30)))
+    with _lock:
+        items = list(_frames)[-n:]
+    out = []
+    for it in reversed(items):
+        row = dict(it)
+        code = it.get("code")
+        if code:
+            row["fields"] = _decode_fields(code, it.get("raw", ""))
+            # 訊息名稱也帶上,前端表頭好標
+            for m in load_command_schemas().values():
+                if m.get("code") == code:
+                    row["name"] = m.get("name")
+                    break
+        out.append(row)
+    return {"count": len(out), "frames": out}
