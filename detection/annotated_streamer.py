@@ -70,6 +70,17 @@ STREAM_HEIGHT = int(os.getenv("ANNOTATED_STREAM_HEIGHT", "0") or 0)
 #    用同一個設定值一定有台會抖,所以改成各自量各自的。
 STREAM_FPS = int(os.getenv("ANNOTATED_STREAM_FPS", "0") or 0)
 # 1080p 要給夠,不然畫面會糊 —— 但仍遠低於 MJPEG 的 10~17 Mbps
+# 🛑 這個值要照「現場對外上行 ÷ 會同時看的格數」來配,不是照畫質喜好配。
+#    超過的話不是「畫面比較卡」而已 —— 寫入緩衝會塞滿,連線直接被伺服器斷掉,
+#    使用者看到的是「四格一起黑 + service 異常」,而後端 /api/health 只要 4ms。
+#    2026-08-20 在 87 實測(對外上行乾淨量測 2.1~2.6 Mbps,下載 25 Mbps —— 非對稱,
+#    別看下載那個數字):
+#        3.0 Mbps × 1 條   /api/health 中位 2055ms,34 次有 8 次完全逾時
+#        1.2 Mbps × 1 條   中位  484ms,0 失敗
+#        1.2 Mbps × 4 條   四條全部 ConnectionClosedError(全黑)
+#        0.5 Mbps × 4 條   合計 1.89 Mbps,四條都活,health 中位 328ms,0 失敗 ✅
+#    所以 87 現場設 500k(systemd drop-in zz-annotated.conf)。
+#    解析度不受這個值影響,一律沿用來源 1920x1080。
 STREAM_BITRATE = os.getenv("ANNOTATED_STREAM_BITRATE", "3M") or "3M"
 # libx264 = 軟體(到處都能跑);hw = Jetson 硬體編碼(nvv4l2h264enc)
 # 87 實測 960x540@20fps,只算編碼器本身:
