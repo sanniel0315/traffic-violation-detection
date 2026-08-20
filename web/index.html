@@ -10303,7 +10303,22 @@ const ensureGo2rtcPlayer=()=>{
 // 正解是把那個 gap 當「量測值」餵給一個溫和的控制器:落後多就微幅加速追,
 // 緩衝快見底就微幅放慢,其餘時間維持 1.0。速率變化小到看不出來,
 // 又能讓播放頭穩定停在即時邊緣後方一小段,不會被 seek。
-const BUF_TARGET = 0.35;     // 想維持的緩衝秒數
+// 想維持的緩衝秒數。
+// 🛑 這個值要照「線路的抖動」配,不是照延遲喜好配。
+//    2026-08-20 在 87 實測(串流沒在跑時的 60 個 ping):
+//        0% 遺失,但 RTT 在 44ms ~ 712ms 之間跳,平均 164ms
+//    典型 4G/LTE(配上 25 Mbps 下載 / 2.2 Mbps 上傳的非對稱)。
+//    原本 BUF_TARGET=0.35 比單次抖動(712ms)還小 —— 抖一下就把緩衝吸乾,
+//    畫面就停。現場回報「NVR 的 1/4/9/16 格都很順,我們 4 格一直停」,
+//    差別就在這裡:NVR 緩衝 2~5 秒把抖動吃掉,我們只緩衝 0.35 秒。
+//    實測分層(30 秒內的停頓次數,四條串流):
+//        直連 go2rtc(本機)   0 0 1 0    ← 來源乾淨
+//        經過代理(本機)      2 3 2 1    ← 代理影響很小
+//        經過代理(遠端)      6 14 7 12  ← 幾乎全是路徑抖動造成的
+//    代價是多約 1.7 秒的延遲。監看用途值得,要更即時可以自己調小。
+const BUF_TARGET = 2.0;
+// 死區也要跟著放大,否則在 2 秒目標附近會一直來回改速率
+const BUF_HIGH = 0.6, BUF_LOW = 0.5;
 const RATE_UP = 1.06, RATE_DOWN = 0.96;
 const clampGo2rtcPlaybackRate = (node, tries = 0) => {
     const v = node && node.querySelector && node.querySelector('video');
@@ -10322,8 +10337,8 @@ const clampGo2rtcPlaybackRate = (node, tries = 0) => {
                 const gap = Number(gapAsRate);
                 let rate = 1.0;
                 if (isFinite(gap)) {
-                    if (gap > BUF_TARGET + 0.25) rate = RATE_UP;        // 落後 → 微幅追
-                    else if (gap < BUF_TARGET - 0.20) rate = RATE_DOWN; // 快見底 → 微幅放慢
+                    if (gap > BUF_TARGET + BUF_HIGH) rate = RATE_UP;        // 落後 → 微幅追
+                    else if (gap < BUF_TARGET - BUF_LOW) rate = RATE_DOWN; // 快見底 → 微幅放慢
                 }
                 desc.set.call(this, rate);
             },
