@@ -15390,7 +15390,28 @@ const app=createApp({
         // page_size 截斷成單一 bucket，導致每小時趨勢圖塌成 1 根。空桶在前端補 0。
         let _trendInFlight=null;      // 進行中的 trend 請求(同參數共用,避免 watcher 連動打爆連線池)
         let _trendInFlightKey='';
+        // 🛑 光有「同參數去重」不夠。statsNowMs 是會走的時間戳,watcher 每次連動
+        //    參數就都不一樣 → 去重永遠不命中 → 請求照噴。
+        //    2026-08-20 在 87 現場抓到:6 分鐘內打了 444 次(每分鐘 74 次),
+        //    Send-Q 塞到 2.6MB、瀏覽器 6 條連線全滿、/api/health 排不到 socket,
+        //    使用者看到的就是「一直 SERVICE OFFLINE」。
+        //    所以再加一層「最小間隔」:非使用者主動觸發的呼叫,兩次真正發出的
+        //    請求至少間隔 TREND_MIN_GAP;期間內的併成一次尾端呼叫,不丟失更新。
+        const TREND_MIN_GAP=2500;
+        let _trendLastAt=0;
+        let _trendPending=null;
+        const loadStatsTrendThrottled=(showMessage=false)=>{
+            if(showMessage)return loadStatsTrend(true);      // 使用者按重新整理 → 立刻
+            const now=Date.now();
+            // 🛑 還在飛的就不要再發。trend 冷查實測要 4.8 秒,只靠時間間隔會重疊,
+            //    重疊起來照樣把連線池吃光。
+            const wait=(_trendInFlight ? TREND_MIN_GAP : Math.max(0, TREND_MIN_GAP-(now-_trendLastAt)));
+            if(wait<=0)return loadStatsTrend(false);
+            if(_trendPending)return;                          // 已排好尾端呼叫
+            _trendPending=setTimeout(()=>{ _trendPending=null; loadStatsTrendThrottled(false); }, wait);
+        };
         const loadStatsTrend=async(showMessage=false)=>{
+            _trendLastAt=Date.now();
             const mode=statsTrendMode.value;
             const bucketMode=resolveTrendBucketMode();
             const secMap={'1s':1,'30s':30,'1m':60,'5m':300,'10m':600,'1h':3600,'1d':86400};
@@ -15456,7 +15477,9 @@ const app=createApp({
         };
         const rebuildStatsTrend=(showMessage=false)=>{
             if(statsTrendMode.value==='flow'){ rebuildFlowTrend(showMessage); return; }
-            loadStatsTrend(showMessage);
+            // 🛑 一定要走節流版。watcher 連動時參數每次都不同(statsNowMs 會走),
+            //    「同參數去重」擋不住 —— 現場實測 6 分鐘打了 444 次。
+            loadStatsTrendThrottled(showMessage);
         };
         const loadStats=async(manual=false,options={})=>{
             if(statsLoading.value)return;
