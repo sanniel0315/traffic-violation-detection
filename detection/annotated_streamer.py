@@ -133,6 +133,17 @@ DELAY_MIN, DELAY_MAX = 0.25, 1.20
 #    也就是說 87 的疊加框「有時候會嚴重落後」,這是分析率的物理結果,
 #    使用者選疊加時應該知道,但不該由系統替他決定要不要看。
 MAX_GAP_SEC = float(os.getenv("ANNOTATED_STREAM_MAX_GAP", "0") or 0)
+# 框的位置要不要用速度外推到「這一幀的時間」。
+# 🛑 為什麼需要:影像 20 fps,但偵測只有約 3 fps(87 實測)——
+#    兩次偵測之間的 6~7 幀,框是完全靜止的,然後突然跳到新位置。
+#    使用者看到的就是「框標註會慢,並且抖動」。
+#    這不是配對邏輯的問題(配對誤差中位已經只有 83ms),是偵測本身太稀疏。
+#    解法:從最近兩組偵測估出每個框的移動速度,中間的幀把框往前推。
+#    外推有上限,超過就不推 —— 車子可能已經轉彎或離開,硬推會飄到離譜的位置。
+INTERP = os.getenv("ANNOTATED_STREAM_INTERP", "1") != "0"
+INTERP_MAX_SEC = float(os.getenv("ANNOTATED_STREAM_INTERP_MAX", "0.5") or 0.5)
+# 兩組偵測之間,中心點距離小於這個比例(相對於畫面寬)才視為同一台車
+INTERP_MATCH_RATIO = 0.08
 # 同時再推一條「不畫框」的低頻寬串流 cam_N_lite。
 # 🛑 為什麼需要:87 對外上行只有 1.4 Mbps,而原始 H.264 是原生 1080p 5.08 Mbps
 #    —— 使用者切「原始畫面」遠端還是會頓,只有疊加那條(0.81 Mbps)塞得下。
@@ -342,8 +353,36 @@ class AnnotatedStreamer:
             return self.procs.get(variant) is not None
 
     def _resolve_fps(self) -> bool:
-        """還沒定案就先量供幀率。量到才開編碼器,避免編碼率與供幀率不匹配。"""
+        """決定編碼率,並持續校正。
+
+        🛑 只在啟動時量一次是不夠的:那 5 秒窗可能剛好是啟動突發,定出來的值偏高,
+           之後就一直用高於供幀率的速度送 → 重複幀 → 畫面抖。
+           104 實測踩到:cam_8 供幀 10.1 fps 卻以 23.6 fps 寫入。
+           所以定案後仍每 30 秒比對一次,偏離超過 25% 就改正並重開編碼器。
+        """
         if self.fps:
+            now = time.monotonic()
+            if now - getattr(self, "_fps_checked", 0) > 30.0:
+                self._fps_checked = now
+                sup = self._supply_fps
+                if sup > 0 and abs(sup - self.fps) / self.fps > 0.25:
+                    new = max(1, min(30, int(round(sup))))
+                    print(f"🎬 [annot] cam_{self.camera_id} 供幀變成 {sup:.1f} fps,"
+                          f"編碼率 {self.fps} → {new},重開編碼器", flush=True)
+                    self.fps = new
+                    self.frame_interval = 1.0 / new
+                    need = max(8, int(new * (DELAY_MAX + 0.3)) + 2)
+                    with self._frame_lock:
+                        self._frames = deque(self._frames, maxlen=need)
+                    with self._proc_lock:
+                        for v in list(self.procs):
+                            if self.procs.get(v) is not None:
+                                try:
+                                    self.procs[v].terminate()
+                                except Exception:
+                                    pass
+                                self.procs[v] = None
+                    self._restart_count = 0
             return True
         if self._supply_fps <= 0:
             return False
@@ -474,7 +513,68 @@ class AnnotatedStreamer:
         if MAX_GAP_SEC > 0 and gap > MAX_GAP_SEC:
             self._dropped += 1
             return []
+        if INTERP:
+            best = self._extrapolate(best, best_ts, ts, items)
         return best
+
+    @staticmethod
+    def _center(det):
+        b = det.get("bbox") or {}
+        try:
+            return ((b["x1"] + b["x2"]) / 2.0, (b["y1"] + b["y2"]) / 2.0)
+        except Exception:
+            return None
+
+    def _extrapolate(self, dets: list, dets_ts: float, ts: float, items: list) -> list:
+        """把框的位置往前(或往後)推到這一幀的時間。
+
+        速度來自「這一組」與「前一組」的中心點位移。配不到前一組的框(新出現的車)
+        就不推,維持原位 —— 沒有速度可用時亂猜比不動更糟。
+        """
+        dt = ts - dets_ts
+        if not dets or abs(dt) < 0.005 or abs(dt) > INTERP_MAX_SEC:
+            return dets
+        prev = None
+        for d_ts, d in items:
+            if d_ts < dets_ts - 1e-6:
+                prev = (d_ts, d)          # deque 依時間遞增,取最後一個比它早的
+        if prev is None or not prev[1]:
+            return dets
+        prev_ts, prev_dets = prev
+        span = dets_ts - prev_ts
+        if span <= 1e-6 or span > 1.5:    # 前一組太舊,速度不可信
+            return dets
+        thr = (self.width or 1920) * INTERP_MATCH_RATIO
+        out = []
+        for det in dets:
+            c = self._center(det)
+            if c is None:
+                out.append(det)
+                continue
+            # 同類別、中心最近的那一個當作同一台車
+            best_prev, best_d = None, None
+            for pd in prev_dets:
+                if pd.get("class_name") != det.get("class_name"):
+                    continue
+                pc = self._center(pd)
+                if pc is None:
+                    continue
+                d = ((pc[0] - c[0]) ** 2 + (pc[1] - c[1]) ** 2) ** 0.5
+                if d <= thr and (best_d is None or d < best_d):
+                    best_prev, best_d = pc, d
+            if best_prev is None:
+                out.append(det)           # 新出現的車,沒有速度可用
+                continue
+            vx = (c[0] - best_prev[0]) / span
+            vy = (c[1] - best_prev[1]) / span
+            dx, dy = vx * dt, vy * dt
+            b = det["bbox"]
+            nb = dict(b)
+            nb["x1"] = int(b["x1"] + dx); nb["x2"] = int(b["x2"] + dx)
+            nb["y1"] = int(b["y1"] + dy); nb["y2"] = int(b["y2"] + dy)
+            nd = dict(det); nd["bbox"] = nb
+            out.append(nd)
+        return out
 
     def align_stats(self) -> dict:
         lat = sorted(self._det_lat)
@@ -598,7 +698,8 @@ class AnnotatedStreamer:
         self._supply_n += 1
         dt = time.monotonic() - self._supply_t0
         # 一開始先用 5 秒快速定出一個值,之後才改成 10 秒視窗
-        if dt >= (5.0 if self._supply_fps <= 0 else 10.0):
+        # 第一次用 8 秒(不要被啟動突發帶偏),之後 10 秒滾動
+        if dt >= (8.0 if self._supply_fps <= 0 else 10.0):
             self._supply_fps = self._supply_n / dt
             self._supply_n = 0
             self._supply_t0 = time.monotonic()
