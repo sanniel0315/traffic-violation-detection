@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """交通流事件 API"""
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
@@ -28,6 +29,23 @@ _AGG_CACHE_TTL_SEC = 60.0
 # 必然 SCAN + TEMP B-TREE;traffic_events 已累積 230 萬筆,全表掃描實測閒置 4.4 秒、
 # 高負載下 17 秒。單一慢請求就會把瀏覽器僅剩的連線佔住,害 /api/health 排不到 socket
 # 逾時 → 前端誤判 SERVICE OFFLINE。所以這裡快取結果 + 限制掃描範圍雙管齊下。
+# 單飛:同一個 key 同時有多個請求進來時,只讓第一個真的去查,其餘等它的結果。
+# 🛑 沒有這層的話,兩台機器同時開報表頁就會各跑一次 4.8 秒的冷查詢,
+#    DB 與上行頻寬都被打兩份。端點是同步 def(跑在 threadpool),所以用 threading.Lock。
+_TREND_LOCKS: dict[tuple, "threading.Lock"] = {}
+_TREND_LOCKS_GUARD = threading.Lock()
+
+
+def _trend_lock(key: tuple):
+    with _TREND_LOCKS_GUARD:
+        lk = _TREND_LOCKS.get(key)
+        if lk is None:
+            if len(_TREND_LOCKS) > 128:      # 有界,不要無限長大
+                _TREND_LOCKS.clear()
+            lk = _TREND_LOCKS[key] = threading.Lock()
+        return lk
+
+
 _TREND_CACHE: dict[tuple, tuple] = {}
 _TREND_CACHE_TTL_SEC = 60.0
 _TREND_CACHE_MAX = 64
@@ -112,16 +130,47 @@ def get_traffic_events_trend(
         _anchor = datetime.utcfromtimestamp(_anchor_epoch)
         start_time = _anchor - timedelta(seconds=_span)
 
+    # 🛑 cache key 的時間要「量化」,否則永遠不會命中。
+    #    上面那段對齊只在「沒給 start_time」時才跑,但前端每次都會帶 start/end,
+    #    而且那是跟著時鐘走的值 —— 每次請求 key 都不一樣,60 秒的 TTL 形同虛設。
+    #    2026-08-20 現場實測:兩台機器同時開報表頁,5 分鐘打了 21 次 trend,
+    #    每一次都是完整查詢(冷查 4.8 秒),把 2 Mbps 的上行佔滿,
+    #    另一台使用者看到的就是「service 異常」。
+    #    量化只動 key 不動查詢條件:同一個量化格內的請求共用先算好的結果,
+    #    最多差一個格子的資料。趨勢圖的桶通常 ≥60 秒,差幾秒看不出來。
+    def _q(dt):
+        if dt is None:
+            return None
+        grid = max(10, min(int(bucket_sec) // 6, 60))
+        ep = int(dt.replace(tzinfo=timezone.utc).timestamp())
+        return (ep // grid) * grid
+
     cache_key = (
         int(bucket_sec), int(max_buckets), str(mode),
         camera_id, lane, direction,
-        start_time.strftime("%Y-%m-%d %H:%M:%S"),
-        end_time.strftime("%Y-%m-%d %H:%M:%S") if end_time else None,
+        _q(start_time), _q(end_time),
     )
     now_ts = time.time()
     hit = _TREND_CACHE.get(cache_key)
     if hit and (now_ts - hit[0]) < _trend_cache_ttl(bucket_sec):
         return hit[1]
+
+    # 沒命中 → 進單飛。拿到鎖之後要再查一次快取:等鎖的期間
+    # 第一個請求很可能已經把結果放進去了,那就直接用,不要再查一次 DB。
+    _lk = _trend_lock(cache_key)
+    with _lk:
+        hit = _TREND_CACHE.get(cache_key)
+        if hit and (time.time() - hit[0]) < _trend_cache_ttl(bucket_sec):
+            return hit[1]
+        return _trend_query(
+            db, cache_key, bucket_sec, max_buckets, mode,
+            camera_id, lane, direction, start_time, end_time,
+        )
+
+
+def _trend_query(db, cache_key, bucket_sec, max_buckets, mode,
+                 camera_id, lane, direction, start_time, end_time):
+    """實際去 DB 查。抽出來只是為了讓上面的單飛看得清楚,邏輯完全沒動。"""
 
     try:
         db.execute(text("PRAGMA busy_timeout = 5000"))
@@ -171,7 +220,10 @@ def get_traffic_events_trend(
     if len(_TREND_CACHE) >= _TREND_CACHE_MAX:
         for _k in sorted(_TREND_CACHE, key=lambda k: _TREND_CACHE[k][0])[:_TREND_CACHE_MAX // 2]:
             _TREND_CACHE.pop(_k, None)
-    _TREND_CACHE[cache_key] = (now_ts, result)
+    # 🛑 這裡要自己取時間。now_ts 是外層端點的區域變數,抽成 _trend_query 之後
+    #    就不在作用域內了(靜態掃描抓到的)。而且用「查完的時間」當快取戳記
+    #    語意上也比「請求進來的時間」正確。
+    _TREND_CACHE[cache_key] = (time.time(), result)
     return result
 
 
