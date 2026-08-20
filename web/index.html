@@ -6412,7 +6412,6 @@
                         <div class="card-body">
                             <div class="analysis-setting-tip">
                                 都市交通控制通訊協定 3.0,號誌控制器主動回報(5F+03 時相資料)。
-                                只讀不寫 —— 這是運作中的號誌通道,不對它送出任何位元組。
                             </div>
                             <el-alert v-if="!sigStatus.enabled" type="info" :closable="false" show-icon
                                       title="本機未啟用抄錄器" description="此主機沒有號誌來源(SIGNAL_TC3_ENABLED=0)。"></el-alert>
@@ -6452,13 +6451,6 @@
                             </div>
                         </div>
                         <div class="card-body">
-                            <div class="analysis-setting-tip">
-                                分母是協定 3.0 規範的 {{ sigCoverage.catalog_total||105 }} 條訊息(設備共用 + 號誌控制器),
-                                分子是這條線實際抄到的。讓現場把圖控操作跑一輪就能拿到覆蓋率的第一手證據。
-                                <br>
-                                「中心下達」那欄是規範定義由交控中心送出的命令 —— 我們是單向抄錄號誌控制器上傳的資料,
-                                這類命令在這條線上結構性看不到,不是漏抄。
-                            </div>
                             <div class="sig-cov-sum">
                                 <div class="sig-cov-chip" v-for="(b, bi) in (sigCoverage.by_level||[])" :key="'lv'+bi">
                                     <span class="sig-cov-k">等級 {{ b.level }}</span>
@@ -6500,6 +6492,72 @@
                                 <el-table-column prop="spec_page" label="規範頁" width="80"></el-table-column>
                                 <el-table-column prop="count" label="次數" width="90"></el-table-column>
                             </el-table>
+                        </div>
+                    </div>
+
+                    <div class="card" v-if="sigCtl.enabled">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-zap"/></svg>號控下傳</span>
+                            <span style="display:flex;gap:8px;align-items:center">
+                                <el-tag size="small" :type="sigCtl.link_connected?'success':'danger'">{{ sigCtl.link_connected?'通道已連線':'通道未連線' }}</el-tag>
+                                <el-tag size="small" :type="sigCtl.query_only?'warning':'danger'">{{ sigCtl.query_only?'只准查詢':'含設定下傳' }}</el-tag>
+                                <el-tag size="small" type="info" v-if="sigCtl.target_addr_hex">位址 {{ sigCtl.target_addr_hex }}</el-tag>
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">
+                                對號誌控制器下傳命令。{{ sigCtl.query_only?'目前限制為只准查詢 —— 查詢不改變路口運轉。':'⚠️ 已開放設定下傳，送出設定類會改變路口的實際號誌運轉。' }}
+                                流程:選命令 → 填參數 → <b>準備</b>(看預覽)→ <b>送出</b>(二次確認)。
+                            </div>
+                            <div style="display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px">
+                                <div>
+                                    <el-select v-model="sigCmdSel" size="small" filterable placeholder="選一則命令" style="width:100%" @change="sigSelectCmd">
+                                        <el-option v-for="c in sigCmds" :key="c.code" :value="c.code"
+                                                   :label="c.code + '　' + c.name"></el-option>
+                                    </el-select>
+                                    <div v-if="!sigCmds.length" class="analysis-setting-tip" style="margin-top:8px">
+                                        {{ sigCtlSchemaOk?'目前沒有可送的命令(可能被安全限制過濾)。':'命令定義未載入(utc-tc3 不可用)，改用下方手輸模式。' }}
+                                    </div>
+                                </div>
+                                <div v-if="sigCmdCur">
+                                    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+                                        <b>{{ sigCmdCur.name }}</b>
+                                        <span style="font-size:12px;color:#64748b">{{ sigCmdCur.code }}　{{ sigCmdCur.kind }}　等級 {{ sigCmdCur.level }}　規範 {{ sigCmdCur.page }}</span>
+                                    </div>
+                                    <div v-for="f in sigCmdCur.fields" :key="f.name" style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+                                        <label style="width:130px;font-size:12px" :title="f.desc||''">{{ f.name }}<span v-if="f.desc" style="color:#94a3b8"> · {{ f.desc }}</span></label>
+                                        <el-input-number v-if="f.kind==='int'" v-model="sigCmdVals[f.name]" :min="f.lo" :max="f.hi" size="small" controls-position="right" style="width:150px"></el-input-number>
+                                        <el-input v-else v-model="sigCmdVals[f.name]" size="small" :placeholder="f.kind" style="width:220px"></el-input>
+                                        <span style="font-size:11px;color:#94a3b8" v-if="f.kind==='int'">{{ f.lo }}~{{ f.hi }}</span>
+                                        <span style="font-size:11px;color:#f59e0b" v-else>{{ f.kind }}(進階欄位，如不確定請用手輸)</span>
+                                    </div>
+                                    <div v-if="!sigCtlSchemaOk || !sigCmdCur.fields.length" style="margin-top:8px">
+                                        <label style="font-size:12px;color:#64748b">參數 info_hex(設備碼/指令碼之後的位元組)</label>
+                                        <el-input v-model="sigCtlHex" size="small" placeholder="例如 05" style="margin-top:4px"></el-input>
+                                    </div>
+                                    <div style="margin-top:12px;display:flex;gap:8px">
+                                        <el-button size="small" :loading="sigCtlBusy" @click="sigPrepare">準備</el-button>
+                                        <el-button size="small" type="primary" :disabled="!sigCtlPreview" :loading="sigCtlBusy" @click="sigSend">送出</el-button>
+                                    </div>
+                                    <div v-if="sigCtlPreview" class="analysis-setting-tip" style="margin-top:10px;font-family:monospace">
+                                        <div>位址 {{ sigCtlPreview.addr_hex }}　SEQ {{ sigCtlPreview.seq }}　{{ sigCtlPreview.bytes }} bytes</div>
+                                        <div style="margin-top:4px;word-break:break-all">原始:{{ sigCtlPreview.raw }}</div>
+                                        <div v-if="sigCtlPreview.decoded" style="margin-top:4px;color:#64748b">解回:{{ sigCtlPreview.decoded.code }} · CKS {{ sigCtlPreview.decoded.cks_ok?'OK':'錯' }}</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-if="(sigCtl.recent||[]).length" style="margin-top:14px">
+                                <div style="font-size:12px;color:#64748b;margin-bottom:6px">最近送出</div>
+                                <el-table :data="sigCtl.recent" size="small" max-height="200" style="width:100%">
+                                    <el-table-column prop="code" label="碼" width="70"></el-table-column>
+                                    <el-table-column prop="kind" label="型態" width="80"></el-table-column>
+                                    <el-table-column prop="user" label="操作者" width="90"></el-table-column>
+                                    <el-table-column label="結果" width="70">
+                                        <template #default="sc"><el-tag size="small" :type="sc.row.ok?'success':'danger'">{{ sc.row.ok?'成功':'失敗' }}</el-tag></template>
+                                    </el-table-column>
+                                    <el-table-column prop="raw" label="原始位元組"></el-table-column>
+                                </el-table>
+                            </div>
                         </div>
                     </div>
 
@@ -6669,8 +6727,8 @@
                         </div>
                         <div class="card-body">
                             <div class="analysis-setting-tip">
-                                只接收、不送出任何位元組。都市交通控制通訊協定的號誌控制器是主動週期上傳,
-                                不需要輪詢也不該對它發送東西。訊框依 AA BB … AA CC 切開並驗算 CKS(逐 byte XOR)。
+                                都市交通控制通訊協定的號誌控制器是主動週期上傳,不需要輪詢就看得到燈態。
+                                訊框依 AA BB … AA CC 切開並驗算 CKS(逐 byte XOR)。
                             </div>
                             <div v-if="npTapResult" style="margin-top:8px">
                                 <div style="display:flex;gap:8px;margin-bottom:8px">
@@ -19358,6 +19416,18 @@ const app=createApp({
         const sigFrames=ref([]);
         const sigAuto=ref(true);
         let sigTimer=null;
+        // ── 號控(下傳)──────────────────────────────────────────────────
+        // 🛑 這一整區是「對運轉中的號誌控制器送出位元組」。後端有三道閘門
+        //    (總開關 / 只准查詢 / 兩段式 token),前端這裡對應把關:
+        //    送出前一定要先 prepare 看預覽,確認無誤才 send。
+        const sigCtl=ref({enabled:false,query_only:true,link_connected:false,target_addr_hex:null,recent:[]});
+        const sigCmds=ref([]);             // 可送的命令清單(已被後端安全過濾)
+        const sigCmdSel=ref('');           // 目前選的 code
+        const sigCmdVals=ref({});          // 表單填的參數值
+        const sigCtlPreview=ref(null);     // prepare 回來的預覽(含 token)
+        const sigCtlBusy=ref(false);
+        const sigCtlSchemaOk=ref(true);    // schema 匯得到嗎(匯不到就退回手輸 hex)
+        const sigCtlHex=ref('');           // 手輸 info_hex 的後路
         const sigPhase=computed(()=>sigStatus.value&&sigStatus.value.latest?sigStatus.value.latest.phase:null);
         // 燈色取最顯著的一個:紅 > 黃 > 綠(位元定義見協定 P5-22)
         const sigLampClass=(L)=>{
@@ -19403,9 +19473,77 @@ const app=createApp({
                 if(r.ok)sigFrames.value=(await r.json()).frames||[];
             }catch(_){ }
         };
+        // ── 號控方法 ──────────────────────────────────────────────────
+        const loadSigControl=async()=>{
+            try{
+                const r=await fetch('/api/signal/control/status',{credentials:'include'});
+                if(r.ok)sigCtl.value=await r.json();
+            }catch(_){ }
+            try{
+                const r=await fetch('/api/signal/control/schemas',{credentials:'include'});
+                if(r.ok){
+                    const d=await r.json();
+                    sigCmds.value=d.commands||[];
+                    sigCtlSchemaOk.value=!!d.available;
+                }
+            }catch(_){ }
+        };
+        const sigCmdCur=computed(()=>sigCmds.value.find(c=>c.code===sigCmdSel.value)||null);
+        // 選一則命令 → 清空表單、清掉上一次的預覽(換命令了,舊 token 不能用)
+        const sigSelectCmd=(code)=>{
+            sigCmdSel.value=code; sigCmdVals.value={}; sigCtlPreview.value=null; sigCtlHex.value='';
+        };
+        // 準備(不送出):把填好的參數送給後端組框,回來的預覽含 token
+        const sigPrepare=async()=>{
+            if(!sigCmdSel.value){ ElementPlus.ElMessage.warning('先選一則命令'); return; }
+            sigCtlBusy.value=true; sigCtlPreview.value=null;
+            try{
+                const payload={code:sigCmdSel.value};
+                if(sigCtlSchemaOk.value && sigCmdCur.value && (sigCmdCur.value.fields||[]).length){
+                    payload.values=sigCmdVals.value;
+                }else{
+                    payload.info_hex=sigCtlHex.value;   // schema 不可用 → 手輸後路
+                }
+                const r=await fetch('/api/signal/control/prepare',{
+                    method:'POST',credentials:'include',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify(payload)});
+                const d=await r.json();
+                if(r.ok){ sigCtlPreview.value=d; }
+                else{ ElementPlus.ElMessage.error(d.detail||'準備失敗'); }
+            }catch(e){ ElementPlus.ElMessage.error('準備失敗: '+e); }
+            finally{ sigCtlBusy.value=false; }
+        };
+        // 送出:要二次確認,因為這會改到運轉中的路口號誌
+        const sigSend=async()=>{
+            const p=sigCtlPreview.value;
+            if(!p||!p.token){ ElementPlus.ElMessage.warning('先按「準備」'); return; }
+            const isSet=p.kind && p.kind.indexOf('查詢')<0;
+            try{
+                await ElementPlus.ElMessageBox.confirm(
+                    `即將對號誌控制器 ${p.addr_hex} 送出 ${p.code}(${p.kind})。`+
+                    (isSet?'\n⚠️ 這是設定類,會改變路口的實際號誌運轉。':'\n查詢類,不改變運轉。')+
+                    `\n\n原始位元組:\n${p.raw}`,
+                    '確認下傳',{type:isSet?'warning':'info',confirmButtonText:'確定送出',cancelButtonText:'取消'});
+            }catch(_){ return; }   // 取消
+            sigCtlBusy.value=true;
+            try{
+                const r=await fetch('/api/signal/control/send',{
+                    method:'POST',credentials:'include',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({token:p.token})});
+                const d=await r.json();
+                if(r.ok){
+                    ElementPlus.ElMessage.success(`已送出 ${p.code}`);
+                    sigCtlPreview.value=null;
+                    loadSigControl(); loadSignalFrames();   // 控制器若回應會出現在訊框
+                }else{ ElementPlus.ElMessage.error(d.detail||'送出失敗'); }
+            }catch(e){ ElementPlus.ElMessage.error('送出失敗: '+e); }
+            finally{ sigCtlBusy.value=false; }
+        };
         const startSignalTimer=()=>{
             if(sigTimer){ clearInterval(sigTimer); sigTimer=null; }
-            loadSignalCoverage(); loadSignalFrames();
+            loadSignalCoverage(); loadSignalFrames(); loadSigControl();
             if(!sigAuto.value)return;
             // 號誌每 2 秒上傳一次,1 秒輪詢足夠,狀態 JSON 只有幾 KB
             sigTimer=setInterval(()=>{
@@ -20001,7 +20139,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,loadSigControl,sigSelectCmd,sigPrepare,sigSend,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
