@@ -711,7 +711,10 @@ def _get_per_cam_detector(camera_id: int):
             return _per_cam_detectors[camera_id]
         try:
             from detection.vehicle_detector import VehicleDetector
-            _per_cam_detectors[camera_id] = VehicleDetector(conf_threshold=0.15)
+            # cls_cache:這個 instance 固定只服務這一台相機,所以可以開細分類快取
+            # (同一台車不必每幀重跑細分類)。共用的 fallback singleton 不可以開。
+            _per_cam_detectors[camera_id] = VehicleDetector(conf_threshold=0.15,
+                                                            cls_cache=True)
             print(f"⚡ cam_{camera_id} 獨立 detector 初始化完成", flush=True)
         except Exception as e:
             add_log("warning", f"cam_{camera_id} 獨立 detector 初始化失敗: {e}", "stream")
