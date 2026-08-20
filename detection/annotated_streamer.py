@@ -285,7 +285,17 @@ class AnnotatedStreamer:
                 f"format=i420 framerate={self.fps}/1 ! "
                 # 🛑 caps 一定要加引號:括號在 sh -c 裡會被當成子 shell → 語法錯誤
                 f"nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12' ! "
+                # 🛑 profile 與 preset 的預設值是「最快最粗」,不是「最好」:
+                #    profile 預設 0=Baseline(沒有 CABAC 熵編碼)、
+                #    preset-level 預設 1=UltraFast。
+                #    現場上行很窄(87 實測 2.1~2.6 Mbps),位元率被壓得很低,
+                #    這時編碼效率就是畫質。改成 High + Medium 等於同樣的頻寬
+                #    換到更清楚的畫面 —— 這是在「不能降解析度」的限制下,
+                #    唯一還能拿到畫質的地方。
+                #    control-rate 維持預設的 CBR:上行只有 2 Mbps 出頭,
+                #    VBR 的尖峰會直接把連線衝斷,寧可穩定。
                 f"nvv4l2h264enc bitrate={self._bitrate_bps()} insert-sps-pps=true "
+                f"profile=4 preset-level=3 "
                 # 🛑 關鍵幀間隔 1 秒。設 2 秒的話 MSE 觀看端要等最多 2 秒才拿得到
                 #    第一個可解碼的段,看起來就像「連上了但沒畫面」。
                 # 🛑 idrinterval 一定要一起設,只設 iframeinterval 沒有用。
