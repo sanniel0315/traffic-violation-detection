@@ -15914,11 +15914,6 @@ const app=createApp({
             //    → watchdog 30 秒後標記快照 → 這裡回 'image' → 永遠回不到 h264
             //    (快照模式下拿不到 live frame,旗標也就永遠清不掉)。
             //    現場實測 87 開頁 30 秒後四台全部掉回快照(2026-08-17)。
-            // 🛑 但 _budgetSnapshot 要看。那是 enforceStreamBudget 主動做的頻寬
-            //    決策(不是 watchdog 的逾時猜測),而且每次重算都會重新清掉/設定,
-            //    不會變成單向閂鎖。窄頻時得靠它把多餘的 h264 收掉,否則四格
-            //    一起拉滿頻寬,連線會被伺服器斷掉。
-            if(camera?._budgetSnapshot)return 'image';
             // 疊加模式也走 h264 —— 偵測框與 ROI 改由前端 SVG 畫在影片上
             // (階段3)。之前疊加只能走 MJPEG,四台就把瀏覽器 6 條連線吃滿,
             // 必然降級成快照;而 monitor_mode 預設就是 overlay,所以現場看到的
@@ -16164,17 +16159,8 @@ const app=createApp({
                 if(getMonitorMediaKind(c)==='video')return;   // mp4 直連檔案，不佔 API 的連線池
                 // H.264 走 WebSocket(Chrome 上限 255 條),不佔 HTTP/1.1 那 6 條,
                 // 不需要為了保連線給 API 而把它降級成快照。
-                // 🛑 H.264 走 WebSocket,不佔 HTTP/1.1 那 6 條連線 —— 但它照樣吃頻寬。
-                //    原本這裡「無條件放行」,窄頻時四格各拉一條 1.2 Mbps 的疊加,
-                //    而現場那條線實測只有 1~1.5 Mbps → 寫入緩衝塞滿 → 伺服器端
-                //    把連線斷掉,四格一起黑,API 也擠不出去。
-                //    2026-08-20 在 87 實測(遠端走 Tailscale,直連非中繼):
-                //        3 Mbps × 1 條   /api/health 中位 2055ms,34 次有 8 次逾時
-                //        1.2 Mbps × 1 條 中位 1079ms,0 次逾時
-                //        1.2 Mbps × 4 條 四條全部 ConnectionClosedError
-                //    結論:連線數不必 budget,頻寬必須 budget。
-                if(getMonitorMediaKind(c)==='h264' && !lowBandwidth.value){
-                    // 頻寬夠的時候維持原本行為:不降級,並把舊旗標清掉
+                if(getMonitorMediaKind(c)==='h264'){
+                    // 把先前降級留下的旗標清掉,否則狀態列會一直顯示「快照」
                     if(c.monitorSnapshotMode||c._budgetSnapshot){
                         c.monitorSnapshotMode=false;
                         c._budgetSnapshot=false;
