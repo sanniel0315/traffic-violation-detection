@@ -11,6 +11,7 @@ faulthandler.enable()
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -349,6 +350,17 @@ app = FastAPI(
     openapi_url=None,
 )
 
+# 🛑 現場對外上行只有 2.1~2.6 Mbps,而開一次網頁要下載 2.9 MB(全是文字):
+#        /web/                       1246 KB
+#        element-plus.min.js         1017 KB
+#        element-plus.css             353 KB
+#        element-plus-icons.min.js    206 KB
+#        vue.global.prod.js           164 KB
+#    2026-08-20 從遠端實測每支要 5~26 秒 —— 使用者回報「web 連線很久」就是這個。
+#    HTML/JS/CSS 壓縮後大約只剩四分之一,這是最便宜的一步。
+#    minimum_size=1024:小回應壓了反而變大,而且白花 CPU。
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -363,9 +375,23 @@ async def no_cache_web_html(request: Request, call_next):
     response = await call_next(request)
     path = str(request.url.path or "")
     if path.startswith("/web"):
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
+        # 🛑 第三方函式庫(/web/lib/)要讓瀏覽器永久快取。
+        #    它們是版本固定的檔案 —— element-plus.min.js 上次變動是 2026-04-07 ——
+        #    卻跟著 index.html 一起被標成 no-store,結果每次開頁都重下載 1.7 MB。
+        #    在 2 Mbps 的現場線路上那是十幾秒,而且完全是白費的。
+        #    要換版本時檔名會不一樣(或自己清快取),不會有拿到舊檔的問題。
+        if path.startswith("/web/lib/"):
+            # 🛑 不要對 response.headers 呼叫 pop() —— Starlette 的 MutableHeaders
+            #    沒有這個方法,會噴 AttributeError 變成 500(2026-08-20 實際踩到,
+            #    /web/lib/* 全部 500,整個網頁載不起來)。
+            #    這裡本來就不需要清:Pragma/Expires 只在下面的 else 分支才會被設。
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            # index.html 這種自己寫的頁面維持 no-store —— 改完要馬上看得到,
+            # 不然每次都得叫使用者 hard reload。
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
     return response
 
 
