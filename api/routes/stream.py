@@ -2006,6 +2006,11 @@ async def gpu_lock_stats_endpoint():
         _timing = detect_timing_stats()
     except Exception:
         _timing = {}
+    try:
+        from detection.vehicle_detector import truck_cls_audit_stats
+        _tc_audit = truck_cls_audit_stats()
+    except Exception:
+        _tc_audit = {}
     per_cam = {
         str(cid): {k: v.get(k) for k in
                    ("analysis_fps", "infer_ms", "lock_wait_ms", "stats_window_sec")
@@ -2018,6 +2023,7 @@ async def gpu_lock_stats_endpoint():
     except Exception:
         _annot = {}
     return {"gpu_lock": gpu_lock_stats(), "detect_timing": _timing,
+            "truck_cls_audit": _tc_audit,
             "annotated": _annot, "per_camera": per_cam}
 
 

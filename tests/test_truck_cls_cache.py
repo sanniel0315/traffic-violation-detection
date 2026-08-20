@@ -144,3 +144,23 @@ def test_共用偵測器不可以開快取(vd):
     assert _cached(vd, det, None, box) == (a, False)
     assert _cached(vd, det, None, box) == (b, False), "沒開快取就必須每次重算"
     assert det.calls == 2
+
+
+def test_沒有結論的不要存進快取(vd):
+    """_default_result()(unknown/信心0)是「這次判不出來」,不是判斷結果。
+
+    存了會讓這台車在 TTL 內都拿不到細分類 —— 下一幀角度變一下本來就可能判得出來。
+    """
+    unknown = {"class_name": "unknown", "label": "未知", "confidence": 0.0}
+    good = {"class_name": "heavy_truck", "confidence": 0.95}
+    det = _FakeDetector(vd, [unknown, good])
+    box = _bbox(100, 200, 300, 400)
+    r1, h1 = _cached(vd, det, None, box)
+    assert (r1["class_name"], h1) == ("unknown", False)
+    # 同一台車下一幀:不可以沿用 unknown,要重新判
+    r2, h2 = _cached(vd, det, None, box)
+    assert h2 is False, "unknown 不該被快取"
+    assert r2["class_name"] == "heavy_truck"
+    # 這次有結論了,才該進快取
+    r3, h3 = _cached(vd, det, None, box)
+    assert h3 is True and r3["class_name"] == "heavy_truck"
