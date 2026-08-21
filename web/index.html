@@ -6914,7 +6914,7 @@
 
                     <div class="card">
                         <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-activity"/></svg>TC3 通訊紀錄（我方/中央/控制器 · 持久化6月 · 可篩選 · 展開解碼）</span>
+                            <span><svg class="text-icon"><use href="#i-activity"/></svg>TC3 通訊紀錄</span>
                             <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                                 <el-select v-model="sigFrameFSrc" size="small" style="width:158px" @change="loadSignalFrames" placeholder="來源/方向">
                                     <el-option label="全部來源" value=""></el-option>
@@ -19863,10 +19863,13 @@ const app=createApp({
             try{
                 const r=await fetch('/api/signal/control/self-probe',{method:'POST',credentials:'include'});
                 const d=await r.json().catch(()=>({}));
-                if(r.ok){
-                    ElementPlus.ElMessage.success('已送出查詢 '+((d.sent||[]).length)+' 則,約1~2秒後回報進來');
-                    setTimeout(()=>{ loadTimingPlans(); loadSignalFrames(); loadSigControl(); },1800);
-                }else ElementPlus.ElMessage.warning(d.detail||'查詢失敗');
+                if(r.ok&&d.started){
+                    ElementPlus.ElMessage.success(d.msg||('開始抄錄約 '+(d.queries||0)+' 則,背景送出'));
+                    // 全計畫抄錄約 10~12 秒,分兩次刷新把表補齊
+                    setTimeout(()=>{ loadSignalFrames(); loadSigControl(); },3000);
+                    setTimeout(()=>{ loadTimingPlans(); loadSignalFrames(); },13000);
+                }else if(d.busy){ ElementPlus.ElMessage.warning(d.msg||'上一輪還在跑'); }
+                else ElementPlus.ElMessage.warning(d.detail||'查詢失敗');
             }catch(_){ ElementPlus.ElMessage.error('查詢失敗'); }
             sigProbing.value=false;
         };

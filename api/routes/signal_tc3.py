@@ -1629,24 +1629,48 @@ def _send_query_to_controller(code: str, params: bytes, user: str) -> bool:
     return True
 
 
-@router.post("/control/self-probe", summary="自我查詢比對:主動查控制器 控制策略/時制計畫/基本參數/硬體狀態")
-def control_self_probe(_user=Depends(get_current_user)):
-    """一鍵對控制器送 5F40(控制策略)/5F48(目前時制計畫)/5F44(各計畫基本參數)/
-    0F41(硬體狀態) 查詢。回報自動進通訊紀錄 + 補滿時制計畫表,預設不轉發中央。
-    (sync def:內含間隔 sleep,交給 FastAPI threadpool 跑,不卡事件迴圈。)"""
+_self_probe_busy = {"on": False}
+
+
+def _run_self_probe(user: str, plan_lo: int, plan_hi: int) -> None:
+    """背景抄錄:控制策略/目前時制/硬體狀態 + 逐計畫(plan_lo~plan_hi) 5F45 資料庫 +
+    5F44 基本參數。查詢多,間隔送,回報進 signal_frames(抑制轉中央)。"""
+    try:
+        for code in ("5F40", "5F48", "0F41"):
+            if shutdown_event.is_set():
+                return
+            _send_query_to_controller(code, b"", user)
+            time.sleep(0.12)
+        for pid in range(plan_lo, plan_hi + 1):
+            if shutdown_event.is_set():
+                return
+            p = bytes((pid & 0xFF,))
+            _send_query_to_controller("5F45", p, user)   # 時制計畫資料庫(綠燈/週期/時差)
+            time.sleep(0.12)
+            _send_query_to_controller("5F44", p, user)   # 基本參數(最短綠/最長綠/黃/全紅/行人)
+            time.sleep(0.12)
+        _log("info", f"自我抄錄完成:控制策略/目前時制/硬體 + 計畫 {plan_lo}~{plan_hi}")
+    finally:
+        _self_probe_busy["on"] = False
+
+
+@router.post("/control/self-probe", summary="自我查詢比對:主動抄錄控制器 控制策略/時制計畫(全)/基本參數/硬體狀態")
+def control_self_probe(_user=Depends(get_current_user), plan_lo: int = 1, plan_hi: int = 40):
+    """一鍵抄錄控制器:5F40(控制策略)/5F48(目前時制計畫)/0F41(硬體狀態) +
+    逐計畫 5F45(資料庫)+5F44(基本參數),plan_lo~plan_hi 預設 1~40(全部)。
+    背景執行緒送(查詢多),即時返回;回報進通訊紀錄+補滿時制計畫表,預設不轉發中央。"""
     if not CONTROL_ENABLED:
         raise HTTPException(status_code=403, detail="號控未啟用(SIGNAL_TC3_CONTROL)")
     if _sock_ref.get("sock") is None:
         raise HTTPException(status_code=409, detail="號誌通道未連線,無法查詢")
+    if _self_probe_busy["on"]:
+        return {"ok": False, "busy": True, "msg": "上一輪自我抄錄還在跑,請稍候"}
+    lo = max(0, min(48, int(plan_lo)))
+    hi = max(lo, min(48, int(plan_hi)))
     user = getattr(_user, "username", None) or str(_user)
-    sent = []
-    for code, params in (("5F40", b""), ("5F48", b""), ("0F41", b"")):
-        if _send_query_to_controller(code, params, user):
-            sent.append(code)
-        time.sleep(0.2)
-    plans = [p["plan_id"] for p in _merge_timing_plans()] or [1]
-    for pid in plans[:16]:
-        if _send_query_to_controller("5F44", bytes((int(pid) & 0xFF,)), user):
-            sent.append(f"5F44/{pid}")
-        time.sleep(0.2)
-    return {"ok": True, "sent": sent, "plans": plans}
+    _self_probe_busy["on"] = True
+    threading.Thread(target=_run_self_probe, args=(user, lo, hi), daemon=True,
+                     name="signal-selfprobe").start()
+    n = 3 + (hi - lo + 1) * 2
+    return {"ok": True, "started": True, "plans": [lo, hi], "queries": n,
+            "msg": f"開始抄錄:控制策略/目前時制/硬體 + 計畫 {lo}~{hi}（約 {n} 則,背景送）"}
