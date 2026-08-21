@@ -3371,26 +3371,56 @@
         .el-table .sig-row-miss { color:#94a3b8; }
         .el-table .sig-row-extra { background:#fef2f2; }
         .sig-hex { font-size:11px; color:#94a3b8; font-family:ui-monospace,monospace; margin-top:6px; }
-        /* 路口十字圖:一台控制器一個路口卡,四(或多)方向燈柱擺在對應方位 */
-        .xn-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; }
-        .xn-card { border:1px solid var(--gov-border); border-radius:12px; background:#fff; padding:14px; }
-        .xn-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
-        .xn-name { font-weight:700; color:var(--gov-text); }
-        .xn-addr { font-size:12px; color:#94a3b8; font-family:ui-monospace,monospace; }
-        .xn-stage { position:relative; width:100%; aspect-ratio:1/1; max-width:280px; margin:8px auto; }
-        .xn-road-h { position:absolute; left:0; right:0; top:42%; height:16%; background:#e2e8f0; border-radius:6px; }
-        .xn-road-v { position:absolute; top:0; bottom:0; left:42%; width:16%; background:#e2e8f0; border-radius:6px; }
-        .xn-pole { position:absolute; display:flex; flex-direction:column; gap:3px; padding:4px;
-                   background:#f8fafc; border:1px solid var(--gov-border); border-radius:8px; }
-        .xn-pole.horiz { flex-direction:row; }
-        .xn-dot { width:14px; height:14px; border-radius:50%; background:#cbd5e1; border:1px solid rgba(0,0,0,.12); }
-        .xn-dot.red { background:#e5342a; box-shadow:0 0 7px rgba(229,52,42,.7); }
-        .xn-dot.amber { background:#f0a020; box-shadow:0 0 7px rgba(240,160,32,.7); }
-        .xn-dot.green { background:#2fb344; box-shadow:0 0 7px rgba(47,179,68,.7); }
-        .xn-lbl { position:absolute; font-size:11px; color:#64748b; }
-        .xn-foot { display:flex; gap:12px; align-items:center; font-size:12px; color:#475569; margin-top:6px; }
-        .xn-foot .k { color:#94a3b8; }
-        .xn-stale { color:#f59e0b; }
+        /* 路口十字圖:一台控制器一個路口卡,擬真號誌燈箱 + 大字倒數 + 動畫 */
+        .xn-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:18px; }
+        .xn-card { border:1px solid var(--gov-border); border-radius:16px;
+                   background:linear-gradient(180deg,#ffffff,#f8fafc); padding:16px;
+                   box-shadow:0 2px 10px rgba(15,23,42,.05); transition:box-shadow .2s; }
+        .xn-card:hover { box-shadow:0 6px 20px rgba(15,23,42,.10); }
+        .xn-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+        .xn-name { font-weight:800; font-size:16px; color:var(--gov-text); display:flex; align-items:center; gap:8px; }
+        .xn-live { width:8px; height:8px; border-radius:50%; background:#2fb344; box-shadow:0 0 0 0 rgba(47,179,68,.6); animation:xnPulse 2s infinite; }
+        .xn-live.off { background:#cbd5e1; animation:none; box-shadow:none; }
+        @keyframes xnPulse { 0%{box-shadow:0 0 0 0 rgba(47,179,68,.5)} 70%{box-shadow:0 0 0 7px rgba(47,179,68,0)} 100%{box-shadow:0 0 0 0 rgba(47,179,68,0)} }
+        .xn-addr { font-size:11px; color:#94a3b8; font-family:ui-monospace,monospace; }
+        /* 舞台:瀝青路面 + 車道線 */
+        .xn-stage { position:relative; width:100%; aspect-ratio:1/1; max-width:300px; margin:10px auto;
+                    background:radial-gradient(circle at 50% 50%,#eef2f7 0%,#e2e8f0 100%); border-radius:14px; overflow:hidden; }
+        .xn-road-h { position:absolute; left:0; right:0; top:40%; height:20%; background:#334155; }
+        .xn-road-v { position:absolute; top:0; bottom:0; left:40%; width:20%; background:#334155; }
+        .xn-road-h::before { content:''; position:absolute; left:0; right:0; top:50%; height:2px; transform:translateY(-50%);
+                             background:repeating-linear-gradient(90deg,#f5c518 0 14px,transparent 14px 28px); }
+        .xn-road-v::before { content:''; position:absolute; top:0; bottom:0; left:50%; width:2px; transform:translateX(-50%);
+                             background:repeating-linear-gradient(180deg,#f5c518 0 14px,transparent 14px 28px); }
+        /* 路口中央的大字倒數 */
+        .xn-center { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:3;
+                     background:rgba(15,23,42,.86); color:#fff; border-radius:12px; padding:8px 6px; min-width:64px; text-align:center;
+                     box-shadow:0 4px 14px rgba(0,0,0,.3); }
+        .xn-count { font-size:26px; font-weight:800; line-height:1; font-variant-numeric:tabular-nums;
+                    font-family:ui-monospace,'SF Mono',monospace; transition:color .3s; }
+        .xn-count.warn { color:#f5c518; }
+        .xn-count.hot { color:#ef4444; }
+        .xn-count-tot { font-size:10px; color:#94a3b8; margin-top:2px; }
+        /* 擬真號誌燈箱:深色外殼,三燈,只亮當前 */
+        .xn-signal { position:absolute; z-index:2; display:flex; flex-direction:column; gap:4px; padding:5px;
+                     background:linear-gradient(180deg,#1f2937,#111827); border:1px solid #0b1220; border-radius:9px;
+                     box-shadow:0 2px 6px rgba(0,0,0,.35); }
+        .xn-signal.horiz { flex-direction:row; }
+        .xn-dot { width:15px; height:15px; border-radius:50%; background:#243044; border:1px solid #0b1220;
+                  transition:box-shadow .25s,background .25s; }
+        .xn-dot.red { background:#ef4444; box-shadow:0 0 10px 2px rgba(239,68,68,.85), inset 0 0 3px rgba(255,255,255,.4); }
+        .xn-dot.amber { background:#f5a623; box-shadow:0 0 10px 2px rgba(245,166,35,.85), inset 0 0 3px rgba(255,255,255,.4); }
+        .xn-dot.green { background:#22c55e; box-shadow:0 0 10px 2px rgba(34,197,94,.85), inset 0 0 3px rgba(255,255,255,.4); }
+        .xn-foot { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+        .xn-chip { display:flex; align-items:baseline; gap:5px; padding:4px 10px; border-radius:8px;
+                   background:#f1f5f9; border:1px solid var(--gov-border); font-size:13px; }
+        .xn-chip .k { font-size:11px; color:#94a3b8; }
+        .xn-chip b { font-weight:700; color:var(--gov-text); font-variant-numeric:tabular-nums; }
+        .xn-stale { color:#f59e0b; font-size:12px; }
+        /* 燈態明細裡的小紅綠燈(橫式燈箱) */
+        .sd-row { display:flex; align-items:center; gap:8px; margin:4px 0; }
+        .sd-signal { display:inline-flex; gap:4px; padding:4px 5px; border-radius:7px;
+                     background:linear-gradient(180deg,#1f2937,#111827); border:1px solid #0b1220; }
         .camera-preview .go2rtc-host,
         .monitor-zoom-stage .go2rtc-host { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
         .go2rtc-host video-stream { width: 100%; height: 100%; display: block; }
@@ -6444,23 +6474,27 @@
                             <div v-if="sigIntersections.length" class="xn-grid" style="margin-top:12px">
                                 <div class="xn-card" v-for="xn in sigIntersections" :key="xn.addr">
                                     <div class="xn-head">
-                                        <span class="xn-name"><span class="sig-lamp" :class="xn.stale?'off':'green'"></span>{{ xn.name }}</span>
+                                        <span class="xn-name"><span class="xn-live" :class="{off:xn.stale}"></span>{{ xn.name }}</span>
                                         <span class="xn-addr">{{ xn.addr_hex }}</span>
                                     </div>
                                     <div class="xn-stage">
                                         <div class="xn-road-h"></div>
                                         <div class="xn-road-v"></div>
-                                        <div class="xn-pole" v-for="(L, li) in (xn.phase&&xn.phase.lights||[])" :key="'p'+xn.addr+li"
+                                        <div class="xn-signal" v-for="(L, li) in (xn.phase&&xn.phase.lights||[])" :key="'p'+xn.addr+li"
                                              :class="{horiz:xnPoleHoriz(L.dir)}" :style="xnPoleStyle(L.dir)" :title="L.dir+' '+L.text">
                                             <span class="xn-dot" :class="{red:xnLampOn(L,'red')}"></span>
                                             <span class="xn-dot" :class="{amber:xnLampOn(L,'amber')}"></span>
                                             <span class="xn-dot" :class="{green:xnLampOn(L,'green')}"></span>
                                         </div>
+                                        <div class="xn-center">
+                                            <div class="xn-count" :class="{warn:xnRemainLive(xn)!=null&&xnRemainLive(xn)<=10,hot:xnRemainLive(xn)!=null&&xnRemainLive(xn)<=5}">{{ xnRemainLive(xn)==null?'—':xnRemainLive(xn) }}</div>
+                                            <div class="xn-count-tot">/ {{ xn.step_total_sec }}s</div>
+                                        </div>
                                     </div>
                                     <div class="xn-foot" v-if="xn.phase">
-                                        <span><span class="k">分相</span> {{ xn.phase.sub_phase_id }}</span>
-                                        <span><span class="k">步階</span> {{ xn.phase.step_id }}</span>
-                                        <span><span class="k">餘</span> {{ xn.remain_sec==null ? '—' : xn.remain_sec+'s' }}<span class="k" style="margin-left:2px">/ {{ xn.step_total_sec }}s</span></span>
+                                        <span class="xn-chip"><span class="k">分相</span><b>{{ xn.phase.sub_phase_id }}</b></span>
+                                        <span class="xn-chip"><span class="k">步階</span><b>{{ xn.phase.step_id }}</b></span>
+                                        <span class="xn-chip"><span class="k">狀態</span><b>{{ xn.phase.step_desc }}</b></span>
                                         <span v-if="xn.stale" class="xn-stale">· 資料過期</span>
                                     </div>
                                 </div>
@@ -6477,7 +6511,15 @@
                                 <div class="sig-grid">
                                     <div class="sig-card" v-for="(L, li) in sigPhase.lights" :key="'sl'+li">
                                         <div class="sig-dir">{{ L.dir }}</div>
-                                        <div><span class="sig-lamp" :class="sigLampClass(L)"></span><span class="sig-text">{{ L.text }}</span></div>
+                                        <div class="sd-row">
+                                            <!-- 紅綠燈 UI:深色燈箱三燈,只亮當前 -->
+                                            <span class="sd-signal">
+                                                <span class="xn-dot" :class="{red:sigLampClass(L)==='red'}"></span>
+                                                <span class="xn-dot" :class="{amber:sigLampClass(L)==='amber'}"></span>
+                                                <span class="xn-dot" :class="{green:sigLampClass(L)==='green'}"></span>
+                                            </span>
+                                            <span class="sig-text">{{ L.text }}</span>
+                                        </div>
                                         <div class="sig-hex">{{ sigHex(L.value) }}</div>
                                     </div>
                                 </div>
@@ -19638,11 +19680,34 @@ const app=createApp({
             const n=Number(v||0);
             return '0x'+n.toString(16).toUpperCase().padStart(2,'0')+' = '+n.toString(2).padStart(8,'0')+'b';
         };
+        // 本地倒數:每秒自減,每次輪詢回來校正。這樣即使網路抖動讓輪詢慢半拍,
+        // 倒數也平順不會跳;後端值一到就修正本地漂移。
+        const sigRemain=ref({});      // addr -> 剩餘秒(本地遞減)
+        let sigTickTimer=null;
         const loadSignal=async()=>{
             try{
                 const r=await fetch('/api/signal/status',{credentials:'include'});
-                if(r.ok)sigStatus.value=await r.json();
+                if(r.ok){
+                    sigStatus.value=await r.json();
+                    // 校正:用後端現算的剩餘覆蓋本地(它已扣掉資料齡,是準的)
+                    (sigStatus.value.intersections||[]).forEach(x=>{
+                        if(x.remain_sec!=null)sigRemain.value[x.addr]=x.remain_sec;
+                    });
+                }
             }catch(_){ }
+        };
+        // 顯示用:優先本地遞減值,沒有才用後端的
+        const xnRemainLive=(xn)=>{
+            const v=sigRemain.value[xn.addr];
+            return (v==null)?xn.remain_sec:v;
+        };
+        const sigStartTick=()=>{
+            if(sigTickTimer)return;
+            sigTickTimer=setInterval(()=>{
+                if(page.value!=='signal'||!isPageVisible())return;
+                const m=sigRemain.value;
+                Object.keys(m).forEach(k=>{ if(m[k]>0)m[k]=m[k]-1; });
+            },1000);
         };
         const sigCovFilter=ref('all');
         const sigCovQuery=ref('');
@@ -19848,7 +19913,7 @@ const app=createApp({
         };
         const startSignalTimer=()=>{
             if(sigTimer){ clearInterval(sigTimer); sigTimer=null; }
-            loadSignalCoverage(); loadSignalFrames(); loadSigControl(); loadQueryHistory();
+            loadSignalCoverage(); loadSignalFrames(); loadSigControl(); loadQueryHistory(); sigStartTick();
             if(!sigAuto.value)return;
             // 號誌每 2 秒上傳一次,1 秒輪詢足夠,狀態 JSON 只有幾 KB
             sigTimer=setInterval(()=>{
@@ -20187,7 +20252,16 @@ const app=createApp({
         // 這次的 lowBandwidth 是不是「health 逾時」打開的(而不是實測頻寬不足)。
         // 只有這種才可以在 health 恢復時自動收回。
         let _bwLatchedByHealth = false;
+        // 🛑 health 逾時放寬到 12s 後,10s 間隔會讓兩次 health 疊在一起,反而多佔一條
+        //    連線、把彼此拖慢。加閂鎖:上一次還沒回來就跳過這次,不排隊、不疊加。
+        let _healthInFlight = false;
         const probeServiceHealth=async()=>{
+            if(_healthInFlight)return;
+            _healthInFlight=true;
+            try{ await _probeServiceHealthInner(); }
+            finally{ _healthInFlight=false; }
+        };
+        const _probeServiceHealthInner=async()=>{
             const state=document.getElementById('service-state');
             const txt=document.getElementById('online-text');
             const beEl=document.getElementById('be-version');
@@ -20223,7 +20297,13 @@ const app=createApp({
             };
             let last={ok:false, status:0};
             try{
-                last=await tryOne(8000);  // 4s → 8s，給 Jetson 高負載時喘息
+                // 🛑 逾時放寬到 12s。這條 4G/5G 線的延遲會跳(實測 44~712ms,尖峰 RTT
+                //    加上號誌頁每秒輪詢佔連線,單次 health 偶爾 5~6s)。8s 門檻會在
+                //    正常抖動時誤判 OFFLINE(2026-08-21 實測:40 次 health 全成功、
+                //    0 破 8s,使用者卻一直看到 SERVICE 異常)。
+                //    真正掛掉的後端是「連線被拒」瞬間失敗,不是慢 —— 放寬逾時不影響
+                //    偵測真故障,只是不再把「慢」誤當「掛」。
+                last=await tryOne(12000);
             }catch{ last={ok:false, status:0, aborted:true}; }
             if(last.ok){
                 // 🛑 health 恢復時一定要把「因為 health 逾時而降級」那件事收回來。
@@ -20444,7 +20524,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
