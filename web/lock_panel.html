@@ -299,7 +299,8 @@
           if (adding.value) return;
           adding.value = true;
           const a = L && L.addr;
-          ElementPlus.ElMessage({ message: '鎖#' + a + ' 加卡模式開啟,請在約 10 秒內到「這顆鎖」上刷新卡…', type: 'info', duration: 11000 });
+          const nm = (L && L.name) || ('鎖#' + a);
+          ElementPlus.ElMessage({ message: '【' + nm + '】(addr ' + a + ') 加卡模式開啟,請在約 10 秒內到「' + nm + '」的讀卡機刷新卡（別刷錯門）…', type: 'info', duration: 11000 });
           try {
             const d = await (await fetch('/api/lock/add-card?addr=' + a, { method: 'POST' })).json();
             if (d.ok && d.card_no) ElementPlus.ElMessage.success(d.msg || ('加卡成功 ' + d.card_no));

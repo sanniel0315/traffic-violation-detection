@@ -1067,8 +1067,14 @@ class IOService:
             return {"ok": False, "msg": f"沒有位址 {addr} 這顆鎖 (目前 {LOCK_ADDRS})"}
         try:
             before = self._read_lock_cardno(lk.addr)
-            self._lock_write(_LOCK_REG_AUX_ENROLL, _LOCK_AUX_ADD_CARD, addr=lk.addr)
-            _log("info", f"電子鎖#{lk.addr} 進入加卡模式 (監測新卡 ~12s)")
+            # 進加卡模式:THS2 單次寫可能沒送達(尤其 addr 3 前門)。寫 3 次兜底(idempotent,
+            # 重複進加卡模式無害);🛑 不讀回確認 —— addr 3 的讀很慢,3 次讀回會把總時間
+            # 推過 client→daemon 的 20s timeout(實測會回「daemon 無回應」)。寫是快的。
+            # 刷卡當下鎖必須真的在加卡模式才會學卡,否則被當一般卡拒絕(門不開)。
+            for _ in range(3):
+                self._lock_write(_LOCK_REG_AUX_ENROLL, _LOCK_AUX_ADD_CARD, addr=lk.addr)
+                time.sleep(0.15)
+            _log("info", f"電子鎖#{lk.addr} 進入加卡模式 (寫 3 次兜底, 監測新卡 ~12s)")
             deadline = time.time() + 12.0
             while time.time() < deadline:
                 time.sleep(0.6)
@@ -1126,8 +1132,11 @@ class IOService:
         if lk is None:
             return {"ok": False, "msg": f"沒有位址 {addr} 這顆鎖 (目前 {LOCK_ADDRS})"}
         try:
-            self._lock_write(_LOCK_REG_AUX_ENROLL, _LOCK_AUX_DEL_CARD, addr=lk.addr)
-            _log("info", f"電子鎖#{lk.addr} 進入刪卡模式 (等待鎖上刷卡)")
+            # 同加卡:THS2 單次寫可能沒送達,寫 3 次兜底(不讀回,避免超時)。
+            for _ in range(3):
+                self._lock_write(_LOCK_REG_AUX_ENROLL, _LOCK_AUX_DEL_CARD, addr=lk.addr)
+                time.sleep(0.15)
+            _log("info", f"電子鎖#{lk.addr} 進入刪卡模式 (寫 3 次兜底, 等待鎖上刷卡)")
             return {"ok": True, "msg": "鎖已進入刪卡模式,請在約 10 秒內到鎖上刷要刪除的卡"}
         except Exception as e:
             return {"ok": False, "msg": f"刪卡指令失敗: {e}"}
