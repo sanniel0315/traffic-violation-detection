@@ -182,6 +182,28 @@ _pending: dict = {}                     # token -> 準備好的送出內容
 _sent_log: deque = deque(maxlen=200)    # 送出紀錄(稽核用)
 _seq_next: dict = {"n": 0}              # 送出用的序號,逐次遞增
 
+# ── 中央電腦中繼(都三) ────────────────────────────────────────────────
+# 架構:我們這台=中央眼中的號誌控制器。中央連我們 <本機>:1001(跟我們查 NPort
+# 同一個 port),我們把 frame 轉給真控制器(佔據 NPort MaxConnect=1 那條),
+# 控制器的主動回報/查詢回報再回傳給中央。雙向都側錄進 _frames(標 src)。
+# 🛑 不是寫死的純通透管道 —— 保留雙向注入:
+#    · 往控制器:_controller_send() 讓我們自己下號控(與中央下傳共用一條、加鎖序列化)
+#    · 往中央:  _send_to_center() 讓我們「自己控制號誌後主動上報中央」,不必等控制器回報
+#    預設行為是轉發;上面兩個鉤子讓我方邏輯可在任一方向插入自己的 frame。
+# 🛑 opt-in:SIGNAL_TC3_CENTER_RELAY=1 才啟用;預設關,完全不動現有抄錄行為。
+CENTER_RELAY_ENABLED = os.getenv("SIGNAL_TC3_CENTER_RELAY", "0") == "1"
+CENTER_LISTEN_HOST = os.getenv("SIGNAL_TC3_CENTER_LISTEN_HOST", "0.0.0.0")
+CENTER_LISTEN_PORT = int(os.getenv("SIGNAL_TC3_CENTER_LISTEN_PORT", "1001") or 1001)
+_center_sock_ref: dict = {"sock": None}  # 目前中央的連線(單一,MaxConnect=1)
+_ctrl_tx_lock = threading.Lock()         # 序列化「寫控制器」(號控下傳+中央轉發共用一條)
+_center_tx_lock = threading.Lock()       # 序列化「寫中央」(轉發控制器回報+我方自報共用一條)
+_center_state: dict = {
+    "enabled": CENTER_RELAY_ENABLED,
+    "listen": f"{CENTER_LISTEN_HOST}:{CENTER_LISTEN_PORT}",
+    "connected": False, "peer": "", "since": 0.0,
+    "from_center_bytes": 0, "to_center_bytes": 0, "center_frames": 0,
+}
+
 _frames: deque = deque(maxlen=300)      # 最近訊框(raw + 解碼)
 _coverage: Counter = Counter()          # 每個 device+cmd 看過幾次
 _by_addr: dict = {}                     # 設備位址 -> 最新一筆燈態(一台=一個路口)
@@ -388,6 +410,9 @@ def _recorder_loop() -> None:
                     continue
                 if not d:
                     raise ConnectionError("對方關閉連線")
+                # 控制器→中央:原封轉發(透明中繼)。tee 內部對「沒中央連」會 no-op。
+                if CENTER_RELAY_ENABLED:
+                    _tee_to_center(d)
                 buf += d
                 # 依 AA BB … AA CC 切訊框
                 while True:
@@ -406,6 +431,7 @@ def _recorder_loop() -> None:
                     rec = decode_frame(frame)
                     if rec is None:
                         continue
+                    rec["src"] = "controller"   # 來源:號誌控制器(上行)
                     got_tc3 = True      # 切出合法碼框 = 對方確實是 TC3 來源
                     last_rx = rec["ts"]
                     with _lock:
@@ -457,6 +483,164 @@ def start_recorder() -> None:
         return
     _thread = threading.Thread(target=_recorder_loop, daemon=True, name="signal-tc3")
     _thread.start()
+
+
+# ── 中央中繼:寫控制器 / 轉發中央 / server 迴圈 ────────────────────────────
+def _controller_send(data: bytes) -> bool:
+    """把 bytes 寫進控制器 socket。號控下傳與中央轉發共用這條,靠 _ctrl_tx_lock
+    序列化,避免兩邊同時 send 把 frame 交錯寫壞。控制器未連線回 False。"""
+    ctrl = _sock_ref.get("sock")
+    if ctrl is None:
+        return False
+    try:
+        with _ctrl_tx_lock:
+            ctrl.sendall(data)
+        return True
+    except Exception:
+        return False
+
+
+def _close_center() -> None:
+    cs = _center_sock_ref.get("sock")
+    _center_sock_ref["sock"] = None
+    _center_state["connected"] = False
+    if cs is not None:
+        try:
+            cs.close()
+        except Exception:
+            pass
+
+
+def _tee_to_center(data: bytes) -> None:
+    """控制器來的原始 bytes 原封轉給中央(透明轉發)。中央斷了就清掉。
+    與 _send_to_center 共用 _center_tx_lock,避免轉發位元組跟我方自報 frame 交錯。"""
+    cs = _center_sock_ref.get("sock")
+    if cs is None:
+        return
+    try:
+        with _center_tx_lock:
+            cs.sendall(data)
+        _center_state["to_center_bytes"] += len(data)
+    except Exception:
+        _close_center()
+
+
+def _send_to_center(frame: bytes) -> bool:
+    """把「我方自己產生的」完整 TC3 碼框上報中央(不是轉發控制器的)。
+    🛑 這是「不要寫死純通透」的鉤子 —— 我們自己控制號誌後,可用這個把結果/狀態
+    主動回報中央,而不必等控制器的回報。與 _tee_to_center 共用 _center_tx_lock。
+    中央未連線回 False。frame 必須是已組好(build_frame)的完整碼框。"""
+    cs = _center_sock_ref.get("sock")
+    if cs is None:
+        return False
+    try:
+        with _center_tx_lock:
+            cs.sendall(frame)
+        _center_state["to_center_bytes"] += len(frame)
+        return True
+    except Exception:
+        _close_center()
+        return False
+
+
+def _center_relay_loop() -> None:
+    """中央電腦透明中繼 server。中央連進來 → 讀它的下傳原封轉給控制器,同時側錄。
+    控制器→中央方向由 _recorder_loop 的 _tee_to_center 負責。"""
+    print(f"📶 [signal-tc3] 中央中繼啟動,聽 {CENTER_LISTEN_HOST}:{CENTER_LISTEN_PORT}",
+          flush=True)
+    srv = None
+    while not shutdown_event.is_set():
+        try:
+            if srv is None:
+                srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                srv.bind((CENTER_LISTEN_HOST, CENTER_LISTEN_PORT))
+                srv.listen(1)
+                srv.settimeout(1.0)
+            try:
+                conn, addr = srv.accept()
+            except socket.timeout:
+                continue
+            _close_center()                 # 新中央連入 → 取代舊的(MaxConnect=1)
+            conn.settimeout(3.0)
+            _center_sock_ref["sock"] = conn
+            _center_state.update({"connected": True, "peer": f"{addr[0]}:{addr[1]}",
+                                  "since": time.time()})
+            print(f"📶 [signal-tc3] 中央已連入 {addr[0]}:{addr[1]}", flush=True)
+            try:
+                add_log("info", f"中央電腦連入中繼 {addr[0]}:{addr[1]}", "signal")
+            except Exception:
+                pass
+            buf = b""
+            while not shutdown_event.is_set():
+                try:
+                    d = conn.recv(4096)
+                except socket.timeout:
+                    continue
+                if not d:
+                    break
+                # 中央→控制器:原封轉發(佔據那條)。控制器沒連上就丟棄(透明:等同源斷)。
+                _controller_send(d)
+                _center_state["from_center_bytes"] += len(d)
+                # 側錄中央下傳的 frame(設定/查詢),標 src=center
+                buf += d
+                while True:
+                    i = buf.find(b"\xaa\xbb")
+                    if i < 0:
+                        if len(buf) > 65536:
+                            buf = b""
+                        break
+                    j = _find_etx(buf, i + 2)
+                    if j < 0 or len(buf) < j + 3:
+                        if i > 0:
+                            buf = buf[i:]
+                        break
+                    frame = buf[i:j + 3]
+                    buf = buf[j + 3:]
+                    rec = decode_frame(frame)
+                    if rec is None:
+                        continue
+                    rec["src"] = "center"       # 來源:中央下傳(下行)
+                    with _lock:
+                        _center_state["center_frames"] += 1
+                        _frames.append(rec)
+                        if rec.get("cks_ok") and rec.get("code"):
+                            _coverage[rec["code"]] += 1
+            _close_center()
+            print("📶 [signal-tc3] 中央連線結束", flush=True)
+        except Exception as exc:
+            print(f"📶 [signal-tc3] 中央中繼錯誤: {exc}", flush=True)
+            _close_center()
+            if srv is not None:
+                try:
+                    srv.close()
+                except Exception:
+                    pass
+            srv = None
+            if shutdown_event.wait(2.0):
+                break
+    _close_center()
+    if srv is not None:
+        try:
+            srv.close()
+        except Exception:
+            pass
+    print("📶 [signal-tc3] 中央中繼結束", flush=True)
+
+
+_center_thread: Optional[threading.Thread] = None
+
+
+def start_center_relay() -> None:
+    """啟動中央中繼 server(opt-in)。SIGNAL_TC3_CENTER_RELAY=1 才會真的起。"""
+    global _center_thread
+    if not CENTER_RELAY_ENABLED:
+        return
+    if _center_thread is not None and _center_thread.is_alive():
+        return
+    _center_thread = threading.Thread(target=_center_relay_loop, daemon=True,
+                                      name="signal-tc3-center")
+    _center_thread.start()
 
 
 @router.get("/status", summary="號誌即時燈態與抄錄器狀態")
@@ -654,6 +838,7 @@ async def control_status(_user=Depends(get_current_user)):
         "addr_source": "設定" if CONTROL_ADDR else "由抄錄到的訊框推得",
         "prepare_ttl_sec": _PREPARE_TTL,
         "recent": list(reversed(list(_sent_log)))[:30],
+        "center": dict(_center_state),      # 中央中繼:是否啟用/中央連入/雙向流量
     }
 
 
@@ -802,7 +987,8 @@ async def control_send(body: dict, _user=Depends(get_current_user)):
     }
     with _send_lock:
         try:
-            sock.sendall(item["frame"])
+            with _ctrl_tx_lock:          # 與中央中繼轉發共用,避免交錯寫壞 frame
+                sock.sendall(item["frame"])
             _seq_next["n"] = item["seq"]
             rec["ok"] = True
         except Exception as exc:
