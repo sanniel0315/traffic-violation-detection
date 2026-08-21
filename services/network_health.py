@@ -116,17 +116,22 @@ def _monitor_loop(interval: int) -> None:
     while not _stop.is_set():
         fault, reasons = _evaluate()
 
-        if fault != prev_fault:
-            try:
-                get_service().set_comm_fault(fault)
-            except Exception:
-                pass
+        # 🛑 每次輪詢都重新驅動 DO(re-assert),不是只在變化時。
+        #    原本只在 fault != prev_fault 才寫,結果 io_daemon 重啟(DO0 預設 fail-safe
+        #    亮紅)後,client 的 prev_fault 沒變就不重寫 → DO0 卡在亮紅,即使網路正常。
+        #    2026-08-21 現場實測:IO 晚接後重啟 daemon,通訊故障燈熄不掉就是這個。
+        #    改成每輪都 assert,daemon 任何時候重啟 5 秒內就被校正回正確狀態。
+        try:
+            get_service().set_comm_fault(fault)
+        except Exception:
+            pass
 
+        # log 維持「只在變化時」記,不要每 5 秒洗一筆。
+        if fault != prev_fault:
             if fault:
                 _log("error", f"通訊故障: {', '.join(reasons)}")
             else:
                 _log("info", "通訊恢復正常")
-
             prev_fault = fault
 
         _stop.wait(interval)

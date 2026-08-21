@@ -205,14 +205,19 @@ class IOService:
         if not self._mod.ok:
             self._mod.connect()
         if self._mod.ok:
-            # IO 硬體連線成功 → 啟動 DI 監聽
             self._apply_do()
-            self._start_di_monitor()
-            # daemon host mode 不 wire reset/download callback (client 端去接 events
-            # 觸發 reset / config_sync — 避免雙重觸發)
-            if os.getenv("IO_DAEMON_HOST", "0") != "1":
-                self._wire_download_button()
-                self._wire_reset_button()
+        # 🛑 DI 監聽要無條件啟動,不能只在「開機時就連上」才啟。
+        #    2026-08-21 現場:IO 硬體晚於 daemon 上電,開機 connect 失敗 →
+        #    原本 if _mod.ok 才啟動 DI 監聽 → 那個內建重連的迴圈根本沒跑 →
+        #    硬體之後接上也永遠不重連,只能手動重啟。
+        #    _start_di_monitor 對未連線有容錯(退回全 False),迴圈內的重連會
+        #    每 ~1.2s 重試 connect,硬體任何時候上電都自己接回。
+        self._start_di_monitor()
+        # daemon host mode 不 wire reset/download callback (client 端去接 events
+        # 觸發 reset / config_sync — 避免雙重觸發)
+        if os.getenv("IO_DAEMON_HOST", "0") != "1":
+            self._wire_download_button()
+            self._wire_reset_button()
             print("[io_svc] started (IO active)", flush=True)
             _log("info", "IO 模組啟動，連線成功")
         else:
@@ -1006,6 +1011,11 @@ class IOService:
                 if not self._mod.ok:
                     if self._mod.connect():
                         _log("info", "IO 模組重連成功")
+                        # 🛑 重連成功要重設 DO,否則燈態停在斷線前的舊值。
+                        try:
+                            self._apply_do()
+                        except Exception:
+                            pass
             self._stop_di.wait(interval)
 
     def _fire_di(self, ch: int) -> None:
