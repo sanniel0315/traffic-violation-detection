@@ -6634,6 +6634,40 @@
                         </div>
                     </div>
 
+                    <div class="card" v-if="sigCtl.enabled">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>查詢紀錄</span>
+                            <span style="display:flex;gap:8px;align-items:center">
+                                <el-input v-model="sigQryHistFilter" size="small" placeholder="依碼篩選 如 5FC5" clearable style="width:150px" @change="loadQueryHistory"></el-input>
+                                <el-button size="small" @click="loadQueryHistory">重新載入</el-button>
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <div v-if="!sigQryHistory.length" class="analysis-setting-tip">尚無查詢紀錄。在上方送出查詢類命令後,回報會存進這裡(關頁也留著)。</div>
+                            <el-table v-else :data="sigQryHistory" size="small" max-height="360" style="width:100%">
+                                <el-table-column type="expand">
+                                    <template #default="sc">
+                                        <el-table :data="sc.row.fields||[]" size="small" style="width:100%;margin:4px 0">
+                                            <el-table-column prop="name" label="欄位" width="180"></el-table-column>
+                                            <el-table-column label="值">
+                                                <template #default="c"><span style="font-family:monospace">{{ Array.isArray(c.row.value)?('['+c.row.value.join(', ')+']'):c.row.value }}</span></template>
+                                            </el-table-column>
+                                            <el-table-column prop="desc" label="說明" width="180"></el-table-column>
+                                        </el-table>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column label="時間" width="150">
+                                    <template #default="sc"><span style="font-size:12px">{{ new Date(sc.row.ts*1000).toLocaleString('zh-TW',{hour12:false}) }}</span></template>
+                                </el-table-column>
+                                <el-table-column label="查詢→回報" width="130">
+                                    <template #default="sc"><el-tag size="small">{{ sc.row.query_code }} → {{ sc.row.reply_code }}</el-tag></template>
+                                </el-table-column>
+                                <el-table-column prop="name" label="名稱"></el-table-column>
+                                <el-table-column prop="user" label="查詢者" width="90"></el-table-column>
+                            </el-table>
+                        </div>
+                    </div>
+
                     <div class="card">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-activity"/></svg>最近訊框</span>
@@ -19506,6 +19540,16 @@ const app=createApp({
         const sigQryLog=ref([]);           // [{ts, code, reply_code, name, fields:[{name,value,desc}]}]
         const sigCmdKind=ref('');          // 命令選單的型態篩選(''/查詢/設定)
         const sigOptOn=ref({});            // optional 欄位勾了沒
+        const sigQryHistory=ref([]);       // 從 DB 讀的查詢紀錄(關頁也留著)
+        const sigQryHistFilter=ref('');    // 依碼篩選
+        const sigQryExpand=ref({});        // 哪幾筆展開了欄位表
+        const loadQueryHistory=async()=>{
+            try{
+                const q=sigQryHistFilter.value?('&code='+encodeURIComponent(sigQryHistFilter.value)):'';
+                const r=await fetch('/api/signal/control/query-log?limit=200'+q,{credentials:'include'});
+                if(r.ok)sigQryHistory.value=(await r.json()).items||[];
+            }catch(_){ }
+        };
         const sigReplyOf=(qcode)=>{        // 查詢碼 → 對應的查詢回報碼
             if(!qcode||qcode.length!==4)return null;
             const hi=parseInt(qcode[2],16);
@@ -19646,12 +19690,20 @@ const app=createApp({
                 sigFrames.value=list;   // 順便更新訊框清單(帶欄位)
                 const hit=want ? list.find(f=>f.code===want && f.fields) : null;
                 if(hit){
-                    sigQryLog.value.unshift({
-                        ts:Date.now()/1000, code:qcode, reply_code:hit.code,
-                        name:hit.name||'', fields:hit.fields||[]
-                    });
+                    const rec={ ts:Date.now()/1000, code:qcode, reply_code:hit.code,
+                        name:hit.name||'', fields:hit.fields||[] };
+                    sigQryLog.value.unshift(rec);
                     if(sigQryLog.value.length>20)sigQryLog.value.pop();
                     ElementPlus.ElMessage.success(`收到回報 ${hit.code}`);
+                    // 存進 DB(關頁也留著),存完刷新歷史紀錄
+                    try{
+                        await fetch('/api/signal/control/query-log',{
+                            method:'POST',credentials:'include',
+                            headers:{'Content-Type':'application/json'},
+                            body:JSON.stringify({ts:rec.ts,query_code:qcode,reply_code:hit.code,
+                                name:hit.name,addr:hit.addr,fields:hit.fields,raw:hit.raw})});
+                        loadQueryHistory();
+                    }catch(_){ }
                     return;
                 }
             }
@@ -19717,7 +19769,7 @@ const app=createApp({
         };
         const startSignalTimer=()=>{
             if(sigTimer){ clearInterval(sigTimer); sigTimer=null; }
-            loadSignalCoverage(); loadSignalFrames(); loadSigControl();
+            loadSignalCoverage(); loadSignalFrames(); loadSigControl(); loadQueryHistory();
             if(!sigAuto.value)return;
             // 號誌每 2 秒上傳一次,1 秒輪詢足夠,狀態 JSON 只有幾 KB
             sigTimer=setInterval(()=>{
@@ -20313,7 +20365,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
