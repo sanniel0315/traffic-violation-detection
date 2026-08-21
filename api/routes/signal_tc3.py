@@ -1,7 +1,8 @@
 """號誌控制器抄錄器 —— 都市交通控制通訊協定 3.0 版。
 
 來源:號誌控制器 RS-232 → Moxa MiiNePort E1 → TCP。現場實測參數:
-    IP 10.42.38.35   TCPDataPort 1001   Mode TCP / Role TCP Server   MaxConnect 1
+    IP 10.42.40.222  TCPDataPort 1001   Mode TCP / Role TCP Server   MaxConnect 1
+    (2026-08-21 MiiNePort 由 10.42.38.35 移到 10.42.40.222;10.42.38.35 已改給分析器主機)
 
 抄錄(接收)是無條件開著的。協定的號誌控制器是主動週期上傳
 (5F+03 時相資料主動回報),不需要輪詢就看得到燈態。
@@ -41,13 +42,14 @@ from api.utils.shutdown import shutdown_event
 
 router = APIRouter(prefix="/api/signal", tags=["signal"])
 
-SIGNAL_HOST = os.getenv("SIGNAL_TC3_HOST", "10.42.38.35")
+SIGNAL_HOST = os.getenv("SIGNAL_TC3_HOST", "10.42.40.222")
 SIGNAL_PORT = int(os.getenv("SIGNAL_TC3_PORT", "1001") or 1001)
 SIGNAL_ENABLED = os.getenv("SIGNAL_TC3_ENABLED", "1") != "0"
 # 連上之後多久沒看到任何 TC3 訊框就判定「打到錯的機器」並主動斷線重試。
-# 🛑 為什麼需要:10.42.38.35 這個 IP 在現場兩個網段各有一台設備(號誌模組
-#    00:90:e8:89:11:42 與另一台只開 80 的機器)。ARP 被攪動時封包會打到錯的
-#    那台,TCP 連得上卻永遠沒有資料 —— 沒有這道檢查就會傻等到天亮。
+# 🛑 為什麼需要:號誌來源是 MiiNePort(現場 10.42.40.222)。MaxConnect=1、又只
+#    此一條線,對端靜默或被交控中心搶走時,TCP 連得上卻永遠沒有資料 —— 沒有這
+#    道檢查就會傻等到天亮。(2026-08-21 前 NPort 曾在 10.42.38.35 且網線落在
+#    192.168.1.x,ARP 被攪動時封包會打到錯的那台,同樣靠這道檢查救回。)
 #    號誌是每 2 秒主動上傳,45 秒沒有任何訊框已經遠超正常間隔。
 SIGNAL_PEER_TIMEOUT = float(os.getenv("SIGNAL_TC3_PEER_TIMEOUT", "45") or 45)
 # 已經抄到過訊框、之後卻長時間靜默 → 一樣要斷線重連。
@@ -1022,3 +1024,138 @@ async def query_log_list(limit: int = 100, code: str = "", _user=Depends(get_cur
             "fields": _json_ctl.loads(fj) if fj else None, "raw": raw,
         })
     return {"count": len(out), "items": out}
+
+
+# ── 時制計畫比對:5FC5(資料庫回報)+5FC4(基本參數回報) 合併成分組表 ──────────
+# 參考號控中心「時制計畫下載」介面:依時制編號分組、每分相一列。
+# 現場端 = 向控制器查到的即時值(從 query-log 取最新);
+# 中心端 = 使用者按「設為基準」存下的參考版(signal_plan_baseline)。
+# 🛑 唯讀 + 只寫我們自己的基準表,不對號誌控制器下傳任何位元組。
+_plan_baseline_ready = False
+
+
+def _plan_baseline_db():
+    global _plan_baseline_ready
+    conn = _sqlite3.connect(_QDB_PATH, timeout=20)
+    conn.execute("PRAGMA busy_timeout=20000")
+    if not _plan_baseline_ready:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS signal_plan_baseline (
+                plan_id INTEGER PRIMARY KEY, json TEXT, ts REAL, user TEXT
+            )""")
+        conn.commit()
+        _plan_baseline_ready = True
+    return conn
+
+
+def _fmap(fields) -> dict:
+    """[{name,value,desc}] → {name: value}。"""
+    return {f.get("name"): f.get("value") for f in (fields or [])}
+
+
+def _latest_reply_by_plan(reply_code: str) -> dict:
+    """從 query-log 撈某回報碼、每個 PlanID 的最新一筆,重新解碼 raw。
+    回 {plan_id: {"vals": {...}, "ts": ts}}。"""
+    out: dict = {}
+    try:
+        conn = _query_db()
+        rows = conn.execute(
+            "SELECT ts, raw FROM signal_query_log WHERE reply_code=? ORDER BY ts DESC",
+            (reply_code.upper(),)).fetchall()
+        conn.close()
+    except Exception:
+        return out
+    for ts, raw in rows:
+        if not raw:
+            continue
+        fields = _decode_fields(reply_code.upper(), raw)
+        if not fields:
+            continue
+        vals = _fmap(fields)
+        pid = vals.get("PlanID")
+        if pid is None:
+            continue
+        pid = int(pid)
+        if pid not in out:          # rows 已按 ts DESC,第一筆即最新
+            out[pid] = {"vals": vals, "ts": ts}
+    return out
+
+
+def _merge_timing_plans() -> list:
+    """合併 5FC5(綠燈/週期/時差) + 5FC4(最短綠/最長綠/黃/全紅/行人) 成分組表。"""
+    db5 = _latest_reply_by_plan("5FC5")     # 資料庫回報
+    db4 = _latest_reply_by_plan("5FC4")     # 基本參數回報
+    plans: list = []
+    for pid in sorted(set(db5) | set(db4)):
+        g = db5.get(pid, {}).get("vals", {})
+        b = db4.get(pid, {}).get("vals", {})
+        greens = g.get("Green") or []
+        subs = b.get("SubPhase") or []
+        n = max(len(greens), len(subs),
+                int(g.get("SubPhaseCount") or 0), int(b.get("SubPhaseCount") or 0))
+        phases = []
+        for i in range(n):
+            sp = subs[i] if i < len(subs) and isinstance(subs[i], dict) else {}
+            phases.append({
+                "idx": i + 1,
+                "green": greens[i] if i < len(greens) else None,
+                "min_green": sp.get("MinGreen"),
+                "max_green": sp.get("MaxGreen"),
+                "yellow": sp.get("Yellow"),
+                "all_red": sp.get("AllRed"),
+                "ped_flash": sp.get("PedGreenFlash"),
+                "ped_red": sp.get("PedRed"),
+            })
+        plans.append({
+            "plan_id": pid,
+            "direct": g.get("Direct"),
+            "phase_order": g.get("PhaseOrder"),
+            "cycle": g.get("CycleTime"),
+            "offset": g.get("Offset"),
+            "sub_phase_count": n,
+            "phases": phases,
+            "ts_green": db5.get(pid, {}).get("ts"),
+            "ts_base": db4.get(pid, {}).get("ts"),
+        })
+    return plans
+
+
+@router.get("/timing-plans", summary="時制計畫比對(現場查到的 vs 中心基準)")
+async def timing_plans(_user=Depends(get_current_user)):
+    field_plans = _merge_timing_plans()
+    baseline: list = []
+    try:
+        conn = _plan_baseline_db()
+        rows = conn.execute(
+            "SELECT json FROM signal_plan_baseline ORDER BY plan_id").fetchall()
+        conn.close()
+        for (js,) in rows:
+            try:
+                baseline.append(_json_ctl.loads(js))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return {"field": field_plans, "baseline": baseline}
+
+
+@router.post("/timing-plans/baseline", summary="把目前現場查到的時制計畫存為中心基準")
+async def timing_plans_set_baseline(_user=Depends(get_current_user)):
+    """快照當下現場端 → 中心基準(只寫我們自己的 DB,不下傳控制器)。"""
+    user = getattr(_user, "username", None) or str(_user)
+    plans = _merge_timing_plans()
+    if not plans:
+        raise HTTPException(status_code=400, detail="目前沒有現場查詢結果可存為基準,請先查詢時制計畫")
+    try:
+        conn = _plan_baseline_db()
+        now = time.time()
+        for p in plans:
+            conn.execute(
+                "INSERT OR REPLACE INTO signal_plan_baseline (plan_id,json,ts,user) "
+                "VALUES (?,?,?,?)",
+                (int(p["plan_id"]), _json_ctl.dumps(p, ensure_ascii=False), now, user))
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"存基準失敗: {exc}")
+    return {"ok": True, "count": len(plans)}

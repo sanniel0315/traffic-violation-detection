@@ -3605,6 +3605,10 @@
         .analysis-setting-group { background:#fff; border:1px solid #dbe3ef; border-radius:8px; padding:10px; margin-bottom:10px; }
         .analysis-setting-head { font-size:12px; font-weight:700; color:#334155; margin-bottom:8px; }
         .analysis-setting-tip { font-size:12px; color:#64748b; margin-top:6px; line-height:1.5; }
+        .tp-tbl { width:100%; border-collapse:collapse; font-size:13px; }
+        .tp-tbl th { background:#f1f5f9; color:#475569; font-weight:600; padding:5px 8px; border:1px solid #e2e8f0; text-align:center; white-space:nowrap; }
+        .tp-tbl td { padding:5px 8px; border:1px solid #e2e8f0; text-align:center; font-variant-numeric:tabular-nums; }
+        .tp-tbl tbody tr:hover td { background:#f8fafc; }
         .analysis-kpi-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
         .analysis-zone-list { display:flex; flex-direction:column; gap:8px; }
         .analysis-zone-row { display:flex; justify-content:space-between; gap:8px; border:1px solid #e2e8f0; border-radius:8px; padding:8px; background:#f8fafc; flex-wrap:wrap; align-items:flex-start; }
@@ -6662,7 +6666,23 @@
                                         <el-button size="small" plain :disabled="!sigQryLog.length" @click="sigFillFromQuery">帶入目前查詢值</el-button>
                                     </div>
                                     <div v-for="f in sigCmdCur.fields" :key="f.name" style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px">
-                                        <label style="width:130px;font-size:12px;padding-top:5px" :title="f.desc||''">{{ f.name }}<span v-if="f.desc" style="color:#94a3b8"> · {{ f.desc }}</span></label>
+                                        <label style="width:130px;font-size:12px;padding-top:5px;display:flex;align-items:center;gap:4px">
+                                            <span>{{ f.name }}</span>
+                                            <!-- 互動說明:點 ℹ 跳出這欄是什麼、怎麼填 -->
+                                            <el-popover placement="right" :width="300" trigger="click">
+                                                <template #reference>
+                                                    <span style="cursor:pointer;color:#3b82f6;font-weight:700;font-size:13px;line-height:1" title="說明">&#9432;</span>
+                                                </template>
+                                                <div style="font-size:13px;line-height:1.7">
+                                                    <div style="font-weight:700;margin-bottom:4px">{{ f.name }}</div>
+                                                    <div style="color:#334155">{{ sigFieldHelp(f).t }}</div>
+                                                    <div v-if="sigFieldHelp(f).i" style="margin-top:8px;padding:8px;background:#f0f9ff;border-radius:6px;color:#0369a1">
+                                                        <b>怎麼填:</b>{{ sigFieldHelp(f).i }}
+                                                    </div>
+                                                    <div v-if="f.kind==='int'&&f.lo!=null" style="margin-top:6px;font-size:12px;color:#94a3b8">合法範圍 {{ f.lo }} ~ {{ f.hi }}</div>
+                                                </div>
+                                            </el-popover>
+                                        </label>
                                         <!-- int:下拉選單,選項是合法範圍 lo~hi(可打字快速跳) -->
                                         <el-select v-if="f.kind==='int'" v-model="sigCmdVals[f.name]" filterable size="small" style="width:150px" :placeholder="f.lo+'~'+f.hi">
                                             <el-option v-for="n in sigIntOpts(f)" :key="n" :value="n" :label="String(n)"></el-option>
@@ -6737,7 +6757,7 @@
                                     <el-table :data="q.fields" size="small" style="width:100%">
                                         <el-table-column prop="name" label="欄位" width="160"></el-table-column>
                                         <el-table-column label="值">
-                                            <template #default="sc"><span style="font-family:monospace">{{ Array.isArray(sc.row.value)?('['+sc.row.value.join(', ')+']'):sc.row.value }}</span></template>
+                                            <template #default="sc"><span style="font-family:monospace">{{ Array.isArray(sc.row.value)?('['+sc.row.value.join(', ')+']'):sc.row.value }}</span><span v-if="sigDecodeValue(sc.row.name,sc.row.value)" style="color:#2563eb;font-size:12px;margin-left:8px">= {{ sigDecodeValue(sc.row.name,sc.row.value) }}</span></template>
                                         </el-table-column>
                                         <el-table-column prop="desc" label="說明" width="160"></el-table-column>
                                     </el-table>
@@ -6777,7 +6797,7 @@
                                         <el-table :data="sc.row.fields||[]" size="small" style="width:100%;margin:4px 0">
                                             <el-table-column prop="name" label="欄位" width="180"></el-table-column>
                                             <el-table-column label="值">
-                                                <template #default="c"><span style="font-family:monospace">{{ Array.isArray(c.row.value)?('['+c.row.value.join(', ')+']'):c.row.value }}</span></template>
+                                                <template #default="c"><span style="font-family:monospace">{{ Array.isArray(c.row.value)?('['+c.row.value.join(', ')+']'):c.row.value }}</span><span v-if="sigDecodeValue(c.row.name,c.row.value)" style="color:#2563eb;font-size:12px;margin-left:8px">= {{ sigDecodeValue(c.row.name,c.row.value) }}</span></template>
                                             </el-table-column>
                                             <el-table-column prop="desc" label="說明" width="180"></el-table-column>
                                         </el-table>
@@ -6795,6 +6815,65 @@
                         </div>
                     </div>
 
+                    <div class="card" v-if="sigCtl.enabled">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>時制計畫比對(中心基準 / 現場)</span>
+                            <span style="display:flex;gap:8px;align-items:center">
+                                <el-button size="small" @click="loadTimingPlans">重新載入</el-button>
+                                <el-button size="small" type="primary" plain @click="sigSetBaseline">設為中心基準</el-button>
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <div v-if="!sigPlanView.length" class="analysis-setting-tip">
+                                尚無時制計畫資料。請在上方對每套計畫查詢 <b>5F45 時制計畫資料庫－查詢</b>(拿綠燈/週期/時差) 與 <b>5F44 時制計畫基本參數－查詢</b>(拿最短綠/最長綠/黃燈/全紅/行人),回報配對後會自動整理到這裡,並可按「設為中心基準」把當下值存成參考版做漂移比對。
+                            </div>
+                            <div v-else>
+                                <div style="display:flex;gap:8px;margin-bottom:8px;font-size:12px;color:#64748b;flex-wrap:wrap">
+                                    <span style="padding:2px 8px;background:#fef3c7;border-radius:4px">黃底 = 現場與中心基準不一致</span>
+                                    <span style="padding:2px 8px;background:#dbeafe;border-radius:4px">藍底 = 只在單邊有</span>
+                                </div>
+                                <div v-for="pv in sigPlanView" :key="'tp'+pv.plan_id" style="margin-bottom:16px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
+                                    <div style="padding:6px 12px;background:#f8fafc;font-weight:600;border-bottom:1px solid #e2e8f0">
+                                        時制計畫 {{ pv.plan_id }}
+                                        <span style="font-weight:400;font-size:12px;color:#64748b;margin-left:8px">現場 週期 {{ pv.f?sigCell(pv.f.cycle):'—' }}s / 時差 {{ pv.f?sigCell(pv.f.offset):'—' }}s / 基準方向 {{ pv.f?sigCell(pv.f.direct):'—' }} / 時相編號 {{ pv.f?sigCell(pv.f.phase_order):'—' }}</span>
+                                    </div>
+                                    <div style="display:flex;flex-wrap:wrap">
+                                        <div style="flex:1;min-width:360px;padding:8px" :style="pv.onlyBase?'background:#dbeafe':''">
+                                            <div style="font-size:12px;color:#64748b;margin-bottom:4px">中心基準{{ pv.b?'':'(未設定)' }}</div>
+                                            <table class="tp-tbl"><thead><tr><th>分相</th><th>綠燈</th><th>最短綠</th><th>最長綠</th><th>黃燈</th><th>全紅</th><th>人閃</th><th>人紅</th></tr></thead><tbody>
+                                                <tr v-for="ph in pv.phases" :key="'b'+ph.idx">
+                                                    <td>分相{{ ph.idx }}</td>
+                                                    <td :style="ph.diff.green?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.green) }}</td>
+                                                    <td :style="ph.diff.min_green?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.min_green) }}</td>
+                                                    <td :style="ph.diff.max_green?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.max_green) }}</td>
+                                                    <td :style="ph.diff.yellow?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.yellow) }}</td>
+                                                    <td :style="ph.diff.all_red?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.all_red) }}</td>
+                                                    <td :style="ph.diff.ped_flash?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.ped_flash) }}</td>
+                                                    <td :style="ph.diff.ped_red?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.ped_red) }}</td>
+                                                </tr>
+                                            </tbody></table>
+                                        </div>
+                                        <div style="flex:1;min-width:360px;padding:8px;border-left:1px solid #e2e8f0" :style="pv.onlyField?'background:#dbeafe':''">
+                                            <div style="font-size:12px;color:#64748b;margin-bottom:4px">現場(即時查到)</div>
+                                            <table class="tp-tbl"><thead><tr><th>分相</th><th>綠燈</th><th>最短綠</th><th>最長綠</th><th>黃燈</th><th>全紅</th><th>人閃</th><th>人紅</th></tr></thead><tbody>
+                                                <tr v-for="ph in pv.phases" :key="'f'+ph.idx">
+                                                    <td>分相{{ ph.idx }}</td>
+                                                    <td :style="ph.diff.green?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.green) }}</td>
+                                                    <td :style="ph.diff.min_green?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.min_green) }}</td>
+                                                    <td :style="ph.diff.max_green?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.max_green) }}</td>
+                                                    <td :style="ph.diff.yellow?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.yellow) }}</td>
+                                                    <td :style="ph.diff.all_red?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.all_red) }}</td>
+                                                    <td :style="ph.diff.ped_flash?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.ped_flash) }}</td>
+                                                    <td :style="ph.diff.ped_red?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.ped_red) }}</td>
+                                                </tr>
+                                            </tbody></table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="card">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-activity"/></svg>最近訊框</span>
@@ -6802,10 +6881,18 @@
                         </div>
                         <div class="card-body">
                             <el-table :data="sigFrames" size="small" max-height="300" style="width:100%">
-                                <el-table-column prop="seq" label="SEQ" width="70"></el-table-column>
-                                <el-table-column prop="code" label="訊息碼" width="90"></el-table-column>
-                                <el-table-column prop="len" label="LEN" width="70"></el-table-column>
-                                <el-table-column label="CKS" width="70">
+                                <el-table-column label="方向" width="88">
+                                    <template #default="sc">
+                                        <el-tag size="small" :type="sigDir(sc.row.code).recv?'success':'warning'">{{ sigDir(sc.row.code).label }}</el-tag>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column prop="seq" label="SEQ" width="60"></el-table-column>
+                                <el-table-column prop="code" label="訊息碼" width="80"></el-table-column>
+                                <el-table-column label="類型" width="90">
+                                    <template #default="sc"><span style="font-size:12px;color:#64748b">{{ sigKind(sc.row.code) }}</span></template>
+                                </el-table-column>
+                                <el-table-column prop="len" label="LEN" width="60"></el-table-column>
+                                <el-table-column label="CKS" width="64">
                                     <template #default="sc">
                                         <el-tag size="small" :type="sc.row.cks_ok?'success':'danger'">{{ sc.row.cks_ok?'OK':'錯' }}</el-tag>
                                     </template>
@@ -19677,6 +19764,121 @@ const app=createApp({
                 if(r.ok)sigQryHistory.value=(await r.json()).items||[];
             }catch(_){ }
         };
+        // 時制計畫比對:現場端(向控制器查到的 5FC5+5FC4 合併) vs 中心基準(存下的參考版)。
+        const sigPlans=ref({field:[],baseline:[]});
+        const sigCell=(v)=>(v===null||v===undefined?'—':v);
+        const loadTimingPlans=async()=>{
+            try{
+                const r=await fetch('/api/signal/timing-plans',{credentials:'include'});
+                if(r.ok)sigPlans.value=await r.json();
+            }catch(_){ }
+        };
+        const sigSetBaseline=async()=>{
+            try{
+                const r=await fetch('/api/signal/timing-plans/baseline',{method:'POST',credentials:'include'});
+                const d=await r.json().catch(()=>({}));
+                if(r.ok){ ElementPlus.ElMessage.success('已存為中心基準('+(d.count||0)+' 套)'); loadTimingPlans(); }
+                else ElementPlus.ElMessage.warning(d.detail||'存基準失敗');
+            }catch(_){ ElementPlus.ElMessage.error('存基準失敗'); }
+        };
+        // 對齊現場與基準:依 plan_id 併,每分相逐欄位標出差異,給模板直接畫。
+        const _tpKeys=['green','min_green','max_green','yellow','all_red','ped_flash','ped_red'];
+        const sigPlanView=computed(()=>{
+            const base={}; (sigPlans.value.baseline||[]).forEach(p=>{ base[p.plan_id]=p; });
+            const field={}; (sigPlans.value.field||[]).forEach(p=>{ field[p.plan_id]=p; });
+            const ids=Array.from(new Set(Object.keys(field).concat(Object.keys(base)))).map(Number).sort((a,b)=>a-b);
+            return ids.map(id=>{
+                const f=field[id]||null, b=base[id]||null;
+                const nph=Math.max(f&&f.phases?f.phases.length:0, b&&b.phases?b.phases.length:0);
+                const phases=[];
+                for(let i=0;i<nph;i++){
+                    const fp=(f&&f.phases&&f.phases[i])||{}, bp=(b&&b.phases&&b.phases[i])||{};
+                    const diff={};
+                    _tpKeys.forEach(k=>{ diff[k]=!!(b&&f&&fp[k]!==bp[k]); });
+                    phases.push({idx:i+1,f:fp,b:bp,diff});
+                }
+                return {plan_id:id,f,b,phases,onlyField:!!f&&!b,onlyBase:!!b&&!f};
+            });
+        });
+        // 欄位互動說明:選命令時每個欄位旁的 ℹ 點開,解釋這欄是什麼、怎麼填。
+        // 🛑 utc-tc3 的 schema 大多沒 desc,所以在前端補一份人看得懂的說明。
+        //    key 用欄位名(跨命令通用),{t:一句話, i:怎麼填}。查不到就退回 schema
+        //    的 desc + 範圍。
+        const SIG_FIELD_HELP={
+            PhaseOrder:{t:'時相種類編號。號誌的一組「哪些方向同時綠」叫一個時相,這個編號指定要操作/查詢哪一組。',
+                        i:'填時相編號(從 0 起)。不確定有幾組時相,先查 5F45 時制計畫看它引用哪些,或從 0 開始試。你路口目前跑的時相可從即時燈態的「時相類型」看到。'},
+            PlanID:{t:'時制計畫編號。一個路口可存多套時制計畫(不同時段用不同套),這個編號選哪一套。',i:'填 0~48。查詢時填要讀的那套;下傳設定時填要覆蓋的那套。'},
+            Direct:{t:'基準方向。時相燈態以哪個方向為基準來排列。',i:'照原值填(多半是 0),不確定就用查詢讀回來的值。'},
+            SubPhaseCount:{t:'分相數。這套時制分成幾個分相(每個分相有自己的綠燈秒數)。',i:'填 1~8。它決定下面 Green 要填幾個值 —— 先選好這個,Green 才會展開對應數量的格子。'},
+            Green:{t:'各分相的綠燈秒數。',i:'依 SubPhaseCount 展開 N 格,每格填該分相的綠燈秒數。各分相綠燈 + 黃燈 + 全紅要等於週期 CycleTime。'},
+            CycleTime:{t:'週期(秒)。號誌跑完一整輪(所有分相)的總秒數。',i:'填秒數。要等於「各分相綠燈總和 + 黃燈 + 全紅清除時間」,改綠燈時這個要跟著算對。'},
+            Offset:{t:'時差(秒)。跟相鄰路口連鎖時,這個路口比基準延後幾秒起步(綠波用)。',i:'單一路口填 0;連鎖時填該路口的偏移秒數。'},
+            EffectTime:{t:'有效時間(分)。設定動態控制後,這段時間內沒有再下新命令,控制器就自動切回定時控制。',i:'填分鐘數。動態/中央控制才需要;定時控制不用。'},
+            ControlStrategy:{t:'控制策略(8 位元)。每個位元一種控制方法(定時/動態/手動/時相/即時/觸動/特勤)。',i:'用 5F10 的勾選面板選,不要自己算十進位。'},
+            SubPhaseID:{t:'分相編號。全動態控制時直接指定要跳到第幾個分相。',i:'填分相編號。'},
+            StepID:{t:'步階編號。分相內再細分的步階,直接指定跳到哪一步。',i:'填步階編號。'},
+            EquipmentNo:{t:'設備編號。要問/操作哪一台設備。',i:'填 255(0xFF)= 廣播,問這條線上所有設備;填 0~254 = 只問特定那台。不知道有幾台就填 255 探測。'},
+            TransmitType:{t:'傳輸型態。控制器要主動上傳「燈態」還是「步階」。',i:'填 1=燈態(5F0F)、2=步階(5F03)。'},
+            TransmitCycle:{t:'傳輸週期。控制器每隔多久主動上傳一次。',i:'填週期(秒/單位依協定)。'},
+            Year:{t:'年',i:'對時用,填西元年後兩碼或完整年(依協定)。'},Month:{t:'月',i:'填 1~12。'},Day:{t:'日',i:'填 1~31。'},
+            Hour:{t:'時',i:'填 0~23。'},Min:{t:'分',i:'填 0~59。'},
+        };
+        const sigFieldHelp=(f)=>{
+            const h=SIG_FIELD_HELP[f.name];
+            if(h)return h;
+            // 退回 schema 的 desc + 範圍
+            const parts=[];
+            if(f.desc)parts.push(f.desc);
+            if(f.kind==='int'&&f.lo!=null)parts.push('範圍 '+f.lo+'~'+f.hi);
+            if(f.kind==='repeat')parts.push('陣列,共 '+f.count+' 個');
+            if(f.kind==='bytes'||f.kind==='var'||f.kind==='tail')parts.push('十六進位輸入');
+            return {t:parts.join(' · ')||'(協定欄位,無額外說明)', i:''};
+        };
+        // 查詢回報的值白話解讀:ControlStrategy 這種位元遮罩/編碼欄位,原始數字看不懂,
+        // 這裡解成人看得懂的字。查不到的欄位回空字串(只顯示原值)。
+        const SIG_STRATEGY_BITS=['定時控制','動態控制','路口手動','中央手動','時相控制','即時控制','觸動控制','特勤路線'];
+        const SIG_LIGHT_BITS=['紅','黃','圓頭綠','左綠','直綠','右綠','行綠','行紅'];
+        const sigDecodeValue=(name,value)=>{
+            const v=Number(value);
+            if(name==='ControlStrategy'&&isFinite(v)){
+                const on=SIG_STRATEGY_BITS.filter((_,i)=>v&(1<<i));
+                return on.length?('啟用:'+on.join('、')):'(全部關閉)';
+            }
+            if(name==='EffectTime'&&isFinite(v)){
+                if(v===255)return '255 = 永久有效(不自動回復)';
+                return v+' 分';
+            }
+            if((name==='SignalMap'||name==='GreenSignalMap'||name==='YellowSignalMap')&&isFinite(v)){
+                const dirs=['北','東北','東','東南','南','西南','西','西北'];
+                const on=dirs.filter((_,i)=>v&(1<<i));
+                return on.length?('方向:'+on.join('、')):'(無)';
+            }
+            if((name==='SignalStatus'||name.indexOf('Signal')===0)&&isFinite(v)&&v>=0&&v<=255){
+                const on=SIG_LIGHT_BITS.filter((_,i)=>v&(1<<i));
+                return on.length?on.join('+'):'(全暗)';
+            }
+            if(name==='TransmitType'&&isFinite(v))return v===1?'燈態(5F0F)':(v===2?'步階(5F03)':'');
+            if(name==='Direct'&&isFinite(v))return '基準方向 '+v;
+            return '';
+        };
+        // 訊框方向與型態:看指令碼高位元組(協定 3-3)。
+        //   設定 1~3 / 查詢 4~6 = 中心送出(下傳);主動回報 0 / 回報 9~E = 控制器回來(接收)。
+        const sigKind=(code)=>{
+            if(!code||code.length!==4)return '';
+            const hi=parseInt(code[2],16);
+            if(hi===0)return '主動回報';
+            if(hi>=1&&hi<=3)return '設定';
+            if(hi>=4&&hi<=6)return '查詢';
+            if(hi>=8&&hi<=0xB)return '設定回報';
+            if(hi>=0xC&&hi<=0xE)return '查詢回報';
+            return '';
+        };
+        const sigDir=(code)=>{
+            const k=sigKind(code);
+            // 設定/查詢 = 中心下達(送);其餘(主動回報/回報)= 控制器上傳(收)
+            const recv=!(k==='設定'||k==='查詢');
+            return {recv, label: recv?'收 ↓':'送 ↑'};
+        };
         const sigReplyOf=(qcode)=>{        // 查詢碼 → 對應的查詢回報碼
             if(!qcode||qcode.length!==4)return null;
             const hi=parseInt(qcode[2],16);
@@ -19885,7 +20087,7 @@ const app=createApp({
                             headers:{'Content-Type':'application/json'},
                             body:JSON.stringify({ts:rec.ts,query_code:qcode,reply_code:hit.code,
                                 name:hit.name,addr:hit.addr,fields:hit.fields,raw:hit.raw})});
-                        loadQueryHistory();
+                        loadQueryHistory(); loadTimingPlans();
                     }catch(_){ }
                     return;
                 }
@@ -19952,7 +20154,7 @@ const app=createApp({
         };
         const startSignalTimer=()=>{
             if(sigTimer){ clearInterval(sigTimer); sigTimer=null; }
-            loadSignalCoverage(); loadSignalFrames(); loadSigControl(); loadQueryHistory(); sigStartTick();
+            loadSignalCoverage(); loadSignalFrames(); loadSigControl(); loadQueryHistory(); loadTimingPlans(); sigStartTick();
             if(!sigAuto.value)return;
             // 號誌每 2 秒上傳一次,1 秒輪詢足夠,狀態 JSON 只有幾 KB
             sigTimer=setInterval(()=>{
@@ -20563,7 +20765,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,sigCell,loadTimingPlans,sigSetBaseline,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
