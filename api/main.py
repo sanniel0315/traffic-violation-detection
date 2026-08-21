@@ -306,6 +306,8 @@ async def lifespan(app: FastAPI):
     # 退避到最多 30 秒讓中心優先。
     try:
         signal_tc3_route.start_recorder()
+        # 中央電腦中繼(opt-in,SIGNAL_TC3_CENTER_RELAY=1 才起):我們=中央眼中的號誌控制器。
+        signal_tc3_route.start_center_relay()
     except Exception as _e:
         print(f"⚠️ [signal-tc3] 啟動失敗: {_e}", flush=True)
     threading.Thread(target=_service_watchdog, daemon=True, name="service-watchdog").start()
