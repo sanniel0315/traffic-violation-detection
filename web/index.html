@@ -6511,9 +6511,16 @@
                             </div>
                             <div style="display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px">
                                 <div>
+                                    <el-radio-group v-model="sigCmdKind" size="small" style="margin-bottom:8px">
+                                        <el-radio-button label="">全部 {{ sigCmds.length }}</el-radio-button>
+                                        <el-radio-button label="查詢">查詢 {{ sigCmdCount('查詢') }}</el-radio-button>
+                                        <el-radio-button label="設定">設定 {{ sigCmdCount('設定') }}</el-radio-button>
+                                    </el-radio-group>
                                     <el-select v-model="sigCmdSel" size="small" filterable placeholder="選一則命令" style="width:100%" @change="sigSelectCmd">
-                                        <el-option v-for="c in sigCmds" :key="c.code" :value="c.code"
-                                                   :label="c.code + '　' + c.name"></el-option>
+                                        <el-option-group v-for="g in sigCmdGroups" :key="g.kind" :label="g.kind + '（' + g.items.length + '）'">
+                                            <el-option v-for="c in g.items" :key="c.code" :value="c.code"
+                                                       :label="c.code + '　' + c.name"></el-option>
+                                        </el-option-group>
                                     </el-select>
                                     <div v-if="!sigCmds.length" class="analysis-setting-tip" style="margin-top:8px">
                                         {{ sigCtlSchemaOk?'目前沒有可送的命令(可能被安全限制過濾)。':'命令定義未載入(utc-tc3 不可用)，改用下方手輸模式。' }}
@@ -6533,8 +6540,8 @@
                                         <el-select v-if="f.kind==='int'" v-model="sigCmdVals[f.name]" filterable size="small" style="width:150px" :placeholder="f.lo+'~'+f.hi">
                                             <el-option v-for="n in sigIntOpts(f)" :key="n" :value="n" :label="String(n)"></el-option>
                                         </el-select>
-                                        <!-- repeat(如 Green 綠燈秒數):依 count 欄位的值展開 N 個下拉 -->
-                                        <div v-else-if="f.kind==='repeat'" style="display:flex;gap:6px;flex-wrap:wrap">
+                                        <!-- 純量 repeat(如 Green):依 count 欄位展開 N 個下拉 -->
+                                        <div v-else-if="f.kind==='repeat' && f.scalar" style="display:flex;gap:6px;flex-wrap:wrap">
                                             <div v-for="i in sigRepeatN(f)" :key="i" style="display:flex;flex-direction:column;align-items:center">
                                                 <span style="font-size:10px;color:#94a3b8">{{ sigRepeatLabel(f,i-1) }}</span>
                                                 <el-select v-model="sigRepeatModel(f)[i-1]" filterable size="small" style="width:90px" placeholder="—">
@@ -6543,10 +6550,38 @@
                                             </div>
                                             <span v-if="!sigRepeatN(f)" style="font-size:11px;color:#f59e0b;padding-top:5px">先選好 {{ f.count }}</span>
                                         </div>
-                                        <el-input v-else v-model="sigCmdVals[f.name]" size="small" :placeholder="f.kind" style="width:220px"></el-input>
+                                        <!-- 非純量 repeat(如車道調撥 TimeIn):N 列,每列是子欄位下拉 -->
+                                        <div v-else-if="f.kind==='repeat'" style="display:flex;flex-direction:column;gap:4px">
+                                            <div v-for="i in sigRepeatN(f)" :key="i" style="display:flex;gap:6px;align-items:center">
+                                                <span style="font-size:10px;color:#94a3b8;width:34px">{{ sigRepeatLabel(f,i-1) }}</span>
+                                                <template v-for="sf in (f.fields||[])" :key="sf.name">
+                                                    <span style="font-size:10px;color:#94a3b8">{{ sf.name }}</span>
+                                                    <el-select v-model="sigRepeatObj(f,i-1)[sf.name]" filterable size="small" style="width:80px" placeholder="—">
+                                                        <el-option v-for="n in sigIntOpts(sf)" :key="n" :value="n" :label="String(n)"></el-option>
+                                                    </el-select>
+                                                </template>
+                                            </div>
+                                            <span v-if="!sigRepeatN(f)" style="font-size:11px;color:#f59e0b">先選好 {{ f.count }}</span>
+                                        </div>
+                                        <!-- optional:勾了才帶,勾了就展開內層(多半是 int) -->
+                                        <div v-else-if="f.kind==='optional'" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                                            <el-checkbox v-model="sigOptOn[f.name]" size="small">包含</el-checkbox>
+                                            <template v-if="sigOptOn[f.name]" v-for="sf in (f.fields||[])" :key="sf.name">
+                                                <span style="font-size:10px;color:#94a3b8">{{ sf.name }}</span>
+                                                <el-select v-if="sf.kind==='int'" v-model="sigCmdVals[sf.name]" filterable size="small" style="width:110px">
+                                                    <el-option v-for="n in sigIntOpts(sf)" :key="n" :value="n" :label="String(n)"></el-option>
+                                                </el-select>
+                                                <el-input v-else v-model="sigCmdVals[sf.name]" size="small" style="width:150px" :placeholder="sf.kind"></el-input>
+                                            </template>
+                                        </div>
+                                        <!-- const:協定固定值,由後端自動帶,不必也不能改 -->
+                                        <el-tag v-else-if="f.kind==='const'" size="small" type="info">自動(協定固定值)</el-tag>
+                                        <!-- bytes/var/tail:非結構化,用十六進位輸入 -->
+                                        <el-input v-else v-model="sigCmdVals[f.name]" size="small" :placeholder="f.width?('十六進位 '+f.width+' bytes'):'十六進位'" style="width:220px"></el-input>
                                         <span style="font-size:11px;color:#94a3b8;padding-top:5px" v-if="f.kind==='int'">{{ f.lo }}~{{ f.hi }}</span>
-                                        <span style="font-size:11px;color:#94a3b8;padding-top:5px" v-else-if="f.kind==='repeat'">共 {{ f.count }} 個</span>
-                                        <span style="font-size:11px;color:#f59e0b;padding-top:5px" v-else>{{ f.kind }}(進階，如不確定請用手輸)</span>
+                                        <span style="font-size:11px;color:#94a3b8;padding-top:5px" v-else-if="f.kind==='repeat'">共 {{ f.count }} 組</span>
+                                        <span style="font-size:11px;color:#94a3b8;padding-top:5px" v-else-if="f.kind==='const'"></span>
+                                        <span style="font-size:11px;color:#f59e0b;padding-top:5px" v-else-if="f.kind==='bytes'||f.kind==='var'||f.kind==='tail'">十六進位</span>
                                     </div>
                                     <div v-if="!sigCtlSchemaOk || !sigCmdCur.fields.length" style="margin-top:8px">
                                         <label style="font-size:12px;color:#64748b">參數 info_hex(設備碼/指令碼之後的位元組)</label>
@@ -19469,6 +19504,8 @@ const app=createApp({
         // 🛑 查詢結果:每次查詢送出後,配對控制器的查詢回報並解成欄位表,留成紀錄。
         //    查詢碼高位元組 4~6 → 回報碼是 C~E(例:5F45 查詢 → 5FC5 回報)。
         const sigQryLog=ref([]);           // [{ts, code, reply_code, name, fields:[{name,value,desc}]}]
+        const sigCmdKind=ref('');          // 命令選單的型態篩選(''/查詢/設定)
+        const sigOptOn=ref({});            // optional 欄位勾了沒
         const sigReplyOf=(qcode)=>{        // 查詢碼 → 對應的查詢回報碼
             if(!qcode||qcode.length!==4)return null;
             const hi=parseInt(qcode[2],16);
@@ -19538,7 +19575,7 @@ const app=createApp({
         const sigCmdCur=computed(()=>sigCmds.value.find(c=>c.code===sigCmdSel.value)||null);
         // 選一則命令 → 清空表單、清掉上一次的預覽(換命令了,舊 token 不能用)
         const sigSelectCmd=(code)=>{
-            sigCmdSel.value=code; sigCmdVals.value={}; sigCtlPreview.value=null; sigCtlHex.value='';
+            sigCmdSel.value=code; sigCmdVals.value={}; sigOptOn.value={}; sigCtlPreview.value=null; sigCtlHex.value='';
         };
         // 準備(不送出):把填好的參數送給後端組框,回來的預覽含 token
         const sigPrepare=async()=>{
@@ -19642,6 +19679,23 @@ const app=createApp({
             const inner=(f.fields&&f.fields[0])||{lo:0,hi:SIG_OPT_CAP};
             return sigIntOpts(inner);
         };
+        // 非純量 repeat 的第 idx 組(物件),確保存在
+        const sigRepeatObj=(f,idx)=>{
+            if(!Array.isArray(sigCmdVals.value[f.name]))sigCmdVals.value[f.name]=[];
+            const arr=sigCmdVals.value[f.name];
+            if(!arr[idx]||typeof arr[idx]!=='object')arr[idx]={};
+            return arr[idx];
+        };
+        // 命令選單:依型態篩選 + 分組
+        const sigCmdCount=(kind)=>sigCmds.value.filter(c=>c.kind===kind).length;
+        const sigCmdGroups=computed(()=>{
+            const want=sigCmdKind.value;
+            const src=want?sigCmds.value.filter(c=>c.kind===want):sigCmds.value;
+            const order=['查詢','設定','主動回報'];
+            const by={};
+            src.forEach(c=>{ (by[c.kind]=by[c.kind]||[]).push(c); });
+            return order.filter(k=>by[k]).map(k=>({kind:k, items:by[k]}));
+        });
         const sigRepeatLabel=(f,idx)=>{
             // Green 依分相編號,其餘就標索引
             if(f.name==='Green')return '分相'+(idx+1);
@@ -20259,7 +20313,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};

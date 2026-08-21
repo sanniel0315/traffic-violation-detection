@@ -643,6 +643,20 @@ async def control_prepare(body: dict, _user=Depends(get_current_user)):
             msg = next((m for m in _M.ALL if m.code == code), None)
             if msg is None:
                 raise HTTPException(status_code=400, detail=f"schema 裡沒有 {code}")
+            # 🛑 bytes/var/tail 這幾種欄位,encoder 要的是 bytes 物件,但前端走 JSON
+            #    只能送字串。這裡照 schema 把那些欄位的十六進位字串轉成 bytes,
+            #    否則含密碼/協定/點陣的命令永遠編不出來(前端 UI 有欄位也沒用)。
+            _sc = load_command_schemas().get(code, {})
+            _hex_fields = {f.get("name") for f in _sc.get("fields", [])
+                           if f.get("kind") in ("bytes", "var", "tail")}
+            for _fn in _hex_fields:
+                v = values.get(_fn)
+                if isinstance(v, str) and v.strip():
+                    try:
+                        values[_fn] = bytes.fromhex(v.replace(" ", ""))
+                    except ValueError:
+                        raise HTTPException(status_code=400,
+                                            detail=f"{_fn} 不是合法的十六進位")
             info = msg.encode(values)             # 回傳含設備碼+指令碼的完整 INFO
         except HTTPException:
             raise
