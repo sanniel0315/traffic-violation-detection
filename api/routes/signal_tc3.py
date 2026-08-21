@@ -887,3 +887,86 @@ async def frames_decoded(limit: int = 30, _user=Depends(get_current_user)):
                     break
         out.append(row)
     return {"count": len(out), "frames": out}
+
+
+# ── 查詢紀錄:顯示 + 儲存 ──────────────────────────────────────────────────
+# 前端的 sigQryLog 只在記憶體,關頁就沒了。查詢回報要能事後回查,存進 DB。
+# 用獨立表,不動 SQLAlchemy models —— 這是純附加,跟既有 schema 無關。
+import sqlite3 as _sqlite3
+import json as _json_ctl
+
+_QDB_PATH = os.getenv("SIGNAL_QUERY_DB",
+                      str(pathlib.Path(__file__).resolve().parents[2] / "data" / "violations.db"))
+_qdb_ready = False
+
+
+def _query_db():
+    global _qdb_ready
+    conn = _sqlite3.connect(_QDB_PATH, timeout=20)
+    conn.execute("PRAGMA busy_timeout=20000")
+    if not _qdb_ready:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS signal_query_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL, user TEXT, query_code TEXT, reply_code TEXT,
+                name TEXT, addr INTEGER, fields_json TEXT, raw TEXT
+            )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_sql_ts ON signal_query_log(ts)")
+        conn.commit()
+        _qdb_ready = True
+    return conn
+
+
+@router.post("/control/query-log", summary="儲存一筆查詢結果")
+async def query_log_save(body: dict, _user=Depends(get_current_user)):
+    """前端配對到查詢回報後呼叫,把結果存進 DB。"""
+    user = getattr(_user, "username", None) or str(_user)
+    fields = (body or {}).get("fields")
+    row = (
+        float((body or {}).get("ts") or time.time()),
+        user,
+        str((body or {}).get("query_code") or ""),
+        str((body or {}).get("reply_code") or ""),
+        str((body or {}).get("name") or ""),
+        int((body or {}).get("addr") or 0),
+        _json_ctl.dumps(fields, ensure_ascii=False) if fields is not None else None,
+        str((body or {}).get("raw") or ""),
+    )
+    try:
+        conn = _query_db()
+        conn.execute(
+            "INSERT INTO signal_query_log "
+            "(ts,user,query_code,reply_code,name,addr,fields_json,raw) "
+            "VALUES (?,?,?,?,?,?,?,?)", row)
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"儲存失敗: {exc}")
+    return {"ok": True}
+
+
+@router.get("/control/query-log", summary="查詢紀錄(可依碼篩選)")
+async def query_log_list(limit: int = 100, code: str = "", _user=Depends(get_current_user)):
+    n = max(1, min(500, int(limit or 100)))
+    try:
+        conn = _query_db()
+        sql = ("SELECT ts,user,query_code,reply_code,name,addr,fields_json,raw "
+               "FROM signal_query_log")
+        params: list = []
+        if code:
+            sql += " WHERE query_code=? OR reply_code=?"
+            params += [code.upper(), code.upper()]
+        sql += " ORDER BY ts DESC LIMIT ?"
+        params.append(n)
+        rows = conn.execute(sql, params).fetchall()
+        conn.close()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"讀取失敗: {exc}")
+    out = []
+    for ts, user, qc, rc, name, addr, fj, raw in rows:
+        out.append({
+            "ts": ts, "user": user, "query_code": qc, "reply_code": rc,
+            "name": name, "addr": addr,
+            "fields": _json_ctl.loads(fj) if fj else None, "raw": raw,
+        })
+    return {"count": len(out), "items": out}
