@@ -6874,16 +6874,87 @@
                         </div>
                     </div>
 
-                    <div class="card">
+                    <div class="card" v-if="sigCtl.center">
                         <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-activity"/></svg>最近訊框</span>
-                            <el-button size="small" @click="loadSignalFrames">重新載入</el-button>
+                            <span><svg class="text-icon"><use href="#i-activity"/></svg>中央電腦連線（都三中繼）</span>
+                            <el-tag size="small" :type="sigCtl.center.connected?'success':(sigCtl.center.enabled?'warning':'info')">
+                                {{ sigCtl.center.connected?('中央已連線 '+sigCtl.center.peer):(sigCtl.center.enabled?'等待中央連入':'中繼未啟用') }}
+                            </el-tag>
                         </div>
                         <div class="card-body">
-                            <el-table :data="sigFrames" size="small" max-height="300" style="width:100%">
-                                <el-table-column label="方向" width="88">
+                            <div style="display:flex;flex-wrap:wrap;gap:18px">
+                                <div style="min-width:120px">
+                                    <div style="font-size:12px;color:#64748b">監聽埠</div>
+                                    <div style="font-size:18px;font-weight:700;color:#0f172a">{{ sigCtl.center.listen }}</div>
+                                </div>
+                                <div style="min-width:140px">
+                                    <div style="font-size:12px;color:#64748b">接收自中央（下傳指令）</div>
+                                    <div style="font-size:18px;font-weight:700;color:#0f172a">{{ sigCtl.center.from_center_bytes }} <small style="font-size:12px;color:#94a3b8">bytes</small></div>
+                                </div>
+                                <div style="min-width:100px">
+                                    <div style="font-size:12px;color:#64748b">收到指令數</div>
+                                    <div style="font-size:18px;font-weight:700;color:#0f172a">{{ sigCtl.center.center_frames }} <small style="font-size:12px;color:#94a3b8">框</small></div>
+                                </div>
+                                <div style="min-width:120px">
+                                    <div style="font-size:12px;color:#64748b">上傳中央</div>
+                                    <div style="font-size:18px;font-weight:700;color:#0f172a">{{ sigCtl.center.to_center_bytes }} <small style="font-size:12px;color:#94a3b8">bytes</small></div>
+                                </div>
+                                <div style="min-width:110px">
+                                    <div style="font-size:12px;color:#64748b">上傳狀態</div>
+                                    <div>
+                                        <el-tag size="small" :type="(sigCtl.center.connected&&sigCtl.center.to_center_bytes)?'success':'info'">
+                                            {{ (sigCtl.center.connected&&sigCtl.center.to_center_bytes)?'正常上傳中':(sigCtl.center.connected?'已連線,尚無上傳':'未連線') }}
+                                        </el-tag>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-activity"/></svg>TC3 通訊紀錄（我方/中央/控制器 · 持久化6月 · 可篩選 · 展開解碼）</span>
+                            <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                                <el-select v-model="sigFrameFSrc" size="small" style="width:158px" @change="loadSignalFrames" placeholder="來源/方向">
+                                    <el-option label="全部來源" value=""></el-option>
+                                    <el-option label="我方→控制器 送出" value="self"></el-option>
+                                    <el-option label="中央→控制器 下傳" value="center"></el-option>
+                                    <el-option label="控制器→中央 上傳" value="controller"></el-option>
+                                </el-select>
+                                <el-input v-model="sigFrameFCode" size="small" style="width:120px" placeholder="訊息碼 如5FC5" clearable @change="loadSignalFrames"></el-input>
+                                <el-select v-model="sigFrameFCks" size="small" style="width:104px" @change="loadSignalFrames" placeholder="CKS">
+                                    <el-option label="CKS 全部" value=""></el-option>
+                                    <el-option label="只看 OK" value="ok"></el-option>
+                                    <el-option label="只看 錯" value="bad"></el-option>
+                                </el-select>
+                                <el-button size="small" @click="loadSignalFrames">重新載入</el-button>
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <el-table :data="sigFrames" size="small" max-height="380" style="width:100%" @expand-change="(row,ex)=>{ if(ex&&ex.length)sigFrameDecode(row); }">
+                                <el-table-column type="expand">
                                     <template #default="sc">
-                                        <el-tag size="small" :type="sigDir(sc.row.code).recv?'success':'warning'">{{ sigDir(sc.row.code).label }}</el-tag>
+                                        <div style="padding:6px 12px">
+                                            <div v-if="!sigFrameDecodeCache[sc.row.raw]" style="font-size:12px;color:#94a3b8">解碼中…</div>
+                                            <div v-else-if="!sigFrameDecodeCache[sc.row.raw].fields" style="font-size:12px;color:#94a3b8">此訊息碼（{{ sc.row.code }}）無欄位定義或解不出。</div>
+                                            <el-table v-else :data="sigFrameDecodeCache[sc.row.raw].fields" size="small" style="width:100%">
+                                                <el-table-column prop="name" label="欄位" width="180"></el-table-column>
+                                                <el-table-column label="值">
+                                                    <template #default="c"><span style="font-family:monospace">{{ Array.isArray(c.row.value)?('['+c.row.value.join(', ')+']'):c.row.value }}</span><span v-if="sigDecodeValue(c.row.name,c.row.value)" style="color:#2563eb;font-size:12px;margin-left:8px">= {{ sigDecodeValue(c.row.name,c.row.value) }}</span></template>
+                                                </el-table-column>
+                                                <el-table-column prop="desc" label="說明" width="180"></el-table-column>
+                                            </el-table>
+                                        </div>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column label="時間" width="120">
+                                    <template #default="sc"><span style="font-size:12px;font-family:monospace">{{ sigFrameTime(sc.row.ts) }}</span></template>
+                                </el-table-column>
+                                <el-table-column label="方向" width="150">
+                                    <template #default="sc">
+                                        <el-tooltip :content="sigSrcDir(sc.row).tip" placement="top">
+                                            <el-tag size="small" :type="sigSrcDir(sc.row).type">{{ sigSrcDir(sc.row).label }}</el-tag>
+                                        </el-tooltip>
                                     </template>
                                 </el-table-column>
                                 <el-table-column prop="seq" label="SEQ" width="60"></el-table-column>
@@ -6896,6 +6967,9 @@
                                     <template #default="sc">
                                         <el-tag size="small" :type="sc.row.cks_ok?'success':'danger'">{{ sc.row.cks_ok?'OK':'錯' }}</el-tag>
                                     </template>
+                                </el-table-column>
+                                <el-table-column label="操作者" width="80">
+                                    <template #default="sc"><span style="font-size:12px;color:#64748b">{{ sc.row.user||'—' }}</span></template>
                                 </el-table-column>
                                 <el-table-column prop="raw" label="RAW HEX"></el-table-column>
                             </el-table>
@@ -19857,6 +19931,15 @@ const app=createApp({
                 const on=SIG_LIGHT_BITS.filter((_,i)=>v&(1<<i));
                 return on.length?on.join('+'):'(全暗)';
             }
+            if(name==='HardwareStatus'&&isFinite(v)){
+                // 設備硬體狀態位圖(0F04 主動回報 / 0FC1 回報)。
+                // 🛑 廠商說明「寫反」(極性顛倒):bit14 實際 1=信號驅動單元正常、0=故障。
+                //    中央跟著寫反的說明,會把 0x4000(正常) 誤顯示成「信號驅動單元故障」。
+                const b14=(v&(1<<14))?'信號驅動單元 正常':'⚠️信號驅動單元 故障';
+                const others=[];
+                for(let i=0;i<16;i++){ if(i!==14 && (v&(1<<i)))others.push('bit'+i); }
+                return b14+(others.length?('；其他亮位: '+others.join(',')):'');
+            }
             if(name==='TransmitType'&&isFinite(v))return v===1?'燈態(5F0F)':(v===2?'步階(5F03)':'');
             if(name==='Direct'&&isFinite(v))return '基準方向 '+v;
             return '';
@@ -19878,6 +19961,27 @@ const app=createApp({
             // 設定/查詢 = 中心下達(送);其餘(主動回報/回報)= 控制器上傳(收)
             const recv=!(k==='設定'||k==='查詢');
             return {recv, label: recv?'收 ↓':'送 ↑'};
+        };
+        // 訊框時間(含毫秒,看中央/控制器來回先後)。ts 是 epoch 秒(帶小數)。
+        const sigFrameTime=(ts)=>{
+            if(!ts)return '';
+            const ms=String(Math.floor((ts%1)*1000)).padStart(3,'0');
+            return new Date(ts*1000).toLocaleTimeString('zh-TW',{hour12:false})+'.'+ms;
+        };
+        // 中繼方向:優先看 src(中央/控制器),分不出再退回 sigDir 的命令方向。
+        // src=center  → 中央下傳的指令(我們接收,轉給控制器) = 我們「接收到的指令」
+        // src=controller → 控制器回報(我們上傳給中央)         = 我們「上傳中央」的資料
+        const sigSrcDir=(row)=>{
+            // 中繼的完整流向(兩端都標,對稱)。控制器有上傳也有下載:
+            //   下傳/下載 = 中央→控制器(指令,src=center);上傳 = 控制器→中央(回報,src=controller)
+            if(row&&row.src==='self')return {label:'我方→控制器 送出',type:'primary',
+                tip:'我們自己(號控UI)送給號誌控制器的查詢/設定'};
+            if(row&&row.src==='center')return {label:'中央→控制器 下傳',type:'warning',
+                tip:'中央電腦下傳指令 → 經我們 → 號誌控制器(即控制器的「下載」)'};
+            if(row&&row.src==='controller')return {label:'控制器→中央 上傳',type:'success',
+                tip:'號誌控制器回報 → 經我們 → 中央電腦(即控制器的「上傳」)'};
+            const d=sigDir(row?row.code:'');
+            return {label:d.label,type:d.recv?'success':'warning',tip:'我方自身通道(非中繼)'};
         };
         const sigReplyOf=(qcode)=>{        // 查詢碼 → 對應的查詢回報碼
             if(!qcode||qcode.length!==4)return null;
@@ -19970,10 +20074,30 @@ const app=createApp({
                 if(r.ok)sigCoverage.value=await r.json();
             }catch(_){ }
         };
+        // 最近訊框:改讀持久化 log(/frames/log),可依方向/訊息碼/CKS 篩選,展開解碼。
+        const sigFrameFSrc=ref('');      // ''=全部 / center=中央→控制器 / controller=控制器→中央
+        const sigFrameFCode=ref('');     // 訊息碼篩選
+        const sigFrameFCks=ref('');      // ''=全部 / ok / bad
+        const sigFrameLimit=ref(200);
+        const sigFrameTotal=ref(0);
+        const sigFrameDecodeCache=ref({});   // raw -> {code,name,fields}
         const loadSignalFrames=async()=>{
             try{
-                const r=await fetch('/api/signal/frames?limit=30',{credentials:'include'});
-                if(r.ok)sigFrames.value=(await r.json()).frames||[];
+                const p=new URLSearchParams({limit:String(sigFrameLimit.value)});
+                if(sigFrameFSrc.value)p.set('src',sigFrameFSrc.value);
+                if(sigFrameFCode.value)p.set('code',sigFrameFCode.value.trim().toUpperCase());
+                if(sigFrameFCks.value)p.set('cks',sigFrameFCks.value);
+                const r=await fetch('/api/signal/frames/log?'+p.toString(),{credentials:'include'});
+                if(r.ok){ const d=await r.json(); sigFrames.value=d.frames||[]; sigFrameTotal.value=d.total||0; }
+            }catch(_){ }
+        };
+        // 展開一列時才解碼(可讀性:欄位+白話),結果快取避免重複打。
+        const sigFrameDecode=async(row)=>{
+            if(!row||!row.raw||sigFrameDecodeCache.value[row.raw])return;
+            try{
+                const p=new URLSearchParams({code:row.code||'',raw:(row.raw||'').replace(/ /g,'')});
+                const r=await fetch('/api/signal/frames/decode?'+p.toString(),{credentials:'include'});
+                if(r.ok)sigFrameDecodeCache.value={...sigFrameDecodeCache.value,[row.raw]:await r.json()};
             }catch(_){ }
         };
         // ── 號控方法 ──────────────────────────────────────────────────
@@ -20157,9 +20281,13 @@ const app=createApp({
             loadSignalCoverage(); loadSignalFrames(); loadSigControl(); loadQueryHistory(); loadTimingPlans(); sigStartTick();
             if(!sigAuto.value)return;
             // 號誌每 2 秒上傳一次,1 秒輪詢足夠,狀態 JSON 只有幾 KB
+            let _sigTick=0;
             sigTimer=setInterval(()=>{
                 if(page.value!=='signal' || !isPageVisible())return;
                 loadSignal();
+                _sigTick++;
+                // 中央連線狀態 + 最近訊框每 3 秒刷新,讓中央通訊監看接近即時
+                if(_sigTick%3===0){ loadSigControl(); loadSignalFrames(); }
             },1000);
         };
 
@@ -20765,7 +20893,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,sigCell,loadTimingPlans,sigSetBaseline,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameDecodeCache,sigFrameDecode,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,sigCell,loadTimingPlans,sigSetBaseline,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};

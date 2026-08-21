@@ -27,6 +27,7 @@ from __future__ import annotations
 import csv
 import os
 import pathlib
+import queue as _queue
 import secrets
 import socket
 import threading
@@ -194,6 +195,12 @@ _seq_next: dict = {"n": 0}              # 送出用的序號,逐次遞增
 CENTER_RELAY_ENABLED = os.getenv("SIGNAL_TC3_CENTER_RELAY", "0") == "1"
 CENTER_LISTEN_HOST = os.getenv("SIGNAL_TC3_CENTER_LISTEN_HOST", "0.0.0.0")
 CENTER_LISTEN_PORT = int(os.getenv("SIGNAL_TC3_CENTER_LISTEN_PORT", "1001") or 1001)
+# 🛑 廠商 HardwareStatus 說明「寫反」(極性顛倒):bit14 實際 1=信號驅動單元正常。
+#    中央照寫反的說明會把 0x4000(正常)誤顯示「故障」。我們在轉給中央前翻 bit14,
+#    補償中央的反向解讀,讓中央顯示正確。預設開,可用 env 關(=純通透)。
+HW_STATUS_FIX = os.getenv("SIGNAL_TC3_FIX_HWSTATUS", "1") != "0"
+HW_STATUS_FIX_CODES = ("0F04", "0FC1")   # 帶 HardwareStatus 的訊息
+HW_STATUS_FIX_MASK = 0x4000              # 要翻的位元(bit14 信號驅動單元)
 _center_sock_ref: dict = {"sock": None}  # 目前中央的連線(單一,MaxConnect=1)
 _ctrl_tx_lock = threading.Lock()         # 序列化「寫控制器」(號控下傳+中央轉發共用一條)
 _center_tx_lock = threading.Lock()       # 序列化「寫中央」(轉發控制器回報+我方自報共用一條)
@@ -203,6 +210,27 @@ _center_state: dict = {
     "connected": False, "peer": "", "since": 0.0,
     "from_center_bytes": 0, "to_center_bytes": 0, "center_frames": 0,
 }
+
+# 訊框持久化:抄到/中繼的每個 frame 都丟進背景 writer 寫 DB(監看要能存、篩選、重啟後還在)。
+# 用 queue 解耦 —— 收框/中繼迴圈只 put_nowait,實際寫 DB 在單一 writer 執行緒,不卡熱路徑。
+FRAME_PERSIST = os.getenv("SIGNAL_TC3_PERSIST_FRAMES", "1") != "0"
+FRAME_RETAIN_DAYS = float(os.getenv("SIGNAL_TC3_FRAME_RETAIN_DAYS", "180") or 180)  # 保存 6 個月
+_frame_q: "_queue.Queue" = _queue.Queue(maxsize=8000)
+
+
+def _enqueue_frame(rec: dict) -> None:
+    """把一個解好的 frame 排進持久化佇列(滿了就丟,監看不是關鍵資料,別回壓熱路徑)。"""
+    if not FRAME_PERSIST:
+        return
+    try:
+        _frame_q.put_nowait({
+            "ts": rec.get("ts"), "src": rec.get("src", ""), "code": rec.get("code"),
+            "seq": rec.get("seq"), "addr": rec.get("addr"), "len": rec.get("len"),
+            "cks_ok": 1 if rec.get("cks_ok") else 0, "raw": rec.get("raw", ""),
+            "user": rec.get("user", ""),
+        })
+    except _queue.Full:
+        pass
 
 _frames: deque = deque(maxlen=300)      # 最近訊框(raw + 解碼)
 _coverage: Counter = Counter()          # 每個 device+cmd 看過幾次
@@ -410,9 +438,8 @@ def _recorder_loop() -> None:
                     continue
                 if not d:
                     raise ConnectionError("對方關閉連線")
-                # 控制器→中央:原封轉發(透明中繼)。tee 內部對「沒中央連」會 no-op。
-                if CENTER_RELAY_ENABLED:
-                    _tee_to_center(d)
+                # 控制器→中央的轉發改「逐框」做(見下方切框處),才能對 0F04/0FC1 的
+                # HardwareStatus 翻 bit14 補償廠商寫反。這裡不再原封 tee 整段 recv。
                 buf += d
                 # 依 AA BB … AA CC 切訊框
                 while True:
@@ -430,14 +457,21 @@ def _recorder_loop() -> None:
                     buf = buf[j + 3:]
                     rec = decode_frame(frame)
                     if rec is None:
+                        # 完整框但解不出:仍原封轉給中央,保持透明。
+                        if CENTER_RELAY_ENABLED:
+                            _tee_to_center(frame)
                         continue
                     rec["src"] = "controller"   # 來源:號誌控制器(上行)
+                    # 逐框轉給中央(0F04/0FC1 會翻 HardwareStatus bit14 校正)。
+                    if CENTER_RELAY_ENABLED:
+                        _forward_controller_frame_to_center(frame, rec)
                     got_tc3 = True      # 切出合法碼框 = 對方確實是 TC3 來源
                     last_rx = rec["ts"]
                     with _lock:
                         _state["frames_total"] += 1
                         _state["last_frame_at"] = rec["ts"]
                         _frames.append(rec)      # 壞框也留著,方便查線路品質
+                        _enqueue_frame(rec)      # 持久化(含壞框,查線路品質用)
                         if not rec["cks_ok"]:
                             # 🛑 CKS 不對就到此為止。不可以拿它更新「目前燈態」或覆蓋矩陣 ——
                             #    壞掉的框會變成前端顯示的當前燈態,也會讓驗收矩陣記到
@@ -525,6 +559,26 @@ def _tee_to_center(data: bytes) -> None:
         _close_center()
 
 
+def _forward_controller_frame_to_center(frame: bytes, rec: dict) -> None:
+    """把控制器的一個完整框轉給中央(透明中繼的上行)。
+    🛑 例外:0F04/0FC1 的 HardwareStatus 翻 bit14(補償廠商『寫反』的說明,讓中央
+       的反向解讀顯示正確);翻完重組碼框(build_frame 會重算 CKS + byte stuffing)。
+       其餘一律原封轉發。出錯就原封轉,絕不擋線路。"""
+    out = frame
+    if (HW_STATUS_FIX and rec.get("cks_ok")
+            and rec.get("code") in HW_STATUS_FIX_CODES
+            and isinstance(rec.get("addr"), int) and isinstance(rec.get("seq"), int)):
+        try:
+            info = _unstuff(frame[7:-3])
+            if len(info) >= 4:
+                hs = ((info[2] << 8) | info[3]) ^ HW_STATUS_FIX_MASK
+                info = info[:2] + bytes(((hs >> 8) & 0xFF, hs & 0xFF)) + info[4:]
+                out = build_frame(rec["addr"], rec["seq"], info)
+        except Exception:
+            out = frame
+    _tee_to_center(out)
+
+
 def _send_to_center(frame: bytes) -> bool:
     """把「我方自己產生的」完整 TC3 碼框上報中央(不是轉發控制器的)。
     🛑 這是「不要寫死純通透」的鉤子 —— 我們自己控制號誌後,可用這個把結果/狀態
@@ -604,6 +658,7 @@ def _center_relay_loop() -> None:
                     with _lock:
                         _center_state["center_frames"] += 1
                         _frames.append(rec)
+                        _enqueue_frame(rec)     # 持久化中央下傳的指令
                         if rec.get("cks_ok") and rec.get("code"):
                             _coverage[rec["code"]] += 1
             _close_center()
@@ -995,6 +1050,13 @@ async def control_send(body: dict, _user=Depends(get_current_user)):
             rec["error"] = f"{type(exc).__name__}: {exc}"[:160]
 
     _sent_log.append(rec)
+    # 統一表 B:我方送出的框也持久化(src=self + 操作者),進同一條 TC3 通訊紀錄。
+    if rec["ok"]:
+        _enqueue_frame({
+            "ts": rec["ts"], "src": "self", "code": rec["code"],
+            "seq": rec["seq"], "addr": rec["addr"], "len": len(item["frame"]),
+            "cks_ok": True, "raw": rec["raw"], "user": rec["user"],
+        })
     # 🛑 送出一定要留在系統日誌,不能只存在記憶體裡 —— 服務重啟就沒了,
     #    而「誰在什麼時候對號誌送了什麼」是要能事後查的。
     print(f"[signal-tc3][控制] user={user} code={rec['code']} kind={rec['kind']} "
@@ -1345,3 +1407,145 @@ async def timing_plans_set_baseline(_user=Depends(get_current_user)):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"存基準失敗: {exc}")
     return {"ok": True, "count": len(plans)}
+
+
+# ── 訊框持久化:背景 writer + 篩選查詢(監看要能存起來、篩選、重啟後還在) ──────
+_frame_db_ready = False
+
+
+def _frames_db():
+    global _frame_db_ready
+    conn = _sqlite3.connect(_QDB_PATH, timeout=20)
+    conn.execute("PRAGMA busy_timeout=20000")
+    if not _frame_db_ready:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS signal_frames (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL, src TEXT, code TEXT, seq INTEGER, addr INTEGER,
+                len INTEGER, cks_ok INTEGER, raw TEXT, user TEXT
+            )""")
+        # 舊表補 user 欄(統一表 B:我方送出也存,帶操作者)
+        try:
+            conn.execute("ALTER TABLE signal_frames ADD COLUMN user TEXT")
+        except Exception:
+            pass
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_sf_ts ON signal_frames(ts)")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_sf_src ON signal_frames(src)")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_sf_code ON signal_frames(code)")
+        conn.commit()
+        _frame_db_ready = True
+    return conn
+
+
+def _frame_writer_loop() -> None:
+    """單一 writer:把 _frame_q 的 frame 批次寫進 signal_frames,順便定期清過期資料。
+    批次+單連線,避免每框一次 commit 的 IO;佇列空就 block 等,不忙迴圈。"""
+    print("📶 [signal-tc3] 訊框持久化 writer 啟動", flush=True)
+    conn = None
+    last_retain = 0.0
+    while not shutdown_event.is_set():
+        try:
+            if conn is None:
+                conn = _frames_db()
+            # 先 block 等第一筆(最多 1s),再把佇列現有的一次抽乾(上限 500 筆/批)
+            batch = []
+            try:
+                batch.append(_frame_q.get(timeout=1.0))
+            except _queue.Empty:
+                pass
+            while len(batch) < 500:
+                try:
+                    batch.append(_frame_q.get_nowait())
+                except _queue.Empty:
+                    break
+            if batch:
+                conn.executemany(
+                    "INSERT INTO signal_frames (ts,src,code,seq,addr,len,cks_ok,raw,user) "
+                    "VALUES (:ts,:src,:code,:seq,:addr,:len,:cks_ok,:raw,:user)", batch)
+                conn.commit()
+            # 保存政策:每 ~5 分鐘清一次過期(預設 3 天)
+            now = time.time()
+            if now - last_retain > 300:
+                last_retain = now
+                cutoff = now - FRAME_RETAIN_DAYS * 86400
+                conn.execute("DELETE FROM signal_frames WHERE ts < ?", (cutoff,))
+                conn.commit()
+        except Exception as exc:
+            print(f"📶 [signal-tc3] 訊框 writer 錯誤: {exc}", flush=True)
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
+            conn = None
+            if shutdown_event.wait(2.0):
+                break
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    print("📶 [signal-tc3] 訊框持久化 writer 結束", flush=True)
+
+
+_frame_writer_thread: Optional[threading.Thread] = None
+
+
+def start_frame_writer() -> None:
+    global _frame_writer_thread
+    if not FRAME_PERSIST:
+        return
+    if _frame_writer_thread is not None and _frame_writer_thread.is_alive():
+        return
+    _frame_writer_thread = threading.Thread(target=_frame_writer_loop, daemon=True,
+                                            name="signal-tc3-framewriter")
+    _frame_writer_thread.start()
+
+
+@router.get("/frames/log", summary="持久化訊框(可依方向/碼/CKS 篩選,重啟後還在)")
+async def frames_log(limit: int = 200, src: str = "", code: str = "",
+                     cks: str = "", _user=Depends(get_current_user)):
+    """src: controller/center/空;code: 訊息碼(如 5FC5);cks: ok/bad/空。最新在前。"""
+    n = max(1, min(2000, int(limit or 200)))
+    where = []
+    params: list = []
+    if src in ("controller", "center", "self"):
+        where.append("src=?")
+        params.append(src)
+    if code:
+        where.append("code=?")
+        params.append(code.upper())
+    if cks == "ok":
+        where.append("cks_ok=1")
+    elif cks == "bad":
+        where.append("cks_ok=0")
+    sql = "SELECT ts,src,code,seq,addr,len,cks_ok,raw,user FROM signal_frames"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY ts DESC LIMIT ?"
+    params.append(n)
+    try:
+        conn = _frames_db()
+        rows = conn.execute(sql, params).fetchall()
+        total = conn.execute("SELECT COUNT(*) FROM signal_frames").fetchone()[0]
+        conn.close()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"讀取失敗: {exc}")
+    out = [{
+        "ts": ts, "src": src_, "code": code_, "seq": seq, "addr": addr,
+        "len": ln, "cks_ok": bool(cks_ok), "raw": raw, "user": user or "",
+    } for ts, src_, code_, seq, addr, ln, cks_ok, raw, user in rows]
+    return {"count": len(out), "total": total, "frames": out}
+
+
+@router.get("/frames/decode", summary="解一個訊框的欄位(給 log 展開讀,可讀性)")
+async def frames_decode_one(code: str, raw: str, _user=Depends(get_current_user)):
+    """給前端 log 展開時呼叫:把該框 raw 解成 [{name,value,desc}]。解不出回 None。"""
+    fields = _decode_fields((code or "").upper(), raw or "")
+    # 附上訊息名稱,表頭好標
+    name = ""
+    for m in load_command_schemas().values():
+        if m.get("code") == (code or "").upper():
+            name = m.get("name", "")
+            break
+    return {"code": (code or "").upper(), "name": name, "fields": fields}
