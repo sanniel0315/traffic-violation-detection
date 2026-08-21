@@ -50,6 +50,12 @@ from api.utils.camera_stream import capture_open_guard
 import cv2
 import numpy as np
 
+try:
+    from PIL import Image as _PILImage, ImageDraw as _ImageDraw, ImageFont as _ImageFont
+    _PIL_OK = True
+except Exception:
+    _PIL_OK = False
+
 log = logging.getLogger(__name__)
 
 _streamers: dict = {}
@@ -179,12 +185,58 @@ def enabled_camera_ids() -> set:
             out.add(int(part))
     return out
 
+# 🛑 車種一律中文。這條疊加串流原本用英文簡寫(Car/Moto…)且沒畫時速,
+#    是 2026-08 把疊加從 MJPEG 改成 H.264 時的回歸 —— 使用者原本的疊加是
+#    「中文車種 + 時速」。標籤內容要跟 stream.py 的 MJPEG overlay 一致。
 _LABELS = {
-    "car": "Car", "motorcycle": "Moto", "truck": "Truck", "bus": "Bus",
-    "heavy_truck": "Heavy", "light_truck": "Light",
-    "person": "Person", "bicycle": "Bike",
+    "car": "小客車", "motorcycle": "機車", "truck": "大貨車", "bus": "公車",
+    "heavy_truck": "重型貨車", "light_truck": "小貨車",
+    "person": "行人", "bicycle": "自行車",
 }
 _BBOX_COLOR = (0, 216, 100)
+
+_FONT_PATHS = (
+    "/workspace/web/fonts/NotoSansCJK-Regular.ttc",
+    "/workspace/fonts/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+)
+_font_cache: dict = {}
+
+
+def _cjk_font(size: int = 20):
+    """中文字型。cv2.putText 畫不出中文,要用 PIL。"""
+    if not _PIL_OK:
+        return None
+    if size in _font_cache:
+        return _font_cache[size]
+    font = None
+    for p in _FONT_PATHS:
+        if os.path.exists(p):
+            try:
+                font = _ImageFont.truetype(p, size)
+                break
+            except Exception:
+                pass
+    _font_cache[size] = font
+    return font
+
+
+def _det_label(det: dict) -> str:
+    """組一個框的標籤:車種中文(優先卡車細分類)+ 時速。跟 MJPEG overlay 一致。"""
+    cls = det.get("class_name", "")
+    tc = det.get("truck_cls")
+    if tc and tc.get("label"):
+        zh = str(tc["label"])              # 卡車細分類:重型貨車/小貨車/大客車
+    else:
+        zh = _LABELS.get(cls)
+    if not zh:
+        return ""
+    spd = det.get("speed_kmh")
+    if isinstance(spd, (int, float)) and 0 < spd < 150:
+        zh += f" {int(spd)}km/h"
+    return zh
 
 
 def _draw_overlay(frame: np.ndarray, detections: list, sx: float = 1.0, sy: float = 1.0) -> np.ndarray:
@@ -192,9 +244,9 @@ def _draw_overlay(frame: np.ndarray, detections: list, sx: float = 1.0, sy: floa
         return frame
     out = frame
     drawn = False
+    labels = []          # (x, y, text) 收集起來最後用 PIL 一次畫中文
     for det in detections:
-        cls = det.get("class_name", "")
-        label = _LABELS.get(cls)
+        label = _det_label(det)
         if not label:
             continue
         b = det.get("bbox") or {}
@@ -206,8 +258,26 @@ def _draw_overlay(frame: np.ndarray, detections: list, sx: float = 1.0, sy: floa
         x1 = int(b["x1"] * sx); y1 = int(b["y1"] * sy)
         x2 = int(b["x2"] * sx); y2 = int(b["y2"] * sy)
         cv2.rectangle(out, (x1, y1), (x2, y2), _BBOX_COLOR, 2)
-        cv2.putText(out, label, (x1, max(20, y1 - 6)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, _BBOX_COLOR, 2)
+        labels.append((x1, max(2, y1 - 26), label))
+    if not labels:
+        return out
+    # 中文用 PIL 一次畫完(cv2.putText 畫不出中文)。整張轉一次 PIL 比每個框
+    # 各轉一小塊 ROI 省事,而且框數不多。字型載不到就退回 cv2(會變亂碼但不當)。
+    font = _cjk_font(20)
+    if _PIL_OK and font is not None:
+        try:
+            pil = _PILImage.fromarray(cv2.cvtColor(out, cv2.COLOR_BGR2RGB))
+            d = _ImageDraw.Draw(pil)
+            for x, y, text in labels:
+                d.rectangle([x - 2, y - 2, x + len(text) * 20 + 4, y + 26], fill=(0, 0, 0))
+                d.text((x + 1, y + 1), text, fill=(0, 216, 100), font=font)
+            out = cv2.cvtColor(np.asarray(pil), cv2.COLOR_RGB2BGR)
+        except Exception:
+            for x, y, text in labels:
+                cv2.putText(out, text, (x, y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.6, _BBOX_COLOR, 2)
+    else:
+        for x, y, text in labels:
+            cv2.putText(out, text, (x, y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.6, _BBOX_COLOR, 2)
     return out
 
 
