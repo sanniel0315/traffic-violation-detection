@@ -3397,20 +3397,30 @@
                      background:rgba(15,23,42,.86); color:#fff; border-radius:12px; padding:8px 6px; min-width:64px; text-align:center;
                      box-shadow:0 4px 14px rgba(0,0,0,.3); }
         .xn-count { font-size:26px; font-weight:800; line-height:1; font-variant-numeric:tabular-nums;
-                    font-family:ui-monospace,'SF Mono',monospace; transition:color .3s; }
+                    font-family:ui-monospace,'SF Mono',monospace; transition:color .3s;
+                    display:inline-block; }
+        /* 倒數每換一秒,數字輕微彈一下 */
+        .xn-count.tick { animation:xnTick .45s ease-out; }
+        @keyframes xnTick { 0%{transform:scale(1.35);opacity:.4} 45%{transform:scale(.94)} 100%{transform:scale(1);opacity:1} }
         .xn-count.warn { color:#f5c518; }
-        .xn-count.hot { color:#ef4444; }
+        /* 剩 5 秒內:紅字 + 持續脈動催促 */
+        .xn-count.hot { color:#ef4444; animation:xnHot .9s ease-in-out infinite; }
+        @keyframes xnHot { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.14);opacity:.75} }
         .xn-count-tot { font-size:10px; color:#94a3b8; margin-top:2px; }
         /* 擬真號誌燈箱:深色外殼,三燈,只亮當前 */
         .xn-signal { position:absolute; z-index:2; display:flex; flex-direction:column; gap:4px; padding:5px;
                      background:linear-gradient(180deg,#1f2937,#111827); border:1px solid #0b1220; border-radius:9px;
                      box-shadow:0 2px 6px rgba(0,0,0,.35); }
         .xn-signal.horiz { flex-direction:row; }
+        /* 燈切換:未亮→亮 有淡入 + 微放大,像真燈點起來。cubic-bezier 讓亮起時有一點回彈。 */
         .xn-dot { width:15px; height:15px; border-radius:50%; background:#243044; border:1px solid #0b1220;
-                  transition:box-shadow .25s,background .25s; }
-        .xn-dot.red { background:#ef4444; box-shadow:0 0 10px 2px rgba(239,68,68,.85), inset 0 0 3px rgba(255,255,255,.4); }
-        .xn-dot.amber { background:#f5a623; box-shadow:0 0 10px 2px rgba(245,166,35,.85), inset 0 0 3px rgba(255,255,255,.4); }
-        .xn-dot.green { background:#22c55e; box-shadow:0 0 10px 2px rgba(34,197,94,.85), inset 0 0 3px rgba(255,255,255,.4); }
+                  transition:background .35s ease, box-shadow .35s ease, transform .35s cubic-bezier(.34,1.56,.64,1); }
+        .xn-dot.red { background:#ef4444; transform:scale(1.12); box-shadow:0 0 10px 2px rgba(239,68,68,.85), inset 0 0 3px rgba(255,255,255,.4); }
+        .xn-dot.amber { background:#f5a623; transform:scale(1.12); box-shadow:0 0 10px 2px rgba(245,166,35,.85), inset 0 0 3px rgba(255,255,255,.4); }
+        .xn-dot.green { background:#22c55e; transform:scale(1.12); box-shadow:0 0 10px 2px rgba(34,197,94,.85), inset 0 0 3px rgba(255,255,255,.4); }
+        /* 黃燈(即將換相):亮著時閃爍提示 */
+        .xn-dot.amber { animation:xnAmber 1s ease-in-out infinite; }
+        @keyframes xnAmber { 0%,100%{opacity:1} 50%{opacity:.45} }
         .xn-foot { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
         .xn-chip { display:flex; align-items:baseline; gap:5px; padding:4px 10px; border-radius:8px;
                    background:#f1f5f9; border:1px solid var(--gov-border); font-size:13px; }
@@ -3423,11 +3433,12 @@
                      background:linear-gradient(180deg,#1f2937,#111827); border:1px solid #0b1220; }
         /* 覆蓋率進度條 */
         .cov-hero { display:flex; align-items:center; gap:16px; padding:14px 16px; border-radius:12px;
-                    background:linear-gradient(135deg,#0f172a,#1e293b); color:#fff; margin-bottom:14px; }
-        .cov-hero-num { font-size:30px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1; }
+                    background:linear-gradient(135deg,#eff6ff,#f0fdf4); border:1px solid var(--gov-border);
+                    color:var(--gov-text); margin-bottom:14px; }
+        .cov-hero-num { font-size:30px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1; color:#16a34a; }
         .cov-hero-num small { font-size:15px; color:#94a3b8; font-weight:600; }
-        .cov-hero-lbl { font-size:12px; color:#94a3b8; margin-top:4px; }
-        .cov-hero-bar { flex:1; height:12px; border-radius:6px; background:rgba(255,255,255,.12); overflow:hidden; }
+        .cov-hero-lbl { font-size:12px; color:#64748b; margin-top:4px; }
+        .cov-hero-bar { flex:1; height:12px; border-radius:6px; background:#e2e8f0; overflow:hidden; }
         .cov-hero-fill { height:100%; border-radius:6px; background:linear-gradient(90deg,#22c55e,#16a34a); transition:width .5s; }
         .cov-bars { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px 18px; margin-bottom:14px; }
         .cov-bar-row { }
@@ -6506,7 +6517,8 @@
                                             <span class="xn-dot" :class="{green:xnLampOn(L,'green')}"></span>
                                         </div>
                                         <div class="xn-center">
-                                            <div class="xn-count" :class="{warn:xnRemainLive(xn)!=null&&xnRemainLive(xn)<=10,hot:xnRemainLive(xn)!=null&&xnRemainLive(xn)<=5}">{{ xnRemainLive(xn)==null?'—':xnRemainLive(xn) }}</div>
+                                            <div class="xn-count" :key="'c'+xn.addr+'-'+xnRemainLive(xn)"
+                                                 :class="{warn:xnRemainLive(xn)!=null&&xnRemainLive(xn)<=10&&xnRemainLive(xn)>5, hot:xnRemainLive(xn)!=null&&xnRemainLive(xn)<=5, tick:xnRemainLive(xn)!=null&&xnRemainLive(xn)>5}">{{ xnRemainLive(xn)==null?'—':xnRemainLive(xn) }}</div>
                                             <div class="xn-count-tot">/ {{ xn.step_total_sec }}s</div>
                                         </div>
                                     </div>
