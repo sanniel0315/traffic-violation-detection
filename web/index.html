@@ -3421,6 +3421,25 @@
         .sd-row { display:flex; align-items:center; gap:8px; margin:4px 0; }
         .sd-signal { display:inline-flex; gap:4px; padding:4px 5px; border-radius:7px;
                      background:linear-gradient(180deg,#1f2937,#111827); border:1px solid #0b1220; }
+        /* 覆蓋率進度條 */
+        .cov-hero { display:flex; align-items:center; gap:16px; padding:14px 16px; border-radius:12px;
+                    background:linear-gradient(135deg,#0f172a,#1e293b); color:#fff; margin-bottom:14px; }
+        .cov-hero-num { font-size:30px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1; }
+        .cov-hero-num small { font-size:15px; color:#94a3b8; font-weight:600; }
+        .cov-hero-lbl { font-size:12px; color:#94a3b8; margin-top:4px; }
+        .cov-hero-bar { flex:1; height:12px; border-radius:6px; background:rgba(255,255,255,.12); overflow:hidden; }
+        .cov-hero-fill { height:100%; border-radius:6px; background:linear-gradient(90deg,#22c55e,#16a34a); transition:width .5s; }
+        .cov-bars { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px 18px; margin-bottom:14px; }
+        .cov-bar-row { }
+        .cov-bar-head { display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px; }
+        .cov-bar-head .k { color:#64748b; }
+        .cov-bar-head .v { font-weight:700; color:var(--gov-text); font-variant-numeric:tabular-nums; }
+        .cov-bar-track { height:8px; border-radius:5px; background:#e2e8f0; overflow:hidden; }
+        .cov-bar-fill { height:100%; border-radius:5px; transition:width .5s; }
+        .cov-bar-fill.lv-A { background:#ef4444; }
+        .cov-bar-fill.lv-B { background:#f59e0b; }
+        .cov-bar-fill.lv-O { background:#3b82f6; }
+        .cov-bar-fill.sc { background:#22c55e; }
         .camera-preview .go2rtc-host,
         .monitor-zoom-stage .go2rtc-host { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
         .go2rtc-host video-stream { width: 100%; height: 100%; display: block; }
@@ -6539,14 +6558,22 @@
                             </div>
                         </div>
                         <div class="card-body">
-                            <div class="sig-cov-sum">
-                                <div class="sig-cov-chip" v-for="(b, bi) in (sigCoverage.by_level||[])" :key="'lv'+bi">
-                                    <span class="sig-cov-k">等級 {{ b.level }}</span>
-                                    <span class="sig-cov-v">{{ b.seen }} / {{ b.total }}</span>
+                            <!-- 覆蓋率:整體大進度條 + 各等級/範疇小進度條 -->
+                            <div class="cov-hero">
+                                <div>
+                                    <div class="cov-hero-num">{{ sigCoverage.seen_total||0 }}<small> / {{ sigCoverage.catalog_total||105 }}</small></div>
+                                    <div class="cov-hero-lbl">協定 3.0 訊息覆蓋率 · {{ Math.round((sigCoverage.seen_total||0)/(sigCoverage.catalog_total||105)*100) }}%</div>
                                 </div>
-                                <div class="sig-cov-chip" v-for="(b, bi) in (sigCoverage.by_scope||[])" :key="'sc'+bi">
-                                    <span class="sig-cov-k">{{ b.scope==='IC' ? '號誌控制器' : '設備共用' }}</span>
-                                    <span class="sig-cov-v">{{ b.seen }} / {{ b.total }}</span>
+                                <div class="cov-hero-bar"><div class="cov-hero-fill" :style="{width:((sigCoverage.seen_total||0)/(sigCoverage.catalog_total||105)*100)+'%'}"></div></div>
+                            </div>
+                            <div class="cov-bars">
+                                <div class="cov-bar-row" v-for="(b, bi) in (sigCoverage.by_level||[])" :key="'lv'+bi">
+                                    <div class="cov-bar-head"><span class="k">等級 {{ b.level }}</span><span class="v">{{ b.seen }} / {{ b.total }}</span></div>
+                                    <div class="cov-bar-track"><div class="cov-bar-fill" :class="'lv-'+b.level" :style="{width:(b.total?b.seen/b.total*100:0)+'%'}"></div></div>
+                                </div>
+                                <div class="cov-bar-row" v-for="(b, bi) in (sigCoverage.by_scope||[])" :key="'sc'+bi">
+                                    <div class="cov-bar-head"><span class="k">{{ b.scope==='IC' ? '號誌控制器' : '設備共用' }}</span><span class="v">{{ b.seen }} / {{ b.total }}</span></div>
+                                    <div class="cov-bar-track"><div class="cov-bar-fill sc" :style="{width:(b.total?b.seen/b.total*100:0)+'%'}"></div></div>
                                 </div>
                             </div>
                             <div style="display:flex;gap:8px;align-items:center;margin:10px 0">
