@@ -201,6 +201,11 @@ CENTER_LISTEN_PORT = int(os.getenv("SIGNAL_TC3_CENTER_LISTEN_PORT", "1001") or 1
 HW_STATUS_FIX = os.getenv("SIGNAL_TC3_FIX_HWSTATUS", "1") != "0"
 HW_STATUS_FIX_CODES = ("0F04", "0FC1")   # 帶 HardwareStatus 的訊息
 HW_STATUS_FIX_MASK = 0x4000              # 要翻的位元(bit14 信號驅動單元)
+# 自我查詢比對:我方主動查控制器(5F40/5F48/5F44/0F41),回報預設「不轉發中央」,
+# 避免中央看到它沒問的回報。用「有界計數 + 短窗」抑制:只擋掉我們預期筆數的回報,
+# 中央若同碼查詢,其回報仍會有一筆通過(資料相同),不會被餓死。
+SELF_PROBE_SUPPRESS = os.getenv("SIGNAL_TC3_SELFPROBE_NO_TEE", "1") != "0"
+_self_probe_expect: dict = {}            # reply_code -> [remaining, expiry_ts]
 _center_sock_ref: dict = {"sock": None}  # 目前中央的連線(單一,MaxConnect=1)
 _ctrl_tx_lock = threading.Lock()         # 序列化「寫控制器」(號控下傳+中央轉發共用一條)
 _center_tx_lock = threading.Lock()       # 序列化「寫中央」(轉發控制器回報+我方自報共用一條)
@@ -559,11 +564,41 @@ def _tee_to_center(data: bytes) -> None:
         _close_center()
 
 
+def _note_expected_reply(reply_code: str, n: int = 1) -> None:
+    """記下「我方查詢預期收到的回報碼」n 筆,短窗內抑制轉發給中央。"""
+    now = time.time()
+    exp = _self_probe_expect.get(reply_code)
+    if exp and now < exp[1]:
+        exp[0] += n
+        exp[1] = now + 10.0
+    else:
+        _self_probe_expect[reply_code] = [n, now + 10.0]
+
+
+def _should_suppress_to_center(code: Optional[str]) -> bool:
+    """此回報是否為我方查詢的結果(該筆不轉中央)。有界計數,過窗自動失效。"""
+    if not code:
+        return False
+    exp = _self_probe_expect.get(code)
+    if not exp:
+        return False
+    if time.time() >= exp[1] or exp[0] <= 0:
+        _self_probe_expect.pop(code, None)
+        return False
+    exp[0] -= 1
+    if exp[0] <= 0:
+        _self_probe_expect.pop(code, None)
+    return True
+
+
 def _forward_controller_frame_to_center(frame: bytes, rec: dict) -> None:
     """把控制器的一個完整框轉給中央(透明中繼的上行)。
-    🛑 例外:0F04/0FC1 的 HardwareStatus 翻 bit14(補償廠商『寫反』的說明,讓中央
+    🛑 例外1:我方自我查詢的回報,不轉中央(SELF_PROBE_SUPPRESS)。
+    🛑 例外2:0F04/0FC1 的 HardwareStatus 翻 bit14(補償廠商『寫反』的說明,讓中央
        的反向解讀顯示正確);翻完重組碼框(build_frame 會重算 CKS + byte stuffing)。
        其餘一律原封轉發。出錯就原封轉,絕不擋線路。"""
+    if SELF_PROBE_SUPPRESS and _should_suppress_to_center(rec.get("code")):
+        return
     out = frame
     if (HW_STATUS_FIX and rec.get("cks_ok")
             and rec.get("code") in HW_STATUS_FIX_CODES
@@ -1302,17 +1337,27 @@ def _fmap(fields) -> dict:
 
 
 def _latest_reply_by_plan(reply_code: str) -> dict:
-    """從 query-log 撈某回報碼、每個 PlanID 的最新一筆,重新解碼 raw。
+    """撈某回報碼、每個 PlanID 的最新一筆,重新解碼 raw。
+    來源 = query-log(前端配對存的) + signal_frames(側錄/中繼/自我查詢抄到的),兩者合併取最新。
     回 {plan_id: {"vals": {...}, "ts": ts}}。"""
     out: dict = {}
+    rows: list = []
+    rc = reply_code.upper()
     try:
         conn = _query_db()
-        rows = conn.execute(
-            "SELECT ts, raw FROM signal_query_log WHERE reply_code=? ORDER BY ts DESC",
-            (reply_code.upper(),)).fetchall()
+        rows += conn.execute(
+            "SELECT ts, raw FROM signal_query_log WHERE reply_code=?", (rc,)).fetchall()
         conn.close()
     except Exception:
-        return out
+        pass
+    try:
+        conn = _frames_db()
+        rows += conn.execute(
+            "SELECT ts, raw FROM signal_frames WHERE code=? AND cks_ok=1", (rc,)).fetchall()
+        conn.close()
+    except Exception:
+        pass
+    rows.sort(key=lambda r: r[0] or 0, reverse=True)   # ts DESC,第一筆即最新
     for ts, raw in rows:
         if not raw:
             continue
@@ -1549,3 +1594,59 @@ async def frames_decode_one(code: str, raw: str, _user=Depends(get_current_user)
             name = m.get("name", "")
             break
     return {"code": (code or "").upper(), "name": name, "fields": fields}
+
+
+def _send_query_to_controller(code: str, params: bytes, user: str) -> bool:
+    """我方主動送一則查詢給控制器(走 _controller_send,與中央/號控共用 tx 鎖)。
+    記下預期回報碼(供抑制轉發中央),並把送出框存進通訊紀錄(src=self)。"""
+    try:
+        dev = int(code[:2], 16)
+        cmd = int(code[2:], 16)
+    except Exception:
+        return False
+    info = bytes((dev, cmd)) + (params or b"")
+    addr = _target_addr()
+    if addr is None:
+        addr = 0xFFFF
+    seq = (int(_seq_next.get("n", 0)) + 1) & 0xFF
+    try:
+        frame = build_frame(addr, seq, info)
+    except Exception:
+        return False
+    if not _controller_send(frame):
+        return False
+    _seq_next["n"] = seq
+    reply_code = f"{dev:02X}{(cmd + 0x80):02X}"   # 查詢 4x/5x/6x → 回報 Cx/Dx/Ex
+    _note_expected_reply(reply_code, 1)
+    ts = time.time()
+    raw_hex = frame.hex(" ").upper()
+    _sent_log.append({"ts": ts, "user": user, "code": code,
+                      "kind": _kind_of(cmd, dev), "addr": addr, "seq": seq,
+                      "raw": raw_hex, "ok": True, "error": ""})
+    _enqueue_frame({"ts": ts, "src": "self", "code": code, "seq": seq,
+                    "addr": addr, "len": len(frame), "cks_ok": True,
+                    "raw": raw_hex, "user": user})
+    return True
+
+
+@router.post("/control/self-probe", summary="自我查詢比對:主動查控制器 控制策略/時制計畫/基本參數/硬體狀態")
+def control_self_probe(_user=Depends(get_current_user)):
+    """一鍵對控制器送 5F40(控制策略)/5F48(目前時制計畫)/5F44(各計畫基本參數)/
+    0F41(硬體狀態) 查詢。回報自動進通訊紀錄 + 補滿時制計畫表,預設不轉發中央。
+    (sync def:內含間隔 sleep,交給 FastAPI threadpool 跑,不卡事件迴圈。)"""
+    if not CONTROL_ENABLED:
+        raise HTTPException(status_code=403, detail="號控未啟用(SIGNAL_TC3_CONTROL)")
+    if _sock_ref.get("sock") is None:
+        raise HTTPException(status_code=409, detail="號誌通道未連線,無法查詢")
+    user = getattr(_user, "username", None) or str(_user)
+    sent = []
+    for code, params in (("5F40", b""), ("5F48", b""), ("0F41", b"")):
+        if _send_query_to_controller(code, params, user):
+            sent.append(code)
+        time.sleep(0.2)
+    plans = [p["plan_id"] for p in _merge_timing_plans()] or [1]
+    for pid in plans[:16]:
+        if _send_query_to_controller("5F44", bytes((int(pid) & 0xFF,)), user):
+            sent.append(f"5F44/{pid}")
+        time.sleep(0.2)
+    return {"ok": True, "sent": sent, "plans": plans}
