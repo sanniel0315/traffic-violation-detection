@@ -308,6 +308,8 @@ async def lifespan(app: FastAPI):
         signal_tc3_route.start_recorder()
         # 中央電腦中繼(opt-in,SIGNAL_TC3_CENTER_RELAY=1 才起):我們=中央眼中的號誌控制器。
         signal_tc3_route.start_center_relay()
+        # 訊框持久化 writer(監看要能存起來/篩選/重啟後還在)。
+        signal_tc3_route.start_frame_writer()
     except Exception as _e:
         print(f"⚠️ [signal-tc3] 啟動失敗: {_e}", flush=True)
     threading.Thread(target=_service_watchdog, daemon=True, name="service-watchdog").start()

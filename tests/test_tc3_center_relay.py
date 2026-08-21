@@ -82,6 +82,37 @@ def test_center_relay_bidirectional_and_inject():
     S.shutdown_event.clear()
 
 
+def test_hardwarestatus_bit14_flip_to_center():
+    """0F04(HardwareStatus=0x4000) 轉給中央前,bit14 應被翻成 0(補償廠商寫反),
+    且重組的碼框 CKS 合法、其他欄位不變。"""
+    import socket as _s
+    # 造一個 0F04 主動回報:INFO = 0F 04 + HardwareStatus(0x4000 big-endian)
+    info = bytes([0x0F, 0x04, 0x40, 0x00])
+    frame = S.build_frame(0xFFFF, 0x63, info)
+    rec = S.decode_frame(frame)
+    assert rec is not None and rec.get("code") == "0F04" and rec.get("cks_ok")
+    # 假中央 socket
+    ours, far = _s.socketpair()
+    far.settimeout(2)
+    S._center_sock_ref["sock"] = ours
+    try:
+        S._forward_controller_frame_to_center(frame, rec)
+        got = far.recv(1024)
+    finally:
+        S._close_center()
+        far.close()
+    # 中央收到的框:解出來 HardwareStatus 應為 0x0000(bit14 被翻掉)
+    out = S.decode_frame(got)
+    assert out is not None and out.get("cks_ok"), "校正後的框 CKS 不合法"
+    fields = S._decode_fields("0F04", got.hex(" ").upper())
+    hs = next((x["value"] for x in (fields or []) if x["name"] == "HardwareStatus"), None)
+    assert hs == 0x0000, f"bit14 沒被翻:HardwareStatus={hs}"
+    # seq/addr 不變
+    assert out.get("seq") == 0x63 and out.get("addr") == 0xFFFF
+    print("test_hardwarestatus_bit14_flip_to_center: PASS")
+
+
 if __name__ == "__main__":
     test_center_relay_bidirectional_and_inject()
-    print("test_tc3_center_relay: PASS")
+    test_hardwarestatus_bit14_flip_to_center()
+    print("ALL PASS")
