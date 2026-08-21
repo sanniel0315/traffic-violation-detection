@@ -24,8 +24,7 @@ from api.models import init_db
 from api.routes import auth, frigate, lpr, lpr_stream, lpr_visual, violations, cameras, stream, traffic, nx
 from api.routes import go2rtc as go2rtc_route
 from api.routes import nport as nport_route
-from api.routes import signal_tc3 as signal_tc3_route
-from api.routes.auth import get_admin_user
+from api.routes.auth import get_admin_user, get_current_user
 from api.routes import congestion
 from api.routes import logs, system
 from api.routes import external, api_key_admin
@@ -301,17 +300,10 @@ async def lifespan(app: FastAPI):
     logs.add_log("info", "系統日誌服務啟動", "system")
     os.makedirs("./output/violations", exist_ok=True)
     threading.Thread(target=_resume_services_in_background, daemon=True, name="resume-services").start()
-    # 號誌控制器抄錄器(TC3 3.0):只讀不寫,獨立執行緒,不影響推論。
-    # 來源掉線會自行退避重連;交控中心接上時(MiiNePort MaxConnect=1)會被拒絕,
-    # 退避到最多 30 秒讓中心優先。
-    try:
-        signal_tc3_route.start_recorder()
-        # 中央電腦中繼(opt-in,SIGNAL_TC3_CENTER_RELAY=1 才起):我們=中央眼中的號誌控制器。
-        signal_tc3_route.start_center_relay()
-        # 訊框持久化 writer(監看要能存起來/篩選/重啟後還在)。
-        signal_tc3_route.start_frame_writer()
-    except Exception as _e:
-        print(f"⚠️ [signal-tc3] 啟動失敗: {_e}", flush=True)
+    # 🛑 號誌 TC3(抄錄 + 中央中繼 + 控制 + 持久化)已拆成獨立常駐服務 traffic-signal
+    #    (services/signal_daemon.py,127.0.0.1:8012)。web 重啟不該中斷中央連線,所以
+    #    這裡「不再」啟動 recorder/relay/writer —— 那些只在 daemon 裡跑。
+    #    本 process 只把 /api/signal/* 反向代理過去(見下方 signal_proxy)。
     threading.Thread(target=_service_watchdog, daemon=True, name="service-watchdog").start()
     threading.Thread(target=_report_aggregation_worker, daemon=True, name="report-aggregation").start()
     # 啟動 MQTT bridge (讀 config，自動連 broker)
@@ -427,7 +419,35 @@ app.include_router(auth.router)
 app.include_router(frigate.router)
 app.include_router(go2rtc_route.router)
 app.include_router(nport_route.router)
-app.include_router(signal_tc3_route.router)
+# 🛑 號誌 /api/signal/* 不再由本 process 提供,改反向代理到常駐 daemon
+#    traffic-signal(127.0.0.1:8012)。web 端仍要登入,daemon 內部不驗。
+#    全是 JSON 端點、無串流,單純轉發即可;daemon 不在時回 502 不拖垮 web。
+SIGNAL_DAEMON_URL = os.getenv("SIGNAL_DAEMON_URL", "http://127.0.0.1:8012")
+
+
+@app.api_route("/api/signal/{sub_path:path}",
+               methods=["GET", "POST", "PUT", "DELETE"])
+async def signal_proxy(sub_path: str, request: Request,
+                       _user=Depends(get_current_user)):
+    import requests as _rq
+    from fastapi.concurrency import run_in_threadpool
+    url = f"{SIGNAL_DAEMON_URL}/api/signal/{sub_path}"
+    body = await request.body()
+    ctype = request.headers.get("content-type", "")
+
+    def _do():
+        return _rq.request(request.method, url,
+                           params=dict(request.query_params),
+                           data=body if body else None,
+                           headers={"content-type": ctype} if ctype else {},
+                           timeout=35)
+    try:
+        r = await run_in_threadpool(_do)
+    except Exception as exc:
+        return Response(content=('{"detail":"號誌 daemon 無回應: %s"}' % exc).encode(),
+                        status_code=502, media_type="application/json")
+    return Response(content=r.content, status_code=r.status_code,
+                    media_type=r.headers.get("content-type", "application/json"))
 app.include_router(nx.router)
 app.include_router(lpr.router)
 app.include_router(lpr_stream.router)
