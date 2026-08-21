@@ -3350,7 +3350,7 @@
            而且 SVG 疊加層的座標換算是照 contain 算的,改 cover 框會整個偏掉。 */
         .camera-preview { position: relative; background: #000; aspect-ratio: 16 / 9; height: auto; min-height: 160px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
         .camera-preview img,
-        .camera-preview video { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; }
+        .camera-preview video { position: absolute; inset: 0; max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; }
         /* go2rtc H.264 播放器外殼。<video-stream> 內部自己放一個 <video>,
            上面那條 .camera-preview video 會套到它,這裡只要讓外殼撐滿。 */
         /* 號誌燈態:每個方向一張卡,燈色直接由協定的 SignalStatus 位元決定 */
@@ -6747,14 +6747,14 @@
                             </div>
                             <!-- 查詢結果:每次查詢送出後,配對控制器回報並解成欄位對照表 -->
                             <div v-if="sigQryLog.length" style="margin-top:16px">
-                                <div style="font-size:12px;color:#64748b;margin-bottom:6px">查詢結果(回報欄位對照)</div>
-                                <div v-for="(q, qi) in sigQryLog" :key="'q'+qi" style="margin-bottom:10px;border:1px solid var(--border-color,#e2e8f0);border-radius:8px;overflow:hidden">
+                                <div style="font-size:12px;color:#64748b;margin-bottom:6px">最新查詢結果（回報欄位對照）<span style="color:#94a3b8">· 歷史見下方「TC3 通訊紀錄」</span></div>
+                                <div style="border:1px solid var(--border-color,#e2e8f0);border-radius:8px;overflow:hidden">
                                     <div style="display:flex;gap:8px;align-items:center;padding:6px 10px;background:#f8fafc;font-size:12px">
-                                        <el-tag size="small">{{ q.code }} → {{ q.reply_code }}</el-tag>
-                                        <b>{{ q.name }}</b>
-                                        <span style="color:#94a3b8;margin-left:auto">{{ new Date(q.ts*1000).toLocaleTimeString('zh-TW',{hour12:false}) }}</span>
+                                        <el-tag size="small">{{ sigQryLog[0].code }} → {{ sigQryLog[0].reply_code }}</el-tag>
+                                        <b>{{ sigQryLog[0].name }}</b>
+                                        <span style="color:#94a3b8;margin-left:auto">{{ new Date(sigQryLog[0].ts*1000).toLocaleTimeString('zh-TW',{hour12:false}) }}</span>
                                     </div>
-                                    <el-table :data="q.fields" size="small" style="width:100%">
+                                    <el-table :data="sigQryLog[0].fields" size="small" max-height="300" style="width:100%">
                                         <el-table-column prop="name" label="欄位" width="160"></el-table-column>
                                         <el-table-column label="值">
                                             <template #default="sc"><span style="font-family:monospace">{{ Array.isArray(sc.row.value)?('['+sc.row.value.join(', ')+']'):sc.row.value }}</span><span v-if="sigDecodeValue(sc.row.name,sc.row.value)" style="color:#2563eb;font-size:12px;margin-left:8px">= {{ sigDecodeValue(sc.row.name,sc.row.value) }}</span></template>
@@ -6817,58 +6817,35 @@
 
                     <div class="card" v-if="sigCtl.enabled">
                         <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-list"/></svg>時制計畫比對(中心基準 / 現場)</span>
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>時制計畫（現場即時）</span>
                             <span style="display:flex;gap:8px;align-items:center">
                                 <el-button size="small" @click="loadTimingPlans">重新載入</el-button>
                                 <el-button size="small" type="success" plain :loading="sigProbing" @click="sigSelfProbe">自我查詢比對</el-button>
-                                <el-button size="small" type="primary" plain @click="sigSetBaseline">設為中心基準</el-button>
                             </span>
                         </div>
                         <div class="card-body">
                             <div v-if="!sigPlanView.length" class="analysis-setting-tip">
-                                尚無時制計畫資料。請在上方對每套計畫查詢 <b>5F45 時制計畫資料庫－查詢</b>(拿綠燈/週期/時差) 與 <b>5F44 時制計畫基本參數－查詢</b>(拿最短綠/最長綠/黃燈/全紅/行人),回報配對後會自動整理到這裡,並可按「設為中心基準」把當下值存成參考版做漂移比對。
+                                尚無時制計畫資料。按上方「自我查詢比對」向控制器抄錄，或等中央/控制器資料進來，就會整理到這裡。
                             </div>
                             <div v-else>
-                                <div style="display:flex;gap:8px;margin-bottom:8px;font-size:12px;color:#64748b;flex-wrap:wrap">
-                                    <span style="padding:2px 8px;background:#fef3c7;border-radius:4px">黃底 = 現場與中心基準不一致</span>
-                                    <span style="padding:2px 8px;background:#dbeafe;border-radius:4px">藍底 = 只在單邊有</span>
-                                </div>
-                                <div v-for="pv in sigPlanView" :key="'tp'+pv.plan_id" style="margin-bottom:16px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
+                                <div v-for="pv in sigPlanView" :key="'tp'+pv.plan_id" style="margin-bottom:14px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
                                     <div style="padding:6px 12px;background:#f8fafc;font-weight:600;border-bottom:1px solid #e2e8f0">
                                         時制計畫 {{ pv.plan_id }}
-                                        <span style="font-weight:400;font-size:12px;color:#64748b;margin-left:8px">現場 週期 {{ pv.f?sigCell(pv.f.cycle):'—' }}s / 時差 {{ pv.f?sigCell(pv.f.offset):'—' }}s / 基準方向 {{ pv.f?sigCell(pv.f.direct):'—' }} / 時相編號 {{ pv.f?sigCell(pv.f.phase_order):'—' }}</span>
+                                        <span style="font-weight:400;font-size:12px;color:#64748b;margin-left:8px">週期 {{ pv.f?sigCell(pv.f.cycle):'—' }}s / 時差 {{ pv.f?sigCell(pv.f.offset):'—' }}s / 基準方向 {{ pv.f?sigCell(pv.f.direct):'—' }} / 時相編號 {{ pv.f?sigCell(pv.f.phase_order):'—' }}</span>
                                     </div>
-                                    <div style="display:flex;flex-wrap:wrap">
-                                        <div style="flex:1;min-width:360px;padding:8px" :style="pv.onlyBase?'background:#dbeafe':''">
-                                            <div style="font-size:12px;color:#64748b;margin-bottom:4px">中心基準{{ pv.b?'':'(未設定)' }}</div>
-                                            <table class="tp-tbl"><thead><tr><th>分相</th><th>綠燈</th><th>最短綠</th><th>最長綠</th><th>黃燈</th><th>全紅</th><th>人閃</th><th>人紅</th></tr></thead><tbody>
-                                                <tr v-for="ph in pv.phases" :key="'b'+ph.idx">
-                                                    <td>分相{{ ph.idx }}</td>
-                                                    <td :style="ph.diff.green?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.green) }}</td>
-                                                    <td :style="ph.diff.min_green?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.min_green) }}</td>
-                                                    <td :style="ph.diff.max_green?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.max_green) }}</td>
-                                                    <td :style="ph.diff.yellow?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.yellow) }}</td>
-                                                    <td :style="ph.diff.all_red?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.all_red) }}</td>
-                                                    <td :style="ph.diff.ped_flash?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.ped_flash) }}</td>
-                                                    <td :style="ph.diff.ped_red?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.b.ped_red) }}</td>
-                                                </tr>
-                                            </tbody></table>
-                                        </div>
-                                        <div style="flex:1;min-width:360px;padding:8px;border-left:1px solid #e2e8f0" :style="pv.onlyField?'background:#dbeafe':''">
-                                            <div style="font-size:12px;color:#64748b;margin-bottom:4px">現場(即時查到)</div>
-                                            <table class="tp-tbl"><thead><tr><th>分相</th><th>綠燈</th><th>最短綠</th><th>最長綠</th><th>黃燈</th><th>全紅</th><th>人閃</th><th>人紅</th></tr></thead><tbody>
-                                                <tr v-for="ph in pv.phases" :key="'f'+ph.idx">
-                                                    <td>分相{{ ph.idx }}</td>
-                                                    <td :style="ph.diff.green?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.green) }}</td>
-                                                    <td :style="ph.diff.min_green?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.min_green) }}</td>
-                                                    <td :style="ph.diff.max_green?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.max_green) }}</td>
-                                                    <td :style="ph.diff.yellow?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.yellow) }}</td>
-                                                    <td :style="ph.diff.all_red?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.all_red) }}</td>
-                                                    <td :style="ph.diff.ped_flash?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.ped_flash) }}</td>
-                                                    <td :style="ph.diff.ped_red?'background:#fef3c7;font-weight:600':''">{{ sigCell(ph.f.ped_red) }}</td>
-                                                </tr>
-                                            </tbody></table>
-                                        </div>
+                                    <div style="padding:8px">
+                                        <table class="tp-tbl"><thead><tr><th>分相</th><th>綠燈</th><th>最短綠</th><th>最長綠</th><th>黃燈</th><th>全紅</th><th>人閃</th><th>人紅</th></tr></thead><tbody>
+                                            <tr v-for="ph in pv.phases" :key="'f'+ph.idx">
+                                                <td>分相{{ ph.idx }}</td>
+                                                <td>{{ sigCell(ph.f.green) }}</td>
+                                                <td>{{ sigCell(ph.f.min_green) }}</td>
+                                                <td>{{ sigCell(ph.f.max_green) }}</td>
+                                                <td>{{ sigCell(ph.f.yellow) }}</td>
+                                                <td>{{ sigCell(ph.f.all_red) }}</td>
+                                                <td>{{ sigCell(ph.f.ped_flash) }}</td>
+                                                <td>{{ sigCell(ph.f.ped_red) }}</td>
+                                            </tr>
+                                        </tbody></table>
                                     </div>
                                 </div>
                             </div>
