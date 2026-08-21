@@ -6524,12 +6524,29 @@
                                         <b>{{ sigCmdCur.name }}</b>
                                         <span style="font-size:12px;color:#64748b">{{ sigCmdCur.code }}　{{ sigCmdCur.kind }}　等級 {{ sigCmdCur.level }}　規範 {{ sigCmdCur.page }}</span>
                                     </div>
-                                    <div v-for="f in sigCmdCur.fields" :key="f.name" style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-                                        <label style="width:130px;font-size:12px" :title="f.desc||''">{{ f.name }}<span v-if="f.desc" style="color:#94a3b8"> · {{ f.desc }}</span></label>
-                                        <el-input-number v-if="f.kind==='int'" v-model="sigCmdVals[f.name]" :min="f.lo" :max="f.hi" size="small" controls-position="right" style="width:150px"></el-input-number>
+                                    <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
+                                        <el-button size="small" plain :disabled="!sigQryLog.length" @click="sigFillFromQuery">帶入目前查詢值</el-button>
+                                    </div>
+                                    <div v-for="f in sigCmdCur.fields" :key="f.name" style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px">
+                                        <label style="width:130px;font-size:12px;padding-top:5px" :title="f.desc||''">{{ f.name }}<span v-if="f.desc" style="color:#94a3b8"> · {{ f.desc }}</span></label>
+                                        <!-- int:下拉選單,選項是合法範圍 lo~hi(可打字快速跳) -->
+                                        <el-select v-if="f.kind==='int'" v-model="sigCmdVals[f.name]" filterable size="small" style="width:150px" :placeholder="f.lo+'~'+f.hi">
+                                            <el-option v-for="n in sigIntOpts(f)" :key="n" :value="n" :label="String(n)"></el-option>
+                                        </el-select>
+                                        <!-- repeat(如 Green 綠燈秒數):依 count 欄位的值展開 N 個下拉 -->
+                                        <div v-else-if="f.kind==='repeat'" style="display:flex;gap:6px;flex-wrap:wrap">
+                                            <div v-for="i in sigRepeatN(f)" :key="i" style="display:flex;flex-direction:column;align-items:center">
+                                                <span style="font-size:10px;color:#94a3b8">{{ sigRepeatLabel(f,i-1) }}</span>
+                                                <el-select v-model="sigRepeatModel(f)[i-1]" filterable size="small" style="width:90px" placeholder="—">
+                                                    <el-option v-for="n in sigRepeatOpts(f)" :key="n" :value="n" :label="String(n)"></el-option>
+                                                </el-select>
+                                            </div>
+                                            <span v-if="!sigRepeatN(f)" style="font-size:11px;color:#f59e0b;padding-top:5px">先選好 {{ f.count }}</span>
+                                        </div>
                                         <el-input v-else v-model="sigCmdVals[f.name]" size="small" :placeholder="f.kind" style="width:220px"></el-input>
-                                        <span style="font-size:11px;color:#94a3b8" v-if="f.kind==='int'">{{ f.lo }}~{{ f.hi }}</span>
-                                        <span style="font-size:11px;color:#f59e0b" v-else>{{ f.kind }}(進階欄位，如不確定請用手輸)</span>
+                                        <span style="font-size:11px;color:#94a3b8;padding-top:5px" v-if="f.kind==='int'">{{ f.lo }}~{{ f.hi }}</span>
+                                        <span style="font-size:11px;color:#94a3b8;padding-top:5px" v-else-if="f.kind==='repeat'">共 {{ f.count }} 個</span>
+                                        <span style="font-size:11px;color:#f59e0b;padding-top:5px" v-else>{{ f.kind }}(進階，如不確定請用手輸)</span>
                                     </div>
                                     <div v-if="!sigCtlSchemaOk || !sigCmdCur.fields.length" style="margin-top:8px">
                                         <label style="font-size:12px;color:#64748b">參數 info_hex(設備碼/指令碼之後的位元組)</label>
@@ -19603,6 +19620,47 @@ const app=createApp({
             }
             ElementPlus.ElMessage.warning(`已送出 ${qcode},但 5 秒內沒收到對應回報`);
         };
+        // ── 號控表單:下拉選單 helper ──────────────────────────────────
+        // int 欄位的選項 = 合法範圍。號誌的秒數值上限很大(協定 8190),但實務不會
+        // 超過幾分鐘,列太多下拉會卡,所以上限收在 300;filterable 仍可打字跳任意值。
+        const SIG_OPT_CAP=300;
+        const sigIntOpts=(f)=>{
+            const lo=Number(f.lo||0), hi=Math.min(Number(f.hi||0), Number(f.lo||0)+SIG_OPT_CAP);
+            const out=[]; for(let n=lo;n<=hi;n++)out.push(n); return out;
+        };
+        // repeat(如 Green):幾個 = count 欄位當下的值(例 SubPhaseCount)
+        const sigRepeatN=(f)=>{
+            if(typeof f.count==='number')return f.count;
+            const v=Number(sigCmdVals.value[f.count]||0);
+            return (v>0&&v<=32)?v:0;
+        };
+        const sigRepeatModel=(f)=>{
+            if(!Array.isArray(sigCmdVals.value[f.name]))sigCmdVals.value[f.name]=[];
+            return sigCmdVals.value[f.name];
+        };
+        const sigRepeatOpts=(f)=>{
+            const inner=(f.fields&&f.fields[0])||{lo:0,hi:SIG_OPT_CAP};
+            return sigIntOpts(inner);
+        };
+        const sigRepeatLabel=(f,idx)=>{
+            // Green 依分相編號,其餘就標索引
+            if(f.name==='Green')return '分相'+(idx+1);
+            return '#'+(idx+1);
+        };
+        // 從最近一筆查詢結果把值帶進表單,讓改動從現況出發而不是從零填
+        const sigFillFromQuery=()=>{
+            const q=sigQryLog.value[0];
+            if(!q||!q.fields){ ElementPlus.ElMessage.warning('還沒有查詢結果可帶入'); return; }
+            const map={}; q.fields.forEach(fl=>{ map[fl.name]=fl.value; });
+            const nv={};
+            (sigCmdCur.value?sigCmdCur.value.fields:[]).forEach(f=>{
+                if(f.name in map){
+                    nv[f.name]=Array.isArray(map[f.name])?map[f.name].slice():map[f.name];
+                }
+            });
+            sigCmdVals.value=nv;
+            ElementPlus.ElMessage.success(`已帶入 ${q.reply_code} 的值`);
+        };
         const startSignalTimer=()=>{
             if(sigTimer){ clearInterval(sigTimer); sigTimer=null; }
             loadSignalCoverage(); loadSignalFrames(); loadSigControl();
@@ -20201,7 +20259,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
