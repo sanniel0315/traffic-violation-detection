@@ -194,6 +194,10 @@ _LABELS = {
     "person": "行人", "bicycle": "自行車",
 }
 _BBOX_COLOR = (0, 216, 100)
+# 畫框顯示門檻:偵測本身跑 conf 0.15(給 LPR/微弱車高召回),但背景(樹/標誌)在
+# 0.15~0.5 會被誤判成車/人,框畫出來就「框不准」。這裡只擋「畫框顯示」,不動
+# LPR/違規(它們吃完整 0.15 偵測)。env STREAM_DISPLAY_MIN_CONF 可調,0=全畫。
+_DISPLAY_MIN_CONF = float(os.getenv("STREAM_DISPLAY_MIN_CONF", "0.35"))
 
 _FONT_PATHS = (
     "/workspace/web/fonts/NotoSansCJK-Regular.ttc",
@@ -246,6 +250,9 @@ def _draw_overlay(frame: np.ndarray, detections: list, sx: float = 1.0, sy: floa
     drawn = False
     labels = []          # (x, y, text) 收集起來最後用 PIL 一次畫中文
     for det in detections:
+        # 只擋畫框顯示,不影響 LPR/違規(它們用完整偵測清單)。
+        if _DISPLAY_MIN_CONF > 0 and float(det.get("confidence", 1.0)) < _DISPLAY_MIN_CONF:
+            continue
         label = _det_label(det)
         if not label:
             continue
