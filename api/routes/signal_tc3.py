@@ -237,6 +237,55 @@ def _enqueue_frame(rec: dict) -> None:
     except _queue.Full:
         pass
 
+
+# 操作(下傳/號控/自我查詢)送出紀錄持久化:含結果/錯誤/操作者,daemon 重啟後還在。
+# 用獨立表 signal_control_log(_QDB_PATH,同一顆 violations.db)。低量,直接 insert。
+_control_log_ready = False
+
+
+def _control_log_db():
+    global _control_log_ready
+    conn = _sqlite3.connect(_QDB_PATH, timeout=20)
+    conn.execute("PRAGMA busy_timeout=20000")
+    if not _control_log_ready:
+        conn.execute("""CREATE TABLE IF NOT EXISTS signal_control_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, user TEXT, code TEXT,
+            kind TEXT, addr INTEGER, seq INTEGER, ok INTEGER, error TEXT, raw TEXT)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_scl_ts ON signal_control_log(ts)")
+        conn.commit()
+        _control_log_ready = True
+    return conn
+
+
+def _persist_control(rec: dict) -> None:
+    """存一筆送出/操作紀錄(成功或失敗都存)。"""
+    try:
+        conn = _control_log_db()
+        conn.execute("INSERT INTO signal_control_log "
+                     "(ts,user,code,kind,addr,seq,ok,error,raw) VALUES (?,?,?,?,?,?,?,?,?)",
+                     (rec.get("ts"), rec.get("user", ""), rec.get("code"),
+                      rec.get("kind", ""), rec.get("addr"), rec.get("seq"),
+                      1 if rec.get("ok") else 0, rec.get("error", ""), rec.get("raw", "")))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def _recent_control_ops(n: int = 30) -> list:
+    """從 DB 撈最近 n 筆操作紀錄(最新在前);讀不到退回記憶體 _sent_log。"""
+    try:
+        conn = _control_log_db()
+        rows = conn.execute("SELECT ts,user,code,kind,addr,seq,ok,error,raw "
+                            "FROM signal_control_log ORDER BY id DESC LIMIT ?",
+                            (int(n),)).fetchall()
+        conn.close()
+        return [{"ts": r[0], "user": r[1], "code": r[2], "kind": r[3], "addr": r[4],
+                 "seq": r[5], "ok": bool(r[6]), "error": r[7], "raw": r[8]} for r in rows]
+    except Exception:
+        return list(reversed(list(_sent_log)))[:n]
+
+
 _frames: deque = deque(maxlen=300)      # 最近訊框(raw + 解碼)
 _coverage: Counter = Counter()          # 每個 device+cmd 看過幾次
 _by_addr: dict = {}                     # 設備位址 -> 最新一筆燈態(一台=一個路口)
@@ -927,7 +976,7 @@ async def control_status(_user=Depends(get_current_user)):
         "target_addr_hex": f"0x{addr:04X}" if addr is not None else None,
         "addr_source": "設定" if CONTROL_ADDR else "由抄錄到的訊框推得",
         "prepare_ttl_sec": _PREPARE_TTL,
-        "recent": list(reversed(list(_sent_log)))[:30],
+        "recent": _recent_control_ops(30),   # 從 DB 讀(daemon 重啟後還在)
         "center": dict(_center_state),      # 中央中繼:是否啟用/中央連入/雙向流量
     }
 
@@ -1085,6 +1134,7 @@ async def control_send(body: dict, _user=Depends(get_current_user)):
             rec["error"] = f"{type(exc).__name__}: {exc}"[:160]
 
     _sent_log.append(rec)
+    _persist_control(rec)      # 操作紀錄持久化(含結果/錯誤/操作者)
     # 統一表 B:我方送出的框也持久化(src=self + 操作者),進同一條 TC3 通訊紀錄。
     if rec["ok"]:
         _enqueue_frame({
@@ -1413,6 +1463,28 @@ def _merge_timing_plans() -> list:
     return plans
 
 
+def _current_running_plan() -> Optional[dict]:
+    """目前執行中的時制計畫 —— 來自最新 5FC8(目前時制計畫－回報)。5F03 燈態報告
+    只有時相編號沒有 PlanID,所以執行中的計畫要看 5FC8。無資料回 None。"""
+    try:
+        conn = _frames_db()
+        row = conn.execute("SELECT ts,raw FROM signal_frames WHERE code='5FC8' "
+                           "AND cks_ok=1 ORDER BY ts DESC LIMIT 1").fetchone()
+        conn.close()
+    except Exception:
+        return None
+    if not row or not row[1]:
+        return None
+    fields = _decode_fields("5FC8", row[1])
+    if not fields:
+        return None
+    vals = _fmap(fields)
+    pid = vals.get("PlanID")
+    return {"plan_id": int(pid) if pid is not None else None,
+            "cycle": vals.get("CycleTime"), "offset": vals.get("Offset"),
+            "ts": row[0], "age_sec": round(time.time() - row[0], 1)}
+
+
 @router.get("/timing-plans", summary="時制計畫比對(現場查到的 vs 中心基準)")
 async def timing_plans(_user=Depends(get_current_user)):
     field_plans = _merge_timing_plans()
@@ -1429,7 +1501,10 @@ async def timing_plans(_user=Depends(get_current_user)):
                 pass
     except Exception:
         pass
-    return {"field": field_plans, "baseline": baseline}
+    running = _current_running_plan()
+    return {"field": field_plans, "baseline": baseline,
+            "running": running,
+            "running_plan_id": running.get("plan_id") if running else None}
 
 
 @router.post("/timing-plans/baseline", summary="把目前現場查到的時制計畫存為中心基準")
@@ -1620,9 +1695,11 @@ def _send_query_to_controller(code: str, params: bytes, user: str) -> bool:
     _note_expected_reply(reply_code, 1)
     ts = time.time()
     raw_hex = frame.hex(" ").upper()
-    _sent_log.append({"ts": ts, "user": user, "code": code,
-                      "kind": _kind_of(cmd, dev), "addr": addr, "seq": seq,
-                      "raw": raw_hex, "ok": True, "error": ""})
+    _crec = {"ts": ts, "user": user, "code": code,
+             "kind": _kind_of(cmd, dev), "addr": addr, "seq": seq,
+             "raw": raw_hex, "ok": True, "error": ""}
+    _sent_log.append(_crec)
+    _persist_control(_crec)      # 自我查詢的每則送出也存進操作紀錄
     _enqueue_frame({"ts": ts, "src": "self", "code": code, "seq": seq,
                     "addr": addr, "len": len(frame), "cks_ok": True,
                     "raw": raw_hex, "user": user})
