@@ -63,6 +63,29 @@ SIGNAL_STALL_TIMEOUT = float(os.getenv("SIGNAL_TC3_STALL_TIMEOUT", "180") or 180
 # 原本寫 30 秒會在正常運作時一直閃紅字。
 SIGNAL_STALE_SEC = float(os.getenv("SIGNAL_TC3_STALE_SEC", "90") or 90)
 
+# 路口名稱。真實控制器沒有內建路名,而 0xFFFF 是廣播位址,不能拿來當路口名顯示。
+#   SIGNAL_TC3_SITE_NAME   單一站點名(這台現場只有一個路口時用)
+#   SIGNAL_TC3_SITE_NAMES  多路口用,格式 "0x1230=興隆路三段,0x1231=..."
+SITE_NAME = os.getenv("SIGNAL_TC3_SITE_NAME", "").strip()
+_SITE_NAMES: dict = {}
+for _pair in os.getenv("SIGNAL_TC3_SITE_NAMES", "").split(","):
+    if "=" in _pair:
+        _k, _v = _pair.split("=", 1)
+        try:
+            _SITE_NAMES[int(_k.strip(), 16)] = _v.strip()
+        except ValueError:
+            pass
+
+
+def _addr_name(addr: int) -> str:
+    """路口顯示名。優先查設定的路名;沒有的話廣播位址回站名或通用名,
+    不把 0xFFFF 這種位址當名字秀出來。"""
+    if addr in _SITE_NAMES:
+        return _SITE_NAMES[addr]
+    if addr == 0xFFFF:                       # 廣播 = 這條線唯一的路口
+        return SITE_NAME or "號誌路口"
+    return SITE_NAME or f"路口 {addr}"       # 具體編號的路口,用十進位比較像編號
+
 # 燈態方向(協定 P5-22 SignalMap bit map)
 DIRECTIONS = ["北", "東北", "東", "東南", "南", "西南", "西", "西北"]
 # 燈號狀態 bit map(協定 P5-22 SignalStatus)
@@ -446,11 +469,21 @@ async def status(_user=Depends(get_current_user)):
     intersections = []
     for a, rec in sorted(by_addr.items()):
         r_age = (now - rec.get("ts", now)) if rec.get("ts") else None
+        ph = rec.get("phase") or {}
+        # 🛑 StepSec 是「這一步的總長」,不是剩餘。控制器每次換步階才送一框,
+        #    所以要用「總長 − 資料齡」現算剩餘,否則畫面會凍在總長不倒數。
+        step_total = ph.get("step_sec")
+        remain = None
+        if isinstance(step_total, (int, float)) and r_age is not None:
+            remain = max(0, int(round(step_total - r_age)))
         intersections.append({
             "addr": a,
             "addr_hex": f"0x{a:04X}",
+            "name": _addr_name(a),
             "phase": rec.get("phase"),
             "age_sec": round(r_age, 2) if r_age is not None else None,
+            "step_total_sec": step_total,       # 這一步的總長
+            "remain_sec": remain,               # 現算的剩餘(倒數)
             "stale": (r_age is None or r_age > SIGNAL_STALE_SEC),
         })
     return {

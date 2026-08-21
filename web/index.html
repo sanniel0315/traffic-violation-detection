@@ -6444,7 +6444,7 @@
                             <div v-if="sigIntersections.length" class="xn-grid" style="margin-top:12px">
                                 <div class="xn-card" v-for="xn in sigIntersections" :key="xn.addr">
                                     <div class="xn-head">
-                                        <span class="xn-name"><span class="sig-lamp" :class="xn.stale?'off':'green'"></span>路口 {{ xn.addr_hex }}</span>
+                                        <span class="xn-name"><span class="sig-lamp" :class="xn.stale?'off':'green'"></span>{{ xn.name }}</span>
                                         <span class="xn-addr">{{ xn.addr_hex }}</span>
                                     </div>
                                     <div class="xn-stage">
@@ -6458,9 +6458,9 @@
                                         </div>
                                     </div>
                                     <div class="xn-foot" v-if="xn.phase">
-                                        <span><span class="k">步階</span> {{ xn.phase.sub_phase_id }}</span>
-                                        <span><span class="k">狀態</span> {{ xn.phase.step_desc }}</span>
-                                        <span><span class="k">餘</span> {{ xn.phase.step_sec }}s</span>
+                                        <span><span class="k">分相</span> {{ xn.phase.sub_phase_id }}</span>
+                                        <span><span class="k">步階</span> {{ xn.phase.step_id }}</span>
+                                        <span><span class="k">餘</span> {{ xn.remain_sec==null ? '—' : xn.remain_sec+'s' }}<span class="k" style="margin-left:2px">/ {{ xn.step_total_sec }}s</span></span>
                                         <span v-if="xn.stale" class="xn-stale">· 資料過期</span>
                                     </div>
                                 </div>
