@@ -159,6 +159,7 @@ _seq_next: dict = {"n": 0}              # 送出用的序號,逐次遞增
 
 _frames: deque = deque(maxlen=300)      # 最近訊框(raw + 解碼)
 _coverage: Counter = Counter()          # 每個 device+cmd 看過幾次
+_by_addr: dict = {}                     # 設備位址 -> 最新一筆燈態(一台=一個路口)
 _lock = threading.Lock()
 
 
@@ -397,6 +398,11 @@ def _recorder_loop() -> None:
                             _state["peer_note"] = ""
                         if rec.get("phase"):
                             _state["latest"] = rec
+                            # 依設備位址各存一筆最新燈態 —— 一台控制器 = 一個路口。
+                            # 現場現在只有 0xFFFF 一個,未來抄到多位址就自動多路口。
+                            a = rec.get("addr")
+                            if isinstance(a, int):
+                                _by_addr[a] = rec
         except Exception as exc:
             with _lock:
                 _state["connected"] = False
@@ -433,8 +439,20 @@ async def status(_user=Depends(get_current_user)):
     with _lock:
         s = dict(_state)
         latest = s.get("latest")
+        by_addr = dict(_by_addr)
     now = time.time()
     age = (now - s["last_frame_at"]) if s["last_frame_at"] else None
+    # 一台控制器 = 一個路口。每個位址一張,附各自的資料齡與是否過期。
+    intersections = []
+    for a, rec in sorted(by_addr.items()):
+        r_age = (now - rec.get("ts", now)) if rec.get("ts") else None
+        intersections.append({
+            "addr": a,
+            "addr_hex": f"0x{a:04X}",
+            "phase": rec.get("phase"),
+            "age_sec": round(r_age, 2) if r_age is not None else None,
+            "stale": (r_age is None or r_age > SIGNAL_STALE_SEC),
+        })
     return {
         **{k: s[k] for k in ("enabled", "host", "port", "connected",
                              "frames_total", "cks_bad", "reconnects", "last_error",
@@ -444,6 +462,7 @@ async def status(_user=Depends(get_current_user)):
         # 門檻見 SIGNAL_STALE_SEC(照現場實測間隔定,不是拍腦袋)
         "stale": (age is None or age > SIGNAL_STALE_SEC),
         "latest": latest,
+        "intersections": intersections,     # 一台控制器一個路口
     }
 
 
