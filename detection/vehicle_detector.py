@@ -533,6 +533,9 @@ class VehicleDetector:
         ih, iw = shape[:2]
         _edge = int(os.getenv("MOTO_EDGE_MARGIN_PX", "6"))
         _moto_min_conf = float(os.getenv("MOTO_MIN_CONF", "0.30"))
+        # 標誌/桿柱誤判成行人:國道點位幾乎沒有真行人,靜態路標卻常被判 person。
+        # 用信心門檻先擋(env 可調);預設 0.6 高於一般 0.5。0=停用此過濾。
+        _person_min_conf = float(os.getenv("PERSON_MIN_CONF", "0.6"))
         filtered = []
         for det in detections:
             if det['class_name'] == 'motorcycle':
@@ -542,6 +545,9 @@ class VehicleDetector:
                     continue  # 出畫殘影(貼邊)
                 if det['confidence'] < _moto_min_conf:
                     continue  # 低信心機車誤判
+            elif det['class_name'] == 'person':
+                if _person_min_conf > 0 and det['confidence'] < _person_min_conf:
+                    continue  # 低信心行人(多半是路標/桿柱誤判)
             filtered.append(det)
 
         return filtered
