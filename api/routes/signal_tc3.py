@@ -201,6 +201,12 @@ CENTER_LISTEN_PORT = int(os.getenv("SIGNAL_TC3_CENTER_LISTEN_PORT", "1001") or 1
 HW_STATUS_FIX = os.getenv("SIGNAL_TC3_FIX_HWSTATUS", "1") != "0"
 HW_STATUS_FIX_CODES = ("0F04", "0FC1")   # 帶 HardwareStatus 的訊息
 HW_STATUS_FIX_MASK = 0x4000              # 要翻的位元(bit14 信號驅動單元)
+# 對中央上傳 HardwareStatus 的模式,可執行期切換(不用重啟 daemon):
+#   flip14 = 只翻 bit14(補償廠商寫反,預設);zero = 全 0(硬體全報正常);raw = 不動(純通透)
+#   force = 強制送指定的 16-bit 值(測試用:逐 bit 送、對照中央顯示哪項 → 對出位元表)
+_hw_center_mode = {"mode": os.getenv("SIGNAL_TC3_HWSTATUS_MODE",
+                                     "flip14" if HW_STATUS_FIX else "raw"),
+                   "value": 0}     # force 模式要送的值
 # 自我查詢比對:我方主動查控制器(5F40/5F48/5F44/0F41),回報預設「不轉發中央」,
 # 避免中央看到它沒問的回報。用「有界計數 + 短窗」抑制:只擋掉我們預期筆數的回報,
 # 中央若同碼查詢,其回報仍會有一筆通過(資料相同),不會被餓死。
@@ -232,7 +238,7 @@ def _enqueue_frame(rec: dict) -> None:
             "ts": rec.get("ts"), "src": rec.get("src", ""), "code": rec.get("code"),
             "seq": rec.get("seq"), "addr": rec.get("addr"), "len": rec.get("len"),
             "cks_ok": 1 if rec.get("cks_ok") else 0, "raw": rec.get("raw", ""),
-            "user": rec.get("user", ""),
+            "user": rec.get("user", ""), "sent_hw": rec.get("sent_hw"),
         })
     except _queue.Full:
         pass
@@ -649,13 +655,21 @@ def _forward_controller_frame_to_center(frame: bytes, rec: dict) -> None:
     if SELF_PROBE_SUPPRESS and _should_suppress_to_center(rec.get("code")):
         return
     out = frame
-    if (HW_STATUS_FIX and rec.get("cks_ok")
+    _mode = _hw_center_mode["mode"]     # flip14(翻bit14) / zero(全0) / raw(不動)
+    if (_mode != "raw" and rec.get("cks_ok")
             and rec.get("code") in HW_STATUS_FIX_CODES
             and isinstance(rec.get("addr"), int) and isinstance(rec.get("seq"), int)):
         try:
             info = _unstuff(frame[7:-3])
             if len(info) >= 4:
-                hs = ((info[2] << 8) | info[3]) ^ HW_STATUS_FIX_MASK
+                raw_hs = (info[2] << 8) | info[3]
+                if _mode == "zero":
+                    hs = 0
+                elif _mode == "force":
+                    hs = _hw_center_mode.get("value", 0) & 0xFFFF
+                else:
+                    hs = raw_hs ^ HW_STATUS_FIX_MASK
+                rec["sent_hw"] = hs           # 記下實際送中央的校正值(給通訊紀錄顯示「收→送」)
                 info = info[:2] + bytes(((hs >> 8) & 0xFF, hs & 0xFF)) + info[4:]
                 out = build_frame(rec["addr"], rec["seq"], info)
         except Exception:
@@ -978,6 +992,9 @@ async def control_status(_user=Depends(get_current_user)):
         "prepare_ttl_sec": _PREPARE_TTL,
         "recent": _recent_control_ops(30),   # 從 DB 讀(daemon 重啟後還在)
         "center": dict(_center_state),      # 中央中繼:是否啟用/中央連入/雙向流量
+        "hwstatus_mode": _hw_center_mode["mode"],   # 對中央上傳硬體狀態的模式
+        "hwstatus_value": _hw_center_mode.get("value", 0),   # force 模式的值
+        "hwstatus_value_hex": f"0x{_hw_center_mode.get('value', 0):04X}",
     }
 
 
@@ -1542,13 +1559,14 @@ def _frames_db():
             CREATE TABLE IF NOT EXISTS signal_frames (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts REAL, src TEXT, code TEXT, seq INTEGER, addr INTEGER,
-                len INTEGER, cks_ok INTEGER, raw TEXT, user TEXT
+                len INTEGER, cks_ok INTEGER, raw TEXT, user TEXT, sent_hw INTEGER
             )""")
-        # 舊表補 user 欄(統一表 B:我方送出也存,帶操作者)
-        try:
-            conn.execute("ALTER TABLE signal_frames ADD COLUMN user TEXT")
-        except Exception:
-            pass
+        # 舊表補欄
+        for _col, _typ in (("user", "TEXT"), ("sent_hw", "INTEGER")):
+            try:
+                conn.execute(f"ALTER TABLE signal_frames ADD COLUMN {_col} {_typ}")
+            except Exception:
+                pass
         conn.execute("CREATE INDEX IF NOT EXISTS ix_sf_ts ON signal_frames(ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_sf_src ON signal_frames(src)")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_sf_code ON signal_frames(code)")
@@ -1580,8 +1598,8 @@ def _frame_writer_loop() -> None:
                     break
             if batch:
                 conn.executemany(
-                    "INSERT INTO signal_frames (ts,src,code,seq,addr,len,cks_ok,raw,user) "
-                    "VALUES (:ts,:src,:code,:seq,:addr,:len,:cks_ok,:raw,:user)", batch)
+                    "INSERT INTO signal_frames (ts,src,code,seq,addr,len,cks_ok,raw,user,sent_hw) "
+                    "VALUES (:ts,:src,:code,:seq,:addr,:len,:cks_ok,:raw,:user,:sent_hw)", batch)
                 conn.commit()
             # 保存政策:每 ~5 分鐘清一次過期(預設 3 天)
             now = time.time()
@@ -1639,7 +1657,7 @@ async def frames_log(limit: int = 200, src: str = "", code: str = "",
         where.append("cks_ok=1")
     elif cks == "bad":
         where.append("cks_ok=0")
-    sql = "SELECT ts,src,code,seq,addr,len,cks_ok,raw,user FROM signal_frames"
+    sql = "SELECT ts,src,code,seq,addr,len,cks_ok,raw,user,sent_hw FROM signal_frames"
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY ts DESC LIMIT ?"
@@ -1654,7 +1672,9 @@ async def frames_log(limit: int = 200, src: str = "", code: str = "",
     out = [{
         "ts": ts, "src": src_, "code": code_, "seq": seq, "addr": addr,
         "len": ln, "cks_ok": bool(cks_ok), "raw": raw, "user": user or "",
-    } for ts, src_, code_, seq, addr, ln, cks_ok, raw, user in rows]
+        "sent_hw": sent_hw,
+        "sent_hw_hex": (f"0x{sent_hw:04X}" if sent_hw is not None else None),
+    } for ts, src_, code_, seq, addr, ln, cks_ok, raw, user, sent_hw in rows]
     return {"count": len(out), "total": total, "frames": out}
 
 
@@ -1751,3 +1771,25 @@ def control_self_probe(_user=Depends(get_current_user), plan_lo: int = 1, plan_h
     n = 3 + (hi - lo + 1) * 2
     return {"ok": True, "started": True, "plans": [lo, hi], "queries": n,
             "msg": f"開始抄錄:控制策略/目前時制/硬體 + 計畫 {lo}~{hi}（約 {n} 則,背景送）"}
+
+
+@router.post("/control/hwstatus-mode", summary="切換對中央上傳 HardwareStatus 的模式")
+def control_hwstatus_mode(mode: str = "flip14", value: int = 0,
+                          _user=Depends(get_current_user)):
+    """執行期切換(不用重啟):flip14=只翻bit14(補償廠商寫反)/zero=硬體全報正常(全0)/
+    raw=純通透不動/force=強制送指定 16-bit 值(測試用,value 帶值)。
+    切了立即對後續 0F04/0FC1 生效。"""
+    m = (mode or "").strip().lower()
+    if m not in ("flip14", "zero", "raw", "force"):
+        raise HTTPException(status_code=400, detail="mode 只能 flip14/zero/raw/force")
+    _hw_center_mode["mode"] = m
+    if m == "force":
+        _hw_center_mode["value"] = int(value) & 0xFFFF
+    note = {"flip14": "只翻 bit14(補償廠商寫反)", "zero": "硬體全報正常(全0)",
+            "raw": "純通透不動",
+            "force": f"強制送 0x{_hw_center_mode['value']:04X}(測試)"}[m]
+    try:
+        add_log("info", f"HardwareStatus 上傳模式切為 {m}({note})", "signal")
+    except Exception:
+        pass
+    return {"ok": True, "mode": m, "note": note}
