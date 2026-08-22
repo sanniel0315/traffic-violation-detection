@@ -6895,6 +6895,31 @@
                         </div>
                     </div>
 
+                    <div class="card" v-if="sigCtl.center">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-cpu"/></svg>硬體狀態碼測試（送給中央）</span>
+                            <el-tag size="small" :type="sigCtl.hwstatus_mode==='force'?'danger':(sigCtl.hwstatus_mode==='flip14'?'success':'warning')">
+                                模式 {{ sigCtl.hwstatus_mode||'flip14' }}<span v-if="sigCtl.hwstatus_mode==='force'"> {{ sigCtl.hwstatus_value_hex }}</span>
+                            </el-tag>
+                        </div>
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">勾要送給中央的 bit → 按「送出測試碼」，中央會顯示對應的故障項；逐 bit 測就能對出「哪個 bit ＝ 哪一項」。測完按「還原正常」。⚠️ 這會改變中央看到的硬體狀態。</div>
+                            <div style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0">
+                                <label v-for="i in 16" :key="'hb'+(i-1)" style="display:flex;align-items:center;gap:4px;font-size:12px;border:1px solid #e2e8f0;border-radius:6px;padding:3px 8px;cursor:pointer">
+                                    <input type="checkbox" v-model="sigHwBits[i-1]"><b>bit {{ i-1 }}</b><span v-if="i-1===14" style="color:#16a34a">✓信號驅動單元</span>
+                                </label>
+                            </div>
+                            <div style="margin:8px 0;font-size:14px">組出的值：<b style="font-family:monospace;font-size:16px;color:#dc2626">{{ sigHwHex }}</b></div>
+                            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                                <el-button size="small" type="danger" @click="sigHwSendTest">送出測試碼給中央</el-button>
+                                <el-button size="small" type="success" plain @click="sigHwSetMode('flip14',0)">還原正常</el-button>
+                                <el-button size="small" plain @click="sigHwSetMode('zero',0)">全 0</el-button>
+                                <el-button size="small" plain @click="sigHwSetMode('raw',0)">純通透</el-button>
+                            </div>
+                            <div class="analysis-setting-tip" style="margin-top:8px">參考：中央監看的 16 項硬體＝CPU模組/記憶體/計時器/Watchdog/電源/單元/信號驅動器單元/信號燈/連線/內櫃開啟/時制計劃故障/信號衝突/信號電源/時制計劃轉變/controller ready/communication line bad（哪項對哪個 bit 就靠這個逐一測）。</div>
+                        </div>
+                    </div>
+
                     <div class="card">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-activity"/></svg>TC3 通訊紀錄</span>
@@ -6934,10 +6959,13 @@
                                 <el-table-column label="時間" width="120">
                                     <template #default="sc"><span style="font-size:12px;font-family:monospace">{{ sigFrameTime(sc.row.ts) }}</span></template>
                                 </el-table-column>
-                                <el-table-column label="方向" width="150">
+                                <el-table-column label="方向" width="180">
                                     <template #default="sc">
                                         <el-tooltip :content="sigSrcDir(sc.row).tip" placement="top">
                                             <el-tag size="small" :type="sigSrcDir(sc.row).type">{{ sigSrcDir(sc.row).label }}</el-tag>
+                                        </el-tooltip>
+                                        <el-tooltip v-if="sc.row.sent_hw!=null" content="控制器原始值(raw)已校正,實際送給中央的是這個值" placement="top">
+                                            <span style="margin-left:6px;font-size:11px;color:#dc2626;font-family:monospace">→中央 {{ sc.row.sent_hw_hex }}</span>
                                         </el-tooltip>
                                     </template>
                                 </el-table-column>
@@ -19841,6 +19869,21 @@ const app=createApp({
         };
         // 自我查詢比對:主動下給控制器 5F40/5F48/5F44/0F41,回報進通訊紀錄+補滿時制計畫表。
         const sigProbing=ref(false);
+        // 硬體狀態碼測試:手動送指定 16-bit HardwareStatus 給中央,逐 bit 對照中央顯示→對出位元表。
+        const sigHwBits=ref(Array(16).fill(false));
+        const sigHwVal=computed(()=>{ let v=0; sigHwBits.value.forEach((b,i)=>{ if(b)v|=(1<<i); }); return v>>>0; });
+        const sigHwHex=computed(()=>'0x'+sigHwVal.value.toString(16).toUpperCase().padStart(4,'0'));
+        const sigHwSetMode=async(mode,value)=>{
+            try{
+                let url='/api/signal/control/hwstatus-mode?mode='+mode;
+                if(mode==='force')url+='&value='+(value||0);
+                const r=await fetch(url,{method:'POST',credentials:'include'});
+                const d=await r.json().catch(()=>({}));
+                if(r.ok){ ElementPlus.ElMessage.success('已切:'+(d.note||mode)); loadSigControl(); }
+                else ElementPlus.ElMessage.warning(d.detail||'切換失敗');
+            }catch(_){ ElementPlus.ElMessage.error('切換失敗'); }
+        };
+        const sigHwSendTest=()=>sigHwSetMode('force',sigHwVal.value);
         const sigSelfProbe=async()=>{
             sigProbing.value=true;
             try{
@@ -20905,7 +20948,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
