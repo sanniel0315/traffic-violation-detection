@@ -496,14 +496,35 @@ def _ensure_ntp_worker():
         add_log("info", "NTP 排程服務已啟動", "system")
 
 
+def _timesyncd_last_sync() -> str | None:
+    """讀 systemd-timesyncd 最後一次成功同步的時間(NTPMessage 的時戳)。讀不到回 None。"""
+    try:
+        out = subprocess.run(
+            ["timedatectl", "show-timesync", "-p", "NTPMessage", "--value"],
+            capture_output=True, text=True, timeout=2)
+        m = re.search(r"DestinationTimestamp=([^,}]+)", out.stdout or "")
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+    except Exception:
+        pass
+    return None
+
+
 @router.get("/ntp/settings")
 async def get_ntp_settings():
     _ensure_ntp_worker()
     settings = _load_ntp_settings()
+    runtime = _get_ntp_runtime_status(settings.get("servers", []))
+    last_sync = dict(_ntp_last_sync)
+    # app 自己沒套用過(idle),但 timesyncd 其實已同步 → 顯示真實狀態,別誤導成「沒同步」。
+    if last_sync.get("status") in (None, "", "idle") and runtime.get("synced"):
+        real_ts = _timesyncd_last_sync()
+        last_sync = {"status": "synced", "timestamp": real_ts,
+                     "message": "systemd-timesyncd 自動同步中（clock synchronized）"}
     return {
         **settings,
-        "runtime": _get_ntp_runtime_status(settings.get("servers", [])),
-        "last_sync": _ntp_last_sync,
+        "runtime": runtime,
+        "last_sync": last_sync,
     }
 
 

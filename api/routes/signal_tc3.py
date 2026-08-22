@@ -995,6 +995,7 @@ async def control_status(_user=Depends(get_current_user)):
         "hwstatus_mode": _hw_center_mode["mode"],   # 對中央上傳硬體狀態的模式
         "hwstatus_value": _hw_center_mode.get("value", 0),   # force 模式的值
         "hwstatus_value_hex": f"0x{_hw_center_mode.get('value', 0):04X}",
+        "hwstatus_now": _latest_hwstatus(),   # 現在實際 收到/送中央 的 HardwareStatus
     }
 
 
@@ -1502,6 +1503,38 @@ def _current_running_plan() -> Optional[dict]:
             "ts": row[0], "age_sec": round(time.time() - row[0], 1)}
 
 
+def _latest_hwstatus() -> dict:
+    """最新收到的 HardwareStatus(0F04/0FC1) + 依目前模式算出實際送中央的值。"""
+    try:
+        conn = _frames_db()
+        row = conn.execute(
+            "SELECT raw FROM signal_frames WHERE code IN ('0F04','0FC1') "
+            "AND src='controller' AND cks_ok=1 ORDER BY id DESC LIMIT 1").fetchone()
+        conn.close()
+    except Exception:
+        return {}
+    if not row or not row[0]:
+        return {}
+    try:
+        info = _unstuff(bytes.fromhex(str(row[0]).replace(" ", ""))[7:-3])
+        recv = ((info[2] << 8) | info[3]) if len(info) >= 4 else None
+    except Exception:
+        recv = None
+    if recv is None:
+        return {}
+    mode = _hw_center_mode["mode"]
+    if mode == "zero":
+        sent = 0
+    elif mode == "force":
+        sent = _hw_center_mode.get("value", 0) & 0xFFFF
+    elif mode == "raw":
+        sent = recv
+    else:
+        sent = recv ^ HW_STATUS_FIX_MASK
+    return {"received": recv, "received_hex": f"0x{recv:04X}",
+            "sent": sent, "sent_hex": f"0x{sent:04X}"}
+
+
 @router.get("/timing-plans", summary="時制計畫比對(現場查到的 vs 中心基準)")
 async def timing_plans(_user=Depends(get_current_user)):
     field_plans = _merge_timing_plans()
@@ -1746,7 +1779,10 @@ def _run_self_probe(user: str, plan_lo: int, plan_hi: int) -> None:
             time.sleep(0.12)
             _send_query_to_controller("5F44", p, user)   # 基本參數(最短綠/最長綠/黃/全紅/行人)
             time.sleep(0.12)
-        _log("info", f"自我抄錄完成:控制策略/目前時制/硬體 + 計畫 {plan_lo}~{plan_hi}")
+        try:
+            add_log("info", f"自我抄錄完成:控制策略/目前時制/硬體 + 計畫 {plan_lo}~{plan_hi}", "signal")
+        except Exception:
+            pass
     finally:
         _self_probe_busy["on"] = False
 
