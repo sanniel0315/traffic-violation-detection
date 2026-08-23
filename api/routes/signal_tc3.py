@@ -1675,8 +1675,10 @@ def start_frame_writer() -> None:
 
 @router.get("/frames/log", summary="持久化訊框(可依方向/碼/CKS 篩選,重啟後還在)")
 async def frames_log(limit: int = 200, src: str = "", code: str = "",
-                     cks: str = "", _user=Depends(get_current_user)):
-    """src: controller/center/空;code: 訊息碼(如 5FC5);cks: ok/bad/空。最新在前。"""
+                     cks: str = "", since: float = 0.0, until: float = 0.0,
+                     _user=Depends(get_current_user)):
+    """src: controller/center/self/空;code: 訊息碼(如 5FC5);cks: ok/bad/空;
+    since/until: epoch 秒的時間範圍(0=不限)。最新在前。保存 6 個月內都查得到。"""
     n = max(1, min(2000, int(limit or 200)))
     where = []
     params: list = []
@@ -1690,14 +1692,21 @@ async def frames_log(limit: int = 200, src: str = "", code: str = "",
         where.append("cks_ok=1")
     elif cks == "bad":
         where.append("cks_ok=0")
-    sql = "SELECT ts,src,code,seq,addr,len,cks_ok,raw,user,sent_hw FROM signal_frames"
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY ts DESC LIMIT ?"
-    params.append(n)
+    if since and float(since) > 0:
+        where.append("ts>=?")
+        params.append(float(since))
+    if until and float(until) > 0:
+        where.append("ts<=?")
+        params.append(float(until))
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    sql = ("SELECT ts,src,code,seq,addr,len,cks_ok,raw,user,sent_hw "
+           "FROM signal_frames" + where_sql + " ORDER BY ts DESC LIMIT ?")
     try:
         conn = _frames_db()
-        rows = conn.execute(sql, params).fetchall()
+        rows = conn.execute(sql, params + [n]).fetchall()
+        # 符合查詢條件的總筆數(不含 limit),讓前端顯示「查到 N 筆」
+        matched = conn.execute(
+            "SELECT COUNT(*) FROM signal_frames" + where_sql, params).fetchone()[0]
         total = conn.execute("SELECT COUNT(*) FROM signal_frames").fetchone()[0]
         conn.close()
     except Exception as exc:
@@ -1708,7 +1717,7 @@ async def frames_log(limit: int = 200, src: str = "", code: str = "",
         "sent_hw": sent_hw,
         "sent_hw_hex": (f"0x{sent_hw:04X}" if sent_hw is not None else None),
     } for ts, src_, code_, seq, addr, ln, cks_ok, raw, user, sent_hw in rows]
-    return {"count": len(out), "total": total, "frames": out}
+    return {"count": len(out), "matched": matched, "total": total, "frames": out}
 
 
 @router.get("/frames/decode", summary="解一個訊框的欄位(給 log 展開讀,可讀性)")

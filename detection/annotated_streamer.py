@@ -173,6 +173,22 @@ INTERP_MATCH_RATIO = 0.08
 #    空串流才收得到 —— 104 沒宣告,結果子行程一直死掉重生(寫入只有 8.1 fps)。
 #    要用之前必須先把「單條就穩」這件事做到。
 LITE_ENABLED = os.getenv("ANNOTATED_STREAM_LITE", "0") != "0"
+# 遠端省流變體 lofi:同解析度、低幀率(預設10)+低碼率(預設350k)。
+# 現場看 annotated(高幀高碼)不受影響;遠端 web/app 改看 cam_X_lofi
+# 就塞得進窄上行(4G 上行實測 ~2 Mbps)。每變體獨立編碼器+writer,互不拖累。
+LOFI_ENABLED = os.getenv("ANNOTATED_STREAM_LOFI", "0") != "0"
+LOFI_FPS = max(1, int(os.getenv("ANNOTATED_STREAM_LOFI_FPS", "10") or 10))
+LOFI_BITRATE = os.getenv("ANNOTATED_STREAM_LOFI_BITRATE", "350K") or "350K"
+# lofi 常駐(不 on-demand):遠端救命串流,10fps 硬體編碼便宜,保證隨時可連不用等編碼器起
+LOFI_ALWAYS = os.getenv("ANNOTATED_STREAM_LOFI_ALWAYS", "1") != "0"
+# lite = 「原始畫面」走我們的乾淨編碼器(不畫框、原解析度)。給高一點碼率保畫質。
+# 🛑 為什麼不直接轉發相機原始碼流:相機怎麼編(時間戳/GOP/60fps)我們控制不了,
+#    MSE 和 app 會凍在一張。走我們的編碼器 = 定速、乾淨 PTS、1 秒 IDR → 一定順。
+LITE_BITRATE = os.getenv("ANNOTATED_STREAM_LITE_BITRATE", "3M") or "3M"
+# on-demand:go2rtc 沒有觀看者(consumer)就不編碼(連畫框都跳過),省 CPU。
+# 87 分析已吃 ~3.6 核、常駐 8 條編碼器會超載,故預設開。
+ON_DEMAND = os.getenv("ANNOTATED_STREAM_ONDEMAND", "1") != "0"
+_GO2RTC_API = os.getenv("GO2RTC_API", "http://127.0.0.1:1984").rstrip("/")
 
 
 def enabled_camera_ids() -> set:
@@ -298,9 +314,12 @@ class AnnotatedStreamer:
         self.frame_interval = 1.0 / (self.fps or 20)
 
         # 每個變體一個編碼子行程:annotated=畫框,lite=不畫框
-        self._variants = ["annotated"] + (["lite"] if LITE_ENABLED else [])
+        self._variants = ["annotated"] + (["lite"] if LITE_ENABLED else []) + (["lofi"] if LOFI_ENABLED else [])
         self.procs: dict = {v: None for v in self._variants}
         self._proc_lock = threading.Lock()
+        self._cons_lock = threading.Lock()   # on-demand:go2rtc consumer 數快取
+        self._cons_ts = 0.0
+        self._cons_cache: dict = {}
         # 🛑 每個變體一條寫入執行緒,各自一個「最新畫面」插槽。
         #    先前是 pacer 同一條執行緒依序寫兩個管線 —— 其中一個阻塞(RTSP 推送
         #    卡住很常見)就把另一個也拖住,兩條串流一起變 0.00~0.40 Mbps(實測)。
@@ -353,13 +372,20 @@ class AnnotatedStreamer:
 
     def _spawn(self, variant: str = "annotated"):
         rtsp_url = f"rtsp://127.0.0.1:8554/cam_{self.camera_id}_{variant}"
+        # lofi(遠端省流):固定低幀率;lite(原始畫面):實測供幀率+高碼率;annotated:供幀率
+        if variant == "lofi":
+            fps, brate = LOFI_FPS, LOFI_BITRATE
+        elif variant == "lite":
+            fps, brate = self.fps, LITE_BITRATE
+        else:
+            fps, brate = self.fps, STREAM_BITRATE
         if USE_HW:
             gst = (
                 f"gst-launch-1.0 -q fdsrc ! "
                 # 🛑 用 I420 不要用 BGRx。1080p 的 BGRx 是每幀 8.3MB,I420 只有 3.1MB
                 #    —— 管線流量少 2.7 倍,而且 NVENC 本來就吃 NV12/I420,少一次轉換。
                 f"rawvideoparse width={self.width} height={self.height} "
-                f"format=i420 framerate={self.fps}/1 ! "
+                f"format=i420 framerate={fps}/1 ! "
                 # 🛑 caps 一定要加引號:括號在 sh -c 裡會被當成子 shell → 語法錯誤
                 f"nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12' ! "
                 # 🛑 profile 與 preset 的預設值是「最快最粗」,不是「最好」:
@@ -371,7 +397,7 @@ class AnnotatedStreamer:
                 #    唯一還能拿到畫質的地方。
                 #    control-rate 維持預設的 CBR:上行只有 2 Mbps 出頭,
                 #    VBR 的尖峰會直接把連線衝斷,寧可穩定。
-                f"nvv4l2h264enc bitrate={self._bitrate_bps()} insert-sps-pps=true "
+                f"nvv4l2h264enc bitrate={self._bitrate_bps(variant)} insert-sps-pps=true "
                 f"profile=4 preset-level=3 "
                 # 🛑 關鍵幀間隔 1 秒。設 2 秒的話 MSE 觀看端要等最多 2 秒才拿得到
                 #    第一個可解碼的段,看起來就像「連上了但沒畫面」。
@@ -383,7 +409,7 @@ class AnnotatedStreamer:
                 #    媒體片段了,前端「連上了但永遠黑畫面」;剛好在 IDR 那一刻連上
                 #    才會通,所以是時好時壞。2026-08-20 在 87 實測:6 秒內 81 個
                 #    影格、關鍵影格 0 個(ffprobe show_entries frame=key_frame)。
-                f"iframeinterval={self.fps} idrinterval={self.fps} ! h264parse ! "
+                f"iframeinterval={fps} idrinterval={fps} ! h264parse ! "
                 # 🛑 一定要用 mpegts 承載,不要送裸 H.264。裸流沒有時間戳,
                 #    ffmpeg 只能照 -r 硬編 PTS,時序一亂 go2rtc 的 MSE 分段就壞掉
                 #    —— 症狀是 go2rtc 明明持續收到 1.0 Mbps,送給觀看端卻只有
@@ -400,13 +426,13 @@ class AnnotatedStreamer:
             "ffmpeg", "-y", "-loglevel", "error",
             "-f", "rawvideo", "-pix_fmt", "bgr24",
             "-s", f"{self.width}x{self.height}",
-            "-r", str(self.fps),
+            "-r", str(fps),
             "-i", "-",
             "-c:v", STREAM_ENCODER,
             "-preset", "ultrafast", "-tune", "zerolatency",
-            "-b:v", STREAM_BITRATE, "-maxrate", STREAM_BITRATE,
-            "-bufsize", STREAM_BITRATE,
-            "-g", str(self.fps * 2),
+            "-b:v", brate, "-maxrate", brate,
+            "-bufsize", brate,
+            "-g", str(fps * 2),
             "-pix_fmt", "yuv420p",
             "-f", "rtsp", "-rtsp_transport", "tcp",
             rtsp_url,
@@ -422,7 +448,7 @@ class AnnotatedStreamer:
             except Exception:
                 err_fh = subprocess.DEVNULL
             print(f"🎬 [annot] cam_{self.camera_id}/{variant} spawn "
-                  f"{self.width}x{self.height}@{self.fps} {STREAM_ENCODER}", flush=True)
+                  f"{self.width}x{self.height}@{fps} {brate} {STREAM_ENCODER}", flush=True)
             with capture_open_guard():
                 self.procs[variant] = subprocess.Popen(
                     cmd, stdin=subprocess.PIPE,
@@ -435,9 +461,10 @@ class AnnotatedStreamer:
             log.error(f"AnnotatedStreamer cam_{self.camera_id}/{variant} spawn failed: {e}")
             self.procs[variant] = None
 
-    def _bitrate_bps(self) -> int:
+    def _bitrate_bps(self, variant: str = "annotated") -> int:
         """nvv4l2h264enc 的 bitrate 要 bps 整數,ffmpeg 吃 "1M" 這種字串。"""
-        v = str(STREAM_BITRATE).strip().upper()
+        _br = LOFI_BITRATE if variant == "lofi" else (LITE_BITRATE if variant == "lite" else STREAM_BITRATE)
+        v = str(_br).strip().upper()
         try:
             if v.endswith("M"):
                 return int(float(v[:-1]) * 1_000_000)
@@ -517,9 +544,20 @@ class AnnotatedStreamer:
                 next_tick = time.monotonic()
                 continue
             item = self._take_delayed()
+            wanted = self._wanted_variants()
+            if not wanted:
+                # on-demand:完全沒人看 → 停所有編碼器,這 tick 連畫框都跳過(省最大宗 CPU)
+                for _v in self._variants:
+                    self._stop_variant_proc(_v)
+                self._last_buf = None
+                sleep_for = next_tick - time.monotonic()
+                time.sleep(sleep_for if sleep_for > 0 else 0.3)
+                if sleep_for <= 0:
+                    next_tick = time.monotonic()
+                continue
             if item is not None and item[0] != self._last_sent_ts:
                 try:
-                    bufs = self._encode_frame(item)
+                    bufs = self._encode_frame(item, wanted)
                 except Exception as e:
                     print(f"⚠️ [annot] cam_{self.camera_id} encode 例外: {e!r}", flush=True)
                     bufs = None
@@ -540,6 +578,39 @@ class AnnotatedStreamer:
             else:
                 next_tick = time.monotonic()
 
+    def _variant_wanted(self, variant: str) -> bool:
+        """cam_X_{variant} 現在有沒有人在看(讀 process 內的串流需求登記表)。
+        on-demand 用:沒人看就別編碼。登記表由 go2rtc WS proxy 連上/斷線時維護。
+        🛑 不查 go2rtc consumer:它對「還沒有 producer」的串流不列 consumer(雞生蛋)。"""
+        if not ON_DEMAND:
+            return True
+        # lofi(遠端救命串流)常駐:10fps 硬體編碼很便宜,且遠端爛線要隨時可用,
+        # 不能有「現起編碼器」的啟動競態(browser 連上空串流 → 沒 producer → 黑)。
+        if variant == "lofi" and LOFI_ALWAYS:
+            return True
+        try:
+            from detection import stream_demand
+            return stream_demand.wanted(f"cam_{self.camera_id}_{variant}")
+        except Exception:
+            return True   # 出錯保守當「要」,避免誤關
+
+    def _wanted_variants(self) -> set:
+        if not ON_DEMAND:
+            return set(self._variants)
+        return {v for v in self._variants if self._variant_wanted(v)}
+
+    def _stop_variant_proc(self, variant: str):
+        """on-demand 停掉某變體編碼子行程(乾淨停,非崩潰 → 重置 restart 計數)。"""
+        with self._proc_lock:
+            proc = self.procs.get(variant)
+            if proc is not None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                self.procs[variant] = None
+                self._restart_count = 0
+
     def _writer_loop(self, variant: str):
         """把最新畫面定速餵給該變體的編碼子行程。
 
@@ -549,7 +620,16 @@ class AnnotatedStreamer:
             time.sleep(0.5)              # 等 pacer 把 fps 定案
         next_tick = time.monotonic()
         while not self._stopped:
-            next_tick += self.frame_interval
+            # lofi 用固定低幀率餵,其餘跟供幀率
+            next_tick += (1.0 / LOFI_FPS) if variant == "lofi" else self.frame_interval
+            # on-demand:沒人看這條就停掉編碼器,省 CPU
+            if ON_DEMAND and not self._variant_wanted(variant):
+                self._stop_variant_proc(variant)
+                sleep_for = next_tick - time.monotonic()
+                time.sleep(sleep_for if sleep_for > 0 else 0.5)
+                if sleep_for <= 0:
+                    next_tick = time.monotonic()
+                continue
             with self._slot_lock:
                 buf = self._slots.get(variant)
             if buf is not None and self._ensure_proc(variant):
@@ -737,32 +817,42 @@ class AnnotatedStreamer:
                     break
             return pick
 
-    def _encode_frame(self, item) -> Optional[bytes]:
+    def _encode_frame(self, item, wanted=None) -> Optional[bytes]:
         """畫框 + 轉 bytes。只在 pacer thread 呼叫。
 
         收到的畫面已經在 push_frame 裡脫離過 cap.read() 的緩衝(見那裡的說明)。
+        on-demand:只產 wanted(有人看)的變體;annotated 的畫框只在 annotated 或
+        lofi(重用同畫面)有人看時才做 —— 這是省 CPU 的關鍵(畫框+色轉是最大宗)。
         """
         try:
+            if wanted is None:
+                wanted = set(self._variants)
             ts, frame, sx, sy = item
             out = {}
-            if "lite" in self._variants:
+            if "lite" in self._variants and "lite" in wanted:
                 # 不畫框那條:直接用原畫面(_draw_overlay 只有真的要畫才複製,
                 # 所以這裡拿到的 frame 不會被下面污染)
                 lite = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420) if USE_HW else frame
                 if not lite.flags['C_CONTIGUOUS']:
                     lite = np.ascontiguousarray(lite)
                 out["lite"] = lite
-            dets = self._dets_for(ts)
-            annotated = _draw_overlay(frame, dets, sx, sy)
-            if USE_HW:
-                # 硬體路徑吃 I420(見 _spawn 的說明)。cv2 直接轉,GStreamer 不必再轉。
-                annotated = cv2.cvtColor(annotated, cv2.COLOR_BGR2YUV_I420)
-            if not annotated.flags['C_CONTIGUOUS']:
-                annotated = np.ascontiguousarray(annotated)
-            # 🛑 回傳 ndarray 而不是 tobytes():那是每幀 1.5~2MB 的複製
-            #    (20fps = 31MB/s),而且複製時抓著 GIL,會跟偵測執行緒搶。
-            #    寫入時直接用 buffer protocol,零複製。
-            out["annotated"] = annotated
+            need_annot = ("annotated" in wanted) or ("lofi" in wanted)
+            if need_annot:
+                dets = self._dets_for(ts)
+                annotated = _draw_overlay(frame, dets, sx, sy)
+                if USE_HW:
+                    # 硬體路徑吃 I420(見 _spawn 的說明)。cv2 直接轉,GStreamer 不必再轉。
+                    annotated = cv2.cvtColor(annotated, cv2.COLOR_BGR2YUV_I420)
+                if not annotated.flags['C_CONTIGUOUS']:
+                    annotated = np.ascontiguousarray(annotated)
+                # 🛑 回傳 ndarray 而不是 tobytes():那是每幀 1.5~2MB 的複製
+                #    (20fps = 31MB/s),而且複製時抓著 GIL,會跟偵測執行緒搶。
+                #    寫入時直接用 buffer protocol,零複製。
+                if "annotated" in wanted:
+                    out["annotated"] = annotated
+                if "lofi" in self._variants and "lofi" in wanted:
+                    # 遠端省流:同一張(含框)畫面,只是編碼成低幀低碼
+                    out["lofi"] = annotated
             return out
         except Exception as e:
             print(f"⚠️ [annot] cam_{self.camera_id} _encode_frame 失敗: {e!r}", flush=True)

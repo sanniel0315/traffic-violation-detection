@@ -28,6 +28,7 @@ from urllib.parse import urlencode
 import requests
 import websockets
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from detection import stream_demand
 from fastapi.responses import Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -52,6 +53,9 @@ async def proxy_ws(ws: WebSocket):
     （單一 TCP 連線，穿得過 NAT，不必額外開 UDP 埠）。
     """
     await ws.accept()
+    # on-demand:登記「有人在看這條 src」,annotated_streamer 據此決定要不要編碼
+    _src = ws.query_params.get("src", "")
+    _token = stream_demand.add(_src)
     query = urlencode(dict(ws.query_params))
     upstream_url = f"{GO2RTC_WS}/api/ws" + (f"?{query}" if query else "")
 
@@ -60,6 +64,7 @@ async def proxy_ws(ws: WebSocket):
             upstream_url, max_size=None, ping_interval=None, open_timeout=_CONNECT_TIMEOUT
         )
     except Exception as exc:
+        stream_demand.remove(_src, _token)
         await ws.close(code=1011, reason=f"go2rtc 連線失敗: {exc}"[:120])
         return
 
@@ -87,6 +92,7 @@ async def proxy_ws(ws: WebSocket):
     except WebSocketDisconnect:
         pass
     finally:
+        stream_demand.remove(_src, _token)
         for t in tasks:
             t.cancel()
         await upstream.close()
@@ -94,6 +100,24 @@ async def proxy_ws(ws: WebSocket):
             await ws.close()
         except Exception:
             pass
+
+
+@router.post("/want")
+async def stream_want(request: Request):
+    """前端心跳:回報「正在看」的 go2rtc src。瀏覽器直連 go2rtc(繞過會凍的 Python
+    proxy)時,proxy 那條需求登記不會觸發,改由這個端點維持 on-demand 編碼不斷。
+    body: {"srcs": ["cam_2_lite", "cam_3_annotated", ...]}"""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    srcs = body.get("srcs") if isinstance(body, dict) else None
+    n = 0
+    for s in (srcs or []):
+        if isinstance(s, str) and s:
+            stream_demand.touch(s)
+            n += 1
+    return {"ok": True, "touched": n}
 
 
 @router.api_route("/{go2rtc_path:path}", methods=["GET", "POST", "HEAD"])

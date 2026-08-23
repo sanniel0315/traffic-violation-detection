@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import yaml
 import os
+import re
 import requests
 import json
 from datetime import datetime
@@ -659,6 +660,32 @@ async def update_nvr_settings(settings: NvrSettings):
 
 # ============ 攝影機 API ============
 
+def _go2rtc_stream_fps() -> dict:
+    """從 go2rtc producer 的 SDP(a=framerate)取每台實際「串流 fps」。
+    這等於「錄影 fps」——錄影走 -c copy,直接複製這條串流。
+    🛑 偵測關閉時 Frigate 的 camera_fps 只是偵測輸入 fps(如 1),不是錄影 fps,
+       會誤導使用者以為「錄影只有 1fps」。改用這個顯示真實錄影幀率。"""
+    out = {}
+    try:
+        import re as _re
+        api = os.getenv("GO2RTC_API", "http://127.0.0.1:1984").rstrip("/")
+        r = requests.get(f"{api}/api/streams", timeout=4)
+        if r.status_code != 200:
+            return out
+        for name, info in (r.json() or {}).items():
+            for prod in (info.get("producers") or []):
+                m = _re.search(r"a=framerate:([0-9.]+)", prod.get("sdp") or "")
+                if m:
+                    try:
+                        out[name] = round(float(m.group(1)))
+                    except Exception:
+                        pass
+                    break
+    except Exception:
+        pass
+    return out
+
+
 @router.get("/cameras")
 def get_nvr_cameras():
     """取得 NVR 攝影機列表"""
@@ -680,6 +707,9 @@ def get_nvr_cameras():
     except Exception:
         pass
 
+    # 實際錄影/串流 fps(錄影走 -c copy = 這條串流的 fps),避免顯示偵測 fps 誤導
+    stream_fps = _go2rtc_stream_fps()
+
     # config.yml 為主要來源
     try:
         if os.path.exists(FRIGATE_CONFIG_PATH):
@@ -697,9 +727,47 @@ def get_nvr_cameras():
                         "detection_fps": 0,
                         "process_fps": 0,
                         "pid": 0,
+                        "record_fps": 0,
                     }
                     if name in live_stats:
                         cam.update(live_stats[name])
+                    # 錄影 fps 要讀「record 角色的輸入串流」——可能被導向降幀串流
+                    # (如 cam_2 錄影走 cam_2_rec30 30fps,但分析源 cam_2 仍 60fps)
+                    rec_stream = name
+                    try:
+                        for _inp in (cam_config.get("ffmpeg", {}).get("inputs") or []):
+                            if "record" in (_inp.get("roles") or []):
+                                _seg = str(_inp.get("path", "")).rstrip("/").split("/")[-1]
+                                if _seg:
+                                    rec_stream = _seg
+                                break
+                    except Exception:
+                        pass
+                    cam["record_fps"] = stream_fps.get(rec_stream, 0)
+                    # 使用者設定的錄影 FPS（從 rec 串流 URL 的 ?fps 取，供 UI 顯示/編輯）
+                    rec_set = 0
+                    try:
+                        _streams = (config.get("go2rtc", {}) or {}).get("streams", {}) or {}
+                        _srcs = _streams.get(rec_stream) or []
+                        if _srcs:
+                            _m = re.search(r'[?&]fps=(\d+)', str(_srcs[0]))
+                            if _m:
+                                rec_set = int(_m.group(1))
+                    except Exception:
+                        pass
+                    cam["record_fps_set"] = rec_set
+                    # 偵測 FPS:frigate 的 detect 是停用的(偵測在 traffic-api 內跑),
+                    # 這裡顯示 0 只會誤導。改抓 traffic-api 實際的 YOLO 分析率(analysis_fps)。
+                    try:
+                        from api.routes.stream import detection_services as _dets
+                        _mid = re.match(r'^cam_(\d+)$', name)
+                        if _mid:
+                            _svc = _dets.get(int(_mid.group(1))) or {}
+                            _afps = _svc.get("analysis_fps")
+                            if _afps is not None:
+                                cam["detection_fps"] = _afps
+                    except Exception:
+                        pass
                     cameras.append(cam)
     except Exception:
         pass
@@ -745,6 +813,75 @@ async def update_nvr_camera(camera_name: str, camera: FrigateCameraConfig):
             yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
 
         return {"status": "success", "message": f"攝影機 {camera_name} 已更新"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RecordFpsRequest(BaseModel):
+    fps: int = Field(..., ge=1, le=30)
+
+
+@router.put("/cameras/{camera_name}/record-fps")
+async def set_record_fps(camera_name: str, req: RecordFpsRequest):
+    """設定該攝影機的錄影 FPS（使用者可自由調節，設多少就錄多少）。
+
+    做法（免重編碼）：Axis 攝影機支援 RTSP `?fps=N`，建立獨立的
+    `cam_X_rec` 內部串流指定幀率，錄影角色改讀它；分析源（cam_X 原生
+    幀率）完全不動，分析率不受影響。設定後 NVR 需重啟套用。
+    """
+    try:
+        if not os.path.exists(FRIGATE_CONFIG_PATH):
+            raise HTTPException(status_code=404, detail="設定檔不存在")
+        with open(FRIGATE_CONFIG_PATH, 'r') as f:
+            config = yaml.safe_load(f) or {}
+        cameras = config.get("cameras", {})
+        if camera_name not in cameras:
+            raise HTTPException(status_code=404, detail="攝影機不存在")
+
+        streams = config.setdefault("go2rtc", {}).setdefault("streams", {})
+        base = streams.get(camera_name)
+        if not isinstance(base, list) or not base:
+            raise HTTPException(
+                status_code=400,
+                detail=f"找不到 {camera_name} 的來源串流，無法建立降幀錄影流",
+            )
+        # 以來源 URL 為基底，去掉既有 fps 參數後重設
+        base_url = str(base[0])
+        clean = re.sub(r'[?&]fps=\d+', '', base_url)
+        sep = '&' if '?' in clean else '?'
+        rec_url = f"{clean}{sep}fps={req.fps}"
+        rec_name = f"{camera_name}_rec"
+        streams[rec_name] = [rec_url]
+        # 清掉舊的固定命名（rec20 / rec30）避免殘留
+        for old in (f"{camera_name}_rec20", f"{camera_name}_rec30"):
+            streams.pop(old, None)
+
+        # 錄影角色輸入改指 rec 串流（分析源 inputs 不動）
+        inputs = cameras[camera_name].get("ffmpeg", {}).get("inputs", [])
+        target = f"rtsp://127.0.0.1:8554/{rec_name}"
+        changed = False
+        for inp in inputs:
+            if "record" in (inp.get("roles") or []):
+                inp["path"] = target
+                changed = True
+                break
+        if not changed and inputs:
+            inputs[0]["path"] = target
+            inputs[0].setdefault("roles", []).append("record")
+
+        _backup_config(FRIGATE_CONFIG_PATH)
+        with open(FRIGATE_CONFIG_PATH, 'w') as f:
+            yaml.dump(_sanitize_frigate_config(config), f, default_flow_style=False, allow_unicode=True)
+
+        add_log("info", f"{camera_name} 錄影 FPS 設為 {req.fps}，NVR 重啟套用", "nvr")
+        restart_nvr()
+        return {
+            "status": "success",
+            "fps": req.fps,
+            "message": f"錄影 FPS 已設為 {req.fps}，NVR 重啟中（約 30 秒）",
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -1526,9 +1663,24 @@ async def sync_cameras_to_nvr():
             existing_roles = list(existing.get("ffmpeg", {}).get("inputs", [{}])[0].get("roles", [])) if existing else []
             if is_new_cam and not existing_roles:
                 existing_roles = ["record"]
+            # 🛑 保留使用者設定的「錄影 FPS」重導向:若已建 cam_X_rec(降幀錄影流)
+            #    且此 input 是錄影專用(無 detect 角色),就指向 cam_X_rec 而非主流。
+            #    否則每次「同步攝影機」都會把錄影打回主流原生 fps,使用者設的 FPS 失效
+            #    (2026-08-24 實案:同步後 cam_2/3/4 錄影退回原生、實測欄變空)。
+            #    分析源 cam_X 由 traffic-api 直接讀 go2rtc,不經 frigate,完全不受影響。
+            _rec_name = f"{cam_name}_rec"
+            _has_rec = isinstance(
+                config.get("go2rtc", {}).get("streams", {}).get(_rec_name), list
+            )
+            _record_only = ("record" in existing_roles) and ("detect" not in existing_roles)
+            _input_path = (
+                f"rtsp://127.0.0.1:8554/{_rec_name}"
+                if (_has_rec and _record_only)
+                else rtsp_url
+            )
             new_cam["ffmpeg"] = {
                 "inputs": [
-                    {"path": rtsp_url, "roles": existing_roles}
+                    {"path": _input_path, "roles": existing_roles}
                 ]
             }
             # detect：保留現有，新 cam 才用預設

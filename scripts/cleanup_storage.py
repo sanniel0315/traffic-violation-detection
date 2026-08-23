@@ -192,6 +192,54 @@ def cleanup_congestion_samples(
         conn.close()
 
 
+def cleanup_traffic_records(
+    db_path: str, keep_days: int, dry_run: bool, batch: int = 50000
+) -> tuple[int, int]:
+    """VD報表/統計報表資料保留上限（預設 365 天 = 存 1 年）。
+
+    刪除超過 keep_days 的 traffic_events(原始車輛事件，VD報表權威來源)與
+    traffic_report_aggs(聚合，統計報表快取)。
+
+    🛑 與 congestion_samples 不同:traffic_events 是報表「權威來源」(聚合表有已知
+       缺口，見 api/routes/external.py)，所以這裡是「純時間上限」——原始與聚合用
+       同一 cutoff 一起刪，>1 年一律退場，不做「有聚合才刪原始」的連鎖。
+    🛑 DB 存 UTC naive 時間字串(與 congestion 一致)，cutoff 用 gmtime。
+    分批刪除(預設 5 萬列一批)避免長鎖表把 VD 報表寫入卡成 timeout。
+
+    回傳 (刪除 traffic_events 列數, 刪除 traffic_report_aggs 列數)。
+    """
+    import sqlite3
+
+    cutoff = time.time() - keep_days * 86400
+    cutoff_dt = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(cutoff))  # DB 存 UTC naive
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute("PRAGMA busy_timeout = 30000")
+    try:
+        ev = conn.execute(
+            "SELECT COUNT(*) FROM traffic_events WHERE created_at < ?", (cutoff_dt,)
+        ).fetchone()[0]
+        ag = conn.execute(
+            "SELECT COUNT(*) FROM traffic_report_aggs WHERE bucket_start < ?", (cutoff_dt,)
+        ).fetchone()[0]
+        if not dry_run:
+            while True:
+                cur = conn.execute(
+                    "DELETE FROM traffic_events WHERE id IN ("
+                    "  SELECT id FROM traffic_events WHERE created_at < ? LIMIT ?)",
+                    (cutoff_dt, batch),
+                )
+                conn.commit()
+                if cur.rowcount == 0:
+                    break
+            conn.execute(
+                "DELETE FROM traffic_report_aggs WHERE bucket_start < ?", (cutoff_dt,)
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    return ev, ag
+
+
 def _parse_camera_days(items: list[str]) -> dict[int, int]:
     """解析 --camera-days 參數，格式 '8:3' = camera_id 8 保留 3 天"""
     result: dict[int, int] = {}
@@ -224,6 +272,10 @@ def main() -> int:
     parser.add_argument(
         "--congestion-sample-days", type=int, default=30,
         help="壅塞原始樣本保留天數（預設 30；設 0 停用）。只刪聚合表已覆蓋的日期",
+    )
+    parser.add_argument(
+        "--traffic-report-days", type=int, default=365,
+        help="VD報表/統計報表資料(traffic_events+traffic_report_aggs)保留天數（預設 365=存 1 年；設 0 停用）",
     )
     parser.add_argument("--dry-run", action="store_true", help="只統計不刪除")
     args = parser.parse_args()
@@ -274,6 +326,14 @@ def main() -> int:
         )
         note = f" / 跳過 {skipped_days} 天" if skipped_days else ""
         print(f"  congestion_samples（保留 {args.congestion_sample_days} 天）: {rows} 列{note}")
+
+    # VD報表/統計報表資料保留上限（traffic_events 原始 + 聚合，預設 365 天=存 1 年）
+    if args.traffic_report_days >= 1 and os.path.exists(args.db):
+        ev, ag = cleanup_traffic_records(
+            args.db, args.traffic_report_days, args.dry_run
+        )
+        print(f"  VD/統計報表資料（保留 {args.traffic_report_days} 天）: "
+              f"traffic_events {ev} 列 / traffic_report_aggs {ag} 列")
 
     print(f"✅ 合計: {total_deleted} 檔 / {total_freed / 1e9:.1f} GB" + (f" / {total_errors} 錯誤" if total_errors else ""))
     return 0

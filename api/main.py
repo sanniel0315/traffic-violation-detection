@@ -299,6 +299,12 @@ async def lifespan(app: FastAPI):
     init_db()
     logs.add_log("info", "系統日誌服務啟動", "system")
     os.makedirs("./output/violations", exist_ok=True)
+    # on-demand 串流需求登記表:清掉上次崩潰殘留的 token
+    try:
+        from detection import stream_demand as _sd
+        _sd.clear_all()
+    except Exception:
+        pass
     threading.Thread(target=_resume_services_in_background, daemon=True, name="resume-services").start()
     # 🛑 號誌 TC3(抄錄 + 中央中繼 + 控制 + 持久化)已拆成獨立常駐服務 traffic-signal
     #    (services/signal_daemon.py,127.0.0.1:8012)。web 重啟不該中斷中央連線,所以
