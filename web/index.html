@@ -5137,6 +5137,12 @@
                             <el-button size="small" :type="overlayShowRoi?'primary':'default'" @click="toggleOverlayRoi" :disabled="monitorMode!=='overlay'">
                                 <svg class="text-icon" style="margin-right:4px"><use href="#i-target"/></svg>{{ overlayShowRoi ? '隱藏 ROI' : '顯示 ROI' }}
                             </el-button>
+                            <el-tooltip content="遠端(4G/外網)觀看開啟:改用 10fps/350k、同解析度的串流,塞得進窄上行 → 順。現場請關閉,看高幀高畫質。此開關本機記住。" placement="bottom">
+                                <span style="display:inline-flex;align-items:center;gap:6px;margin-left:4px">
+                                    <span class="monitor-toolbar-label">遠端省流</span>
+                                    <el-switch v-model="remoteSaver" size="small" @change="toggleRemoteSaver"></el-switch>
+                                </span>
+                            </el-tooltip>
                         </div>
                         <div style="display:flex;align-items:center;gap:10px">
                             <el-button
@@ -5179,7 +5185,12 @@
                                      而且 traffic-api 完全不參與編碼(每多一個觀看者 +15% CPU → 0)。
                                      疊加維持 MJPEG:偵測框是後端燒進畫面的。 -->
                                 <div
-                                    v-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='h264'"
+                                    v-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='hls'"
+                                    class="go2rtc-host"
+                                    v-hls="hlsUrl(c)"
+                                ></div>
+                                <div
+                                    v-else-if="c.enabled && c.showStream && getMonitorMediaKind(c)==='h264'"
                                     class="go2rtc-host"
                                     :data-ovl-host="c.id"
                                     v-go2rtc="gridWsUrl(c)"
@@ -5283,7 +5294,12 @@
                             <!-- 放大也走 H.264:原生就是 1080p,不必像 MJPEG 那樣
                                  分割格送小張、放大再換一條高解析度串流。 -->
                             <div
-                                v-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera,{zoom:true})==='h264'"
+                                v-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera,{zoom:true})==='hls'"
+                                class="go2rtc-host"
+                                v-hls="hlsUrl(monitorZoomCamera)"
+                            ></div>
+                            <div
+                                v-else-if="monitorZoomCamera && getMonitorMediaKind(monitorZoomCamera,{zoom:true})==='h264'"
                                 class="go2rtc-host"
                                 data-ovl-host="zoom"
                                 v-go2rtc="getMonitorWsUrl(monitorZoomCamera)"
@@ -6572,9 +6588,9 @@
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-list"/></svg>命令覆蓋矩陣</span>
                             <div style="display:flex;gap:8px;align-items:center">
-                                <el-tag size="small" type="success">已抄到 {{ sigCoverage.seen_total||0 }} / {{ sigCoverage.catalog_total||0 }}</el-tag>
-                                <el-tag v-if="sigCoverage.extra_total" size="small" type="danger">規範外 {{ sigCoverage.extra_total }}</el-tag>
-                                <el-tag size="small" type="info">訊框 {{ sigCoverage.frames_total||0 }}</el-tag>
+                                <el-tag size="small" type="success">已抄到 {{ sigCovSummary.seen_total }} / {{ sigCovSummary.catalog_total }}</el-tag>
+                                <el-tag v-if="sigCovSummary.extra_total" size="small" type="danger">規範外 {{ sigCovSummary.extra_total }}</el-tag>
+                                <el-tag size="small" type="info">訊框 {{ sigCovSummary.frames_total }}</el-tag>
                                 <el-button size="small" @click="loadSignalCoverage">重新載入</el-button>
                             </div>
                         </div>
@@ -6582,17 +6598,17 @@
                             <!-- 覆蓋率:整體大進度條 + 各等級/範疇小進度條 -->
                             <div class="cov-hero">
                                 <div>
-                                    <div class="cov-hero-num">{{ sigCoverage.seen_total||0 }}<small> / {{ sigCoverage.catalog_total||105 }}</small></div>
-                                    <div class="cov-hero-lbl">協定 3.0 訊息覆蓋率 · {{ Math.round((sigCoverage.seen_total||0)/(sigCoverage.catalog_total||105)*100) }}%</div>
+                                    <div class="cov-hero-num">{{ sigCovSummary.seen_total }}<small> / {{ sigCovSummary.catalog_total||105 }}</small></div>
+                                    <div class="cov-hero-lbl">協定 3.0 訊息覆蓋率 · {{ Math.round(sigCovSummary.seen_total/(sigCovSummary.catalog_total||105)*100) }}%</div>
                                 </div>
-                                <div class="cov-hero-bar"><div class="cov-hero-fill" :style="{width:((sigCoverage.seen_total||0)/(sigCoverage.catalog_total||105)*100)+'%'}"></div></div>
+                                <div class="cov-hero-bar"><div class="cov-hero-fill" :style="{width:(sigCovSummary.seen_total/(sigCovSummary.catalog_total||105)*100)+'%'}"></div></div>
                             </div>
                             <div class="cov-bars">
-                                <div class="cov-bar-row" v-for="(b, bi) in (sigCoverage.by_level||[])" :key="'lv'+bi">
+                                <div class="cov-bar-row" v-for="(b, bi) in sigCovSummary.by_level" :key="'lv'+bi">
                                     <div class="cov-bar-head"><span class="k">等級 {{ b.level }}</span><span class="v">{{ b.seen }} / {{ b.total }}</span></div>
                                     <div class="cov-bar-track"><div class="cov-bar-fill" :class="'lv-'+b.level" :style="{width:(b.total?b.seen/b.total*100:0)+'%'}"></div></div>
                                 </div>
-                                <div class="cov-bar-row" v-for="(b, bi) in (sigCoverage.by_scope||[])" :key="'sc'+bi">
+                                <div class="cov-bar-row" v-for="(b, bi) in sigCovSummary.by_scope" :key="'sc'+bi">
                                     <div class="cov-bar-head"><span class="k">{{ b.scope==='IC' ? '號誌控制器' : '設備共用' }}</span><span class="v">{{ b.seen }} / {{ b.total }}</span></div>
                                     <div class="cov-bar-track"><div class="cov-bar-fill sc" :style="{width:(b.total?b.seen/b.total*100:0)+'%'}"></div></div>
                                 </div>
@@ -6604,6 +6620,7 @@
                                     <el-radio-button label="miss">未抄到</el-radio-button>
                                 </el-radio-group>
                                 <el-input v-model="sigCovQuery" size="small" clearable placeholder="搜尋訊息碼或類別" style="max-width:240px"></el-input>
+                                <el-checkbox v-model="sigCovHideOptional" size="small">隱藏設定/選用類(控制器不會送)</el-checkbox>
                                 <span style="font-size:12px;color:#94a3b8">顯示 {{ sigCovRows.length }} 筆</span>
                             </div>
                             <el-table :data="sigCovRows" size="small" max-height="420" style="width:100%"
@@ -6825,7 +6842,7 @@
                             <span><svg class="text-icon"><use href="#i-list"/></svg>時制計畫（現場即時）</span>
                             <span style="display:flex;gap:8px;align-items:center">
                                 <el-button size="small" @click="loadTimingPlans">重新載入</el-button>
-                                <el-button size="small" type="success" plain :loading="sigProbing" @click="sigSelfProbe">自我查詢比對</el-button>
+                                <el-button size="small" type="primary" :loading="sigProbing" @click="sigSelfProbe">自我查詢比對</el-button>
                             </span>
                         </div>
                         <div class="card-body">
@@ -6904,8 +6921,8 @@
                         </div>
                         <div class="card-body">
                             <div v-if="sigCtl.hwstatus_now&&sigCtl.hwstatus_now.received!=null" style="margin-bottom:8px;font-size:14px;padding:6px 10px;background:#f1f5f9;border-radius:6px">
-                                現在實際：控制器報 <b style="font-family:monospace">{{ sigCtl.hwstatus_now.received_hex }}</b> → 送中央 <b style="font-family:monospace;color:#dc2626">{{ sigCtl.hwstatus_now.sent_hex }}</b>（模式 {{ sigCtl.hwstatus_mode }}）
-                                <el-button size="small" text type="primary" @click="sigHwLoadCurrent">帶入下方勾選</el-button>
+                                <span style="color:#0f172a">現在實際：控制器報 <b style="font-family:monospace">{{ sigCtl.hwstatus_now.received_hex }}</b> → 送中央 <b style="font-family:monospace;color:#dc2626">{{ sigCtl.hwstatus_now.sent_hex }}</b>（模式 {{ sigCtl.hwstatus_mode }}）</span>
+                                <el-button size="small" @click="sigHwLoadCurrent" style="margin-left:10px">帶入下方勾選</el-button>
                             </div>
                             <div class="analysis-setting-tip">下方是「要送出測試的值」（跟上面的現在值分開）。勾要送給中央的 bit → 按「送出測試碼」，中央會顯示對應的故障項；逐 bit 測就能對出「哪個 bit ＝ 哪一項」。測完按「還原正常」。⚠️ 這會改變中央看到的硬體狀態。</div>
                             <div style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0">
@@ -6915,10 +6932,10 @@
                             </div>
                             <div style="margin:8px 0;font-size:14px">組出的值：<b style="font-family:monospace;font-size:16px;color:#dc2626">{{ sigHwHex }}</b></div>
                             <div style="display:flex;gap:8px;flex-wrap:wrap">
-                                <el-button size="small" type="danger" @click="sigHwSendTest">送出測試碼給中央</el-button>
-                                <el-button size="small" type="success" plain @click="sigHwSetMode('flip14',0)">還原正常</el-button>
-                                <el-button size="small" plain @click="sigHwSetMode('zero',0)">全 0</el-button>
-                                <el-button size="small" plain @click="sigHwSetMode('raw',0)">純通透</el-button>
+                                <el-button size="small" type="primary" @click="sigHwSendTest">送出測試碼給中央</el-button>
+                                <el-button size="small" @click="sigHwSetMode('flip14',0)">還原正常</el-button>
+                                <el-button size="small" @click="sigHwSetMode('zero',0)">全 0</el-button>
+                                <el-button size="small" @click="sigHwSetMode('raw',0)">純通透</el-button>
                             </div>
                             <div class="analysis-setting-tip" style="margin-top:8px">參考：中央監看的 16 項硬體＝CPU模組/記憶體/計時器/Watchdog/電源/單元/信號驅動器單元/信號燈/連線/內櫃開啟/時制計劃故障/信號衝突/信號電源/時制計劃轉變/controller ready/communication line bad（哪項對哪個 bit 就靠這個逐一測）。</div>
                         </div>
@@ -6935,12 +6952,14 @@
                                     <el-option label="控制器→中央 上傳" value="controller"></el-option>
                                 </el-select>
                                 <el-input v-model="sigFrameFCode" size="small" style="width:120px" placeholder="訊息碼 如5FC5" clearable @change="loadSignalFrames"></el-input>
+                                <el-date-picker v-model="sigFrameRange" type="datetimerange" size="small" style="width:340px" unlink-panels range-separator="~" start-placeholder="起(查歷史,留空=即時)" end-placeholder="迄" format="MM/DD HH:mm" @change="loadSignalFrames" :teleported="true"></el-date-picker>
                                 <el-select v-model="sigFrameFCks" size="small" style="width:104px" @change="loadSignalFrames" placeholder="CKS">
                                     <el-option label="CKS 全部" value=""></el-option>
                                     <el-option label="只看 OK" value="ok"></el-option>
                                     <el-option label="只看 錯" value="bad"></el-option>
                                 </el-select>
                                 <el-button size="small" @click="loadSignalFrames">重新載入</el-button>
+                                <span v-if="sigFrameHasRange()" style="font-size:12px;color:#2563eb;font-weight:700">查到 {{ sigFrameMatched }} 筆<span v-if="sigFrameMatched &gt; 2000" style="color:#f59e0b">(顯示前2000)</span></span>
                             </span>
                         </div>
                         <div class="card-body">
@@ -8344,7 +8363,7 @@
                                     <tr>
                                         <th>名稱</th>
                                         <th>狀態</th>
-                                        <th>FPS</th>
+                                        <th>錄影 FPS</th>
                                         <th>偵測 FPS</th>
                                         <th>錄影</th>
                                         <th>Motion</th>
@@ -8364,7 +8383,13 @@
                                                 {{ cam.fps>0?'串流中':cam.enabled!==false?'等待中':'停用' }}
                                             </el-tag>
                                         </td>
-                                        <td>{{ cam.fps || '-' }}</td>
+                                        <td>
+                                            <div style="display:flex;align-items:center;gap:4px">
+                                                <el-input-number v-model="nvrRecFpsDraft[cam.name]" :min="1" :max="30" :step="1" size="small" controls-position="right" style="width:96px" :disabled="nvrRestarting"></el-input-number>
+                                                <el-button size="small" type="primary" :loading="nvrRecFpsSaving[cam.name]===true" :disabled="nvrRestarting" @click="setNvrRecordFps(cam)">套用</el-button>
+                                            </div>
+                                            <div style="font-size:11px;color:#94a3b8;margin-top:2px">實測 {{ cam.record_fps || '-' }} fps</div>
+                                        </td>
                                         <td>{{ cam.detection_fps || '-' }}</td>
                                         <td>
                                             <el-switch
@@ -10855,6 +10880,68 @@ const attachGo2rtc=(el,url)=>{
 //    Vue 在自訂元素「還沒註冊」時建立節點,會把 src 當 attribute 設,
 //    元素之後被升級時那個值直接被忽略 → 永遠沒畫面(headless 實測過)。
 //    指令可以先 await customElements.whenDefined 再用 property 指派,沒有競態。
+// ── HLS 播放(遠端省流專用):高延遲外網線用 hls.js 建大緩衝吸收抖動 ──────────
+//    VideoRTC 的 HLS 只支援 Safari 原生(canPlayType apple.mpegurl),Chrome 用不到,
+//    所以這裡用 hls.js。緩衝領先 ~4 秒 → 592ms 級抖動不會把畫面凍住(代價:延遲幾秒)。
+let _hlsLibReady=null;
+const ensureHlsLib=()=>{
+    if(_hlsLibReady)return _hlsLibReady;
+    _hlsLibReady=new Promise((resolve,reject)=>{
+        if(window.Hls){resolve();return;}
+        const sc=document.createElement('script');
+        sc.src='/web/lib/hls.min.js'; sc.onload=()=>resolve(); sc.onerror=()=>{_hlsLibReady=null;reject();};
+        document.head.appendChild(sc);
+    });
+    return _hlsLibReady;
+};
+const attachHls=(el,url)=>{
+    if(!url){ if(el.__hls){try{el.__hls.destroy();}catch(_){}el.__hls=null;} el.innerHTML=''; el.__hlsSrc=null; return; }
+    el.__hlsUrl=url;
+    if(el.__hlsPending)return;
+    el.__hlsPending=true;
+    ensureHlsLib().then(()=>{
+        el.__hlsPending=false;
+        let v=el.querySelector('video');
+        if(!v){ v=document.createElement('video'); v.autoplay=true; v.muted=true; v.playsInline=true; v.setAttribute('muted',''); el.appendChild(v); }
+        if(el.__hlsSrc===el.__hlsUrl && el.__hls)return;
+        if(el.__hls){try{el.__hls.destroy();}catch(_){}el.__hls=null;}
+        el.__hlsSrc=el.__hlsUrl;
+        if(window.Hls && window.Hls.isSupported()){
+            const hls=new window.Hls({
+                lowLatencyMode:false,
+                // 高延遲外網線(592ms):播放頭「坐」在直播後方 10 秒,不貼邊緣追。
+                // 墊子夠厚才吸得住 592ms 級抖動 —— 貼邊緣一遇慢 segment 就凍。
+                // 播放頭坐直播後方 8 秒:夠吸 592ms 抖動,又不會像 10s+ 那樣 join 時
+                // 一次把整個視窗灌進來塞爆窄上行(4 台同時 join → health 逾時 → SERVICE OFFLINE)。
+                liveSyncDuration:8,
+                liveMaxLatencyDuration:40,   // 落後 40 秒內都不強制 seek 追(一 hiccup 就跳=凍的元凶)
+                liveDurationInfinity:true,
+                maxLiveSyncPlaybackRate:1,   // 不加速追邊緣:窄/高延遲線加速只會更慘
+                maxBufferLength:24, maxMaxBufferLength:48, backBufferLength:12,
+                manifestLoadingTimeOut:20000, fragLoadingTimeOut:40000,
+                fragLoadingMaxRetry:8, fragLoadingRetryDelay:500,
+                manifestLoadingMaxRetry:8, levelLoadingMaxRetry:8,
+                nudgeMaxRetry:20,            // stall 時多試著輕推播放頭,而不是放棄
+            });
+            hls.loadSource(el.__hlsUrl); hls.attachMedia(v);
+            hls.on(window.Hls.Events.MANIFEST_PARSED,()=>{ v.play().catch(()=>{}); });
+            hls.on(window.Hls.Events.ERROR,(_e,data)=>{
+                if(!data||!data.fatal)return;
+                // 媒體錯用 recoverMediaError(不重拉整條),網路錯才 startLoad 重來
+                if(data.type===window.Hls.ErrorTypes.MEDIA_ERROR){ try{hls.recoverMediaError();}catch(_){} }
+                else { try{hls.startLoad();}catch(_){} }
+            });
+            el.__hls=hls;
+        } else if(v.canPlayType('application/vnd.apple.mpegurl')){
+            v.src=el.__hlsUrl; v.play().catch(()=>{});   // Safari 原生 HLS
+        }
+    }).catch(()=>{ el.__hlsPending=false; });
+};
+const vHls={
+    mounted(el,binding){ attachHls(el,binding.value); },
+    updated(el,binding){ if(binding.value!==binding.oldValue)attachHls(el,binding.value); },
+    unmounted(el){ if(el.__hls){try{el.__hls.destroy();}catch(_){}el.__hls=null;} el.innerHTML=''; },
+};
 const vGo2rtc={
     mounted(el,binding){ attachGo2rtc(el,binding.value); },
     updated(el,binding){ if(binding.value!==binding.oldValue)attachGo2rtc(el,binding.value); },
@@ -16259,7 +16346,10 @@ const app=createApp({
                 if(!r.ok)return;
                 const d=await r.json()||{};
                 go2rtcStreams.value=new Set(Object.keys(d));
-                go2rtcLive.value=new Set(Object.keys(d).filter(k=>((d[k]||{}).producers||[]).length>0));
+                // 🛑 收「已宣告」的串流,不要求有 producer:on-demand 變體(annotated/lite/lofi)
+                //    沒人看就沒 producer,但它們是已宣告的空串流。若只收有 producer 的,
+                //    前端 hasGo2rtcLofi 永遠 false → 永遠不選 lofi → 心跳不觸發 → 死鎖。
+                go2rtcLive.value=new Set(Object.keys(d));
             }catch(_){ /* go2rtc 不可用 → 全部維持 MJPEG,不影響現有行為 */ }
         };
         loadGo2rtcStreams();
@@ -16284,9 +16374,22 @@ const app=createApp({
         //    (先前用 MJPEG w=400 降級是糊到不能用,而且 2.0 Mbps 還是超標)。
         const go2rtcLiteName=(camera)=>camera?.id?`cam_${camera.id}_lite`:'';
         const hasGo2rtcLite=(camera)=>go2rtcLive.value.has(go2rtcLiteName(camera));
+        // 遠端省流變體:同解析度、10fps/350k。遠端(web/app)開此開關就走這條,
+        // 塞得進 4G 窄上行;現場不開,照舊看高幀高碼的 annotated。
+        const go2rtcLofiName=(camera)=>camera?.id?`cam_${camera.id}_lofi`:'';
+        const hasGo2rtcLofi=(camera)=>go2rtcLive.value.has(go2rtcLofiName(camera));
+        // 使用者手動開關(每台瀏覽器記住):比頻寬自動偵測可靠(偵測會被自己的串流汙染)。
+        const remoteSaver=ref(localStorage.getItem('remoteSaver')==='1');
+        const toggleRemoteSaver=(v)=>{
+            remoteSaver.value=!!v;
+            try{ localStorage.setItem('remoteSaver', v?'1':'0'); }catch(e){}
+            try{ reloadMonitorStreams && reloadMonitorStreams(); }catch(e){}
+        };
         const getGo2rtcWsUrl=(camera, opts={})=>{
             let name;
-            if(opts.annotated && hasGo2rtcAnnotated(camera)){
+            if(opts.lofi && hasGo2rtcLofi(camera)){
+                name=go2rtcLofiName(camera);   // 遠端省流:10fps/350k 同解析度
+            }else if(opts.annotated && hasGo2rtcAnnotated(camera)){
                 name=go2rtcAnnotatedName(camera);
             }else if(opts.lite && hasGo2rtcLite(camera)){
                 name=go2rtcLiteName(camera);   // 窄頻的原始畫面
@@ -16295,14 +16398,64 @@ const app=createApp({
             }
             if(!name)return '';
             const proto=location.protocol==='https:'?'wss:':'ws:';
-            return `${proto}//${location.host}/api/go2rtc/api/ws?src=${encodeURIComponent(name)}`;
+            // 🛑 直連 go2rtc:1984,繞過 traffic-api 的 Python WS proxy —— 那個 proxy 跟吃滿
+            //    CPU 的分析同一個 process,async 事件迴圈被卡會週期性停頓近 1 秒 → MSE 凍一張
+            //    (實測 proxy 最大間隔 961ms;直連 go2rtc 0 停頓)。go2rtc origin:'*' 允許跨埠。
+            //    直連繞過 proxy 的需求登記 → 改由前端心跳 streamWantHeartbeat 維持 on-demand。
+            return `${proto}//${location.hostname}:1984/api/ws?src=${encodeURIComponent(name)}`;
         };
+        // 遠端省流的 HLS 網址:直連 go2rtc:1984 的 m3u8(hls.js 播、大緩衝)
+        const hlsUrl=(camera)=>{
+            const name=go2rtcLofiName(camera);
+            if(!name)return '';
+            const proto=location.protocol==='https:'?'https:':'http:';
+            // 大視窗 HLS(:8013 獨立重打包服務,~7-10 秒視窗)→ hls.js 能緩衝 5 秒吃高延遲抖動。
+            // 🛑 不用 go2rtc 的 :1984 HLS:那個視窗只 1 秒,緩衝不夠,高延遲線照凍。
+            return `${proto}//${location.hostname}:8013/${encodeURIComponent(name)}/index.m3u8`;
+        };
+        // 這台攝影機目前實際在看的 go2rtc src(跟 getMonitorWsUrl 選同一條)
+        const monitorGo2rtcSrc=(camera)=>{
+            if(remoteSaver.value && hasGo2rtcLofi(camera))return go2rtcLofiName(camera);
+            const overlay=resolveCameraStreamMode(camera)==='overlay';
+            if(overlay && hasGo2rtcAnnotated(camera))return go2rtcAnnotatedName(camera);
+            if(!overlay && hasGo2rtcLite(camera))return go2rtcLiteName(camera);
+            return go2rtcStreamName(camera);
+        };
+        // on-demand 心跳:每幾秒回報「正在看」的 annotated/lite/lofi src,讓後端維持編碼。
+        // 直連 go2rtc 繞過了 proxy 的需求登記,所以需要它。沒在看就不送,編碼器自動停。
+        const streamWantHeartbeat=()=>{
+            try{
+                const srcs=new Set();
+                const collect=(cam)=>{
+                    if(!cam)return;
+                    if(getMonitorMediaKind(cam)!=='h264')return;
+                    const src=monitorGo2rtcSrc(cam);
+                    if(src && (src.endsWith('_annotated')||src.endsWith('_lite')||src.endsWith('_lofi')))srcs.add(src);
+                };
+                if(monitorZoomVisible.value && monitorZoomCamera.value){ collect(monitorZoomCamera.value); }
+                else { (sortedCameras.value||[]).forEach(collect); }
+                if(srcs.size){
+                    fetch('/api/go2rtc/want',{method:'POST',credentials:'include',
+                        headers:{'Content-Type':'application/json'},body:JSON.stringify({srcs:[...srcs]})}).catch(()=>{});
+                }
+            }catch(_){ }
+        };
+        // on-demand 心跳每 3 秒:在看的變體維持編碼,不看的自動停(省 CPU)
+        setInterval(streamWantHeartbeat, 3000);
         // 監控格用:疊加模式優先拿疊加串流
         // 疊加 → 有框那條;原始 + 窄頻 → 不畫框的低頻寬那條;其餘 → 原生
-        const getMonitorWsUrl=(camera)=>getGo2rtcWsUrl(camera, {
-            annotated: resolveCameraStreamMode(camera)==='overlay',
-            lite: resolveCameraStreamMode(camera)!=='overlay' && lowBandwidth.value,
-        });
+        const getMonitorWsUrl=(camera)=>{
+            // 遠端省流:不分疊加/非疊加,一律走 lofi(10fps/350k、含框、同解析度)
+            if(remoteSaver.value && hasGo2rtcLofi(camera)){
+                return getGo2rtcWsUrl(camera, {lofi:true});
+            }
+            return getGo2rtcWsUrl(camera, {
+                annotated: resolveCameraStreamMode(camera)==='overlay',
+                // 原始畫面 → 真原始相機串流 cam_X(60fps 全畫質)。直連 go2rtc 後不再凍,
+                // 不必再降成 lite。lite 只保留給窄頻(有的話)。
+                lite: resolveCameraStreamMode(camera)!=='overlay' && lowBandwidth.value,
+            });
+        };
         // 網格用的串流網址。放大視窗開著時回空字串 → v-go2rtc 會把該格的
         // <video-stream> 收掉。
         // 🛑 為什麼一定要收:放大跟網格那一格是「同一條串流」,不收就會有兩個
@@ -16403,6 +16556,8 @@ const app=createApp({
         //    或後端在 H.264 SEI 帶時間戳),那是另一個題目。
         const getMonitorMediaKind=(camera, opts={})=>{
             if(shouldUseDirectMonitorVideo(camera))return 'video';   // 上傳的 mp4 直接播檔案
+            // 遠端省流:走 HLS(hls.js 大緩衝,吃高延遲外網線;VideoRTC 的 MSE 緩衝太小會凍)
+            if(remoteSaver.value && hasGo2rtcLofi(camera))return 'hls';
             // 窄頻 + 有 lite:原始畫面走 H.264 低頻寬版本,不要再降級成 400px MJPEG
             if(resolveCameraStreamMode(camera)!=='overlay'
                && lowBandwidth.value && h264LiveEnabled.value && hasGo2rtcLite(camera)){
@@ -16664,9 +16819,12 @@ const app=createApp({
                     return;
                 }
                 if(getMonitorMediaKind(c)==='video')return;   // mp4 直連檔案，不佔 API 的連線池
-                // H.264 走 WebSocket(Chrome 上限 255 條),不佔 HTTP/1.1 那 6 條,
-                // 不需要為了保連線給 API 而把它降級成快照。
-                if(getMonitorMediaKind(c)==='h264'){
+                // H.264 走 WebSocket(Chrome 上限 255 條)、HLS 走 hls.js(:8013),
+                // 兩者都不佔 traffic-api 的 HTTP/1.1 那 6 條,不需要為了保連線給 API
+                // 而降級成快照。🛑 少了 HLS 這條:遠端省流開 4 台全走 HLS 時會被當成
+                //    MJPEG 扣光預算,把後面幾台標成 monitorSnapshotMode → 狀態列一直
+                //    顯示「快照」(其實底下在播 HLS),watchdog 又跳過 HLS 永遠清不掉。
+                if(getMonitorMediaKind(c)==='h264'||getMonitorMediaKind(c)==='hls'){
                     // 把先前降級留下的旗標清掉,否則狀態列會一直顯示「快照」
                     if(c.monitorSnapshotMode||c._budgetSnapshot){
                         c.monitorSnapshotMode=false;
@@ -16841,6 +16999,7 @@ const app=createApp({
                     // h264 沒有 img/video 的 load 事件可以更新 lastFrameAt,
                     // 拿「30 秒沒新畫面」判它等於必定誤殺。它也不佔連線,不需要降級。
                     if(getMonitorMediaKind(c)==='h264')return;
+                    if(getMonitorMediaKind(c)==='hls')return;   // HLS 由 hls.js 自己管緩衝,沒 load 事件,別誤降快照
                     if(!c.monitorSnapshotMode && now-Number(c.lastFrameAt||0)>30000){
                         c.monitorSnapshotMode=true;
                         c.thumbKey=now;
@@ -17049,7 +17208,24 @@ const app=createApp({
                 nvrStatusLoading.value=false;
             }
         };
-        const loadNVRCameras=async()=>{try{const r=await fetch('/api/frigate/cameras');const d=await r.json();frigateCameras.value=d.cameras||[];}catch(e){console.error(e);}};
+        // 錄影 FPS 使用者可自由調節（Axis ?fps=N，免重編碼；分析源不動）
+        const nvrRecFpsDraft=reactive({});
+        const nvrRecFpsSaving=reactive({});
+        const loadNVRCameras=async()=>{try{const r=await fetch('/api/frigate/cameras');const d=await r.json();frigateCameras.value=d.cameras||[];frigateCameras.value.forEach(c=>{if(nvrRecFpsDraft[c.name]==null)nvrRecFpsDraft[c.name]=c.record_fps_set||c.record_fps||20;});}catch(e){console.error(e);}};
+        const setNvrRecordFps=async(cam)=>{
+            const fps=parseInt(nvrRecFpsDraft[cam.name]);
+            if(!fps||fps<1||fps>30){ElementPlus.ElMessage.warning('錄影 FPS 需介於 1~30');return;}
+            nvrRecFpsSaving[cam.name]=true;
+            try{
+                const r=await fetch(`/api/frigate/cameras/${encodeURIComponent(cam.name)}/record-fps`,{method:'PUT',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({fps})});
+                const d=await r.json().catch(()=>({}));
+                if(!r.ok||d.status==='error')throw new Error(d.detail||d.message||`HTTP ${r.status}`);
+                ElementPlus.ElMessage.success(`錄影 FPS 已設為 ${fps}，NVR 重啟中（約 30 秒）`);
+                nvrRestarting.value=true;
+                setTimeout(()=>{nvrRestarting.value=false;loadNVRCameras();},32000);
+            }catch(e){ElementPlus.ElMessage.error(`設定失敗: ${e.message||e}`);}
+            finally{nvrRecFpsSaving[cam.name]=false;}
+        };
         const nvrMotionRoiFrameUrl=(cam)=>{
             const name=String(cam?.name||'');
             const m=name.match(/^cam_(\d+)$/);
@@ -20111,10 +20287,24 @@ const app=createApp({
         };
         const sigCovFilter=ref('all');
         const sigCovQuery=ref('');
+        // 預設隱藏「不會抓到」的:設定類/選用(O級)/只有中央會下的碼 —— 控制器平常不會送,計數恆 0 只是噪音
+        const sigCovHideOptional=ref(true);
+        // 這條碼在我們的部署裡「抓得到」嗎:已抄到 / 規範外 / 我方會自我查詢 /
+        // 控制器會主動送或查詢會回(且非選用 O 級)
+        const _sigCovSelfQuery=['5F40','5F48','5F44','0F41'];
+        const sigCovCapturable=(r)=>{
+            if(r.seen||r.extra)return true;
+            const code=(r.code||'').toUpperCase();
+            if(_sigCovSelfQuery.includes(code))return true;
+            const mt=r.message_type||'';
+            const lv=(r.level||'').toUpperCase();
+            return (lv==='A'||lv==='B') && (mt.indexOf('主動回報')>=0 || mt.indexOf('查詢回報')>=0);
+        };
         const sigCovRows=computed(()=>{
             const all=(sigCoverage.value&&sigCoverage.value.codes)||[];
             const q=sigCovQuery.value.trim().toLowerCase();
             return all.filter(r=>{
+                if(sigCovHideOptional.value && !sigCovCapturable(r))return false;
                 if(sigCovFilter.value==='seen' && !r.seen)return false;
                 if(sigCovFilter.value==='miss' && r.seen)return false;
                 if(!q)return true;
@@ -20123,6 +20313,30 @@ const app=createApp({
             });
         });
         const sigCovRowClass=({row})=>row.extra?'sig-row-extra':(row.seen?'':'sig-row-miss');
+        // 摘要(覆蓋率大數字/各等級/各範疇)也套用同一套「抓得到」定義:
+        // 勾「隱藏設定/選用類」時,分母只算控制器真的會送的碼,等級 O(全不可抓)整個消失,
+        // 才不會用永遠 0 的設定碼灌水覆蓋率。取消勾選則回到規範完整 105 條。
+        const sigCovSummary=computed(()=>{
+            const cov=sigCoverage.value||{};
+            const all=cov.codes||[];
+            const base=sigCovHideOptional.value?all.filter(sigCovCapturable):all;
+            const inSpec=base.filter(r=>!r.extra);
+            const lvMap={},scMap={};
+            inSpec.forEach(r=>{
+                const lv=r.level||'-';
+                (lvMap[lv]=lvMap[lv]||{level:lv,total:0,seen:0});lvMap[lv].total++;if(r.seen)lvMap[lv].seen++;
+                const sc=r.scope||'-';
+                (scMap[sc]=scMap[sc]||{scope:sc,total:0,seen:0});scMap[sc].total++;if(r.seen)scMap[sc].seen++;
+            });
+            return {
+                seen_total:inSpec.filter(r=>r.seen).length,
+                catalog_total:inSpec.length,
+                extra_total:base.filter(r=>r.extra).length,
+                frames_total:cov.frames_total||0,
+                by_level:Object.values(lvMap).sort((a,b)=>a.level<b.level?-1:1),
+                by_scope:Object.values(scMap).sort((a,b)=>a.scope<b.scope?-1:1),
+            };
+        });
         const loadSignalCoverage=async()=>{
             try{
                 const r=await fetch('/api/signal/coverage',{credentials:'include'});
@@ -20135,15 +20349,26 @@ const app=createApp({
         const sigFrameFCks=ref('');      // ''=全部 / ok / bad
         const sigFrameLimit=ref(200);
         const sigFrameTotal=ref(0);
+        const sigFrameRange=ref(null);       // [起,迄] 查歷史用(datetimerange);null=即時檢視
+        const sigFrameMatched=ref(0);        // 符合查詢條件的總筆數(可>顯示筆數)
         const sigFrameDecodeCache=ref({});   // raw -> {code,name,fields}
+        // 設了時間範圍就是「查歷史」(6 個月內);沒設就是即時檢視最新 200 筆
+        const sigFrameHasRange=()=>{ const r=sigFrameRange.value; return Array.isArray(r)&&r.length===2&&!!r[0]&&!!r[1]; };
         const loadSignalFrames=async()=>{
             try{
-                const p=new URLSearchParams({limit:String(sigFrameLimit.value)});
+                const hasRange=sigFrameHasRange();
+                // 查歷史範圍放寬到 2000 筆;即時檢視維持 200
+                const p=new URLSearchParams({limit:String(hasRange?2000:sigFrameLimit.value)});
                 if(sigFrameFSrc.value)p.set('src',sigFrameFSrc.value);
                 if(sigFrameFCode.value)p.set('code',sigFrameFCode.value.trim().toUpperCase());
                 if(sigFrameFCks.value)p.set('cks',sigFrameFCks.value);
+                if(hasRange){
+                    const r=sigFrameRange.value;
+                    p.set('since', String(Math.floor(new Date(r[0]).getTime()/1000)));
+                    p.set('until', String(Math.floor(new Date(r[1]).getTime()/1000)));
+                }
                 const r=await fetch('/api/signal/frames/log?'+p.toString(),{credentials:'include'});
-                if(r.ok){ const d=await r.json(); sigFrames.value=d.frames||[]; sigFrameTotal.value=d.total||0; }
+                if(r.ok){ const d=await r.json(); sigFrames.value=d.frames||[]; sigFrameTotal.value=d.total||0; sigFrameMatched.value=(d.matched!=null?d.matched:(d.frames||[]).length); }
             }catch(_){ }
         };
         // 展開的列在自動刷新(每3s換資料)後要保持展開,不能收折。
@@ -20351,7 +20576,7 @@ const app=createApp({
                 loadSignal();
                 _sigTick++;
                 // 中央連線狀態 + 最近訊框每 3 秒刷新,讓中央通訊監看接近即時
-                if(_sigTick%3===0){ loadSigControl(); loadSignalFrames(); }
+                if(_sigTick%3===0){ loadSigControl(); if(!sigFrameHasRange()) loadSignalFrames(); }
             },1000);
         };
 
@@ -20720,15 +20945,23 @@ const app=createApp({
             };
             const tryOne=async(timeoutMs)=>{
                 const ctrl=new AbortController();
+                const t0=performance.now();
                 const t=setTimeout(()=>ctrl.abort(),timeoutMs);
                 try{
                     const r=await fetch('/api/health',{cache:'no-store',signal:ctrl.signal});
-                    return {ok:r.ok, status:r.status};
+                    return {ok:r.ok, status:r.status, timedOut:false};
+                }catch(e){
+                    // 🛑 區分「慢(線塞逾時)」與「真掛(連線被拒瞬間失敗)」:
+                    //    abort 逾時、或耗時已接近逾時 → 後端還在,只是頻寬被自家串流佔住;
+                    //    瞬間失敗(連線被拒/DNS) → 才是後端真的不可達。
+                    const ms=performance.now()-t0;
+                    const timedOut=(e&&e.name==='AbortError')||ms>=timeoutMs*0.6;
+                    return {ok:false, status:0, timedOut};
                 }finally{
                     clearTimeout(t);
                 }
             };
-            let last={ok:false, status:0};
+            let last={ok:false, status:0, timedOut:true};
             try{
                 // 🛑 逾時放寬到 12s。這條 4G/5G 線的延遲會跳(實測 44~712ms,尖峰 RTT
                 //    加上號誌頁每秒輪詢佔連線,單次 health 偶爾 5~6s)。8s 門檻會在
@@ -20737,7 +20970,7 @@ const app=createApp({
                 //    真正掛掉的後端是「連線被拒」瞬間失敗,不是慢 —— 放寬逾時不影響
                 //    偵測真故障,只是不再把「慢」誤當「掛」。
                 last=await tryOne(12000);
-            }catch{ last={ok:false, status:0, aborted:true}; }
+            }catch{ last={ok:false, status:0, timedOut:true}; }
             if(last.ok){
                 // 🛑 health 恢復時一定要把「因為 health 逾時而降級」那件事收回來。
                 //    否則它是單向閂鎖:後端只要重啟一次(health 必然連續逾時),
@@ -20784,7 +21017,14 @@ const app=createApp({
                 // 還在容錯區間，保留上一次狀態文字（不切 fault），不更動 UI
                 return;
             }
-            // 連續 3 次失敗才切 fault
+            // 🛑 連續 3 次失敗:先分辨「慢(線塞)」還是「真掛(連線被拒)」。
+            //    逾時/慢 = 後端還在(本機實測 4ms),只是遠端頻寬被自家 HLS 串流佔住,
+            //    這種顯示「頻寬吃緊」就好,不要誤報 SERVICE OFFLINE 嚇使用者。
+            //    只有 HTTP 錯誤(status>0) 或 快速連線被拒(timedOut=false) 才是真異常。
+            if(last.timedOut && !(last.status>0)){
+                setDegraded(['頻寬吃緊']);
+                return;
+            }
             if(last.status>0){
                 setFault('SERVICE 連線異常 ('+last.status+')');
             }else{
@@ -20951,13 +21191,13 @@ const app=createApp({
             if(lprVisualTimer)clearInterval(lprVisualTimer);
         });
         
-        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,radarCameraId,radarTracks,radarStats,radarDotColor,radarClassZh,radarInsights,loadRadarTracks,visionEyeUrl,onVisionEyeError,trackHistory,parkingSources,parkingSource,parkingData,parkingSnapshotUrl,parkingRawSnapshotUrl,parkingImgEl,pmRect,pmLabel,pmDown,pmMove,pmUp,parkingShowVerify,parkingShowBoxes,parkingShowVehicles,parkingUseStream,vlmStatus,vlmResult,vlmQuerying,loadVlmStatus,triggerVlmLoad,askVlm,assistantOpen,toggleAssistant,assistantZoomImg,assistantPanelStyle,assistantDragStart,assistantEnabled,assistantFabStyle,assistantFabDrag,toggleAssistantEnabled,assistantSource,assistantMessages,assistantInput,assistantLoading,assistantSnapUrl,assistantSources,reloadAssistantSnap,sendAssistant,assistantPresets,assistantTTS,assistantListening,quickAsk,assistantVoiceInput,loadParkingSources,loadParkingOccupancy,openParkingEditor,downloadParkingSnapshot,openParkingLabel,parkingLiveRunning,parkingIntervalMs,parkingShowAdd,parkingAddForm,startParkingLive,stopParkingLive,addParkingSource,twipcamQuery,twipcamResults,twipcamSearching,searchTwipcam,pickTwipcam,parkingHistory,loadParkingHistory,parkingTrendPath,parkingCounting,parkingCountingMismatch,parkingCrossValidation,parkingCrossCalibrated,parkingCrossEscalated,parkingCrossHasArea,parkingCrossSuspect,parkingCrossTrend,loadParkingCounting,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewLocations,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
+        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,radarCameraId,radarTracks,radarStats,radarDotColor,radarClassZh,radarInsights,loadRadarTracks,visionEyeUrl,onVisionEyeError,trackHistory,parkingSources,parkingSource,parkingData,parkingSnapshotUrl,parkingRawSnapshotUrl,parkingImgEl,pmRect,pmLabel,pmDown,pmMove,pmUp,parkingShowVerify,parkingShowBoxes,parkingShowVehicles,parkingUseStream,vlmStatus,vlmResult,vlmQuerying,loadVlmStatus,triggerVlmLoad,askVlm,assistantOpen,toggleAssistant,assistantZoomImg,assistantPanelStyle,assistantDragStart,assistantEnabled,assistantFabStyle,assistantFabDrag,toggleAssistantEnabled,assistantSource,assistantMessages,assistantInput,assistantLoading,assistantSnapUrl,assistantSources,reloadAssistantSnap,sendAssistant,assistantPresets,assistantTTS,assistantListening,quickAsk,assistantVoiceInput,loadParkingSources,loadParkingOccupancy,openParkingEditor,downloadParkingSnapshot,openParkingLabel,parkingLiveRunning,parkingIntervalMs,parkingShowAdd,parkingAddForm,startParkingLive,stopParkingLive,addParkingSource,twipcamQuery,twipcamResults,twipcamSearching,searchTwipcam,pickTwipcam,parkingHistory,loadParkingHistory,parkingTrendPath,parkingCounting,parkingCountingMismatch,parkingCrossValidation,parkingCrossCalibrated,parkingCrossEscalated,parkingCrossHasArea,parkingCrossSuspect,parkingCrossTrend,loadParkingCounting,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewLocations,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,nvrRecFpsDraft,nvrRecFpsSaving,setNvrRecordFps,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
             showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,zoneColorOf,markPreviewZonesDirty,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,previewParkingZones,previewParkingZoneCount,parkingSubKindOptions,applyParkingSubKindToZone,directionLabel,directionArrowLabel,directionOptionsForZone,roadDirectionOptions,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedPlateIsInferred,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,detailClipRetrying,detailClipReloadKey,onDetailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovRows,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
@@ -21074,6 +21314,7 @@ async function __applyI18n(){
 }
 
 app.directive('go2rtc', vGo2rtc);
+app.directive('hls', vHls);
 app.use(ElementPlus).mount('#app');
 // 初次載入若記憶為英文,套用全站翻譯
 if (__lang.value === 'en') setTimeout(__applyI18n, 300);
