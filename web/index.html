@@ -5200,12 +5200,10 @@
                                         HTML parser 全部小寫成 viewbox,而 SVG 屬性大小寫敏感,
                                         加了也是死的。這裡不需要 —— SVG 尺寸就設成影片實際
                                         顯示的矩形,座標也已換算成該矩形的像素。 -->
-                                <svg v-if="c.enabled && c.showStream && showSvgRoi(c)"
-                                     :style="overlaySvgStyle(c.id)">
-                                    <polygon v-for="(z, zi) in overlayZonesFor(c.id)" :key="'rz'+c.id+'-'+zi"
-                                             :points="ovlPoly(c.id, z.points)"
-                                             fill="none" :stroke="z.color || '#22c55e'" stroke-width="2"></polygon>
-                                </svg>
+                                <!-- 🛑 SVG ROI 疊層移到串流鏈「之後」(見下方)。放在這裡會用 v-if
+                                     打斷 hls→h264→video→img→v-else 的 v-else-if 鏈,害 <img> fallback
+                                     在 HLS 模式(showSvgRoi=false)照樣渲染 → 每台多跑一條 live-overlay
+                                     MJPEG(帶 roi 燒 ROI)疊在 HLS 上,ROI 關不掉且吃爆頻寬(2026-08-24)。 -->
                                 <!-- 階段3:偵測框與 ROI 用 SVG 畫在影片上,不再由後端燒進畫面。
                                      🛑 不要加 viewBox / preserveAspectRatio:in-DOM 模板會被 HTML parser
                                      全部小寫成 viewbox,而 SVG 屬性是大小寫敏感的,加了也是死的。
@@ -5227,6 +5225,15 @@
                                 ></video>
                                 <img v-else-if="c.enabled && c.showStream" :src="getMonitorMediaUrl(c)" @load="handleMonitorStreamLoad(c)" @error="handleMonitorStreamError(c)">
                                 <div v-else style="color:#666" @click.stop="if(c.enabled){c.showStream=true;streamKey=Date.now();}"><svg class="text-icon"><use href="#i-video"/></svg>{{ c.enabled?'無影像，點擊重試':'攝影機已關閉' }}</div>
+                                <!-- ROI 疊層:獨立 v-if(不在串流鏈內),避免打斷上面的 v-else-if 鏈。
+                                     疊在影片上,由 overlayShowRoi 開關控制;座標靠 overlayRects(目前只為
+                                     h264 量測,故 hls 省流模式不畫 SVG ROI —— 那模式 ROI 本就不燒進畫面)。 -->
+                                <svg v-if="c.enabled && c.showStream && showSvgRoi(c)"
+                                     :style="overlaySvgStyle(c.id)">
+                                    <polygon v-for="(z, zi) in overlayZonesFor(c.id)" :key="'rz'+c.id+'-'+zi"
+                                             :points="ovlPoly(c.id, z.points)"
+                                             fill="none" :stroke="z.color || '#22c55e'" stroke-width="2"></polygon>
+                                </svg>
                                 <!-- 🛑 這裡不要再疊一層 SVG 畫 ROI。overlay 模式的串流已經由後端
                                      把 ROI 燒進畫面(URL 帶 roi=1),而且是照 1920x1080 原始座標畫的。
                                      前端再疊一層 preserveAspectRatio="none" 的 SVG 會撐滿整個容器,
