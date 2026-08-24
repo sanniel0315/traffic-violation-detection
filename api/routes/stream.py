@@ -3146,9 +3146,11 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 _min_frames = int(detection_config.get("speeding_min_frames", 5) or 5)
                 _min_frames_no_tw = int(detection_config.get("speeding_min_frames_no_tw", 8) or 8)
                 # _speed_clamp_max 已於 run_detection 頂端讀入（DB 寫入共用）
-                # 2-A: 只信校正來源開單（trip-wire 物理真值 / homography+Kalman 世界座標）；
-                # 純 pixel 未校正只顯示不開單。預設 True,可用此開關回退。
-                _require_calibrated = bool(detection_config.get("speeding_require_calibrated", True))
+                # 2-A: 只信校正來源記錄（trip-wire 物理真值 / homography+Kalman 世界座標）。
+                # 🔧 記錄模式:本系統只做「記錄」不開單,預設 False → 未校正的估算速度
+                #    也直接記錄超速事件(速度為估算值,可用一鍵透視校正提升精度)。
+                #    要「只記錄已校正的準確速度」才把此開關設 True。
+                _require_calibrated = bool(detection_config.get("speeding_require_calibrated", False))
                 global _violation_dedup
                 try:
                     _violation_dedup

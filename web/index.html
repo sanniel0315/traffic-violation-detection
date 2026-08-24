@@ -5448,6 +5448,16 @@
                                         <option value="rejected">不舉發</option>
                                     </select>
                                 </div>
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span>超速分級</span>
+                                    <select v-model="violationSeverityFilter" class="stats-native-select" style="width:120px">
+                                        <option value="">全部分級</option>
+                                        <option value="critical">嚴重 (+40↑)</option>
+                                        <option value="normal">超速 (+20~40)</option>
+                                        <option value="minor">輕微 (+&lt;20)</option>
+                                    </select>
+                                </div>
+                                <el-checkbox v-model="violationCriticalTop">嚴重置頂</el-checkbox>
                                 <el-button type="primary" @click="loadViolations">查詢</el-button>
                             </div>
                         </div>
@@ -5455,7 +5465,7 @@
                     <!-- 查詢結果 -->
                     <div class="card">
                         <div class="card-header">
-                            <span>違規件數 {{ violations.length }} 件</span>
+                            <span>違規件數 {{ displayedViolations.length }} 件{{ displayedViolations.length!==violations.length ? '（共 '+violations.length+'）' : '' }}</span>
                             <div style="display:flex;gap:8px">
                                 <el-button type="success" size="small">清單與圖片下載</el-button>
                                 <el-button type="primary" size="small">下載</el-button>
@@ -5475,7 +5485,7 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr v-for="v in violations" :key="v.id">
+                                    <tr v-for="v in displayedViolations" :key="v.id">
                                         <td>{{ v.location }}</td>
                                         <td>{{ formatTime(v.created_at) }}</td>
                                         <td>{{ formatTime(v.end_time || v.created_at) }}</td>
@@ -7861,6 +7871,7 @@
                                         <td><el-tag size="small" :type="v.violation_type==='RED_LIGHT'?'danger':(v.violation_type==='SPEEDING'?'warning':'info')">{{ v.violation_name }}</el-tag></td>
                                         <td>
                                             <span v-if="v.speed_kmh" class="ds-vrow-speed" :class="speedSeverity(v)"><b>{{ Math.round(v.speed_kmh) }}</b> <small>km/h · 限{{ v.speed_limit_kmh||'-' }}</small></span>
+                                            <el-tag v-if="speedSeverityTier(v)" size="small" :type="speedSeverityTier(v).type" effect="plain" style="margin-left:4px">{{ speedSeverityTier(v).label }} +{{ speedSeverityTier(v).over }}</el-tag>
                                             <span v-else class="ds-vrow-dim">—</span>
                                         </td>
                                         <td>{{ rowLocation(v) }}</td>
@@ -9530,6 +9541,8 @@
                         <div class="config-item"><span>逆向行駛 <el-tag size="small" type="info" effect="plain" style="margin-left:6px">開發中</el-tag></span><el-switch v-model="previewCamera.detection_config.wrong_way" disabled/></div>
                         <div class="config-item"><span>未戴安全帽 <el-tag size="small" type="warning" effect="plain" style="margin-left:6px">需 helmet model</el-tag></span><el-switch v-model="previewCamera.detection_config.no_helmet" @change="saveConfig"/></div>
                         <div class="config-item" v-if="previewCamera.detection_config.speeding"><span>速限</span><el-input-number v-model="previewCamera.detection_config.speed_limit" :min="20" :max="120" size="small" @change="saveConfig"/></div>
+                        <div class="config-item" v-if="previewCamera.detection_config.speeding"><span>記錄模式<el-tag size="small" type="info" effect="plain" style="margin-left:6px">免校正·只記錄不開單</el-tag></span><el-switch :model-value="speedRecordMode" @change="setSpeedRecordMode"></el-switch></div>
+                        <div class="config-item" v-if="previewCamera.detection_config.speeding"><span>速度校正 <el-tag size="small" type="info" effect="plain" style="margin-left:6px">選用·提升精度</el-tag></span><el-button size="small" type="primary" plain @click="autoPerspectiveCalib">一鍵透視校正（免進出線）</el-button></div>
                         <div class="config-item" v-if="previewCamera.detection_config.speeding"><span>精度校正記錄 <el-tag size="small" type="info" effect="plain" style="margin-left:6px">trip-wire GT</el-tag></span><el-switch v-model="previewCamera.detection_config.speed_calib_log" @change="saveConfig"/></div>
                     </template>
                     <template v-if="page==='traffic_flow_settings' || page==='speed_detection'">
@@ -9560,6 +9573,12 @@
                             </div>
                             <template v-if="page==='speed_detection'">
                                 <div style="font-size:12px;color:#64748b;margin-bottom:8px">車速檢測編輯可直接查看已建立的車速區與進出線，並可個別刪除。</div>
+                                <div v-if="previewCamera.detection_config && previewCamera.detection_config.speeding && speedRecordMode" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:13px;color:#1e40af;line-height:1.6">
+                                    📝 <b>記錄模式</b>：超速事件會直接<b>記錄</b>（含快照/車牌），<b>不開單</b>。速度為估算值；想讓速度更準，按 <el-button size="small" type="primary" plain @click="autoPerspectiveCalib">一鍵透視校正（免進出線）</el-button>——從當前畫面自動偵測車道線做 Homography。
+                                </div>
+                                <div v-if="previewCamera.detection_config && previewCamera.detection_config.speeding && !speedRecordMode && !speedWillRecord" style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:13px;color:#991b1b;line-height:1.6">
+                                    ⚠️ <b>目前為「只記錄已校正」模式，但此台未校正 → 不會記錄超速。</b>改回記錄模式（下方切換），或按 <el-button size="small" type="primary" plain @click="autoPerspectiveCalib">一鍵透視校正</el-button>。
+                                </div>
                                 <div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:6px">車速 ROI</div>
                                 <div v-if="previewSpeedRoiZones.length" class="analysis-zone-list" style="margin-bottom:10px">
                                     <div class="analysis-zone-row" v-for="item in previewSpeedRoiZones" :key="`speed-roi-${item.index}`">
@@ -9572,6 +9591,7 @@
                                             <el-tag v-if="zoneLaneNoLabel(item.zone)" size="small" type="info">{{ zoneLaneNoLabel(item.zone) }}</el-tag>
                                             <el-tag v-if="item.zone.direction" size="small" type="success">{{ directionArrowLabel(item.zone.direction) }}</el-tag>
                                             <el-tag size="small" type="warning">目前值 {{ Number(item.zone.speed_limit||60) }} km/h (+{{ Number(item.zone.overspeed_kmh||10) }})</el-tag>
+                                            <el-tag size="small" :type="speedCalibBadge(item.zone).type">{{ speedCalibBadge(item.zone).text }}</el-tag>
                                             <span style="font-size:12px;color:#64748b">車道編號</span>
                                             <el-input-number v-model="item.zone.lane_no" :min="1" :step="1" size="small" style="width:110px"></el-input-number>
                                             <span style="font-size:12px;color:#64748b">方向(依車流車道)</span>
@@ -11113,6 +11133,31 @@ const app=createApp({
             if(r>=1.2)return 'sev-mid';
             return 'sev-low';
         };
+        // 超速分級(記錄用,不開單):依「超速幅度」= 實速 - 速限 的絕對值(km/h)分三級。
+        // 輕微 <20 / 超速 20~40 / 嚴重 ≥40。只對有速度的超速記錄有效。
+        const SPEED_TIER_NORMAL_KMH=20, SPEED_TIER_SEVERE_KMH=40;
+        const speedSeverityTier=(v)=>{
+            const s=Number(v?.speed_kmh)||0, l=Number(v?.speed_limit_kmh)||0;
+            if(!(s>0)||!(l>0))return null;
+            const over=s-l;
+            if(over>=SPEED_TIER_SEVERE_KMH)return {level:'critical',label:'嚴重',type:'danger',over:Math.round(over)};
+            if(over>=SPEED_TIER_NORMAL_KMH)return {level:'normal',label:'超速',type:'warning',over:Math.round(over)};
+            return {level:'minor',label:'輕微',type:'info',over:Math.round(over)};
+        };
+        // 超速分級篩選 + 嚴重置頂(前端,作用於已載入的違規清單)
+        const violationSeverityFilter=ref('');
+        const violationCriticalTop=ref(false);
+        const displayedViolations=computed(()=>{
+            let arr=(violations.value||[]);
+            if(violationSeverityFilter.value){
+                arr=arr.filter(v=>{ const t=speedSeverityTier(v); return t && t.level===violationSeverityFilter.value; });
+            }
+            if(violationCriticalTop.value){
+                const rank={critical:3,normal:2,minor:1};
+                arr=arr.slice().sort((a,b)=>{ const la=(speedSeverityTier(a)||{}).level, lb=(speedSeverityTier(b)||{}).level; return (rank[lb]||0)-(rank[la]||0); });
+            }
+            return arr;
+        });
         // 攝影機「位置」顯示: location 字串 > lat/lng 座標 > 未設定
         // user 反映「地圖擺好攝影機應該就要綁定設定位置,而不是顯示未設定位置」
         const displayCameraLocation=(c)=>{
@@ -15554,6 +15599,55 @@ const app=createApp({
         const previewSpeedLineZones=computed(()=>{
             return filteredPreviewZones.value.filter(item=>['speed_line_in','speed_line_out'].includes(String(item?.zone?.type||'')));
         });
+        // 速度校正狀態:判斷該速度區能不能算出「可信」速度(→ 決定超速會不會開單)。
+        // 順序:Homography(4點+實寬長) > 同車道 Trip-wire 實距 > 幾何校正 > 任一 Trip-wire 實距。
+        const speedZoneCalibStatus=(zone)=>{
+            const cam=previewCamera.value||{};
+            const zones=cam.zones||[];
+            const cfg=cam.detection_config||{};
+            const w=Number(zone.calibration_width_m||0), l=Number(zone.calibration_length_m||0);
+            const pts=zone.points||[];
+            if(w>0 && l>0 && pts.length>=4) return {ok:true,method:'Homography',detail:w+'×'+l+'m'};
+            const laneNo=Number(zone.lane_no||0);
+            const twSame=zones.find(z=>String(z.type||'')==='speed_line_in' && Number(z.line_distance_m||0)>0 && laneNo>0 && Number(z.lane_no||0)===laneNo);
+            if(twSame) return {ok:true,method:'Trip-wire實距',detail:Number(twSame.line_distance_m)+'m'};
+            if(cfg.geometric_calibration) return {ok:true,method:'幾何校正',detail:''};
+            const twAny=zones.find(z=>String(z.type||'')==='speed_line_in' && Number(z.line_distance_m||0)>0);
+            if(twAny) return {ok:true,method:'Trip-wire(未綁車道)',detail:Number(twAny.line_distance_m)+'m'};
+            return {ok:false,method:'未校正',detail:''};
+        };
+        const speedCalibBadge=(zone)=>{
+            const s=speedZoneCalibStatus(zone);
+            return s.ok ? {type:'success',text:'✓ 校正:'+s.method+(s.detail?' '+s.detail:'')} : {type:'info',text:'估算速度(未校正)'};
+        };
+        // 記錄模式:本系統只做記錄不開單,預設免校正。require_calibrated===true 才是「只記錄已校正的準確速度」。
+        const speedRecordMode=computed(()=>{
+            const cfg=(previewCamera.value||{}).detection_config||{};
+            return cfg.speeding_require_calibrated!==true;
+        });
+        // 超速事件會不會被記錄:記錄模式→一定會;非記錄模式→需至少一個速度區已校正。
+        const speedWillRecord=computed(()=>{
+            if(speedRecordMode.value) return true;
+            return previewSpeedRoiZones.value.some(it=>speedZoneCalibStatus(it.zone).ok);
+        });
+        const setSpeedRecordMode=async(on)=>{
+            const cam=previewCamera.value; if(!cam) return;
+            cam.detection_config=cam.detection_config||{};
+            cam.detection_config.speeding_require_calibrated = on ? false : true;
+            await saveConfig();
+        };
+        // 一鍵透視校正(免 in/out):從當前畫面自動偵測車道線→產生 Homography 速度區→速度更準
+        const autoPerspectiveCalib=async()=>{
+            const cam=previewCamera.value; if(!cam) return;
+            try{
+                ElementPlus.ElMessage.info('自動透視校正中…(從當前畫面偵測車道線)');
+                const r=await fetch(`/api/cameras/${cam.id}/auto-calibrate/apply?lane_no=1&lane_width_m=3.5&rect_length_m=10`,{method:'POST'});
+                const d=await r.json().catch(()=>({}));
+                if(!r.ok){ ElementPlus.ElMessage.error(d?.detail||'自動校正失敗:此畫面可能沒有明顯車道線,可改用 ROI 編輯器手動 4 點'); return; }
+                ElementPlus.ElMessage.success('已建立透視校正速度區(Homography),速度更準');
+                await refreshPreview();
+            }catch(e){ ElementPlus.ElMessage.error('自動校正失敗'); }
+        };
         // 停車類違規 ROI: 6 種 zone type (no_parking/sidewalk/red_line/yellow_line/bus_stop/crosswalk)
         const previewParkingZones=computed(()=>{
             const zones=previewCamera.value?.zones||[];
@@ -21215,8 +21309,8 @@ const app=createApp({
             if(lprVisualTimer)clearInterval(lprVisualTimer);
         });
         
-        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,radarCameraId,radarTracks,radarStats,radarDotColor,radarClassZh,radarInsights,loadRadarTracks,visionEyeUrl,onVisionEyeError,trackHistory,parkingSources,parkingSource,parkingData,parkingSnapshotUrl,parkingRawSnapshotUrl,parkingImgEl,pmRect,pmLabel,pmDown,pmMove,pmUp,parkingShowVerify,parkingShowBoxes,parkingShowVehicles,parkingUseStream,vlmStatus,vlmResult,vlmQuerying,loadVlmStatus,triggerVlmLoad,askVlm,assistantOpen,toggleAssistant,assistantZoomImg,assistantPanelStyle,assistantDragStart,assistantEnabled,assistantFabStyle,assistantFabDrag,toggleAssistantEnabled,assistantSource,assistantMessages,assistantInput,assistantLoading,assistantSnapUrl,assistantSources,reloadAssistantSnap,sendAssistant,assistantPresets,assistantTTS,assistantListening,quickAsk,assistantVoiceInput,loadParkingSources,loadParkingOccupancy,openParkingEditor,downloadParkingSnapshot,openParkingLabel,parkingLiveRunning,parkingIntervalMs,parkingShowAdd,parkingAddForm,startParkingLive,stopParkingLive,addParkingSource,twipcamQuery,twipcamResults,twipcamSearching,searchTwipcam,pickTwipcam,parkingHistory,loadParkingHistory,parkingTrendPath,parkingCounting,parkingCountingMismatch,parkingCrossValidation,parkingCrossCalibrated,parkingCrossEscalated,parkingCrossHasArea,parkingCrossSuspect,parkingCrossTrend,loadParkingCounting,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewLocations,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,nvrRecFpsDraft,nvrRecFpsSaving,setNvrRecordFps,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
-            showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,zoneColorOf,markPreviewZonesDirty,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,previewParkingZones,previewParkingZoneCount,parkingSubKindOptions,applyParkingSubKindToZone,directionLabel,directionArrowLabel,directionOptionsForZone,roadDirectionOptions,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
+        return{page,currentTime,menuOpen,isAuthenticated,authLoading,loginForm,showLoginPassword,showNxPassword,showMqttPassword,showCameraFormPassword,showFrigateCameraFormPassword,currentUser,login,logout,users,showUserCreateDialog,showUserPasswordDialog,editingUser,userCreateForm,userPasswordForm,loadUsers,openUserCreateDialog,createUser,updateUserMeta,openUserPasswordDialog,updateUserPassword,deleteUser,isAnalysisPage,analysisPageTitle,cameraPageHero,camerasOnlineCount,camerasEnabledCount,monitorActiveCount,currentPageIcon,openAnalysisPage,userRole,isAdmin,isViewer,hasPerm,canOpenAnalysisMenu,canViewDashboard,canReviewTickets,canManageCameras,canManageNvr,editingRole,permissionDraft,permissionCatalog,savePermissionMatrix,resetPermissionMatrix,loadPermissionDraft,saveCurrentRole,selectedArea,dashboard,dashboardAutoRefresh,violations,recentViolations,plateSnapUrl,rowLocation,displayCameraLocation,speedSeverity,speedSeverityTier,violationSeverityFilter,violationCriticalTop,displayedViolations,currentTimeHHmm,dashboardDeltaText,oldestPendingText,dashboardHasSpeed,cameraDistTotal,cameras,detectionStatus,congestionStatus,lprTaskStatus,detectionStartLoading,congestionStartLoading,lprStartLoading,congestionParamsForm,streamKey,monitorMode,overlayShowRoi,toggleOverlayRoi,vehicleTypeZh,monitorUpdatedAt,monitorZoomVisible,monitorZoomCamera,hourlyStats,hourlyTotalCount,hourlyStatsList,violationTypeColor,analyticsHotspots,analyticsRecs,analyticsSafety,analyticsAvgSafety,analyticsHighRiskCount,analyticsHourHeatmap,radarCameraId,radarTracks,radarStats,radarDotColor,radarClassZh,radarInsights,loadRadarTracks,visionEyeUrl,onVisionEyeError,trackHistory,parkingSources,parkingSource,parkingData,parkingSnapshotUrl,parkingRawSnapshotUrl,parkingImgEl,pmRect,pmLabel,pmDown,pmMove,pmUp,parkingShowVerify,parkingShowBoxes,parkingShowVehicles,parkingUseStream,vlmStatus,vlmResult,vlmQuerying,loadVlmStatus,triggerVlmLoad,askVlm,assistantOpen,toggleAssistant,assistantZoomImg,assistantPanelStyle,assistantDragStart,assistantEnabled,assistantFabStyle,assistantFabDrag,toggleAssistantEnabled,assistantSource,assistantMessages,assistantInput,assistantLoading,assistantSnapUrl,assistantSources,reloadAssistantSnap,sendAssistant,assistantPresets,assistantTTS,assistantListening,quickAsk,assistantVoiceInput,loadParkingSources,loadParkingOccupancy,openParkingEditor,downloadParkingSnapshot,openParkingLabel,parkingLiveRunning,parkingIntervalMs,parkingShowAdd,parkingAddForm,startParkingLive,stopParkingLive,addParkingSource,twipcamQuery,twipcamResults,twipcamSearching,searchTwipcam,pickTwipcam,parkingHistory,loadParkingHistory,parkingTrendPath,parkingCounting,parkingCountingMismatch,parkingCrossValidation,parkingCrossCalibrated,parkingCrossEscalated,parkingCrossHasArea,parkingCrossSuspect,parkingCrossTrend,loadParkingCounting,analyticsVehTypes,analyticsForecast,analyticsForecastCam,analyticsTrend,trendPathData,loadAnalytics,dashboardTrend24h,dashboardTrendPeak,dashboardTrendPeakHour,systemAllHealthy,systemHealthSummary,focusCameraOnMap,mapPlacingCamera,mapPlacingDraft,startMapPlacement,confirmMapPlacement,cancelMapPlacement,mapDragHover,onCamDragStart,onCamDragOver,onCamDropOnMap,systemLogs,logsDateFrom,logsDateTo,logsQuickRange,logsPage,logsPageSize,logsTotal,logsTotalPages,statsLoading,statsDateFrom,statsTimeFrom,statsDateTo,statsTimeTo,statsPlate,statsLocation,statsCamera,statsLane,statsDirection,statsPeriod,statsTrendMode,statsTimeScale,statsQuickRange,statsAutoRefresh,statsRefreshSeconds,statsLocationOptions,statsCameraOptions,statsLaneOptions,statsDirectionOptions,hourlyChartData,trendHoverIndex,trendLabelStep,trendAxisTicks,setTrendHover,clearTrendHover,trendActiveItem,trendActiveValue,statsLastUpdated,statsSummary,statsRealtimeOverview,statsTrendSummary,statsTrendBucketLabel,statsSpeedOverview,statsSpeedTopRows,statsCameraRanking,statsTypeDistribution,statsLaneFlowSpeedRows,vdLaneColumns,statsVdLikeRows,filteredStatsVdLikeRows,vdDeviceOptions,vdDirectionOptions,vdFilter,vdLoading,vdError,vdTimeScale,vdBucketSize,vdQuickRange,applyVdReportFilters,setVdQuickRange,resetVdReportFilters,exportVdReportCsv,exportVdReportPdf,vdPage,vdPageSize,vdTotalPages,pagedStatsVdLikeRows,repeatDateFrom,repeatTimeFrom,repeatDateTo,repeatTimeTo,repeatPlate,repeatThreshold,repeatViolationType,repeatOffenders,reportDateRange,reportType,locations,pageSize,reviewDateFrom,reviewTimeFrom,reviewDateTo,reviewTimeTo,reviewPlate,reviewLocation,reviewLocations,reviewCamera,reviewType,reviewStatus,pendingViolations,recordScheduleDayLabels,retainDayOptions,motionRetainSelections,frigateStatus,nvrRestarting,frigateConfig,frigateCameras,cameraSwitchLoading,nvrRecFpsDraft,nvrRecFpsSaving,setNvrRecordFps,frigateEvents,nvrEventsLoading,nvrPlaybackLoading,nvrPlaybackRows,nvrPlaybackCurrent,nvrPlaybackCurrentIndex,nvrPlaybackPlayerUrl,nvrPlaybackVideoRef,nvrPlaybackRate,nvrPlaybackPlaying,nvrPlaybackCurrentSec,nvrPlaybackDurationSec,nvrPlaybackQuickRange,nvrPlaybackDeviceSearch,nvrPlaybackPanelTab,nvrPlaybackDeviceTree,nvrPlaybackThumbRows,nvrPlaybackSummary,nvrPlaybackLatestRow,nvrPlaybackNotifications,nvrPlaybackFilter,nvrPlaybackPage,nvrPlaybackPageSize,nvrPlaybackCameraOptions,pagedNvrPlaybackRows,nvrPlaybackTotalPages,nvrPlaybackTimelineBars,nvrPlaybackTimelineMarkers,nvrPlaybackTimelineTicks,showNvrEventModal,nvrEventPreview,nvrEventClipUrl,nvrEventSnapshotUrl,closeNvrEventModal,frigateFilter,frigatePage,frigatePageSize,frigateCameraOptions,frigateLabelOptions,filteredNVREvents,pagedNVREvents,frigateEventTotalPages,showNvrMotionRoiDialog,nvrMotionRoiCamera,nvrMotionRoiImageUrl,nvrMotionRoiLoading,nvrMotionRoiSaving,nvrMotionRoiEditTarget,activeNvrMotionRoiPoints,nvrMotionRoiIncludePoints,nvrMotionRoiExcludePoints,nvrMotionRoiImg,nvrMotionRoiCanvas,lprStatus,lprFile,lprPreview,lprLoading,lprResult,lprCameraId,lprCameraOptions,lprHistory,lprHistoryRows,lprHistoryLatestTimeText,lprHistoryActiveCameraName,lprHistoryCameraDebugText,lprHistoryQuery,lprHistoryMinConfidence,lprHistoryLimit,lprHistoryFrom,lprHistoryTo,lprHistoryCameraFilter,lprHistoryCameraOptions,lprHistoryPage,lprHistoryTotal,lprHistoryTotalPages,lprHistoryHasPrev,lprHistoryHasNext,lprDebugRows,lprStreamRunning,lprStreamStatus,showLprVisual,lprVisualUrl,lprVisualSnapshotMode,lprSnapshotModal,lprSnapshotZoom,lprSnapshotData,showLprSnapshot,toggleLprSnapshotZoom,closeLprSnapshot,toggleLprVisual,handleLprVisualError,loadLprHistoryCameraOptions,loadLprHistory,applyLprHistoryFilters,goPrevLprHistoryPage,goNextLprHistoryPage,resetLprHistoryFilters,refreshLprDebugStatuses,recognitionSourceFilter,recognitionQuery,recognitionResultLimit,recognitionResults,recognitionSummary,activeFeatureCount,isLprRunning,
+            showPreviewModal,previewCamera,previewImageUrl,onPreviewImgError,previewImg,roiCanvas,roiType,roiName,roiPoints,zoneColors,zoneColorOf,markPreviewZonesDirty,filteredPreviewZones,previewFlowZoneCount,previewFlowBoundCount,previewSpeedRoiZoneCount,previewSpeedLineZoneCount,previewSpeedRoiZones,previewSpeedLineZones,speedCalibBadge,speedZoneCalibStatus,speedRecordMode,speedWillRecord,setSpeedRecordMode,autoPerspectiveCalib,previewParkingZones,previewParkingZoneCount,parkingSubKindOptions,applyParkingSubKindToZone,directionLabel,directionArrowLabel,directionOptionsForZone,roadDirectionOptions,zoneTypeLabel,zoneTypeTagType,zoneLaneNoLabel,speedLineDirectionLabel,isSpeedLimitEditableZone,laneOptions,laneTagsLabel,laneGroupLabel,
             showDetailModal,selected,selectedPhotos,selectedSnapshots,selectedComposite,selectedPlateUrl,selectedPlateNumber,selectedPlateIsInferred,selectedSnapshotsLoading,compositeZoomVisible,SNAPSHOT_LABELS,detailLocationText,detailClipUrl,detailClipError,detailClipRetrying,detailClipReloadKey,onDetailClipError,showCameraDialog,cameraForm,cameraSourceFile,cameraSourceUploading,cameraSourceUploadProgress,cameraServerFilesLoading,cameraServerFileImporting,cameraServerFiles,cameraServerRoots,cameraServerFilePath,cameraNxDevices,cameraNxDevicesLoading,filters,rtspUrl,cameraSourceUrl,
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
