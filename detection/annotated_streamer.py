@@ -162,7 +162,7 @@ MAX_GAP_SEC = float(os.getenv("ANNOTATED_STREAM_MAX_GAP", "0") or 0)
 #    「偶爾大幅拖尾」。高速公路是直路、車速穩,線性外推到 0.8s 仍安全,故放寬到 0.8。
 #    偵測更慢的機器(如 104 Orin NX)gap 更大,可再用 env 調高。
 INTERP = os.getenv("ANNOTATED_STREAM_INTERP", "1") != "0"
-INTERP_MAX_SEC = float(os.getenv("ANNOTATED_STREAM_INTERP_MAX", "0.8") or 0.8)
+INTERP_MAX_SEC = float(os.getenv("ANNOTATED_STREAM_INTERP_MAX", "0.5") or 0.5)
 # 兩組偵測之間,中心點距離小於這個比例(相對於畫面寬)才視為同一台車 → 才有速度可外推。
 # 🛑 0.08 是市區車速的門檻:國道車 100km/h 在 3.8fps 偵測間隔(263ms)內位移可達
 #    畫面寬 20%+,遠超 0.08 → 同一台車跨兩組偵測配不起來 → 當成新車不外推 →
@@ -170,7 +170,7 @@ INTERP_MAX_SEC = float(os.getenv("ANNOTATED_STREAM_INTERP_MAX", "0.8") or 0.8)
 #    match_gap p95 ~500ms,靜止車貼合、移動車拖尾正是此因)。
 #    等於 0.08 只有 <40km/h 的車會被外推,高速公路等於沒開。放寬到 ~0.20 涵蓋
 #    ~110km/h;env 可依現場 analysis_fps 再調(機器越慢/偵測越稀疏,位移越大要越大)。
-INTERP_MATCH_RATIO = float(os.getenv("ANNOTATED_STREAM_INTERP_MATCH", "0.20") or 0.20)
+INTERP_MATCH_RATIO = float(os.getenv("ANNOTATED_STREAM_INTERP_MATCH", "0.08") or 0.08)
 # 同時再推一條「不畫框」的低頻寬串流 cam_N_lite。
 # 🛑 為什麼需要:87 對外上行只有 1.4 Mbps,而原始 H.264 是原生 1080p 5.08 Mbps
 #    —— 使用者切「原始畫面」遠端還是會頓,只有疊加那條(0.81 Mbps)塞得下。
