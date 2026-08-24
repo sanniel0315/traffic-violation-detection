@@ -6848,6 +6848,7 @@
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-list"/></svg>時制計畫（現場即時）</span>
                             <span style="display:flex;gap:8px;align-items:center">
+                                <el-button v-if="sigPlanView.length" size="small" @click="toggleAllPlans">{{ sigPlansAllOpen?'全部收合':'全部展開' }}</el-button>
                                 <el-button size="small" @click="loadTimingPlans">重新載入</el-button>
                                 <el-button size="small" type="primary" :loading="sigProbing" @click="sigSelfProbe">自我查詢比對</el-button>
                             </span>
@@ -6858,12 +6859,14 @@
                             </div>
                             <div v-else>
                                 <div v-for="pv in sigPlanView" :key="'tp'+pv.plan_id" :class="{'tp-running':pv.plan_id===sigRunningPlanId}" style="margin-bottom:14px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
-                                    <div style="padding:6px 12px;background:#f8fafc;font-weight:600;border-bottom:1px solid #e2e8f0">
-                                        時制計畫 {{ pv.plan_id }}
+                                    <div @click="togglePlan(pv)" style="padding:6px 12px;background:#f8fafc;font-weight:600;border-bottom:1px solid #e2e8f0;cursor:pointer;display:flex;align-items:center;gap:6px;flex-wrap:wrap" title="點擊展開／收合此套分相表">
+                                        <span style="font-size:11px;color:#94a3b8;width:10px">{{ isPlanOpen(pv)?'▾':'▸' }}</span>
+                                        <span>時制計畫 {{ pv.plan_id }}</span>
                                         <span v-if="pv.plan_id===sigRunningPlanId" class="tp-run-badge">● 執行中</span>
-                                        <span style="font-weight:400;font-size:12px;color:#64748b;margin-left:8px">週期 {{ pv.f?sigCell(pv.f.cycle):'—' }}s / 時差 {{ pv.f?sigCell(pv.f.offset):'—' }}s / 基準方向 {{ pv.f?sigCell(pv.f.direct):'—' }} / 時相編號 {{ pv.f?sigCell(pv.f.phase_order):'—' }}</span>
+                                        <span v-if="!isPlanOpen(pv)" style="font-weight:400;font-size:12px;color:#94a3b8">（收合中，共 {{ pv.phases.length }} 分相）</span>
+                                        <span style="font-weight:400;font-size:12px;color:#64748b">週期 {{ pv.f?sigCell(pv.f.cycle):'—' }}s / 時差 {{ pv.f?sigCell(pv.f.offset):'—' }}s / 基準方向 {{ pv.f?sigCell(pv.f.direct):'—' }} / 時相編號 {{ pv.f?sigCell(pv.f.phase_order):'—' }}</span>
                                     </div>
-                                    <div style="padding:8px">
+                                    <div v-show="isPlanOpen(pv)" style="padding:8px">
                                         <table class="tp-tbl"><thead><tr><th>分相</th><th>綠燈</th><th>最短綠</th><th>最長綠</th><th>黃燈</th><th>全紅</th><th>人閃</th><th>人紅</th></tr></thead><tbody>
                                             <tr v-for="ph in pv.phases" :key="'f'+ph.idx">
                                                 <td>分相{{ ph.idx }}</td>
@@ -10918,13 +10921,15 @@ const attachHls=(el,url)=>{
                 lowLatencyMode:false,
                 // 高延遲外網線(592ms):播放頭「坐」在直播後方 10 秒,不貼邊緣追。
                 // 墊子夠厚才吸得住 592ms 級抖動 —— 貼邊緣一遇慢 segment 就凍。
-                // 播放頭坐直播後方 8 秒:夠吸 592ms 抖動,又不會像 10s+ 那樣 join 時
-                // 一次把整個視窗灌進來塞爆窄上行(4 台同時 join → health 逾時 → SERVICE OFFLINE)。
-                liveSyncDuration:8,
-                liveMaxLatencyDuration:40,   // 落後 40 秒內都不強制 seek 追(一 hiccup 就跳=凍的元凶)
+                // 播放頭坐直播後方 12 秒:寄生 MJPEG 拔掉後線有餘裕,加深緩衝吸「偶爾
+                // 某 segment 晚到/重傳(592ms 線 loss 一次就 >0.6s)」造成的偶發凍結。
+                // 代價是延遲多幾秒(監控可接受);join 爆量有 SERVICE OFFLINE→「頻寬吃緊」
+                // 的容錯兜底,不會誤報離線。
+                liveSyncDuration:12,
+                liveMaxLatencyDuration:60,   // 落後 60 秒內都不強制 seek 追(一 hiccup 就跳=凍的元凶)
                 liveDurationInfinity:true,
                 maxLiveSyncPlaybackRate:1,   // 不加速追邊緣:窄/高延遲線加速只會更慘
-                maxBufferLength:24, maxMaxBufferLength:48, backBufferLength:12,
+                maxBufferLength:45, maxMaxBufferLength:90, backBufferLength:24,
                 manifestLoadingTimeOut:20000, fragLoadingTimeOut:40000,
                 fragLoadingMaxRetry:8, fragLoadingRetryDelay:500,
                 manifestLoadingMaxRetry:8, levelLoadingMaxRetry:8,
@@ -20112,6 +20117,13 @@ const app=createApp({
                 return {plan_id:id,f,b,phases,onlyField:!!f&&!b,onlyBase:!!b&&!f};
             });
         });
+        // 時制計畫可收折:40 套各攤一張分相表太長(表帶多、影響 UX)。
+        // 預設只展開「執行中」那套,其餘收合;可逐套點開或全部展開/收合。
+        const sigPlanExpanded=reactive({});
+        const isPlanOpen=(pv)=>{ const v=sigPlanExpanded[pv.plan_id]; return v===undefined ? pv.plan_id===sigRunningPlanId.value : v; };
+        const togglePlan=(pv)=>{ sigPlanExpanded[pv.plan_id]=!isPlanOpen(pv); };
+        const sigPlansAllOpen=ref(false);
+        const toggleAllPlans=()=>{ sigPlansAllOpen.value=!sigPlansAllOpen.value; (sigPlanView.value||[]).forEach(pv=>{ sigPlanExpanded[pv.plan_id]=sigPlansAllOpen.value; }); };
         // 欄位互動說明:選命令時每個欄位旁的 ℹ 點開,解釋這欄是什麼、怎麼填。
         // 🛑 utc-tc3 的 schema 大多沒 desc,所以在前端補一份人看得懂的說明。
         //    key 用欄位名(跨命令通用),{t:一句話, i:怎麼填}。查不到就退回 schema
@@ -20305,7 +20317,12 @@ const app=createApp({
             if(_sigCovSelfQuery.includes(code))return true;
             const mt=r.message_type||'';
             const lv=(r.level||'').toUpperCase();
-            return (lv==='A'||lv==='B') && (mt.indexOf('主動回報')>=0 || mt.indexOf('查詢回報')>=0);
+            // 🛑 訊息型態含「設定」(如「設定回報/查詢回報」)排除:那是中心下設定指令後的
+            //    回覆,控制器不會主動送、我方也不設定,平常抓不到(如 0F81 訊息回應處理、
+            //    0F8F 訊息代傳)。已抄到的在上面 seen 判定已保留,不受此影響。
+            return (lv==='A'||lv==='B')
+                && (mt.indexOf('主動回報')>=0 || mt.indexOf('查詢回報')>=0)
+                && mt.indexOf('設定')<0;
         };
         const sigCovRows=computed(()=>{
             const all=(sigCoverage.value&&sigCoverage.value.codes)||[];
@@ -21204,7 +21221,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
