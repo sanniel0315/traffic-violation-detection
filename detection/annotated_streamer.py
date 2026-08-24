@@ -157,10 +157,20 @@ MAX_GAP_SEC = float(os.getenv("ANNOTATED_STREAM_MAX_GAP", "0") or 0)
 #    這不是配對邏輯的問題(配對誤差中位已經只有 83ms),是偵測本身太稀疏。
 #    解法:從最近兩組偵測估出每個框的移動速度,中間的幀把框往前推。
 #    外推有上限,超過就不推 —— 車子可能已經轉彎或離開,硬推會飄到離譜的位置。
+# 🛑 上限 0.5s 太短:車輛間歇偵測(時有時無)時,最近那組偵測常落後 300~600ms
+#    (2026-08-24 實測 87 match_gap p95),超過 0.5 就放棄外推 → 框凍在很舊位置 →
+#    「偶爾大幅拖尾」。高速公路是直路、車速穩,線性外推到 0.8s 仍安全,故放寬到 0.8。
+#    偵測更慢的機器(如 104 Orin NX)gap 更大,可再用 env 調高。
 INTERP = os.getenv("ANNOTATED_STREAM_INTERP", "1") != "0"
-INTERP_MAX_SEC = float(os.getenv("ANNOTATED_STREAM_INTERP_MAX", "0.5") or 0.5)
-# 兩組偵測之間,中心點距離小於這個比例(相對於畫面寬)才視為同一台車
-INTERP_MATCH_RATIO = 0.08
+INTERP_MAX_SEC = float(os.getenv("ANNOTATED_STREAM_INTERP_MAX", "0.8") or 0.8)
+# 兩組偵測之間,中心點距離小於這個比例(相對於畫面寬)才視為同一台車 → 才有速度可外推。
+# 🛑 0.08 是市區車速的門檻:國道車 100km/h 在 3.8fps 偵測間隔(263ms)內位移可達
+#    畫面寬 20%+,遠超 0.08 → 同一台車跨兩組偵測配不起來 → 當成新車不外推 →
+#    快車框凍在舊位置、車跑掉了(2026-08-24 實測 87 analysis_fps 3.8、
+#    match_gap p95 ~500ms,靜止車貼合、移動車拖尾正是此因)。
+#    等於 0.08 只有 <40km/h 的車會被外推,高速公路等於沒開。放寬到 ~0.20 涵蓋
+#    ~110km/h;env 可依現場 analysis_fps 再調(機器越慢/偵測越稀疏,位移越大要越大)。
+INTERP_MATCH_RATIO = float(os.getenv("ANNOTATED_STREAM_INTERP_MATCH", "0.20") or 0.20)
 # 同時再推一條「不畫框」的低頻寬串流 cam_N_lite。
 # 🛑 為什麼需要:87 對外上行只有 1.4 Mbps,而原始 H.264 是原生 1080p 5.08 Mbps
 #    —— 使用者切「原始畫面」遠端還是會頓,只有疊加那條(0.81 Mbps)塞得下。
@@ -360,6 +370,11 @@ class AnnotatedStreamer:
         self._wr = {}                         # variant -> (n, t0, fps, max_write_ms)
         self._det_lat = deque(maxlen=120)     # update_detections 時 now - 該幀 ts
         self._match_gap = deque(maxlen=300)   # 送出時 該幀 ts - 配到的偵測 ts
+        # 外推engage統計:hit=配到前一組同車有速度可推,miss=配不到(新車/位移超門檻)只能凍在原位。
+        # hit_ratio 低 = 大多數車沒被外推 → 框會拖尾(門檻 INTERP_MATCH_RATIO 太小的直接證據)。
+        self._interp_hit = 0
+        self._interp_miss = 0
+        self._interp_hit_narrow = 0   # 這些命中若用舊門檻 0.08 也會中(反事實對照,量門檻該多大)
         self._stopped = False
         self._restart_count = 0
         self._max_restart = 200
@@ -749,8 +764,12 @@ class AnnotatedStreamer:
                 if d <= thr and (best_d is None or d < best_d):
                     best_prev, best_d = pc, d
             if best_prev is None:
-                out.append(det)           # 新出現的車,沒有速度可用
+                self._interp_miss += 1
+                out.append(det)           # 新出現的車(或位移超門檻配不到),沒有速度可用
                 continue
+            self._interp_hit += 1
+            if best_d is not None and best_d <= 0.08 * (self.width or 1920):
+                self._interp_hit_narrow += 1
             vx = (c[0] - best_prev[0]) / span
             vy = (c[1] - best_prev[1]) / span
             dx, dy = vx * dt, vy * dt
@@ -779,6 +798,13 @@ class AnnotatedStreamer:
             "unmatched": miss,
             # 因為配到的偵測太舊而選擇不畫框的幀數(門檻 MAX_GAP_SEC)
             "dropped_stale": self._dropped,
+            # 外推engage率:hit/(hit+miss)。低 = 多數車配不到前一組→不外推→框拖尾
+            "interp_hit_ratio": (round(self._interp_hit / (self._interp_hit + self._interp_miss), 2)
+                                 if (self._interp_hit + self._interp_miss) else None),
+            # 反事實:同一批車若用舊門檻 0.08 的命中率(對照新門檻多抓了多少快車)
+            "interp_hit_ratio_008": (round(self._interp_hit_narrow / (self._interp_hit + self._interp_miss), 2)
+                                     if (self._interp_hit + self._interp_miss) else None),
+            "interp_match_ratio": INTERP_MATCH_RATIO,
             # 實際送進編碼器的幀率(應等於設定 fps);單次 write 最久多少毫秒
             "write_fps": {k: round(v[2], 1) for k, v in self._wr.items()},
             "write_ms_max": {k: round(v[3], 1) for k, v in self._wr.items()},
