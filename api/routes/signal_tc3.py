@@ -224,7 +224,9 @@ _center_state: dict = {
 
 # 訊框持久化:抄到/中繼的每個 frame 都丟進背景 writer 寫 DB(監看要能存、篩選、重啟後還在)。
 # 用 queue 解耦 —— 收框/中繼迴圈只 put_nowait,實際寫 DB 在單一 writer 執行緒,不卡熱路徑。
-FRAME_PERSIST = os.getenv("SIGNAL_TC3_PERSIST_FRAMES", "1") != "0"
+# 🔧 預設不持久化訊框:每 2 秒的號誌訊框量大(實測 6.7 萬筆),使用者確認「不用記錄」。
+#    即時監看仍可用(記憶體 _frames deque 保最近 300 筆);要長期存 DB 才設 env=1。
+FRAME_PERSIST = os.getenv("SIGNAL_TC3_PERSIST_FRAMES", "0") != "0"
 FRAME_RETAIN_DAYS = float(os.getenv("SIGNAL_TC3_FRAME_RETAIN_DAYS", "180") or 180)  # 保存 6 個月
 _frame_q: "_queue.Queue" = _queue.Queue(maxsize=8000)
 
