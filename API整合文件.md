@@ -1,6 +1,6 @@
 # 對外報表 API 文件
 
-> 版本：1.1 | 更新日期：2026-08-09
+> 版本：1.1 | 更新日期：2026-08-24
 
 ## 概述
 
@@ -11,6 +11,7 @@
 - **輸出格式：** JSON / CSV
 - **Swagger UI：** `http://10.42.38.35:8000/api/v1/external/docs?token={API_KEY}`
   （瀏覽器開文件頁沒辦法帶 Header，所以用 `?token=`；程式呼叫請用 Header）
+- **OpenAPI JSON：** `http://10.42.38.35:8000/api/v1/external/openapi.json?token={API_KEY}`
 
 > `http://10.42.38.35:8000/docs` 是**內部**完整文件，需管理者登入，對外不提供。
 
@@ -76,7 +77,7 @@ GET /api/v1/external/realtime
     },
     "records": [
       {
-        "detector_id": "台62基隆段隧道口",
+        "detector_id": "CCTV-N8-E-9-L-NE-1-SIG",
         "time_start": "2026-08-09T14:52:58+08:00",
         "time_end":   "2026-08-09T14:53:58+08:00",
         "direction": "straight", "direction_label": "直行",
@@ -197,7 +198,7 @@ EXTERNAL_API_KEY={Key}
   "meta": {
     "request_time": "2026-04-07T10:00:00+08:00",
     "api_version": "1.0",
-    "device_id": "jetson-nx-001",
+    "device_id": "R34_動態號誌VD",
     "format": "json"
   }
 }
@@ -269,8 +270,8 @@ curl -H "X-API-Key: {Key}" \
     },
     "records": [
       {
-        "detector_id": "台62基隆段隧道口",
-        "road_name": "台62線",
+        "detector_id": "CCTV-N8-E-9-L-NE-1-SIG",
+        "road_name": "國道8號",
         "time_start": "2026-04-07T08:00:00+08:00",
         "time_end": "2026-04-07T08:05:00+08:00",
         "direction": "N2S",
@@ -309,7 +310,7 @@ curl -H "X-API-Key: {Key}" \
   "meta": {
     "request_time": "2026-04-07T10:00:00+08:00",
     "api_version": "1.0",
-    "device_id": "jetson-nx-001",
+    "device_id": "R34_動態號誌VD",
     "format": "json"
   }
 }
@@ -411,7 +412,7 @@ curl -H "X-API-Key: {Key}" \
     "records": [
       {
         "detector_id": "2",
-        "camera_name": "台62基隆段隧道口",
+        "camera_name": "CCTV-N8-E-9-L-NE-1-SIG",
         "time_start": "2026-04-07T08:00:00+08:00",
         "time_end": "2026-04-07T08:05:00+08:00",
         "zone_name": "車流區 1",
@@ -431,7 +432,7 @@ curl -H "X-API-Key: {Key}" \
   "meta": {
     "request_time": "2026-04-07T10:00:00+08:00",
     "api_version": "1.0",
-    "device_id": "jetson-nx-001",
+    "device_id": "R34_動態號誌VD",
     "format": "json"
   }
 }
@@ -504,19 +505,21 @@ GET /api/v1/external/streams
 {
   "status": "success",
   "data": {
-    "device_id": "jetson-nx-001",
-    "host": "192.168.0.102",
+    "device_id": "R34_動態號誌VD",
+    "host": "10.42.38.35",
     "ports": { "rtsp": 8554, "http": 1984 },
     "stream_count": 4,
     "streams": [
       {
         "stream_id": "cam_2",
         "camera_id": 2,
-        "name": "台62基隆段隧道口",
+        "name": "CCTV-N8-E-9-L-NE-1-SIG",
+        "location": "",
         "online": true,
         "codec": "h264",
-        "resolution": "1920x1080",
-        "fps": 30.0,
+        "profile": "High",
+        "resolution": null,
+        "fps": 60.0,
         "urls": {
           "rtsp":  "rtsp://10.42.38.35:8554/cam_2",
           "hls":   "http://10.42.38.35:1984/api/stream.m3u8?src=cam_2",

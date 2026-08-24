@@ -956,15 +956,15 @@ section:nth-of-type(6) { animation-delay: 0.44s; }
       <div class="hero-meta">
         <div class="hero-meta-head">SYSTEM ENDPOINT</div>
         <dl>
-          <dt>Host</dt>      <dd><b>192.168.0.108</b></dd>
+          <dt>Host</dt>      <dd><b id="ep-host">—</b></dd>
           <dt>API</dt>       <dd>:8000 (REST)</dd>
           <dt>RTSP</dt>      <dd>:8554 (TCP)</dd>
           <dt>HTTP</dt>      <dd>:1984 (HLS / MJPEG)</dd>
         </dl>
         <dl>
-          <dt>Codec</dt>     <dd>H.264 Main/High</dd>
+          <dt>Codec</dt>     <dd>H.264 High</dd>
           <dt>Res.</dt>      <dd>1920 × 1080</dd>
-          <dt>FPS</dt>       <dd>≥ 15</dd>
+          <dt>FPS</dt>       <dd>30 – 60</dd>
           <dt>Latency</dt>   <dd>RTSP ≈ 200 ms</dd>
         </dl>
       </div>
@@ -977,130 +977,11 @@ section:nth-of-type(6) { animation-delay: 0.44s; }
       <span class="section-num">§ 01</span>
       <div>
         <h2 class="section-title">即時影像清單 <b>· Active streams</b></h2>
-        <div class="section-sub">目前對外開放的 3 條串流（2026-05-26 經 RTSP DESCRIBE 全部回應 200 OK）</div>
+        <div class="section-sub">國道 8 號新市交流道 · 對外開放 <b id="stream-count">4</b> 條 H.264 串流（本頁即時探測 LIVE 狀態）</div>
       </div>
     </div>
 
-    <div class="stream-grid">
-
-      <!-- cam_1 -->
-      <article class="stream-card">
-        <div class="sc-head">
-          <span class="sc-id">STREAM 01</span>
-          <span class="sc-live online" data-cam="cam_1"><span class="ldot"></span>LIVE</span>
-        </div>
-        <div class="sc-name">cam_1</div>
-        <div class="sc-cn">匝道攝影機 · Axis ramp-cam</div>
-        <div class="sc-spec">
-          <b>H.264</b> · High @ 4.1
-          <span class="sep">·</span>
-          <b>1920×1080</b>
-          <span class="sep">·</span>
-          <b>30 fps</b>
-        </div>
-        <div class="sc-urls">
-          <div class="url-row">
-            <span class="proto">RTSP</span>
-            <span class="url">rtsp://192.168.0.108:8554/cam_1</span>
-            <button class="copy-btn" data-copy="rtsp://192.168.0.108:8554/cam_1">COPY</button>
-          </div>
-          <div class="url-row">
-            <span class="proto">HLS</span>
-            <span class="url">http://192.168.0.108:1984/api/stream.m3u8?src=cam_1</span>
-            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/stream.m3u8?src=cam_1">COPY</button>
-          </div>
-          <div class="url-row">
-            <span class="proto">MJPEG</span>
-            <span class="url">http://192.168.0.108:1984/api/stream.mjpeg?src=cam_1</span>
-            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/stream.mjpeg?src=cam_1">COPY</button>
-          </div>
-          <div class="url-row">
-            <span class="proto">WS</span>
-            <span class="url">http://192.168.0.108:1984/api/ws?src=cam_1</span>
-            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/ws?src=cam_1">COPY</button>
-          </div>
-        </div>
-      </article>
-
-      <!-- cam_2 -->
-      <article class="stream-card">
-        <div class="sc-head">
-          <span class="sc-id">STREAM 02</span>
-          <span class="sc-live online" data-cam="cam_2"><span class="ldot"></span>LIVE</span>
-        </div>
-        <div class="sc-name">cam_2</div>
-        <div class="sc-cn">台 62 基隆段隧道口 · Samsung tunnel-cam</div>
-        <div class="sc-spec">
-          <b>H.264</b> · Main @ 4.0
-          <span class="sep">·</span>
-          <b>1920×1080</b>
-          <span class="sep">·</span>
-          <b>30 fps</b>
-        </div>
-        <div class="sc-urls">
-          <div class="url-row">
-            <span class="proto">RTSP</span>
-            <span class="url">rtsp://192.168.0.108:8554/cam_2</span>
-            <button class="copy-btn" data-copy="rtsp://192.168.0.108:8554/cam_2">COPY</button>
-          </div>
-          <div class="url-row">
-            <span class="proto">HLS</span>
-            <span class="url">http://192.168.0.108:1984/api/stream.m3u8?src=cam_2</span>
-            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/stream.m3u8?src=cam_2">COPY</button>
-          </div>
-          <div class="url-row">
-            <span class="proto">MJPEG</span>
-            <span class="url">http://192.168.0.108:1984/api/stream.mjpeg?src=cam_2</span>
-            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/stream.mjpeg?src=cam_2">COPY</button>
-          </div>
-          <div class="url-row">
-            <span class="proto">WS</span>
-            <span class="url">http://192.168.0.108:1984/api/ws?src=cam_2</span>
-            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/ws?src=cam_2">COPY</button>
-          </div>
-        </div>
-      </article>
-
-      <!-- cam_6 -->
-      <article class="stream-card">
-        <div class="sc-head">
-          <span class="sc-id">STREAM 03</span>
-          <span class="sc-live online" data-cam="cam_6"><span class="ldot"></span>LIVE</span>
-        </div>
-        <div class="sc-name">cam_6</div>
-        <div class="sc-cn">台 62 LPR · Samsung lpr-cam</div>
-        <div class="sc-spec">
-          <b>H.264</b> · High @ 4.0
-          <span class="sep">·</span>
-          <b>1920×1080</b>
-          <span class="sep">·</span>
-          <b>30 fps</b>
-        </div>
-        <div class="sc-urls">
-          <div class="url-row">
-            <span class="proto">RTSP</span>
-            <span class="url">rtsp://192.168.0.108:8554/cam_6</span>
-            <button class="copy-btn" data-copy="rtsp://192.168.0.108:8554/cam_6">COPY</button>
-          </div>
-          <div class="url-row">
-            <span class="proto">HLS</span>
-            <span class="url">http://192.168.0.108:1984/api/stream.m3u8?src=cam_6</span>
-            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/stream.m3u8?src=cam_6">COPY</button>
-          </div>
-          <div class="url-row">
-            <span class="proto">MJPEG</span>
-            <span class="url">http://192.168.0.108:1984/api/stream.mjpeg?src=cam_6</span>
-            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/stream.mjpeg?src=cam_6">COPY</button>
-          </div>
-          <div class="url-row">
-            <span class="proto">WS</span>
-            <span class="url">http://192.168.0.108:1984/api/ws?src=cam_6</span>
-            <button class="copy-btn" data-copy="http://192.168.0.108:1984/api/ws?src=cam_6">COPY</button>
-          </div>
-        </div>
-      </article>
-
-    </div>
+    <div class="stream-grid" id="stream-grid"></div>
   </section>
 
   <!-- ─── §02 PROTOCOLS ─── -->
@@ -1188,7 +1069,7 @@ section:nth-of-type(6) { animation-delay: 0.44s; }
       </div>
       <div class="metric online">
         <div class="m-lbl">轉發串流</div>
-        <div class="m-val">3<span class="unit">cams</span></div>
+        <div class="m-val"><span id="metric-cams">4</span><span class="unit">cams</span></div>
         <div class="m-sub">go2rtc · port 8554 / 1984</div>
       </div>
       <div class="metric">
@@ -1251,10 +1132,9 @@ section:nth-of-type(6) { animation-delay: 0.44s; }
       <div>
         <h5>QUICK LINKS</h5>
         <div class="links">
-          <a href="/docs" target="_blank">Swagger UI</a>
-          <a href="/redoc" target="_blank">ReDoc</a>
-          <a href="/openapi.json" target="_blank">OpenAPI Spec</a>
-          <a href="/api/health" target="_blank">/api/health</a>
+          <a href="/api/v1/external/docs" target="_blank">對外 API Swagger（附 ?token=金鑰）</a>
+          <a href="/api/v1/external/openapi.json" target="_blank">對外 OpenAPI Spec</a>
+          <a href="/api/health" target="_blank">/api/health（公開）</a>
         </div>
       </div>
       <div>
@@ -1267,7 +1147,7 @@ section:nth-of-type(6) { animation-delay: 0.44s; }
       </div>
     </div>
     <div class="ver">
-      DOC v1.0 · BUILD 2026-05-26 · HOST 192.168.0.108 · AGENCY DELIVERABLE
+      DOC v1.1 · 國道 8 號新市交流道 · HOST <span id="foot-host">—</span> · AGENCY DELIVERABLE
     </div>
   </div>
 </footer>
@@ -1283,24 +1163,74 @@ function updateClock(){
 updateClock();
 setInterval(updateClock, 1000);
 
-// ─── copy buttons ───
-document.querySelectorAll('.copy-btn').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const url = btn.getAttribute('data-copy');
-    try {
-      await navigator.clipboard.writeText(url);
-    } catch {
-      const ta = document.createElement('textarea');
-      ta.value = url; document.body.appendChild(ta);
-      ta.select(); document.execCommand('copy');
-      document.body.removeChild(ta);
-    }
-    const orig = btn.textContent;
-    btn.textContent = 'COPIED';
-    btn.classList.add('ok');
-    setTimeout(() => { btn.textContent = orig; btn.classList.remove('ok'); }, 1400);
+// ─── host 解析:一律跟著本頁存取網址(Tailscale / 現場固定IP / localhost 都正確),
+//     不寫死。file:// 直接開檔時才退回現場固定 IP。 ───
+const HOST = (location.hostname && location.protocol !== 'file:')
+  ? location.hostname : '10.42.38.35';
+document.getElementById('ep-host').textContent = HOST;
+document.getElementById('foot-host').textContent = HOST;
+
+// ─── 串流清單(國道 8 號新市交流道,4 台 Axis H.264 High 1080p) ───
+const STREAMS = [
+  {id:'cam_2', name:'CCTV-N8-E-9-L-NE-1-SIG', cn:'國道8東向9K · NE-1', fps:60},
+  {id:'cam_3', name:'CCTV-N8-E-9-L-NE-2-SIG', cn:'國道8東向9K · NE-2', fps:30},
+  {id:'cam_4', name:'CCTV-N8-E-9-L-WN-1-SIG', cn:'國道8東向9K · WN-1', fps:30},
+  {id:'cam_5', name:'CCTV-N8-E-9-L-WN-2-SIG', cn:'國道8東向9K · WN-2', fps:30},
+];
+const esc = s => String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function streamUrls(id){
+  return [
+    ['RTSP',  `rtsp://${HOST}:8554/${id}`],
+    ['HLS',   `http://${HOST}:1984/api/stream.m3u8?src=${id}`],
+    ['MJPEG', `http://${HOST}:1984/api/stream.mjpeg?src=${id}`],
+    ['WS',    `http://${HOST}:1984/api/ws?src=${id}`],
+  ];
+}
+function buildStreams(){
+  document.getElementById('stream-grid').innerHTML = STREAMS.map((s,i)=>`
+    <article class="stream-card">
+      <div class="sc-head">
+        <span class="sc-id">STREAM ${String(i+1).padStart(2,'0')}</span>
+        <span class="sc-live online" data-cam="${s.id}"><span class="ldot"></span>LIVE</span>
+      </div>
+      <div class="sc-name">${esc(s.id)}</div>
+      <div class="sc-cn">${esc(s.name)} · ${esc(s.cn)}</div>
+      <div class="sc-spec"><b>H.264</b> · High <span class="sep">·</span> <b>1920×1080</b> <span class="sep">·</span> <b>${s.fps} fps</b></div>
+      <div class="sc-urls">
+        ${streamUrls(s.id).map(([p,u])=>`
+          <div class="url-row">
+            <span class="proto">${p}</span>
+            <span class="url">${esc(u)}</span>
+            <button class="copy-btn" data-copy="${esc(u)}">COPY</button>
+          </div>`).join('')}
+      </div>
+    </article>`).join('');
+  document.getElementById('metric-cams').textContent = STREAMS.length;
+  document.getElementById('stream-count').textContent = STREAMS.length;
+  bindCopyButtons();
+}
+// ─── copy buttons(卡片動態產生後綁定) ───
+function bindCopyButtons(){
+  document.querySelectorAll('.copy-btn').forEach(btn => {
+    if (btn._bound) return; btn._bound = true;
+    btn.addEventListener('click', async () => {
+      const url = btn.getAttribute('data-copy');
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = url; document.body.appendChild(ta);
+        ta.select(); document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      const orig = btn.textContent;
+      btn.textContent = 'COPIED';
+      btn.classList.add('ok');
+      setTimeout(() => { btn.textContent = orig; btn.classList.remove('ok'); }, 1400);
+    });
   });
-});
+}
+buildStreams();
 
 // ─── health probe ───
 async function probeHealth(){
@@ -1311,9 +1241,9 @@ async function probeHealth(){
   const timeEl   = document.getElementById('metric-time-val');
   const t0 = performance.now();
   try {
-    const url = (location.host && !location.host.startsWith('file'))
+    const url = (location.protocol !== 'file:')
       ? '/api/health'
-      : 'http://192.168.0.108:8000/api/health';
+      : `http://${HOST}:8000/api/health`;
     const r = await fetch(url, { cache: 'no-store' });
     const dt = Math.round(performance.now() - t0);
     if (r.ok) {
@@ -1343,13 +1273,10 @@ setInterval(probeHealth, 15000);
 // ─── cam LIVE indicator via go2rtc ───
 async function probeStreams(){
   try {
-    const host = (location.host && !location.host.startsWith('file'))
-      ? location.hostname
-      : '192.168.0.108';
-    const r = await fetch(`http://${host}:1984/api/streams`, { cache: 'no-store' });
+    const r = await fetch(`http://${HOST}:1984/api/streams`, { cache: 'no-store' });
     if (!r.ok) return;
     const d = await r.json();
-    ['cam_1','cam_2','cam_6'].forEach(name => {
+    STREAMS.map(s => s.id).forEach(name => {
       const info = d[name];
       const tag = document.querySelector(`[data-cam="${name}"]`);
       if (!tag) return;
@@ -1368,61 +1295,6 @@ async function probeStreams(){
 probeStreams();
 setInterval(probeStreams, 20000);
 
-// ─── load OpenAPI spec and render external endpoint table ───
-async function loadOpenApiEndpoints(){
-  const tbody  = document.getElementById('endpoint-tbody');
-  const status = document.getElementById('endpoint-status');
-  const escape = s => String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  const host = (location.host && !location.host.startsWith('file'))
-    ? location.origin
-    : 'http://192.168.0.108:8000';
-  try {
-    const r = await fetch(host + '/openapi.json', { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const spec = await r.json();
-    const rows = [];
-    const paths = spec.paths || {};
-    Object.keys(paths).sort().forEach(p => {
-      // 只列對外 endpoint：/api/v1/external 或 /api/health 等 public 端點
-      if (!(p.startsWith('/api/v1/external') || p === '/api/health')) return;
-      const ops = paths[p];
-      ['get','post','put','delete','patch'].forEach(m => {
-        if (!ops[m]) return;
-        const op = ops[m];
-        const summary = op.summary || op.description || '';
-        const securitySchemes = (op.security && op.security.length) ? op.security : (spec.security || []);
-        const requiresAuth = securitySchemes.some(s => Object.keys(s||{}).length > 0);
-        // FastAPI 對 require_scope dependency 通常不帶到 OpenAPI security，這裡用路徑模式 fallback：
-        const isExternal = p.startsWith('/api/v1/external');
-        const authBadge = (isExternal && p !== '/api/health')
-          ? '<span class="pill">X-API-Key</span>'
-          : '<span style="color:var(--gov-muted)">public</span>';
-        rows.push({
-          method: m.toUpperCase(),
-          path: p,
-          summary,
-          auth: authBadge,
-        });
-      });
-    });
-    if (!rows.length) {
-      status.textContent = '在 OpenAPI 規格內沒找到對外 endpoint（/api/v1/external/*）';
-      return;
-    }
-    tbody.innerHTML = rows.map(r => `
-      <tr>
-        <td class="method"><span class="method-tag ${r.method}">${r.method}</span></td>
-        <td class="path">${escape(r.path)}</td>
-        <td class="summary">${escape(r.summary)}</td>
-        <td class="scope">${r.auth}</td>
-      </tr>
-    `).join('');
-  } catch (e) {
-    status.classList.add('error');
-    status.textContent = '載入 OpenAPI 失敗：' + (e.message || e) + '（請確認 traffic-api 服務運作中）';
-  }
-}
-loadOpenApiEndpoints();
 </script>
 
 </body>

@@ -1,6 +1,6 @@
 # 對外報表 API 文件
 
-> 版本：1.0 | 更新日期：2026-04-07
+> 版本：1.0 | 更新日期：2026-08-24
 
 ## 概述
 
@@ -9,7 +9,9 @@
 - **Base URL：** `http://{host}:8000/api/v1/external`
 - **認證方式：** API Key（`X-API-Key` Header）
 - **輸出格式：** JSON / CSV
-- **Swagger UI：** `http://{host}:8000/docs`
+- **Swagger UI（對外專屬）：** `http://{host}:8000/api/v1/external/docs?token=<API金鑰>`（或帶 `X-API-Key` header）
+- **OpenAPI JSON（對外專屬）：** `http://{host}:8000/api/v1/external/openapi.json?token=<API金鑰>`
+- 主站 `http://{host}:8000/docs`、`/redoc`、`/openapi.json` 需操作者登入（未登入回 401），機關請改用上面對外專屬端點。
 
 ---
 
@@ -58,7 +60,7 @@ EXTERNAL_API_KEY=tvd_hwacom_traffic_2026
   "meta": {
     "request_time": "2026-04-07T10:00:00+08:00",
     "api_version": "1.0",
-    "device_id": "jetson-nx-001",
+    "device_id": "R34_動態號誌VD",
     "format": "json"
   }
 }
@@ -114,7 +116,7 @@ GET /api/v1/external/vd-report
 
 ```bash
 curl -H "X-API-Key: tvd_xxxxxxxx" \
-  "http://10.26.4.102:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00&interval=5m"
+  "http://10.42.38.35:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00&interval=5m"
 ```
 
 #### JSON 回應範例
@@ -130,8 +132,8 @@ curl -H "X-API-Key: tvd_xxxxxxxx" \
     },
     "records": [
       {
-        "detector_id": "台62基隆段隧道口",
-        "road_name": "台62線",
+        "detector_id": "CCTV-N8-E-9-L-NE-1-SIG",
+        "road_name": "國道8號",
         "time_start": "2026-04-07T08:00:00+08:00",
         "time_end": "2026-04-07T08:05:00+08:00",
         "direction": "N2S",
@@ -170,7 +172,7 @@ curl -H "X-API-Key: tvd_xxxxxxxx" \
   "meta": {
     "request_time": "2026-04-07T10:00:00+08:00",
     "api_version": "1.0",
-    "device_id": "jetson-nx-001",
+    "device_id": "R34_動態號誌VD",
     "format": "json"
   }
 }
@@ -232,7 +234,7 @@ GET /api/v1/external/congestion-report
 
 ```bash
 curl -H "X-API-Key: tvd_xxxxxxxx" \
-  "http://10.26.4.102:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
+  "http://10.42.38.35:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
 ```
 
 #### JSON 回應範例
@@ -249,7 +251,7 @@ curl -H "X-API-Key: tvd_xxxxxxxx" \
     "records": [
       {
         "detector_id": "2",
-        "camera_name": "台62基隆段隧道口",
+        "camera_name": "CCTV-N8-E-9-L-NE-1-SIG",
         "time_start": "2026-04-07T08:00:00+08:00",
         "time_end": "2026-04-07T08:05:00+08:00",
         "zone_name": "車流區 1",
@@ -269,7 +271,7 @@ curl -H "X-API-Key: tvd_xxxxxxxx" \
   "meta": {
     "request_time": "2026-04-07T10:00:00+08:00",
     "api_version": "1.0",
-    "device_id": "jetson-nx-001",
+    "device_id": "R34_動態號誌VD",
     "format": "json"
   }
 }
@@ -418,7 +420,7 @@ DELETE /api/auth/api-keys/{id}
 import requests
 
 API_KEY = "tvd_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-BASE = "http://10.26.4.102:8000/api/v1/external"
+BASE = "http://10.42.38.35:8000/api/v1/external"
 
 # VD 報表 (JSON)
 resp = requests.get(f"{BASE}/vd-report", headers={"X-API-Key": API_KEY}, params={
@@ -444,13 +446,13 @@ with open("congestion.csv", "w") as f:
 ```bash
 # VD 報表 JSON
 curl -H "X-API-Key: tvd_xxx..." \
-  "http://10.26.4.102:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
+  "http://10.42.38.35:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
 
 # VD 報表 CSV 下載
 curl -H "X-API-Key: tvd_xxx..." -o vd_report.csv \
-  "http://10.26.4.102:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00&format=csv"
+  "http://10.42.38.35:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00&format=csv"
 
 # 壅塞報表
 curl -H "X-API-Key: tvd_xxx..." \
-  "http://10.26.4.102:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
+  "http://10.42.38.35:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&end_time=2026-04-07T12:00:00%2B08:00"
 ```

@@ -21,8 +21,8 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
 <h1 id="_1">交通違規影像分析系統 — 對機關既設數位影像平台整合文件</h1>
 <blockquote>
 <p><strong>適用範圍</strong>：本系統部署主機 → 機關既設 NVR / VMS / 影像平台
-<strong>更新日期</strong>：2026-05-08
-<strong>裝置編號</strong>：jetson-nx-001
+<strong>更新日期</strong>：2026-08-24
+<strong>裝置編號</strong>：R34_動態號誌VD
 <strong>聯絡</strong>：sannielshi@gmail.com</p>
 </blockquote>
 <hr />
@@ -38,7 +38,7 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
 <tbody>
 <tr>
 <td>影像編碼 H.264</td>
-<td>H.264 (Main / High Profile @ Level 4.0)；go2rtc passthrough 不重編碼</td>
+<td>H.264 (High Profile @ Level 4.0)；go2rtc passthrough 不重編碼</td>
 <td>✅</td>
 </tr>
 <tr>
@@ -48,7 +48,7 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
 </tr>
 <tr>
 <td>每秒 ≥ 15 FPS</td>
-<td><strong>30 FPS</strong></td>
+<td><strong>30–60 FPS</strong>（cam_2 為 60）</td>
 <td>✅</td>
 </tr>
 <tr>
@@ -62,7 +62,7 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
 <h2 id="2-rtsp">2. RTSP 串流（推薦的整合方式）</h2>
 <h3 id="21">2.1 串流列表</h3>
 <blockquote>
-<p>主機 IP：<code>192.168.0.108</code>，RTSP port <code>8554</code>，<strong>無需帳號密碼</strong>。</p>
+<p>主機 IP：<code>10.42.38.35</code>，RTSP port <code>8554</code>，<strong>無需帳號密碼</strong>。</p>
 </blockquote>
 <table>
 <thead>
@@ -77,25 +77,33 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
 </thead>
 <tbody>
 <tr>
-<td>cam_1</td>
-<td>匝道攝影機 (Axis)</td>
-<td><code>rtsp://192.168.0.108:8554/cam_1</code></td>
-<td>H.264</td>
-<td>1920×1080</td>
-<td>30</td>
-</tr>
-<tr>
 <td>cam_2</td>
-<td>台 62 基隆段隧道口 (Samsung)</td>
-<td><code>rtsp://192.168.0.108:8554/cam_2</code></td>
-<td>H.264 Main</td>
+<td>CCTV-N8-E-9-L-NE-1-SIG (Axis)</td>
+<td><code>rtsp://10.42.38.35:8554/cam_2</code></td>
+<td>H.264 High</td>
+<td>1920×1080</td>
+<td>60</td>
+</tr>
+<tr>
+<td>cam_3</td>
+<td>CCTV-N8-E-9-L-NE-2-SIG (Axis)</td>
+<td><code>rtsp://10.42.38.35:8554/cam_3</code></td>
+<td>H.264 High</td>
 <td>1920×1080</td>
 <td>30</td>
 </tr>
 <tr>
-<td>cam_6</td>
-<td>台 62 LPR (Samsung)</td>
-<td><code>rtsp://192.168.0.108:8554/cam_6</code></td>
+<td>cam_4</td>
+<td>CCTV-N8-E-9-L-WN-1-SIG (Axis)</td>
+<td><code>rtsp://10.42.38.35:8554/cam_4</code></td>
+<td>H.264 High</td>
+<td>1920×1080</td>
+<td>30</td>
+</tr>
+<tr>
+<td>cam_5</td>
+<td>CCTV-N8-E-9-L-WN-2-SIG (Axis)</td>
+<td><code>rtsp://10.42.38.35:8554/cam_5</code></td>
 <td>H.264 High</td>
 <td>1920×1080</td>
 <td>30</td>
@@ -104,22 +112,69 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
 </table>
 <h3 id="22">2.2 機關平台設定範例</h3>
 <p>絕大多數 NVR / VMS（Hikvision、Dahua、NX Witness、Milestone、Genetec、Axis 之類）支援「Generic RTSP Source」，設定如下：</p>
-<pre><code>RTSP URL:        rtsp://192.168.0.108:8554/cam_2
+<pre><code>RTSP URL:        rtsp://10.42.38.35:8554/cam_2
 Transport:       TCP (建議)
 Authentication:  None
 Codec:           H.264 (auto-detect)
 </code></pre>
 <h3 id="23">2.3 命令列驗證</h3>
-<pre><code class="language-bash">ffprobe -rtsp_transport tcp rtsp://192.168.0.108:8554/cam_2
-# 預期輸出：H.264 Main, 1920x1080, 30 fps
+<pre><code class="language-bash">ffprobe -rtsp_transport tcp rtsp://10.42.38.35:8554/cam_2
+# 預期輸出：H.264 High, 1920x1080, 60 fps
 </code></pre>
 <hr />
 <h2 id="3-api">3. 動態 API 查詢（給整合系統用）</h2>
 <p>需要程式化拿串流資訊（含線上狀態 / bytes 統計），打 External API：</p>
 <h3 id="31">3.1 端點</h3>
-<pre><code>GET  http://192.168.0.108:8000/api/v1/external/streams
+<pre><code>GET  http://10.42.38.35:8000/api/v1/external/streams
 Header:  X-API-Key: &lt;你的 API Key&gt;
 </code></pre>
+<p>對外 API 完整端點清單（皆為 <code>GET</code>，base <code>http://10.42.38.35:8000</code>）：</p>
+<table>
+<thead>
+<tr>
+<th>路徑</th>
+<th>說明</th>
+<th>scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/v1/external/streams</code></td>
+<td>即時影像串流清單（cam id + RTSP/HLS/MJPEG/WS URL）</td>
+<td><code>streams</code></td>
+</tr>
+<tr>
+<td><code>/api/v1/external/realtime</code></td>
+<td>即時 VD 車流報表（mode=minute 分鐘累積 / mode=window 滾動視窗）</td>
+<td><code>vd_report</code></td>
+</tr>
+<tr>
+<td><code>/api/v1/external/vd-report</code></td>
+<td>VD 車流報表 — 指定時間區間（start_time/end_time ISO8601）</td>
+<td><code>vd_report</code></td>
+</tr>
+<tr>
+<td><code>/api/v1/external/vd-report/latest</code></td>
+<td>VD 車流報表快捷 — 最近 N 分鐘 + 統計摘要</td>
+<td><code>vd_report</code></td>
+</tr>
+<tr>
+<td><code>/api/v1/external/congestion-report</code></td>
+<td>壅塞報表 — 指定時間區間</td>
+<td><code>congestion_report</code></td>
+</tr>
+<tr>
+<td><code>/api/v1/external/congestion-report/realtime</code></td>
+<td>壅塞即時報表</td>
+<td><code>congestion_report</code></td>
+</tr>
+<tr>
+<td><code>/api/v1/external/congestion-report/latest</code></td>
+<td>壅塞統計快捷 — 最近 N 分鐘 + 摘要</td>
+<td><code>congestion_report</code></td>
+</tr>
+</tbody>
+</table>
 <h3 id="32-api-key">3.2 API Key 申請</h3>
 <p>請聯絡系統管理員建立 API Key，申請時告知所需 scopes：</p>
 <table>
@@ -149,31 +204,32 @@ Header:  X-API-Key: &lt;你的 API Key&gt;
   &quot;meta&quot;: {
     &quot;request_time&quot;: &quot;2026-05-08T14:13:10+08:00&quot;,
     &quot;api_version&quot;: &quot;1.0&quot;,
-    &quot;device_id&quot;: &quot;jetson-nx-001&quot;,
+    &quot;device_id&quot;: &quot;R34_動態號誌VD&quot;,
     &quot;format&quot;: &quot;json&quot;
   },
   &quot;status&quot;: &quot;success&quot;,
   &quot;data&quot;: {
-    &quot;device_id&quot;: &quot;jetson-nx-001&quot;,
-    &quot;host&quot;: &quot;192.168.0.108&quot;,
+    &quot;device_id&quot;: &quot;R34_動態號誌VD&quot;,
+    &quot;host&quot;: &quot;10.42.38.35&quot;,
     &quot;ports&quot;: {&quot;rtsp&quot;: 8554, &quot;http&quot;: 1984},
-    &quot;stream_count&quot;: 3,
+    &quot;stream_count&quot;: 4,
     &quot;streams&quot;: [
       {
         &quot;stream_id&quot;: &quot;cam_2&quot;,
         &quot;camera_id&quot;: 2,
-        &quot;name&quot;: &quot;台62基隆段隧道口&quot;,
+        &quot;name&quot;: &quot;CCTV-N8-E-9-L-NE-1-SIG&quot;,
+        &quot;location&quot;: &quot;&quot;,
         &quot;online&quot;: true,
         &quot;codec&quot;: &quot;h264&quot;,
-        &quot;profile&quot;: &quot;Main&quot;,
-        &quot;resolution&quot;: &quot;1920x1080&quot;,
-        &quot;fps&quot;: 30.0,
+        &quot;profile&quot;: &quot;High&quot;,
+        &quot;resolution&quot;: null,
+        &quot;fps&quot;: 60.0,
         &quot;bytes_received&quot;: 5691793511,
         &quot;urls&quot;: {
-          &quot;rtsp&quot;:  &quot;rtsp://192.168.0.108:8554/cam_2&quot;,
-          &quot;hls&quot;:   &quot;http://192.168.0.108:1984/api/stream.m3u8?src=cam_2&quot;,
-          &quot;mjpeg&quot;: &quot;http://192.168.0.108:1984/api/stream.mjpeg?src=cam_2&quot;,
-          &quot;webrtc_signal&quot;: &quot;http://192.168.0.108:1984/api/ws?src=cam_2&quot;
+          &quot;rtsp&quot;:  &quot;rtsp://10.42.38.35:8554/cam_2&quot;,
+          &quot;hls&quot;:   &quot;http://10.42.38.35:1984/api/stream.m3u8?src=cam_2&quot;,
+          &quot;mjpeg&quot;: &quot;http://10.42.38.35:1984/api/stream.mjpeg?src=cam_2&quot;,
+          &quot;webrtc_signal&quot;: &quot;http://10.42.38.35:1984/api/ws?src=cam_2&quot;
         }
       }
     ],
@@ -187,7 +243,7 @@ Header:  X-API-Key: &lt;你的 API Key&gt;
 </code></pre>
 <h3 id="34-curl">3.4 cURL 範例</h3>
 <pre><code class="language-bash">curl -H &quot;X-API-Key: &lt;your-key&gt;&quot; \
-     http://192.168.0.108:8000/api/v1/external/streams | jq .
+     http://10.42.38.35:8000/api/v1/external/streams | jq .
 </code></pre>
 <hr />
 <h2 id="4">4. 備援串流協定</h2>
@@ -203,22 +259,22 @@ Header:  X-API-Key: &lt;你的 API Key&gt;
 <tbody>
 <tr>
 <td><strong>HLS</strong> (HTTP Live Streaming)</td>
-<td><code>http://192.168.0.108:1984/api/stream.m3u8?src=cam_2</code></td>
+<td><code>http://10.42.38.35:1984/api/stream.m3u8?src=cam_2</code></td>
 <td>Web 瀏覽器、行動裝置</td>
 </tr>
 <tr>
 <td><strong>MJPEG over HTTP</strong></td>
-<td><code>http://192.168.0.108:1984/api/stream.mjpeg?src=cam_2</code></td>
+<td><code>http://10.42.38.35:1984/api/stream.mjpeg?src=cam_2</code></td>
 <td>老舊 NVR、低資源裝置（注意頻寬大）</td>
 </tr>
 <tr>
 <td><strong>WebRTC</strong></td>
-<td><code>http://192.168.0.108:1984/api/ws?src=cam_2</code></td>
+<td><code>http://10.42.38.35:1984/api/ws?src=cam_2</code></td>
 <td>現代瀏覽器低延遲場景</td>
 </tr>
 <tr>
 <td><strong>RTSP</strong></td>
-<td><code>rtsp://192.168.0.108:8554/cam_2</code></td>
+<td><code>rtsp://10.42.38.35:8554/cam_2</code></td>
 <td><strong>首選</strong>（多數 VMS 標準支援）</td>
 </tr>
 </tbody>
@@ -226,23 +282,25 @@ Header:  X-API-Key: &lt;你的 API Key&gt;
 <hr />
 <h2 id="5">5. 健康檢查 / 監控</h2>
 <h3 id="51">5.1 公開健康檢查</h3>
-<pre><code>GET  http://192.168.0.108:8000/api/health
-回應：{&quot;status&quot;:&quot;ok&quot;,&quot;version&quot;:&quot;1.0.0&quot;}
+<pre><code>GET  http://10.42.38.35:8000/api/health
+回應：{&quot;status&quot;:&quot;healthy&quot;,&quot;timestamp&quot;:&quot;2026-08-24T10:04:14+08:00&quot;}
 </code></pre>
 <h3 id="52-swagger-ui-api">5.2 Swagger UI（互動式 API 文件）</h3>
-<pre><code>http://192.168.0.108:8000/docs
-http://192.168.0.108:8000/redoc
+<pre><code>http://10.42.38.35:8000/api/v1/external/docs?token=&lt;API金鑰&gt;
 </code></pre>
+<blockquote>
+<p>對外專屬互動文件，可用 API 金鑰存取（網址帶 <code>?token=&lt;API金鑰&gt;</code>，或程式呼叫帶 <code>X-API-Key</code> header）。主站 <code>/docs</code>、<code>/redoc</code>、<code>/openapi.json</code> 需操作者登入（未登入回 401），<strong>機關請改用本節對外專屬端點</strong>。</p>
+</blockquote>
 <h3 id="53-openapi-json">5.3 OpenAPI 規格 (JSON)</h3>
-<pre><code>http://192.168.0.108:8000/openapi.json
+<pre><code>http://10.42.38.35:8000/api/v1/external/openapi.json?token=&lt;API金鑰&gt;
 </code></pre>
 <hr />
 <h2 id="6">6. 網路需求</h2>
 <h3 id="61-lan">6.1 同 LAN 整合</h3>
-<p>機關平台主機 IP 在 <code>192.168.0.0/24</code> 子網 → <strong>無需任何網路設定，直接連線</strong>。</p>
+<p>機關平台主機 IP 在 <code>10.42.32.0/20</code> 子網 → <strong>無需任何網路設定，直接連線</strong>。</p>
 <h3 id="62">6.2 跨子網 / 跨單位整合</h3>
 <p>需網路管理員協助：</p>
-<pre><code>[機關平台]  →  [機關 router]  →  [本系統 router 192.168.0.254]  →  192.168.0.108
+<pre><code>[機關平台]  →  [機關 router]  →  [本系統 router 10.42.32.254]  →  10.42.38.35
 
 需開放：
   TCP/UDP 8000     (External API + Web UI)
@@ -270,21 +328,27 @@ http://192.168.0.108:8000/redoc
 </thead>
 <tbody>
 <tr>
-<td>cam_1</td>
-<td>Axis</td>
-<td><code>rtsp://root:****@111.70.33.189:554/axis-media/media.amp</code></td>
-<td>H.264</td>
-</tr>
-<tr>
 <td>cam_2</td>
-<td>Samsung</td>
-<td><code>rtsp://admin:****@111.70.34.183:6554/profile2/media.smp</code></td>
-<td>H.264 Main 4.0</td>
+<td>Axis</td>
+<td><code>rtsp://admin:****@10.42.40.22:554//axis-media/media.amp</code></td>
+<td>H.264 High 4.0</td>
 </tr>
 <tr>
-<td>cam_6</td>
-<td>Samsung</td>
-<td><code>rtsp://admin:****@111.70.34.184:7554/profile2/media.smp</code></td>
+<td>cam_3</td>
+<td>Axis</td>
+<td><code>rtsp://admin:****@10.42.40.23:554//axis-media/media.amp</code></td>
+<td>H.264 High 4.0</td>
+</tr>
+<tr>
+<td>cam_4</td>
+<td>Axis</td>
+<td><code>rtsp://admin:****@10.42.40.24:554//axis-media/media.amp</code></td>
+<td>H.264 High 4.0</td>
+</tr>
+<tr>
+<td>cam_5</td>
+<td>Axis</td>
+<td><code>rtsp://admin:****@10.42.40.25:554//axis-media/media.amp</code></td>
 <td>H.264 High 4.0</td>
 </tr>
 </tbody>
@@ -304,7 +368,7 @@ http://192.168.0.108:8000/redoc
 <tr>
 <td>RTSP 連不上</td>
 <td>防火牆 / 路由</td>
-<td>確認 <code>nc -zv 192.168.0.108 8554</code> 通</td>
+<td>確認 <code>nc -zv 10.42.38.35 8554</code> 通</td>
 </tr>
 <tr>
 <td>影像卡頓</td>
@@ -324,7 +388,7 @@ http://192.168.0.108:8000/redoc
 <tr>
 <td>API 429</td>
 <td>速率限制</td>
-<td>降低呼叫頻率（預設 60 req/min）</td>
+<td>降低呼叫頻率（預設 60 req/min，靜態金鑰 120）</td>
 </tr>
 </tbody>
 </table>
@@ -338,6 +402,10 @@ http://192.168.0.108:8000/redoc
 </tr>
 </thead>
 <tbody>
+<tr>
+<td>2026-08-24</td>
+<td>更新為國道 8 號新市交流道部署（cam_2~cam_5 四路）、主機 10.42.38.35</td>
+</tr>
 <tr>
 <td>2026-05-08</td>
 <td>初版 — RTSP 對機關平台開放、新增 <code>/api/v1/external/streams</code></td>

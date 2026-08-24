@@ -20,7 +20,7 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
 <div class="top"><span class="k">交通影像服務 · 交付文件</span><a href="/web/agency_landing.html">← 返回入口</a></div>
 <h1 id="api">對外報表 API 文件</h1>
 <blockquote>
-<p>版本：1.0 | 更新日期：2026-04-07</p>
+<p>版本：1.0 | 更新日期：2026-08-24</p>
 </blockquote>
 <h2 id="_1">概述</h2>
 <p>交通影像分析系統提供對外 REST API，供政府/交通局系統及內部系統取得 VD 車流報表與壅塞報表資料。</p>
@@ -28,8 +28,56 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
 <li><strong>Base URL：</strong> <code>http://{host}:8000/api/v1/external</code></li>
 <li><strong>認證方式：</strong> API Key（<code>X-API-Key</code> Header）</li>
 <li><strong>輸出格式：</strong> JSON / CSV</li>
-<li><strong>Swagger UI：</strong> <code>http://{host}:8000/docs</code></li>
+<li><strong>Swagger UI（對外專屬）：</strong> <code>http://{host}:8000/api/v1/external/docs?token=&lt;API金鑰&gt;</code>（或帶 <code>X-API-Key</code> header）。主站 <code>/docs</code>、<code>/redoc</code>、<code>/openapi.json</code> 需操作者登入（未登入回 401），機關請改用對外專屬端點。</li>
+<li><strong>OpenAPI JSON（對外專屬）：</strong> <code>http://{host}:8000/api/v1/external/openapi.json?token=&lt;API金鑰&gt;</code></li>
 </ul>
+<p>對外 API 端點總覽（皆為 <code>GET</code>）：</p>
+<table>
+<thead>
+<tr>
+<th>路徑</th>
+<th>說明</th>
+<th>scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/v1/external/streams</code></td>
+<td>即時影像串流清單（cam id + RTSP/HLS/MJPEG/WS URL）</td>
+<td><code>streams</code></td>
+</tr>
+<tr>
+<td><code>/api/v1/external/realtime</code></td>
+<td>即時 VD 車流報表（mode=minute 分鐘累積 / mode=window 滾動視窗）</td>
+<td><code>vd_report</code></td>
+</tr>
+<tr>
+<td><code>/api/v1/external/vd-report</code></td>
+<td>VD 車流報表 — 指定時間區間（start_time/end_time ISO8601）</td>
+<td><code>vd_report</code></td>
+</tr>
+<tr>
+<td><code>/api/v1/external/vd-report/latest</code></td>
+<td>VD 車流報表快捷 — 最近 N 分鐘 + 統計摘要</td>
+<td><code>vd_report</code></td>
+</tr>
+<tr>
+<td><code>/api/v1/external/congestion-report</code></td>
+<td>壅塞報表 — 指定時間區間</td>
+<td><code>congestion_report</code></td>
+</tr>
+<tr>
+<td><code>/api/v1/external/congestion-report/realtime</code></td>
+<td>壅塞即時報表</td>
+<td><code>congestion_report</code></td>
+</tr>
+<tr>
+<td><code>/api/v1/external/congestion-report/latest</code></td>
+<td>壅塞統計快捷 — 最近 N 分鐘 + 摘要</td>
+<td><code>congestion_report</code></td>
+</tr>
+</tbody>
+</table>
 <hr />
 <h2 id="_2">認證</h2>
 <p>所有對外 API 端點皆需在 HTTP Header 帶入 API Key：</p>
@@ -75,7 +123,7 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
   &quot;meta&quot;: {
     &quot;request_time&quot;: &quot;2026-04-07T10:00:00+08:00&quot;,
     &quot;api_version&quot;: &quot;1.0&quot;,
-    &quot;device_id&quot;: &quot;jetson-nx-001&quot;,
+    &quot;device_id&quot;: &quot;R34_動態號誌VD&quot;,
     &quot;format&quot;: &quot;json&quot;
   }
 }
@@ -171,7 +219,7 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
 </table>
 <h4 id="_8">請求範例</h4>
 <pre><code class="language-bash">curl -H &quot;X-API-Key: tvd_xxxxxxxx&quot; \
-  &quot;http://10.26.4.102:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&amp;interval=5m&quot;
+  &quot;http://10.42.38.35:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&amp;interval=5m&quot;
 </code></pre>
 <h4 id="json_2">JSON 回應範例</h4>
 <pre><code class="language-json">{
@@ -184,8 +232,8 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
     },
     &quot;records&quot;: [
       {
-        &quot;detector_id&quot;: &quot;台62基隆段隧道口&quot;,
-        &quot;road_name&quot;: &quot;台62線&quot;,
+        &quot;detector_id&quot;: &quot;CCTV-N8-E-9-L-NE-1-SIG&quot;,
+        &quot;road_name&quot;: &quot;國道8號&quot;,
         &quot;time_start&quot;: &quot;2026-04-07T08:00:00+08:00&quot;,
         &quot;time_end&quot;: &quot;2026-04-07T08:05:00+08:00&quot;,
         &quot;direction&quot;: &quot;N2S&quot;,
@@ -226,7 +274,7 @@ ul,ol{padding-left:22px}hr{border:none;border-top:1px solid var(--border);margin
   &quot;meta&quot;: {
     &quot;request_time&quot;: &quot;2026-04-07T10:00:00+08:00&quot;,
     &quot;api_version&quot;: &quot;1.0&quot;,
-    &quot;device_id&quot;: &quot;jetson-nx-001&quot;,
+    &quot;device_id&quot;: &quot;R34_動態號誌VD&quot;,
     &quot;format&quot;: &quot;json&quot;
   }
 }
@@ -400,7 +448,7 @@ avg_speed_kmh, avg_occupancy_pct, avg_queue_length_m, max_queue_length_m
 </table>
 <h4 id="_11">請求範例</h4>
 <pre><code class="language-bash">curl -H &quot;X-API-Key: tvd_xxxxxxxx&quot; \
-  &quot;http://10.26.4.102:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&quot;
+  &quot;http://10.42.38.35:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&quot;
 </code></pre>
 <h4 id="json_3">JSON 回應範例</h4>
 <pre><code class="language-json">{
@@ -414,7 +462,7 @@ avg_speed_kmh, avg_occupancy_pct, avg_queue_length_m, max_queue_length_m
     &quot;records&quot;: [
       {
         &quot;detector_id&quot;: &quot;2&quot;,
-        &quot;camera_name&quot;: &quot;台62基隆段隧道口&quot;,
+        &quot;camera_name&quot;: &quot;CCTV-N8-E-9-L-NE-1-SIG&quot;,
         &quot;time_start&quot;: &quot;2026-04-07T08:00:00+08:00&quot;,
         &quot;time_end&quot;: &quot;2026-04-07T08:05:00+08:00&quot;,
         &quot;zone_name&quot;: &quot;車流區 1&quot;,
@@ -434,7 +482,7 @@ avg_speed_kmh, avg_occupancy_pct, avg_queue_length_m, max_queue_length_m
   &quot;meta&quot;: {
     &quot;request_time&quot;: &quot;2026-04-07T10:00:00+08:00&quot;,
     &quot;api_version&quot;: &quot;1.0&quot;,
-    &quot;device_id&quot;: &quot;jetson-nx-001&quot;,
+    &quot;device_id&quot;: &quot;R34_動態號誌VD&quot;,
     &quot;format&quot;: &quot;json&quot;
   }
 }
@@ -690,7 +738,7 @@ queue_active_duration_sec, sample_count
 <pre><code class="language-python">import requests
 
 API_KEY = &quot;tvd_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&quot;
-BASE = &quot;http://10.26.4.102:8000/api/v1/external&quot;
+BASE = &quot;http://10.42.38.35:8000/api/v1/external&quot;
 
 # VD 報表 (JSON)
 resp = requests.get(f&quot;{BASE}/vd-report&quot;, headers={&quot;X-API-Key&quot;: API_KEY}, params={
@@ -713,15 +761,15 @@ with open(&quot;congestion.csv&quot;, &quot;w&quot;) as f:
 <h3 id="curl">cURL</h3>
 <pre><code class="language-bash"># VD 報表 JSON
 curl -H &quot;X-API-Key: tvd_xxx...&quot; \
-  &quot;http://10.26.4.102:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&quot;
+  &quot;http://10.42.38.35:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&quot;
 
 # VD 報表 CSV 下載
 curl -H &quot;X-API-Key: tvd_xxx...&quot; -o vd_report.csv \
-  &quot;http://10.26.4.102:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&amp;format=csv&quot;
+  &quot;http://10.42.38.35:8000/api/v1/external/vd-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&amp;format=csv&quot;
 
 # 壅塞報表
 curl -H &quot;X-API-Key: tvd_xxx...&quot; \
-  &quot;http://10.26.4.102:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&quot;
+  &quot;http://10.42.38.35:8000/api/v1/external/congestion-report?start_time=2026-04-07T00:00:00%2B08:00&amp;end_time=2026-04-07T12:00:00%2B08:00&quot;
 </code></pre>
 <div class="foot">邊緣交通影像服務 · 機關平台對接交付件</div>
 </div></body></html>
