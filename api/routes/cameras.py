@@ -639,8 +639,8 @@ async def update_camera(camera_id: int, data: CameraUpdate, db: Session = Depend
             from api.routes.stream import detection_services
             sv = detection_services.get(camera_id)
             if sv is not None and sv.get("running"):
-                sv["zones"] = c.zones or []
-                sv["zones_version"] = int(sv.get("zones_version", 0)) + 1
+                sv["_zones"] = c.zones or []
+                sv["_zones_version"] = int(sv.get("_zones_version", 0)) + 1
         except Exception:
             pass
     _sync_frigate()

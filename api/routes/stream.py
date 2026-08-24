@@ -2226,9 +2226,12 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     #    變了就重算,update_camera 存檔後 bump 版本。免重啟、零 cap.read SEGV 風險。
     _zones_version = 0
     try:
+        # 🛑 用底線開頭 key:zones 裡的 zone dict 會被占用率程式加上 _occ_mask_cache
+        #    (numpy 陣列不可 JSON 序列化);/detection/all 與 /detection/status 用
+        #    `not kk.startswith("_")` 過濾,底線 key 自動被排除,不會序列化爆掉。
         detection_services.setdefault(camera_id, {})
-        detection_services[camera_id]["zones"] = zones
-        detection_services[camera_id]["zones_version"] = 0
+        detection_services[camera_id]["_zones"] = zones
+        detection_services[camera_id]["_zones_version"] = 0
     except Exception:
         pass
     print(
@@ -2466,9 +2469,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         # 🔁 zones 熱重載:編輯 ROI 後 update_camera 會 bump 版本,這裡比對到就重算
         try:
             _sv = detection_services.get(camera_id) or {}
-            _nv = _sv.get("zones_version", _zones_version)
+            _nv = _sv.get("_zones_version", _zones_version)
             if _nv != _zones_version:
-                zones = list(_sv.get("zones") or [])
+                zones = list(_sv.get("_zones") or [])
                 det_zones = select_zones(zones, scope=SCOPE_TRAFFIC, allowed_types=("detection", "flow_detection"), fallback_scopes=(SCOPE_CONGESTION,))
                 speed_zones = select_zones(zones, scope=SCOPE_SPEED, allowed_types=("speed", "speed_roi", "speed_line_in", "speed_line_out"))
                 _zones_version = _nv
