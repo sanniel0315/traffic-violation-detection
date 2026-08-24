@@ -2220,6 +2220,17 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     
     det_zones = select_zones(zones, scope=SCOPE_TRAFFIC, allowed_types=("detection", "flow_detection"), fallback_scopes=(SCOPE_CONGESTION,))
     speed_zones = select_zones(zones, scope=SCOPE_SPEED, allowed_types=("speed", "speed_roi", "speed_line_in", "speed_line_out"))
+    # 🔁 zones 熱重載:偵測執行緒原本抓「啟動當下」的 zones 快照,編輯 ROI 後要
+    #    restart traffic-api 才生效(舊行為) —— 使用者畫了違停區卻不觸發違規、
+    #    ROI 也不出現。改成把 zones+版本掛在 detection_services,worker 每輪比對版本,
+    #    變了就重算,update_camera 存檔後 bump 版本。免重啟、零 cap.read SEGV 風險。
+    _zones_version = 0
+    try:
+        detection_services.setdefault(camera_id, {})
+        detection_services[camera_id]["zones"] = zones
+        detection_services[camera_id]["zones_version"] = 0
+    except Exception:
+        pass
     print(
         f"🚀 偵測服務啟動: camera_id={camera_id}, 啟用類型={[t[1] for t in enabled_types]}, "
         f"traffic_roi={len(det_zones)}, speed_roi={len(speed_zones)}"
@@ -2451,6 +2462,19 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     # 以下是 _process_post_yolo 函式體（原本內聯在 worker 迴圈裡，現在抽出來）
     def _process_post_yolo(infer_frame, detections, cur_ts):
         nonlocal next_track_id, detection_count, _last_round_ts, _inout_next_id
+        nonlocal zones, det_zones, speed_zones, _zones_version
+        # 🔁 zones 熱重載:編輯 ROI 後 update_camera 會 bump 版本,這裡比對到就重算
+        try:
+            _sv = detection_services.get(camera_id) or {}
+            _nv = _sv.get("zones_version", _zones_version)
+            if _nv != _zones_version:
+                zones = list(_sv.get("zones") or [])
+                det_zones = select_zones(zones, scope=SCOPE_TRAFFIC, allowed_types=("detection", "flow_detection"), fallback_scopes=(SCOPE_CONGESTION,))
+                speed_zones = select_zones(zones, scope=SCOPE_SPEED, allowed_types=("speed", "speed_roi", "speed_line_in", "speed_line_out"))
+                _zones_version = _nv
+                print(f"♻️ cam_{camera_id} zones 熱重載 v{_nv}: 總zones={len(zones)} traffic_roi={len(det_zones)} speed_roi={len(speed_zones)}", flush=True)
+        except Exception as _e:
+            print(f"⚠️ cam_{camera_id} zones 熱重載失敗: {_e!r}", flush=True)
         vehicles = [d for d in detections if d['class_name'] in ['car', 'motorcycle', 'truck', 'bus', 'heavy_truck', 'light_truck']]
 
         # 最小 bbox 面積過濾：砍掉遠端把路面標線/接縫誤判成車的小框。

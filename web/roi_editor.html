@@ -172,6 +172,12 @@
                     <el-option label="車速區" value="speed_roi"></el-option>
                     <el-option label="車速進入線" value="speed_line_in"></el-option>
                     <el-option label="車速離開線" value="speed_line_out"></el-option>
+                    <el-option label="禁停區" value="no_parking"></el-option>
+                    <el-option label="人行道" value="sidewalk"></el-option>
+                    <el-option label="紅線" value="red_line"></el-option>
+                    <el-option label="黃線" value="yellow_line"></el-option>
+                    <el-option label="公車招呼站" value="bus_stop"></el-option>
+                    <el-option label="斑馬線" value="crosswalk"></el-option>
                 </el-select>
                 <el-select v-model="item.zone.direction" size="small" style="width:120px">
                     <el-option v-for="opt in directionOptions" :key="`other-dir-${item.idx}-${opt.value}`" :label="opt.label" :value="opt.value"></el-option>
@@ -331,7 +337,8 @@ createApp({
         const modeToFunction = {
             speed_detection: 'speed',
             traffic_flow_settings: 'flow',
-            congestion_detection: 'flow'
+            congestion_detection: 'flow',
+            parking_violation_settings: 'parking'
         };
         const currentScope = String(entryMode || 'traffic_flow_settings');
         const notifyOpenerZonesUpdated = () => {
@@ -350,7 +357,8 @@ createApp({
         const scopeAllowedTypes = {
             traffic_flow_settings: ['flow_detection'],
             speed_detection: ['speed_roi', 'speed_line_in', 'speed_line_out'],
-            congestion_detection: ['flow_detection']
+            congestion_detection: ['flow_detection'],
+            parking_violation_settings: ['no_parking', 'sidewalk', 'red_line', 'yellow_line', 'bus_stop', 'crosswalk']
         };
         const zoneTypeAlias = {
             detection: 'flow_detection',
@@ -519,9 +527,12 @@ createApp({
         const mergeScopedZones = (localZones) => {
             const normalizedLocal = (localZones || []).map((z, i) => {
                 const t = normalizeZoneType(z.type);
-                // parking 類 zone 強制走 traffic_flow_settings scope (跟 stream.py
-                // SCOPE_TRAFFIC 一致),不然 select_zones 撈不到 → evaluator 不觸發
-                const scope = isParkingZoneType(t) ? 'traffic_flow_settings' : currentScope;
+                // parking 類 zone 走自己的 scope parking_violation_settings。
+                // 後端 select_zones 用 fallback_scopes=("parking_violation_settings",) 仍撈得到
+                // (traffic scope 下沒 parking 型 → scoped 空 → 進 fallback);編輯器在
+                // parking 模式(currentScope 同名)才顯示得出來 —— 舊本強制 traffic scope
+                // 會被 selectScopedZones 濾掉,存了卻「編輯後沒出現」。
+                const scope = isParkingZoneType(t) ? 'parking_violation_settings' : currentScope;
                 return {
                     ...z,
                     id: ensureZoneId(z, i),
@@ -952,7 +963,7 @@ createApp({
                 newZone.violation_name = cfg.violation_name;
                 newZone.fine_amount = cfg.fine;
                 newZone.points_penalty = cfg.points;
-                newZone.scope = 'traffic_flow_settings';  // parking 共用 traffic scope
+                newZone.scope = 'parking_violation_settings';  // parking 自己的 scope(後端 fallback 撈得到)
             }
             
             const newZones = [...zones.value, newZone];
