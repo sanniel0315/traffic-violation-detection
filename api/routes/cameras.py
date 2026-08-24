@@ -631,6 +631,18 @@ async def update_camera(camera_id: int, data: CameraUpdate, db: Session = Depend
     c.updated_at = datetime.utcnow()
     _commit_with_retry(db)
     db.refresh(c)
+    # 🔁 zones 熱重載:編輯 ROI 後把新 zones + 版本推給運行中的偵測執行緒,
+    #    免 restart traffic-api 就生效(違停/超速/流量 ROI 立即套用、ROI 立即顯示)。
+    #    先寫 zones 再 bump 版本,worker 讀到新版本時 zones 必定已就緒。
+    if "zones" in payload:
+        try:
+            from api.routes.stream import detection_services
+            sv = detection_services.get(camera_id)
+            if sv is not None and sv.get("running"):
+                sv["zones"] = c.zones or []
+                sv["zones_version"] = int(sv.get("zones_version", 0)) + 1
+        except Exception:
+            pass
     _sync_frigate()
     return _to_dict(c)
 
