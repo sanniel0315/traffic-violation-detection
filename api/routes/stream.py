@@ -1613,7 +1613,7 @@ def generate_frames_overlay(
                     if prev.get("det_ts") != _cur_det_ts:
                         _pc = prev.get("det_center", (cx, cy))
                         _pdts = prev.get("det_ts")
-                        _ddt = max(0.05, (_cur_det_ts - _pdts)) if _pdts else 0.05
+                        _ddt = max(0.1, (_cur_det_ts - _pdts)) if _pdts else 0.1   # 下限貼近實際偵測間隔,擋偵測幀過近時速度被高估→框飛過頭
                         vx = (cx - _pc[0]) / _ddt
                         vy = (cy - _pc[1]) / _ddt
                         if _pv_x is not None:
