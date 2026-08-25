@@ -3566,11 +3566,16 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     threading.Thread(target=_post_loop, daemon=True, name=f"post-{camera_id}").start()
 
     # worker: 拿最新 frame 跑 YOLO，把 frame + detections 一起寫入 shared_frames，後處理丟給 queue
-    # 限制每 cam 最多 10 FPS 偵測 → 4 cam × 10 = 40 inferences/s，降 GPU 負載（監控夠用）
+    # 每 cam 偵測率上限,env 可調(ANALYSIS_MAX_INFER_FPS,預設 10)。同一偵測器餵分析+疊加框。
+    # 🛑 實測結論(2026-08-25 104):拉高到 15 反而更差 —— 104 的 GPU 本來就在 ~80% 用量、
+    #    2 台相機各 ~7fps 已是 GPU/模型(640 推論~40ms)綁定,不是這個上限綁定。拉高只增加
+    #    GPU 爭用(util 94%、wait_ms 翻倍)、分析率不升反降,還排擠 LPR/壅塞(共用 GPU_INFERENCE_LOCK)。
+    #    要真正提高偵測率只能:減少共用相機數 / 換更快模型(降準度) / 更強硬體。保留 env 給
+    #    「相機少、GPU 有餘裕」的機器(如 87 AGX)自行拉高。
     _last_proc_ts = 0.0
     _last_infer_wall = 0.0
     _infer_stats = _InferStats()
-    MAX_INFER_FPS = 10.0
+    MAX_INFER_FPS = float(os.getenv("ANALYSIS_MAX_INFER_FPS", "10") or 10)
     _min_infer_interval = 1.0 / MAX_INFER_FPS
     _frigate_fb_last = 0.0  # frigate fallback throttle (worker-local，不影響 reader_loop)
     while detection_services.get(camera_id, {}).get('running', False):
