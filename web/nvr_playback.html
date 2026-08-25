@@ -437,6 +437,20 @@ body {
   background:var(--accent-blue); color:#fff; font-size:16px;
 }
 .ctrl-btn.primary:hover { background:var(--gov-primary-strong); }
+.range-pop {
+  position:absolute; bottom:calc(100% + 8px); left:0; z-index:60;
+  width:250px; padding:12px; border-radius:8px;
+  background:var(--bg-secondary); border:1px solid var(--border-color);
+  box-shadow:0 8px 28px rgba(0,0,0,.28); display:flex; flex-direction:column; gap:6px;
+}
+.range-pop input[type=datetime-local] {
+  width:100%; box-sizing:border-box; border:1px solid var(--border-color);
+  border-radius:6px; padding:4px 8px; font-size:12px;
+  background:var(--bg-primary); color:var(--text-primary);
+}
+.range-pop .rp-do { background:var(--accent-blue); color:#fff; border:none; border-radius:6px; padding:5px 14px; cursor:pointer; font-size:12px; }
+.range-pop .rp-do:hover { background:var(--gov-primary-strong); }
+.range-pop .rp-cancel { background:var(--bg-tertiary); color:var(--text-secondary); border:none; border-radius:6px; padding:5px 12px; cursor:pointer; font-size:12px; }
 .ctrl-sep { width:1px; height:20px; background:var(--border-color); margin:0 4px; }
 .ctrl-speed {
   padding:4px 8px; border:1px solid var(--border-color); border-radius:5px;
@@ -885,7 +899,21 @@ body {
       <div class="ctrl-sep"></div>
       <button class="ctrl-btn" @click="captureFrame" title="截圖">&#128247;</button>
       <button class="ctrl-btn" @click="addBookmark" title="加入書籤 (B)">&#128278;</button>
-      <button class="ctrl-btn" @click="downloadClip" :disabled="downloading" :title="downloading?'匯出中…':'從目前播放位置下載片段'">&#11015;</button>
+      <div style="position:relative;display:inline-flex;gap:4px" @click.stop>
+        <button class="ctrl-btn wide" @click="exportSegment" :disabled="downloading" :title="downloading?'匯出中…':'導出整個目前時段為 mp4'">&#11015; 本段</button>
+        <button class="ctrl-btn wide" @click="openRangeExport" :disabled="downloading" title="自訂起訖時間匯出 mp4">選範圍</button>
+        <div v-show="rangeOpen" class="range-pop">
+          <div style="font-size:12px;font-weight:600;color:var(--text-primary)">選擇匯出範圍<span style="font-weight:400;color:var(--text-secondary)">（同日、上限 1 小時）</span></div>
+          <label style="font-size:11px;color:var(--text-secondary)">開始</label>
+          <input type="datetime-local" step="1" v-model="rangeStart">
+          <label style="font-size:11px;color:var(--text-secondary)">結束</label>
+          <input type="datetime-local" step="1" v-model="rangeEnd">
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+            <button class="rp-cancel" @click="rangeOpen=false">取消</button>
+            <button class="rp-do" @click="exportRange" :disabled="downloading">匯出</button>
+          </div>
+        </div>
+      </div>
       <div class="ctrl-spacer"></div>
       <!-- Filters -->
       <div class="ctrl-filter-group">
@@ -1571,25 +1599,22 @@ setup(){
     a.click();
     ElementPlus.ElMessage.success('已擷取畫面');
   };
-  // 下載目前片段:從播放位置往後選 N 分鐘 → 走 Frigate export(ffmpeg 合併成單一 mp4)
-  // → 輪詢等 in_progress=false → 觸發下載。用 export 而非 clip.mp4,因為任意範圍
-  // clip.mp4 只認精確段界會失敗;export 才能導出任意時間範圍(後端上限 1 小時)。
+  // ── 錄影匯出(下載)──
+  // 走 Frigate export(ffmpeg 把任意範圍多段錄影合併成單一 mp4)→ 輪詢 exports 等
+  // in_progress=false → export-file 端點觸發下載。用 export 而非 clip.mp4,因為任意
+  // 範圍 clip.mp4 只認精確段界會失敗;export 才能導出任意時間範圍(後端上限 1 小時)。
   const downloading=ref(false);
-  const downloadClip=async()=>{
-    const cell=cells[activeCell.value];
-    const cam=String(cell&&cell.camera||'').trim();
-    if(!cam||!Number(cell&&cell.startTs)){ElementPlus.ElMessage.warning('請先在格子中播放一段錄影');return;}
-    const startEpoch=Math.floor(Number(cell.startTs||0)+Number(cell.currentSec||0));
-    let mins;
-    try{
-      const r=await ElementPlus.ElMessageBox.prompt('從目前播放位置往後下載幾分鐘？(1~60)','下載錄影片段',{
-        confirmButtonText:'開始匯出',cancelButtonText:'取消',inputValue:'1',
-        inputPattern:/^\d+(\.\d+)?$/,inputErrorMessage:'請輸入數字(分鐘)'});
-      mins=parseFloat(r.value);
-    }catch(_e){return;}   // 取消
-    if(!Number.isFinite(mins)||mins<=0)return;
-    mins=Math.min(60,mins);   // 後端上限 1 小時
-    const endEpoch=startEpoch+Math.round(mins*60);
+  const rangeOpen=ref(false);
+  const rangeStart=ref('');
+  const rangeEnd=ref('');
+  const epochToLocalInput=(ep)=>{   // Unix 秒 → <input datetime-local> 用的本地字串
+    const d=new Date(ep*1000),p=n=>String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  };
+  // 匯出核心:發起 export → 輪詢完成 → 觸發瀏覽器下載
+  const runExport=async(cam,startEpoch,endEpoch)=>{
+    if(downloading.value)return;
+    startEpoch=Math.floor(startEpoch);endEpoch=Math.floor(endEpoch);
     downloading.value=true;
     const loading=ElementPlus.ElLoading.service({text:'匯出中… Frigate 正在合併錄影,請稍候(長片段較久)'});
     try{
@@ -1622,6 +1647,39 @@ setup(){
       loading.close();downloading.value=false;
     }
   };
+  // 導出本段:直接匯出目前播放中的整個時段(current row)
+  const exportSegment=async()=>{
+    const cell=cells[activeCell.value];
+    const cam=String(cell&&cell.camera||'').trim();
+    const row=current.value;
+    if(!cam||!row||!Number(row.start_time)){ElementPlus.ElMessage.warning('請先播放一個時段');return;}
+    let s=Math.floor(Number(row.start_time));
+    let e=Math.floor(Number(row.end_time||0))||(s+3600);
+    if(e-s>3600)e=s+3600;   // 後端上限 1 小時
+    await runExport(cam,s,e);
+  };
+  // 選範圍:打開自訂起訖面板(預設帶入目前播放點往後 1 分鐘)
+  const openRangeExport=()=>{
+    const cell=cells[activeCell.value];
+    if(!String(cell&&cell.camera||'').trim()){ElementPlus.ElMessage.warning('請先選擇攝影機');return;}
+    const base=Math.floor(Number(cell.startTs||0)+Number(cell.currentSec||0))||Math.floor(Date.now()/1000);
+    rangeStart.value=epochToLocalInput(base);
+    rangeEnd.value=epochToLocalInput(base+60);
+    rangeOpen.value=true;
+  };
+  const exportRange=async()=>{
+    const cell=cells[activeCell.value];
+    const cam=String(cell&&cell.camera||'').trim();
+    if(!cam){ElementPlus.ElMessage.warning('請先選擇攝影機');return;}
+    const s=Math.floor(new Date(rangeStart.value).getTime()/1000);
+    const e=Math.floor(new Date(rangeEnd.value).getTime()/1000);
+    if(!Number.isFinite(s)||!Number.isFinite(e)){ElementPlus.ElMessage.warning('時間格式不正確');return;}
+    if(e<=s){ElementPlus.ElMessage.warning('結束時間要晚於開始時間');return;}
+    if(e-s>3600){ElementPlus.ElMessage.warning('單次匯出上限 1 小時');return;}
+    rangeOpen.value=false;
+    await runExport(cam,s,e);
+  };
+  const closeRangePop=()=>{ rangeOpen.value=false; };   // 面板外點擊關閉(wrapper 有 @click.stop 擋內部)
   // 點時間軸 → 跳到那個時刻。一小時一段,所以先找出包含該時刻的那一段,
   // 再把「距離該段起點幾秒」記下來,等 video 載到 metadata 後才 seek 得動。
   const seekToTime=(ts)=>{
@@ -1859,6 +1917,7 @@ setup(){
     clockTimer=setInterval(updateClock,1000);
 
     document.addEventListener('keydown',onKeydown);
+    document.addEventListener('click',closeRangePop);   // 點面板外關閉「選範圍」
 
     // Load data
     await Promise.all([loadStatus(),loadCameras()]);
@@ -1873,6 +1932,7 @@ setup(){
   onUnmounted(()=>{
     clearInterval(clockTimer);
     document.removeEventListener('keydown',onKeydown);
+    document.removeEventListener('click',closeRangePop);
   });
 
   return {
@@ -1890,7 +1950,8 @@ setup(){
     attachSource,
     formatClock,formatDuration,formatTime,
     setGridMode,selectRow,selectCamera,selectPrev,selectNext,
-    togglePlay,seekBy,applyRate,captureFrame,downloadClip,downloading,seekToTime,
+    togglePlay,seekBy,applyRate,captureFrame,seekToTime,
+    downloading,rangeOpen,rangeStart,rangeEnd,exportSegment,openRangeExport,exportRange,
     onVideoLoaded,onVideoTimeUpdate,onVideoError,
     onDragStartDevice,onDropCell,clearCell,
     addBookmark,jumpToBookmark,
