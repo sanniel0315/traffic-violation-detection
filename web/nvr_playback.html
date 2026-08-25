@@ -885,6 +885,7 @@ body {
       <div class="ctrl-sep"></div>
       <button class="ctrl-btn" @click="captureFrame" title="截圖">&#128247;</button>
       <button class="ctrl-btn" @click="addBookmark" title="加入書籤 (B)">&#128278;</button>
+      <button class="ctrl-btn" @click="downloadClip" :disabled="downloading" :title="downloading?'匯出中…':'從目前播放位置下載片段'">&#11015;</button>
       <div class="ctrl-spacer"></div>
       <!-- Filters -->
       <div class="ctrl-filter-group">
@@ -1570,6 +1571,57 @@ setup(){
     a.click();
     ElementPlus.ElMessage.success('已擷取畫面');
   };
+  // 下載目前片段:從播放位置往後選 N 分鐘 → 走 Frigate export(ffmpeg 合併成單一 mp4)
+  // → 輪詢等 in_progress=false → 觸發下載。用 export 而非 clip.mp4,因為任意範圍
+  // clip.mp4 只認精確段界會失敗;export 才能導出任意時間範圍(後端上限 1 小時)。
+  const downloading=ref(false);
+  const downloadClip=async()=>{
+    const cell=cells[activeCell.value];
+    const cam=String(cell&&cell.camera||'').trim();
+    if(!cam||!Number(cell&&cell.startTs)){ElementPlus.ElMessage.warning('請先在格子中播放一段錄影');return;}
+    const startEpoch=Math.floor(Number(cell.startTs||0)+Number(cell.currentSec||0));
+    let mins;
+    try{
+      const r=await ElementPlus.ElMessageBox.prompt('從目前播放位置往後下載幾分鐘？(1~60)','下載錄影片段',{
+        confirmButtonText:'開始匯出',cancelButtonText:'取消',inputValue:'1',
+        inputPattern:/^\d+(\.\d+)?$/,inputErrorMessage:'請輸入數字(分鐘)'});
+      mins=parseFloat(r.value);
+    }catch(_e){return;}   // 取消
+    if(!Number.isFinite(mins)||mins<=0)return;
+    mins=Math.min(60,mins);   // 後端上限 1 小時
+    const endEpoch=startEpoch+Math.round(mins*60);
+    downloading.value=true;
+    const loading=ElementPlus.ElLoading.service({text:'匯出中… Frigate 正在合併錄影,請稍候(長片段較久)'});
+    try{
+      // 先記下現有 export id,供 export_id 為 null(部分 Frigate 版本)時比對出新檔
+      const before=new Set();
+      try{const pre=await fetch('/api/frigate/recordings/exports').then(x=>x.json());(pre.items||[]).forEach(it=>before.add(String(it.id)));}catch(_e){}
+      const res=await fetch(`/api/frigate/recordings/export?camera=${encodeURIComponent(cam)}&start=${startEpoch}&end=${endEpoch}&playback=realtime`,{method:'POST'});
+      if(!res.ok){const t=await res.text();throw new Error(`匯出失敗 HTTP ${res.status}:${t.slice(0,120)}`);}
+      const j=await res.json();
+      const wantId=j&&j.export_id?String(j.export_id):null;
+      let target=null;
+      for(let i=0;i<90;i++){   // 90 × 2s = 最多 3 分鐘
+        await new Promise(rs=>setTimeout(rs,2000));
+        let list=[];
+        try{list=((await fetch('/api/frigate/recordings/exports').then(x=>x.json()))||{}).items||[];}catch(_e){continue;}
+        let cand=null;
+        if(wantId)cand=list.find(it=>String(it.id)===wantId);
+        if(!cand)cand=list.filter(it=>it.camera===cam&&!before.has(String(it.id)))
+                        .sort((a,b)=>String(b.name||'').localeCompare(String(a.name||'')))[0];
+        if(cand&&!cand.in_progress&&cand.download_src){target=cand;break;}
+      }
+      if(!target)throw new Error('匯出逾時或找不到檔案,請稍後於 Frigate 匯出清單確認');
+      const a=document.createElement('a');
+      a.href=target.download_src;a.download=`${cam}-${startEpoch}.mp4`;
+      document.body.appendChild(a);a.click();a.remove();
+      ElementPlus.ElMessage.success('匯出完成,開始下載');
+    }catch(e){
+      ElementPlus.ElMessage.error(String(e&&e.message||e));
+    }finally{
+      loading.close();downloading.value=false;
+    }
+  };
   // 點時間軸 → 跳到那個時刻。一小時一段,所以先找出包含該時刻的那一段,
   // 再把「距離該段起點幾秒」記下來,等 video 載到 metadata 後才 seek 得動。
   const seekToTime=(ts)=>{
@@ -1838,7 +1890,7 @@ setup(){
     attachSource,
     formatClock,formatDuration,formatTime,
     setGridMode,selectRow,selectCamera,selectPrev,selectNext,
-    togglePlay,seekBy,applyRate,captureFrame,seekToTime,
+    togglePlay,seekBy,applyRate,captureFrame,downloadClip,downloading,seekToTime,
     onVideoLoaded,onVideoTimeUpdate,onVideoError,
     onDragStartDevice,onDropCell,clearCell,
     addBookmark,jumpToBookmark,
