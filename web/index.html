@@ -9543,7 +9543,6 @@
                         <div class="config-item" v-if="previewCamera.detection_config.speeding"><span>速限</span><el-input-number v-model="previewCamera.detection_config.speed_limit" :min="20" :max="120" size="small" @change="saveConfig"/></div>
                         <div class="config-item" v-if="previewCamera.detection_config.speeding"><span>記錄模式<el-tag size="small" type="info" effect="plain" style="margin-left:6px">免校正·只記錄不開單</el-tag></span><el-switch :model-value="speedRecordMode" @change="setSpeedRecordMode"></el-switch></div>
                         <div class="config-item" v-if="previewCamera.detection_config.speeding"><span>速度校正 <el-tag size="small" type="info" effect="plain" style="margin-left:6px">選用·提升精度</el-tag></span><el-button size="small" type="primary" plain @click="autoPerspectiveCalib">一鍵透視校正（免進出線）</el-button></div>
-                        <div class="config-item" v-if="previewCamera.detection_config.speeding"><span>精度校正記錄 <el-tag size="small" type="info" effect="plain" style="margin-left:6px">trip-wire GT</el-tag></span><el-switch v-model="previewCamera.detection_config.speed_calib_log" @change="saveConfig"/></div>
                     </template>
                     <template v-if="page==='traffic_flow_settings' || page==='speed_detection'">
                         <div class="section-title">
@@ -9846,71 +9845,41 @@
                             <p v-else style="font-size:12px;color:#999;text-align:center;padding:8px 0">尚未設定，請先建立 ROI</p>
                         </div>
                         <div v-if="page==='speed_detection'" class="analysis-setting-group">
-                            <div class="analysis-setting-head">3. 進階參數調校</div>
+                            <div class="analysis-setting-head">3. 速度校正（僅記錄用）</div>
                             <div class="analysis-setting-tip">
-                                影響車速估算的準確度與穩定性。沒做 homography / trip_wire 校正時，若速度全空 (NULL) 可試把<b>絕對上限</b>調高或<b>離群閾值</b>放寬。
+                                車速僅供<b>記錄與分級</b>顯示，不開單、不需精密校正。一般只要調「校正係數」：估速偏低就調高、偏高就調低即可。
                             </div>
                             <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0;border-bottom:1px solid #eef2f7">
                                 <span>校正係數 <span style="color:#94a3b8">(預設 0.12)</span></span>
                                 <el-input-number v-model="previewCamera.detection_config.speed_kmh_per_pxps" :min="0.01" :max="0.5" :step="0.01" :precision="3" size="small" controls-position="right" style="width:120px" @change="saveConfig"/>
                             </div>
-                            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0;border-bottom:1px solid #eef2f7">
-                                <span>平滑因子 α <span style="color:#94a3b8">(預設 0.35)</span></span>
-                                <el-input-number v-model="previewCamera.detection_config.speed_smooth_alpha" :min="0.1" :max="1.0" :step="0.05" :precision="2" size="small" controls-position="right" style="width:120px" @change="saveConfig"/>
-                            </div>
-                            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0;border-bottom:1px solid #eef2f7">
+                            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0">
                                 <span>絕對上限 (km/h) <span style="color:#94a3b8">(預設 130)</span></span>
                                 <el-input-number v-model="previewCamera.detection_config.speed_abs_cap" :min="50" :max="300" :step="10" size="small" controls-position="right" style="width:120px" @change="saveConfig"/>
                             </div>
-                            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0;border-bottom:1px solid #eef2f7">
-                                <span>離群閾值 (倍率) <span style="color:#94a3b8">(預設 2.0)</span></span>
-                                <el-input-number v-model="previewCamera.detection_config.speed_outlier_factor" :min="1.0" :max="10.0" :step="0.5" :precision="1" size="small" controls-position="right" style="width:120px" @change="saveConfig"/>
-                            </div>
-                            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0">
-                                <span>最少採樣 frame <span style="color:#94a3b8">(預設 5)</span></span>
-                                <el-input-number v-model="previewCamera.detection_config.speed_min_samples" :min="3" :max="30" :step="1" size="small" controls-position="right" style="width:120px" @change="saveConfig"/>
-                            </div>
-                            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0;border-top:1px solid #eef2f7;margin-top:2px">
-                                <span>只信校正來源開單 <span style="color:#94a3b8">(預設 開)</span></span>
-                                <el-switch v-model="previewCamera.detection_config.speeding_require_calibrated" @change="saveConfig"/>
-                            </div>
-                            <div v-if="!previewCamera.detection_config.speeding_require_calibrated" class="analysis-setting-tip" style="color:#b45309;margin:2px 0 4px">
-                                ⚠ 已關閉：未校正相機的純 pixel 估速也會開超速單（準確度低，可能誤開）。
-                            </div>
-                            <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0">
-                                <span>Track 逾時 (秒) <span style="color:#94a3b8">(預設 5)</span></span>
-                                <el-input-number v-model="previewCamera.detection_config.speed_track_ttl_sec" :min="1" :max="30" :step="1" size="small" controls-position="right" style="width:120px" @change="saveConfig"/>
-                            </div>
+                            <details style="margin-top:8px">
+                                <summary style="font-size:12px;color:#64748b;cursor:pointer;user-select:none">進階參數（少用，維持預設即可）</summary>
+                                <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0;border-bottom:1px solid #eef2f7">
+                                    <span>平滑因子 α <span style="color:#94a3b8">(預設 0.35)</span></span>
+                                    <el-input-number v-model="previewCamera.detection_config.speed_smooth_alpha" :min="0.1" :max="1.0" :step="0.05" :precision="2" size="small" controls-position="right" style="width:120px" @change="saveConfig"/>
+                                </div>
+                                <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0;border-bottom:1px solid #eef2f7">
+                                    <span>離群閾值 (倍率) <span style="color:#94a3b8">(預設 2.0)</span></span>
+                                    <el-input-number v-model="previewCamera.detection_config.speed_outlier_factor" :min="1.0" :max="10.0" :step="0.5" :precision="1" size="small" controls-position="right" style="width:120px" @change="saveConfig"/>
+                                </div>
+                                <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0;border-bottom:1px solid #eef2f7">
+                                    <span>最少採樣 frame <span style="color:#94a3b8">(預設 5)</span></span>
+                                    <el-input-number v-model="previewCamera.detection_config.speed_min_samples" :min="3" :max="30" :step="1" size="small" controls-position="right" style="width:120px" @change="saveConfig"/>
+                                </div>
+                                <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#334155;padding:6px 0">
+                                    <span>Track 逾時 (秒) <span style="color:#94a3b8">(預設 5)</span></span>
+                                    <el-input-number v-model="previewCamera.detection_config.speed_track_ttl_sec" :min="1" :max="30" :step="1" size="small" controls-position="right" style="width:120px" @change="saveConfig"/>
+                                </div>
+                            </details>
                             <div class="analysis-setting-tip" style="margin-top:6px">
                                 改完按下方「完成」會自動儲存並重啟 traffic-api，detection thread 重新讀入新參數。
                             </div>
                             <el-button type="danger" size="small" style="width:100%;margin-top:8px" @click="confirmRestartTrafficApi">完成（儲存並重啟服務）</el-button>
-                        </div>
-                        <div v-if="page==='speed_detection'" class="analysis-setting-group">
-                            <div class="analysis-setting-head">4. 精度校正報告</div>
-                            <div class="analysis-setting-tip">
-                                以 trip-wire 跨線速度為真值，比對估算誤差。需先開上方「精度校正記錄」並設好 trip-wire 兩線，收一段車流後產生報告。
-                            </div>
-                            <el-button type="primary" plain size="small" style="width:100%" @click="loadSpeedCalibReport(previewCamera.id)">產生 / 更新報告</el-button>
-                            <div v-if="speedCalibReport && speedCalibReport.n_total===0" class="analysis-setting-tip" style="color:#b45309;margin-top:6px">
-                                尚無有效配對資料（gt 與 est 皆需大於 0）。請確認已開精度校正記錄，且有車輛跨越 trip-wire 兩線。
-                            </div>
-                            <div v-for="g in (speedCalibReport && speedCalibReport.groups || [])" :key="(g.calibrated?'c':'p')" style="border:1px solid #eef2f7;border-radius:8px;padding:8px;margin-top:8px">
-                                <div style="font-weight:600;font-size:12px;color:#334155;margin-bottom:4px">
-                                    {{ g.calibrated ? '已校正 (homography)' : '純 pixel' }} · n={{ g.n }}
-                                </div>
-                                <div style="font-size:12px;color:#475569;display:flex;flex-wrap:wrap;gap:10px">
-                                    <span>真值均 {{ g.gt_mean_kmh }}</span>
-                                    <span>估算均 {{ g.est_mean_kmh }}</span>
-                                    <span>MAE {{ g.mae_kmh }}</span>
-                                    <span>偏差 {{ g.bias_kmh }}</span>
-                                    <span>MAPE {{ g.mape_pct }}%</span>
-                                </div>
-                                <div v-if="!g.calibrated && g.suggested_coeff" style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                                    <span style="font-size:12px;color:#64748b">建議係數 {{ g.suggested_coeff }}（目前 {{ g.current_coeff }}）</span>
-                                    <el-button type="success" plain size="small" @click="applySuggestedCoeff(g.suggested_coeff)">套用建議係數</el-button>
-                                </div>
-                            </div>
                         </div>
                     </template>
 
