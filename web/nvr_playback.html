@@ -403,6 +403,42 @@ body {
   background:var(--accent-cyan); z-index:2;
   pointer-events:none;
 }
+/* 拖曳選取的範圍 band —— 要一眼看得到 */
+.timeline-sel {
+  position:absolute; top:0; bottom:0; z-index:3; pointer-events:none;
+  background:rgba(37,99,235,.30);
+  border-left:3px solid var(--accent-blue);
+  border-right:3px solid var(--accent-blue);
+  box-shadow:inset 0 0 0 1px rgba(37,99,235,.6);
+}
+.timeline-sel::before, .timeline-sel::after {
+  content:''; position:absolute; top:0; bottom:0; width:3px; background:var(--accent-blue);
+  box-shadow:0 0 8px var(--accent-blue);
+}
+.timeline-sel::before { left:-3px; }
+.timeline-sel::after { right:-3px; }
+/* 下載進度覆蓋層 */
+.dl-overlay {
+  position:fixed; inset:0; z-index:3000;
+  background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center;
+}
+.dl-box {
+  background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:12px;
+  padding:26px 34px; display:flex; flex-direction:column; align-items:center; gap:14px;
+  min-width:240px; box-shadow:0 12px 40px rgba(0,0,0,.45);
+}
+.dl-spinner {
+  width:46px; height:46px; border-radius:50%;
+  border:4px solid var(--bg-tertiary); border-top-color:var(--accent-blue);
+  animation:dlspin .8s linear infinite;
+}
+@keyframes dlspin { to { transform:rotate(360deg); } }
+.dl-text { font-size:14px; color:var(--text-primary); text-align:center; }
+.dl-cancel {
+  background:var(--accent-red); color:#fff; border:none; border-radius:6px;
+  padding:7px 20px; cursor:pointer; font-size:13px; margin-top:2px;
+}
+.dl-cancel:hover { opacity:.9; }
 .timeline-playhead::before {
   content:''; position:absolute; top:-3px; left:-4px;
   width:10px; height:10px; border-radius:50%;
@@ -877,6 +913,15 @@ body {
       </div>
       <div class="timeline-ticks">
         <span v-for="t in timelineTicks" :key="t.key">{{ t.label }}</span>
+      </div>
+    </div>
+
+    <!-- 下載進度覆蓋層(動畫 + 取消) -->
+    <div v-if="dlActive" class="dl-overlay">
+      <div class="dl-box">
+        <div class="dl-spinner"></div>
+        <div class="dl-text">{{ dlText }}</div>
+        <button class="dl-cancel" @click="cancelDownload">取消下載</button>
       </div>
     </div>
 
@@ -1647,50 +1692,60 @@ setup(){
     const d=tpeDate(ep),p=n=>String(n).padStart(2,'0');
     return `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
   };
-  // 匯出核心:發起 export → 輪詢完成 → 觸發瀏覽器下載
+  // 下載進度覆蓋層(動畫 + 可取消)。用 AbortController 貫串輪詢與下載,取消即中斷。
+  const dlActive=ref(false);
+  const dlText=ref('');
+  let dlAbort=null;
+  const cancelDownload=()=>{ if(dlAbort){try{dlAbort.abort();}catch(_e){}} };
+  const abortableSleep=(ms,sig)=>new Promise((rs,rj)=>{
+    const to=setTimeout(rs,ms);
+    if(sig)sig.addEventListener('abort',()=>{clearTimeout(to);rj(new DOMException('aborted','AbortError'));},{once:true});
+  });
+  // 匯出核心:發起 export → 輪詢完成 → fetch blob 下載(可取消,全程顯示動畫)
   const runExport=async(cam,startEpoch,endEpoch)=>{
     if(downloading.value)return;
     startEpoch=Math.floor(startEpoch);endEpoch=Math.floor(endEpoch);
-    downloading.value=true;
-    const loading=ElementPlus.ElLoading.service({text:'合併錄影中,請稍候…(長片段較久)'});
+    downloading.value=true; dlActive.value=true; dlText.value='準備匯出…';
+    dlAbort=new AbortController(); const sig=dlAbort.signal;
+    let objurl=null;
     try{
-      // 先記下現有 export id(供 export_id 為 null 版本比對新檔),並順手清掉已完成的
-      // 舊匯出檔 → Frigate 匯出清單不累積、不再顯示一堆「錄影資料」。
+      // 清掉已完成的舊匯出 → Frigate 清單不累積
+      dlText.value='清理舊匯出…';
       const before=new Set();
       try{
-        const pre=await fetch('/api/frigate/recordings/exports').then(x=>x.json());
+        const pre=await fetch('/api/frigate/recordings/exports',{signal:sig}).then(x=>x.json());
         for(const it of (pre.items||[])){
           before.add(String(it.id));
-          if(it.id&&!it.in_progress){try{await fetch(`/api/frigate/recordings/export/${encodeURIComponent(it.id)}`,{method:'DELETE'});}catch(_e){}}
+          if(it.id&&!it.in_progress){try{await fetch(`/api/frigate/recordings/export/${encodeURIComponent(it.id)}`,{method:'DELETE',signal:sig});}catch(_e){if(sig.aborted)throw _e;}}
         }
-      }catch(_e){}
-      const res=await fetch(`/api/frigate/recordings/export?camera=${encodeURIComponent(cam)}&start=${startEpoch}&end=${endEpoch}&playback=realtime`,{method:'POST'});
+      }catch(_e){if(sig.aborted)throw _e;}
+      dlText.value='合併錄影中…';
+      const res=await fetch(`/api/frigate/recordings/export?camera=${encodeURIComponent(cam)}&start=${startEpoch}&end=${endEpoch}&playback=realtime`,{method:'POST',signal:sig});
       if(!res.ok){const t=await res.text();throw new Error(`匯出失敗 HTTP ${res.status}:${t.slice(0,120)}`);}
       const j=await res.json();
       const wantId=j&&j.export_id?String(j.export_id):null;
       let target=null;
       for(let i=0;i<90;i++){   // 90 × 2s = 最多 3 分鐘
-        await new Promise(rs=>setTimeout(rs,2000));
+        await abortableSleep(2000,sig);
         let list=[];
-        try{list=((await fetch('/api/frigate/recordings/exports').then(x=>x.json()))||{}).items||[];}catch(_e){continue;}
+        try{list=((await fetch('/api/frigate/recordings/exports',{signal:sig}).then(x=>x.json()))||{}).items||[];}catch(_e){if(sig.aborted)throw _e;continue;}
         let cand=null;
         if(wantId)cand=list.find(it=>String(it.id)===wantId);
         if(!cand)cand=list.filter(it=>it.camera===cam&&!before.has(String(it.id)))
                         .sort((a,b)=>String(b.name||'').localeCompare(String(a.name||'')))[0];
         if(cand&&!cand.in_progress&&cand.download_src){target=cand;break;}
+        dlText.value=`合併錄影中…(${i+1})`;
       }
       if(!target)throw new Error('匯出逾時或找不到檔案,請稍後再試');
-      // 檔名帶入 攝影機名稱_日期_起訖時間;下載完成後由後端自動刪除該匯出(cleanup=1)
-      const st=(ep)=>{const d=new Date(ep*1000),p=n=>String(n).padStart(2,'0');
-        return{date:`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}`,time:`${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`};};
+      // 檔名 攝影機名_日期_起訖(台北時間);下載完後端自動刪匯出(cleanup=1)
+      const st=(ep)=>{const d=tpeDate(ep),p=n=>String(n).padStart(2,'0');
+        return{date:`${d.getUTCFullYear()}${p(d.getUTCMonth()+1)}${p(d.getUTCDate())}`,time:`${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`};};
       const s0=st(startEpoch),e0=st(endEpoch);
       const nm=String((cameraDisplayName?cameraDisplayName(cam):cam)||cam).replace(/[^\w一-龥-]/g,'')||cam;
       const fname=`${nm}_${s0.date}_${s0.time}-${e0.time}.mp4`;
-      const durSec=Math.max(1,Math.round(endEpoch-startEpoch));
-      const useOsd=showOverlay.value;   // 綁主介面 OSD 開關:畫面有顯示 OSD 就燒進匯出(涵蓋全時段)
+      const useOsd=showOverlay.value;   // 綁主介面 OSD 開關:畫面有 OSD 就燒進匯出(涵蓋全時段)
       let href;
       if(useOsd){
-        // OSD 端點:ffmpeg 逐秒疊字後串流(CPU 轉碼較久)。位置取播放器上拖曳過的 OSD 換算成 0..1
         const enc=(String(target.download_src||'').split('name=')[1]||'');
         let ox=0.012,oy=0.02;
         try{
@@ -1701,20 +1756,25 @@ setup(){
           }
         }catch(_e){}
         const lbl=encodeURIComponent(String((cameraDisplayName?cameraDisplayName(cam):cam)||cam));
-        href=`/api/frigate/recordings/export-osd?name=${enc}&cam=${encodeURIComponent(cam)}&label=${lbl}&start=${startEpoch}&dur=${durSec}&osdx=${ox.toFixed(4)}&osdy=${oy.toFixed(4)}`;
+        href=`/api/frigate/recordings/export-osd?name=${enc}&cam=${encodeURIComponent(cam)}&label=${lbl}&start=${startEpoch}&osdx=${ox.toFixed(4)}&osdy=${oy.toFixed(4)}`;
       }else{
-        href=target.download_src;   // 原始檔直下(不燒字,秒下)
+        href=target.download_src;
       }
       if(target.id)href+=`${href.indexOf('?')>=0?'&':'?'}id=${encodeURIComponent(target.id)}&cleanup=1`;
-      if(useOsd)ElementPlus.ElMessage.info('OSD 燒錄中,較長片段下載會等較久…');
-      const a=document.createElement('a');
-      a.href=href;a.download=fname;
+      dlText.value=useOsd?'燒錄 OSD 並下載中…(長片段較久)':'下載中…';
+      const fr=await fetch(href,{signal:sig});
+      if(!fr.ok)throw new Error(`下載失敗 HTTP ${fr.status}`);
+      const blob=await fr.blob();   // 讀完才觸發存檔;fetch 可被 AbortController 取消
+      objurl=URL.createObjectURL(blob);
+      const a=document.createElement('a');a.href=objurl;a.download=fname;
       document.body.appendChild(a);a.click();a.remove();
-      ElementPlus.ElMessage.success('匯出完成,開始下載');
+      ElementPlus.ElMessage.success('下載完成');
     }catch(e){
-      ElementPlus.ElMessage.error(String(e&&e.message||e));
+      if(e&&(e.name==='AbortError'||sig.aborted))ElementPlus.ElMessage.info('已取消下載');
+      else ElementPlus.ElMessage.error(String(e&&e.message||e));
     }finally{
-      loading.close();downloading.value=false;
+      if(objurl)setTimeout(()=>{try{URL.revokeObjectURL(objurl);}catch(_e){}},10000);
+      dlActive.value=false;dlText.value='';downloading.value=false;dlAbort=null;
     }
   };
   // 導出本段:直接匯出目前播放中的整個時段(current row)
@@ -2024,6 +2084,7 @@ setup(){
     togglePlay,seekBy,applyRate,captureFrame,seekToTime,
     downloading,rangeOpen,rangeStart,rangeEnd,exportSegment,openRangeExport,exportRange,
     selRange,selBandStyle,clearSel,downloadSelection,
+    dlActive,dlText,cancelDownload,
     onVideoLoaded,onVideoTimeUpdate,onVideoError,
     onDragStartDevice,onDropCell,clearCell,
     addBookmark,jumpToBookmark,
