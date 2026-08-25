@@ -16446,6 +16446,7 @@ const app=createApp({
         //    所以「名稱存在」對未啟用的相機也成立 —— 只看名稱會讓那幾台切到一條
         //    沒有資料的 H.264,畫面是 0x0 全黑(實測 104 的 cam_8 就這樣)。
         const go2rtcLive=ref(new Set());
+        let _go2rtc1984Probed=false;   // :1984 直連可達性只探一次
         const loadGo2rtcStreams=async()=>{
             try{
                 const r=await fetch('/api/go2rtc/api/streams');
@@ -16456,6 +16457,22 @@ const app=createApp({
                 //    沒人看就沒 producer,但它們是已宣告的空串流。若只收有 producer 的,
                 //    前端 hasGo2rtcLofi 永遠 false → 永遠不選 lofi → 心跳不觸發 → 死鎖。
                 go2rtcLive.value=new Set(Object.keys(d));
+                // h264 的 WS/HLS 是「直連 go2rtc :1984」(繞過 :8000 代理求效能)。有些機器
+                // (如 104)只對外開 :8000、:1984 不可達 → h264 全黑。這裡探測 :1984 直連,
+                // 不可達就自動關 h264 退回 MJPEG(走 :8000,必通);87 的 :1984 可達則維持 h264。
+                // 只影響本次 session(不寫 localStorage),不干擾使用者手動設定。
+                if(h264LiveEnabled.value && !_go2rtc1984Probed){
+                    _go2rtc1984Probed=true;
+                    try{
+                        const _p=location.protocol==='https:'?'https:':'http:';
+                        const _pr=await fetch(`${_p}//${location.hostname}:1984/api/streams`,{signal:AbortSignal.timeout(2500)});
+                        if(!_pr.ok)throw 0;
+                    }catch(_e){
+                        h264LiveEnabled.value=false;
+                        try{ console.warn('[monitor] go2rtc :1984 直連不可達 → 自動改用 MJPEG(:8000)'); }catch(e){}
+                        try{ reloadMonitorStreams && reloadMonitorStreams(); }catch(e){}
+                    }
+                }
             }catch(_){ /* go2rtc 不可用 → 全部維持 MJPEG,不影響現有行為 */ }
         };
         loadGo2rtcStreams();
@@ -16551,9 +16568,16 @@ const app=createApp({
         // 監控格用:疊加模式優先拿疊加串流
         // 疊加 → 有框那條;原始 + 窄頻 → 不畫框的低頻寬那條;其餘 → 原生
         const getMonitorWsUrl=(camera)=>{
-            // 遠端省流:不分疊加/非疊加,一律走 lofi(10fps/350k、含框、同解析度)
-            if(remoteSaver.value && hasGo2rtcLofi(camera)){
-                return getGo2rtcWsUrl(camera, {lofi:true});
+            // 遠端省流:🛑 疊加模式走 lofi(含框、省流);原始模式走 lite(無框、省流)。
+            //   原本不分模式一律 lofi(含框),害「原始畫面」也冒框(bug)。lofi/lite 沒有時
+            //   fall through 到下面一般選擇(原始→cam_X 乾淨無框)。
+            if(remoteSaver.value){
+                if(resolveCameraStreamMode(camera)==='overlay' && hasGo2rtcLofi(camera)){
+                    return getGo2rtcWsUrl(camera, {lofi:true});
+                }
+                if(resolveCameraStreamMode(camera)!=='overlay' && hasGo2rtcLite(camera)){
+                    return getGo2rtcWsUrl(camera, {lite:true});
+                }
             }
             return getGo2rtcWsUrl(camera, {
                 annotated: resolveCameraStreamMode(camera)==='overlay',
@@ -16663,7 +16687,7 @@ const app=createApp({
         const getMonitorMediaKind=(camera, opts={})=>{
             if(shouldUseDirectMonitorVideo(camera))return 'video';   // 上傳的 mp4 直接播檔案
             // 遠端省流:走 HLS(hls.js 大緩衝,吃高延遲外網線;VideoRTC 的 MSE 緩衝太小會凍)
-            if(remoteSaver.value && hasGo2rtcLofi(camera))return 'hls';
+            if(remoteSaver.value && resolveCameraStreamMode(camera)==='overlay' && hasGo2rtcLofi(camera))return 'hls';  // lofi含框,只疊加模式用
             // 窄頻 + 有 lite:原始畫面走 H.264 低頻寬版本,不要再降級成 400px MJPEG
             if(resolveCameraStreamMode(camera)!=='overlay'
                && lowBandwidth.value && h264LiveEnabled.value && hasGo2rtcLite(camera)){
