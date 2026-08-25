@@ -195,6 +195,22 @@ def _post_frigate(path: str, json_body: Optional[Dict[str, Any]] = None, timeout
     return None, None, last_error
 
 
+def _delete_frigate(path: str, timeout: int = 15):
+    """Try Frigate DELETE across candidate base URLs; return (response, url, error)。"""
+    last_error = None
+    p = path if path.startswith("/") else f"/{path}"
+    for base in _frigate_base_urls():
+        url = f"{base}{p}"
+        try:
+            r = requests.delete(url, timeout=timeout)
+            # Frigate 刪除成功回 200;404 視同已不存在也算成功
+            if r.status_code in (200, 202, 204, 404):
+                return r, url, None
+        except Exception as e:
+            last_error = e
+    return None, None, last_error
+
+
 def _parse_time_to_epoch(raw: Optional[str]) -> Optional[float]:
     if raw is None:
         return None
@@ -1277,8 +1293,20 @@ def list_recording_exports():
     return {"items": out, "total": len(out)}
 
 
+@router.delete("/recordings/export/{export_id}")
+def delete_recording_export(export_id: str):
+    """刪除單一 Frigate 匯出(前端下載前清舊檔用,避免匯出清單累積)。"""
+    eid = os.path.basename(str(export_id or "").strip())
+    if not eid or ".." in eid:
+        raise HTTPException(status_code=400, detail="不合法的 export_id")
+    r, _url, err = _delete_frigate(f"/api/export/{eid}", timeout=15)
+    if r is None:
+        raise HTTPException(status_code=502, detail=f"連不到 Frigate:{err}")
+    return {"ok": True, "id": eid, "status": r.status_code}
+
+
 @router.api_route("/recordings/export-file", methods=["GET", "HEAD"])
-def download_export_file(name: str, request: Request):
+def download_export_file(name: str, request: Request, id: Optional[str] = None, cleanup: int = 0):
     """下載已完成的匯出檔(從 Frigate /exports/<name> 取,支援 Range)。
 
     為何不共用 /recordings/play:play 代理會停在第一個回 200 的 base,而
@@ -1319,6 +1347,10 @@ def download_export_file(name: str, request: Request):
             pass
         return Response(status_code=upstream.status_code, headers=headers, media_type=ct)
 
+    # 只有「完整 GET(非 Range 續傳)」串完才清除,避免刪到還在續傳的檔;
+    # 用 id 精準刪(檔名 → export_id 不可靠)。client 中斷也會走 finally 一併清掉不留孤兒。
+    do_cleanup = bool(cleanup) and bool(id) and not rng
+
     def _iter():
         try:
             for chunk in upstream.iter_content(chunk_size=64 * 1024):
@@ -1326,6 +1358,11 @@ def download_export_file(name: str, request: Request):
                     yield chunk
         finally:
             upstream.close()
+            if do_cleanup:
+                try:
+                    _delete_frigate(f"/api/export/{os.path.basename(str(id).strip())}", timeout=15)
+                except Exception:
+                    pass
 
     return StreamingResponse(_iter(), media_type=ct, headers=headers, status_code=upstream.status_code)
 

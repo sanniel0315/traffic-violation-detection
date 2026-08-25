@@ -1618,9 +1618,16 @@ setup(){
     downloading.value=true;
     const loading=ElementPlus.ElLoading.service({text:'匯出中… Frigate 正在合併錄影,請稍候(長片段較久)'});
     try{
-      // 先記下現有 export id,供 export_id 為 null(部分 Frigate 版本)時比對出新檔
+      // 先記下現有 export id(供 export_id 為 null 版本比對新檔),並順手清掉已完成的
+      // 舊匯出檔 → Frigate 匯出清單不累積、不再顯示一堆「錄影資料」。
       const before=new Set();
-      try{const pre=await fetch('/api/frigate/recordings/exports').then(x=>x.json());(pre.items||[]).forEach(it=>before.add(String(it.id)));}catch(_e){}
+      try{
+        const pre=await fetch('/api/frigate/recordings/exports').then(x=>x.json());
+        for(const it of (pre.items||[])){
+          before.add(String(it.id));
+          if(it.id&&!it.in_progress){try{await fetch(`/api/frigate/recordings/export/${encodeURIComponent(it.id)}`,{method:'DELETE'});}catch(_e){}}
+        }
+      }catch(_e){}
       const res=await fetch(`/api/frigate/recordings/export?camera=${encodeURIComponent(cam)}&start=${startEpoch}&end=${endEpoch}&playback=realtime`,{method:'POST'});
       if(!res.ok){const t=await res.text();throw new Error(`匯出失敗 HTTP ${res.status}:${t.slice(0,120)}`);}
       const j=await res.json();
@@ -1637,8 +1644,16 @@ setup(){
         if(cand&&!cand.in_progress&&cand.download_src){target=cand;break;}
       }
       if(!target)throw new Error('匯出逾時或找不到檔案,請稍後於 Frigate 匯出清單確認');
+      // 檔名帶入 攝影機名稱_日期_起訖時間;下載完成後由後端自動刪除該匯出(cleanup=1)
+      const st=(ep)=>{const d=new Date(ep*1000),p=n=>String(n).padStart(2,'0');
+        return{date:`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}`,time:`${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`};};
+      const s0=st(startEpoch),e0=st(endEpoch);
+      const nm=String((cameraDisplayName?cameraDisplayName(cam):cam)||cam).replace(/[^\w一-龥-]/g,'')||cam;
+      const fname=`${nm}_${s0.date}_${s0.time}-${e0.time}.mp4`;
+      let href=target.download_src;
+      if(target.id)href+=`${href.indexOf('?')>=0?'&':'?'}id=${encodeURIComponent(target.id)}&cleanup=1`;
       const a=document.createElement('a');
-      a.href=target.download_src;a.download=`${cam}-${startEpoch}.mp4`;
+      a.href=href;a.download=fname;
       document.body.appendChild(a);a.click();a.remove();
       ElementPlus.ElMessage.success('匯出完成,開始下載');
     }catch(e){
