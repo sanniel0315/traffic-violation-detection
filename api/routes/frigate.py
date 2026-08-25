@@ -1367,6 +1367,74 @@ def download_export_file(name: str, request: Request, id: Optional[str] = None, 
     return StreamingResponse(_iter(), media_type=ct, headers=headers, status_code=upstream.status_code)
 
 
+@router.get("/recordings/export-osd")
+def download_export_osd(name: str, cam: str = "", start: int = 0, id: Optional[str] = None, cleanup: int = 0):
+    """把 Frigate 匯出檔即時燒錄 OSD(攝影機名 + 錄影時間戳)後串流下載。
+
+    ffmpeg 讀 Frigate /exports/<name> → drawtext 疊字 → libx264(容器內無 nvenc,用 CPU)
+    → 分段 mp4(frag)pipe 串流。下載結束或中斷都走 finally 刪掉該 Frigate 匯出,不留檔。
+    🛑 drawtext 選項順序:text= 要放在 box/boxcolor 之前,否則此版 ffmpeg 會誤報
+       「Both text and text file provided」(實測)。時間戳 %{pts\\:localtime\\:START}
+       冒號要 escape;字型 DejaVu 無中日韓字,故攝影機標籤只取 ASCII。
+    """
+    import subprocess
+    base_name = os.path.basename(str(name or "").strip())
+    if not base_name or ".." in base_name:
+        raise HTTPException(status_code=400, detail="不合法的檔名")
+    src_url = None
+    for base in _frigate_base_urls():
+        try:
+            h = requests.get(f"{base}/exports/{base_name}", timeout=10, stream=True)
+            ok = h.status_code == 200 and not h.headers.get("content-type", "").startswith("text/html")
+            h.close()
+            if ok:
+                src_url = f"{base}/exports/{base_name}"
+                break
+        except Exception:
+            pass
+    if not src_url:
+        raise HTTPException(status_code=404, detail="找不到匯出檔")
+    font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    cam_label = re.sub(r"[^\w .\-]", "", str(cam or "")) or "camera"   # ASCII-safe
+    suf = "fontsize=28:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=6"
+    ts = ("%{pts\\:localtime\\:" + str(int(start)) + "}") if int(start or 0) > 0 else "%{pts\\:hms}"
+    vf = (f"drawtext=fontfile={font}:text={cam_label}:x=14:y=12:{suf},"
+          f"drawtext=fontfile={font}:text={ts}:x=14:y=52:{suf}")
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", src_url,
+           "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+           "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    do_cleanup = bool(cleanup) and bool(id)
+
+    def _iter():
+        try:
+            while True:
+                chunk = proc.stdout.read(64 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            if do_cleanup:
+                try:
+                    _delete_frigate(f"/api/export/{os.path.basename(str(id).strip())}", timeout=15)
+                except Exception:
+                    pass
+
+    return StreamingResponse(_iter(), media_type="video/mp4",
+                             headers={"Cache-Control": "no-store", "Content-Type": "video/mp4"})
+
+
 @router.api_route("/recordings/play", methods=["GET", "HEAD"])
 def play_nvr_recording(src: str, request: Request):
     """代理錄影播放內容（支援 Range、HEAD 探測）
