@@ -1368,19 +1368,29 @@ def download_export_file(name: str, request: Request, id: Optional[str] = None, 
 
 
 @router.get("/recordings/export-osd")
-def download_export_osd(name: str, cam: str = "", start: int = 0, id: Optional[str] = None, cleanup: int = 0):
-    """把 Frigate 匯出檔即時燒錄 OSD(攝影機名 + 錄影時間戳)後串流下載。
+def download_export_osd(name: str, cam: str = "", label: str = "", start: int = 0, dur: int = 0,
+                        osdx: float = 0.012, osdy: float = 0.02, id: Optional[str] = None, cleanup: int = 0):
+    """把 Frigate 匯出檔燒錄 OSD(攝影機名 + 逐秒跳動的錄影時間)後串流下載,對齊播放器 OSD。
 
-    ffmpeg 讀 Frigate /exports/<name> → drawtext 疊字 → libx264(容器內無 nvenc,用 CPU)
-    → 分段 mp4(frag)pipe 串流。下載結束或中斷都走 finally 刪掉該 Frigate 匯出,不留檔。
-    🛑 drawtext 選項順序:text= 要放在 box/boxcolor 之前,否則此版 ffmpeg 會誤報
-       「Both text and text file provided」(實測)。時間戳 %{pts\\:localtime\\:START}
-       冒號要 escape;字型 DejaVu 無中日韓字,故攝影機標籤只取 ASCII。
+    🛑 此容器 ffmpeg 4.4 的 %{pts\\:localtime} expansion 不可靠(會殘字/Unterminated,
+       與 violations.py 同款雷,實測燒出來變 raw epoch「1787...}」)→ 改用「每秒一個
+       textfile + enable=between(t,i,i+1)」逐秒切換;textfile 內容不過 filter parser,
+       完全避開 `:` escape 地雷,時間像監視器 OSD 逐秒跳。
+    - 攝影機名與時間都用 textfile → 支援中文(NotoSansCJK,對齊播放器 cameraDisplayName)。
+    - osdx/osdy 為 0..1 比例(播放器上拖曳過的 OSD 位置換算),x=osdx*w、y=osdy*h。
+    - libx264 CPU 轉碼(容器無 nvenc)。finally 清 textfile + 刪 Frigate 匯出不留檔。
+    - 逐秒 textfile 有量,單次 OSD 上限 600 秒;更長請關 OSD 或縮短範圍。
     """
     import subprocess
+    import uuid
+    import shutil
+    from datetime import timezone as _tz, timedelta as _td
     base_name = os.path.basename(str(name or "").strip())
     if not base_name or ".." in base_name:
         raise HTTPException(status_code=400, detail="不合法的檔名")
+    seconds = int(dur or 0) or 60
+    if seconds > 600:
+        raise HTTPException(status_code=400, detail="OSD 匯出單次上限 10 分鐘,請縮短範圍或關閉 OSD")
     src_url = None
     for base in _frigate_base_urls():
         try:
@@ -1394,12 +1404,38 @@ def download_export_osd(name: str, cam: str = "", start: int = 0, id: Optional[s
             pass
     if not src_url:
         raise HTTPException(status_code=404, detail="找不到匯出檔")
+    # 字型:優先 NotoSansCJK 支援中文攝影機名,退回 DejaVu
     font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    cam_label = re.sub(r"[^\w .\-]", "", str(cam or "")) or "camera"   # ASCII-safe
-    suf = "fontsize=28:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=6"
-    ts = ("%{pts\\:localtime\\:" + str(int(start)) + "}") if int(start or 0) > 0 else "%{pts\\:hms}"
-    vf = (f"drawtext=fontfile={font}:text={cam_label}:x=14:y=12:{suf},"
-          f"drawtext=fontfile={font}:text={ts}:x=14:y=52:{suf}")
+    for fp in ("/workspace/web/fonts/NotoSansCJK-Regular.ttc",
+               "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+               "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+               "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"):
+        if os.path.exists(fp):
+            font = fp
+            break
+    try:
+        fx = min(0.95, max(0.0, float(osdx)))
+        fy = min(0.90, max(0.0, float(osdy)))
+    except Exception:
+        fx, fy = 0.012, 0.02
+    work = f"/tmp/osd_{uuid.uuid4().hex}"
+    os.makedirs(work, exist_ok=True)
+    cam_text = (str(label or "").strip() or str(cam or "").strip() or "camera")
+    cam_file = os.path.join(work, "cam.txt")
+    with open(cam_file, "w", encoding="utf-8") as f:
+        f.write(cam_text)
+    tpe = _tz(_td(hours=8))
+    base_dt = datetime.fromtimestamp(int(start), tz=tpe) if int(start or 0) > 0 else datetime.now(tpe)
+    common = f"fontfile={font}:fontsize=28:fontcolor=white:borderw=3:bordercolor=black@0.85"
+    filters = [f"drawtext={common}:textfile={cam_file}:x={fx}*w:y={fy}*h"]
+    for i in range(seconds + 2):
+        sec_file = os.path.join(work, f"t_{i}.txt")
+        with open(sec_file, "w", encoding="utf-8") as f:
+            f.write((base_dt + _td(seconds=i)).strftime("%Y-%m-%d %H:%M:%S"))
+        filters.append(
+            f"drawtext={common}:textfile={sec_file}:x={fx}*w:y={fy}*h+38:enable='between(t,{i},{i + 1})'"
+        )
+    vf = ",".join(filters)
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", src_url,
            "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
            "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1"]
@@ -1425,6 +1461,10 @@ def download_export_osd(name: str, cam: str = "", start: int = 0, id: Optional[s
                     proc.kill()
                 except Exception:
                     pass
+            try:
+                shutil.rmtree(work, ignore_errors=True)
+            except Exception:
+                pass
             if do_cleanup:
                 try:
                     _delete_frigate(f"/api/export/{os.path.basename(str(id).strip())}", timeout=15)

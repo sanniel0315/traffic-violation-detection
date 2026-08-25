@@ -1652,16 +1652,28 @@ setup(){
       const s0=st(startEpoch),e0=st(endEpoch);
       const nm=String((cameraDisplayName?cameraDisplayName(cam):cam)||cam).replace(/[^\w一-龥-]/g,'')||cam;
       const fname=`${nm}_${s0.date}_${s0.time}-${e0.time}.mp4`;
+      const durSec=Math.max(1,Math.round(endEpoch-startEpoch));
+      const useOsd=osdBurn.value && durSec<=600;   // OSD 逐秒 textfile 上限 10 分鐘
+      if(osdBurn.value && durSec>600)ElementPlus.ElMessage.warning('範圍超過 10 分鐘,OSD 僅支援 ≤10 分鐘 → 本次以無 OSD 原始檔下載');
       let href;
-      if(osdBurn.value){
-        // 走燒錄 OSD 端點:ffmpeg 疊字後串流(較久,CPU 轉碼)。name 沿用 download_src 已編碼的檔名
+      if(useOsd){
+        // OSD 端點:ffmpeg 逐秒疊字後串流(CPU 轉碼較久)。位置取播放器上拖曳過的 OSD 換算成 0..1
         const enc=(String(target.download_src||'').split('name=')[1]||'');
-        href=`/api/frigate/recordings/export-osd?name=${enc}&cam=${encodeURIComponent(cam)}&start=${startEpoch}`;
+        let ox=0.012,oy=0.02;
+        try{
+          const pos=osdPositions[activeCell.value],vid=cellVideoRefs[activeCell.value];
+          if(pos&&vid&&vid.clientWidth&&vid.clientHeight){
+            ox=Math.min(0.95,Math.max(0,parseFloat(pos.left)/vid.clientWidth));
+            oy=Math.min(0.90,Math.max(0,parseFloat(pos.top)/vid.clientHeight));
+          }
+        }catch(_e){}
+        const lbl=encodeURIComponent(String((cameraDisplayName?cameraDisplayName(cam):cam)||cam));
+        href=`/api/frigate/recordings/export-osd?name=${enc}&cam=${encodeURIComponent(cam)}&label=${lbl}&start=${startEpoch}&dur=${durSec}&osdx=${ox.toFixed(4)}&osdy=${oy.toFixed(4)}`;
       }else{
         href=target.download_src;   // 原始檔直下(不燒字,秒下)
       }
       if(target.id)href+=`${href.indexOf('?')>=0?'&':'?'}id=${encodeURIComponent(target.id)}&cleanup=1`;
-      if(osdBurn.value)ElementPlus.ElMessage.info('OSD 燒錄中,較長片段下載會等較久…');
+      if(useOsd)ElementPlus.ElMessage.info('OSD 燒錄中,較長片段下載會等較久…');
       const a=document.createElement('a');
       a.href=href;a.download=fname;
       document.body.appendChild(a);a.click();a.remove();
