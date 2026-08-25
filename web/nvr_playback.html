@@ -381,9 +381,9 @@ body {
 .timeline-bar {
   position:relative; height:48px; border-radius:6px; overflow:hidden;
   background:var(--bg-tertiary); border:1px solid var(--border-color);
-  cursor:grab; touch-action:none;   /* 手機要能拖曳平移,不要被瀏覽器捲動吃掉 */
+  cursor:crosshair; touch-action:none;   /* 拖曳=選範圍,不要被瀏覽器捲動吃掉 */
 }
-.timeline-bar.dragging { cursor:grabbing; }
+.timeline-bar.dragging { cursor:crosshair; }
 .timeline-now {
   position:absolute; top:0; bottom:0; width:1px;
   background:var(--accent-red); opacity:.7; z-index:1; pointer-events:none;
@@ -854,13 +854,12 @@ body {
         <button class="tl-zoom-btn" type="button" @click="zoomOut" title="縮小刻度">&minus;</button>
         <span class="tl-range-label">{{ tlRangeLabel }}</span>
         <span class="tl-spacer"></span>
-        <button class="tl-zoom-btn wide" type="button" :class="{active:selMode}" @click="toggleSelMode" :title="selMode?'關閉範圍標註':'拖曳時間軸標註起訖範圍後下載'">{{ selMode?'標註中(拖曳選範圍)':'標註範圍' }}</button>
         <template v-if="selRange">
           <span class="tl-range-label" style="color:var(--accent-blue);font-weight:600">選取 {{ formatDuration(selRange.dur) }}</span>
           <button class="tl-zoom-btn wide" type="button" @click="downloadSelection" :disabled="downloading">&#11015; 下載選取</button>
           <button class="tl-zoom-btn" type="button" @click="clearSel" title="清除選取">&times;</button>
         </template>
-        <span v-else class="tl-range-label">滾輪縮放 / 拖曳平移 / 點擊定位</span>
+        <span v-else class="tl-range-label">滾輪縮放 / 拖曳選範圍下載 / 點擊定位</span>
         <button class="tl-zoom-btn wide" type="button" @click="tlGoNow" title="回到現在">現在</button>
       </div>
       <div class="timeline-bar" ref="tlBarEl" :class="{dragging:tlDragging}"
@@ -910,7 +909,6 @@ body {
       <div style="position:relative;display:inline-flex;gap:4px;align-items:center" @click.stop>
         <button class="ctrl-btn wide" @click="exportSegment" :disabled="downloading" :title="downloading?'匯出中…':'導出整個目前時段為 mp4'">&#11015; 本段</button>
         <button class="ctrl-btn wide" @click="openRangeExport" :disabled="downloading" title="自訂起訖時間匯出 mp4">選範圍</button>
-        <label style="display:inline-flex;align-items:center;gap:3px;font-size:12px;color:var(--text-secondary);cursor:pointer;white-space:nowrap" title="把攝影機名稱與錄影時間燒錄到匯出影片(需轉碼,較久)"><input type="checkbox" v-model="osdBurn" style="margin:0">OSD</label>
         <div v-show="rangeOpen" class="range-pop">
           <div style="font-size:12px;font-weight:600;color:var(--text-primary)">選擇匯出範圍<span style="font-weight:400;color:var(--text-secondary)">（同日、上限 1 小時）</span></div>
           <label style="font-size:11px;color:var(--text-secondary)">開始</label>
@@ -1099,6 +1097,10 @@ setup(){
 
   // ── Helpers ──
   const pad=(v)=>String(v).padStart(2,'0');
+  // 錄影/時間軸一律用台北時間(+8)顯示,不依賴瀏覽器/OS 時區(現場機常是 UTC → 會差 8h)。
+  // 取回的 Date 用 getUTC* 讀,即為台北時間。
+  const TPE_OFF=8*3600;
+  const tpeDate=(sec)=>new Date((Number(sec||0)+TPE_OFF)*1000);
   const formatClock=(sec)=>{
     const t=Math.max(0,Math.floor(Number(sec||0)));
     return `${pad(Math.floor(t/3600))}:${pad(Math.floor((t%3600)/60))}:${pad(t%60)}`;
@@ -1113,9 +1115,9 @@ setup(){
   };
   const formatTime=(ts)=>{
     if(!ts)return '-';
-    const dt=new Date(ts*1000);
+    const dt=tpeDate(ts);
     if(isNaN(dt.getTime()))return '-';
-    return `${pad(dt.getMonth()+1)}/${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+    return `${pad(dt.getUTCMonth()+1)}/${pad(dt.getUTCDate())} ${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}:${pad(dt.getUTCSeconds())}`;
   };
   const parseTs=(raw)=>{
     if(raw===null||raw===undefined||raw==='')return 0;
@@ -1244,8 +1246,8 @@ setup(){
   });
   const tlRangeLabel=computed(()=>{
     const {from,to}=timelineRange.value;
-    const a=new Date(from*1000), b=new Date(to*1000);
-    const d=(x)=>`${pad(x.getMonth()+1)}/${pad(x.getDate())} ${pad(x.getHours())}:${pad(x.getMinutes())}`;
+    const a=tpeDate(from), b=tpeDate(to);
+    const d=(x)=>`${pad(x.getUTCMonth()+1)}/${pad(x.getUTCDate())} ${pad(x.getUTCHours())}:${pad(x.getUTCMinutes())}`;
     return `${d(a)} ~ ${d(b)}`;
   });
   // 目前在看哪幾台:以格子裡實際載入的相機為準,沒有就退回篩選條件
@@ -1310,11 +1312,11 @@ setup(){
     const steps=6, out=[];
     for(let i=0;i<=steps;i++){
       const sec=Math.floor(from+(span*(i/steps)));
-      const dt=new Date(sec*1000);
+      const dt=tpeDate(sec);
       let label;
-      if(key==='month')label=`${pad(dt.getMonth()+1)}/${pad(dt.getDate())}`;
-      else if(key==='day')label=`${pad(dt.getMonth()+1)}/${pad(dt.getDate())} ${pad(dt.getHours())}:00`;
-      else label=`${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+      if(key==='month')label=`${pad(dt.getUTCMonth()+1)}/${pad(dt.getUTCDate())}`;
+      else if(key==='day')label=`${pad(dt.getUTCMonth()+1)}/${pad(dt.getUTCDate())} ${pad(dt.getUTCHours())}:00`;
+      else label=`${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}`;
       out.push({key:`${i}-${sec}`,label});
     }
     return out;
@@ -1369,8 +1371,8 @@ setup(){
   const cellWallClock=(cell)=>{
     const ts=Number(cell&&cell.startTs||0)+Number(cell&&cell.currentSec||0);
     if(!(ts>0))return '';
-    const d=new Date(ts*1000);
-    return `${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    const d=tpeDate(ts);
+    return `${pad(d.getUTCMonth()+1)}/${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
   };
   // 每格下拉可選的相機:清單裡真的有錄影的那些
   // 每格可選的相機 = 所有伺服器抓進來的(系統 DB + NVR/go2rtc + 歷史片段),
@@ -1442,46 +1444,31 @@ setup(){
       tlCenter.value=Math.floor(anchor+TL_SCALES[tlScaleIdx.value].span*(0.5-ratio));
     }
   };
+  // 時間軸:直接「壓住拖拉」= 標註範圍(拖過就選起訖,放開出現下載);單純點一下 = 定位。
   const onTlDown=(e)=>{
-    if(selMode.value){   // 標註範圍模式:拖曳選起訖,不平移
-      const t=tlTimeAt(e.clientX); if(t==null)return;
-      selA.value=t; selB.value=t; selecting.value=true;
-      try{ e.currentTarget.setPointerCapture(e.pointerId); }catch(_e){}
-      return;
-    }
     tlDrag.active=true; tlDrag.moved=false;
-    tlDrag.x0=e.clientX; tlDrag.c0=tlCenter.value;
+    tlDrag.x0=e.clientX; tlDrag.t0=tlTimeAt(e.clientX);
     tlDragging.value=true;
     try{ e.currentTarget.setPointerCapture(e.pointerId); }catch(_e){}
   };
   const onTlMove=(e)=>{
-    if(selMode.value){
-      if(selecting.value){ const t=tlTimeAt(e.clientX); if(t!=null)selB.value=t; }
-      return;
-    }
     if(!tlDrag.active)return;
-    const el=tlBarEl.value, rect=el?el.getBoundingClientRect():null;
-    if(!rect||!(rect.width>0))return;
     const dx=e.clientX-tlDrag.x0;
     if(Math.abs(dx)>3)tlDrag.moved=true;
-    // 拖曳只動視窗,不碰播放 —— 播放中也能左右滑動找時間
-    tlCenter.value=Math.floor(tlDrag.c0-(dx/rect.width)*timelineRange.value.span);
+    if(tlDrag.moved && tlDrag.t0!=null){   // 拖曳 → 即時更新選取範圍
+      selA.value=tlDrag.t0;
+      const t=tlTimeAt(e.clientX); if(t!=null)selB.value=t;
+    }
   };
   const onTlUp=(e)=>{
-    if(selMode.value){
-      if(selecting.value){ selecting.value=false; try{ e.currentTarget.releasePointerCapture(e.pointerId); }catch(_e){} }
-      return;
-    }
     if(!tlDrag.active)return;
     tlDrag.active=false; tlDragging.value=false;
     try{ e.currentTarget.releasePointerCapture(e.pointerId); }catch(_e){}
-    if(!tlDrag.moved){ const t=tlTimeAt(e.clientX); if(t!=null)seekToTime(t); }
+    if(!tlDrag.moved){ const t=tlTimeAt(e.clientX); if(t!=null)seekToTime(t); }   // 沒拖 = 定位
   };
   // ── 時間軸拖曳標註範圍 → 下載 ──
-  const selMode=ref(false);
   const selA=ref(null);
   const selB=ref(null);
-  const selecting=ref(false);
   const selRange=computed(()=>{
     if(selA.value==null||selB.value==null)return null;
     const s=Math.min(selA.value,selB.value), e=Math.max(selA.value,selB.value);
@@ -1493,7 +1480,6 @@ setup(){
     const l=Math.max(0,Math.min(100,tlPctOf(r.s))), rr=Math.max(0,Math.min(100,tlPctOf(r.e)));
     return {left:l+'%',width:Math.max(0,rr-l)+'%'};
   });
-  const toggleSelMode=()=>{ selMode.value=!selMode.value; if(!selMode.value){selA.value=null;selB.value=null;} };
   const clearSel=()=>{ selA.value=null; selB.value=null; };
   const downloadSelection=async()=>{
     const r=selRange.value;
@@ -1657,10 +1643,9 @@ setup(){
   const rangeOpen=ref(false);
   const rangeStart=ref('');
   const rangeEnd=ref('');
-  const osdBurn=ref(true);   // 匯出時燒錄 OSD(攝影機+錄影時間)到影片,預設開
-  const epochToLocalInput=(ep)=>{   // Unix 秒 → <input datetime-local> 用的本地字串
-    const d=new Date(ep*1000),p=n=>String(n).padStart(2,'0');
-    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  const epochToLocalInput=(ep)=>{   // Unix 秒 → <input datetime-local> 字串(台北時間,不依賴瀏覽器 TZ)
+    const d=tpeDate(ep),p=n=>String(n).padStart(2,'0');
+    return `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
   };
   // 匯出核心:發起 export → 輪詢完成 → 觸發瀏覽器下載
   const runExport=async(cam,startEpoch,endEpoch)=>{
@@ -1702,8 +1687,7 @@ setup(){
       const nm=String((cameraDisplayName?cameraDisplayName(cam):cam)||cam).replace(/[^\w一-龥-]/g,'')||cam;
       const fname=`${nm}_${s0.date}_${s0.time}-${e0.time}.mp4`;
       const durSec=Math.max(1,Math.round(endEpoch-startEpoch));
-      const useOsd=osdBurn.value && durSec<=600;   // OSD 逐秒 textfile 上限 10 分鐘
-      if(osdBurn.value && durSec>600)ElementPlus.ElMessage.warning('範圍超過 10 分鐘,OSD 僅支援 ≤10 分鐘 → 本次以無 OSD 原始檔下載');
+      const useOsd=showOverlay.value;   // 綁主介面 OSD 開關:畫面有顯示 OSD 就燒進匯出(涵蓋全時段)
       let href;
       if(useOsd){
         // OSD 端點:ffmpeg 逐秒疊字後串流(CPU 轉碼較久)。位置取播放器上拖曳過的 OSD 換算成 0..1
@@ -1757,8 +1741,9 @@ setup(){
     const cell=cells[activeCell.value];
     const cam=String(cell&&cell.camera||'').trim();
     if(!cam){ElementPlus.ElMessage.warning('請先選擇攝影機');return;}
-    const s=Math.floor(new Date(rangeStart.value).getTime()/1000);
-    const e=Math.floor(new Date(rangeEnd.value).getTime()/1000);
+    // datetime-local 無時區,一律當台北時間解析(附 +08:00),不依賴瀏覽器 TZ
+    const s=Math.floor(new Date(rangeStart.value+'+08:00').getTime()/1000);
+    const e=Math.floor(new Date(rangeEnd.value+'+08:00').getTime()/1000);
     if(!Number.isFinite(s)||!Number.isFinite(e)){ElementPlus.ElMessage.warning('時間格式不正確');return;}
     if(e<=s){ElementPlus.ElMessage.warning('結束時間要晚於開始時間');return;}
     if(e-s>3600){ElementPlus.ElMessage.warning('單次匯出上限 1 小時');return;}
@@ -1998,7 +1983,7 @@ setup(){
   let clockTimer;
   onMounted(async()=>{
     // Clock
-    const updateClock=()=>{const d=new Date();clock.value=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;};
+    const updateClock=()=>{const d=tpeDate(Math.floor(Date.now()/1000));clock.value=`${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;};
     updateClock();
     clockTimer=setInterval(updateClock,1000);
 
@@ -2037,7 +2022,8 @@ setup(){
     formatClock,formatDuration,formatTime,
     setGridMode,selectRow,selectCamera,selectPrev,selectNext,
     togglePlay,seekBy,applyRate,captureFrame,seekToTime,
-    downloading,rangeOpen,rangeStart,rangeEnd,osdBurn,exportSegment,openRangeExport,exportRange,
+    downloading,rangeOpen,rangeStart,rangeEnd,exportSegment,openRangeExport,exportRange,
+    selRange,selBandStyle,clearSel,downloadSelection,
     onVideoLoaded,onVideoTimeUpdate,onVideoError,
     onDragStartDevice,onDropCell,clearCell,
     addBookmark,jumpToBookmark,

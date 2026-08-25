@@ -1370,27 +1370,22 @@ def download_export_file(name: str, request: Request, id: Optional[str] = None, 
 @router.get("/recordings/export-osd")
 def download_export_osd(name: str, cam: str = "", label: str = "", start: int = 0, dur: int = 0,
                         osdx: float = 0.012, osdy: float = 0.02, id: Optional[str] = None, cleanup: int = 0):
-    """把 Frigate 匯出檔燒錄 OSD(攝影機名 + 逐秒跳動的錄影時間)後串流下載,對齊播放器 OSD。
+    """把 Frigate 匯出檔燒錄 OSD(攝影機名 + 逐幀跳動的錄影時間)後串流下載,對齊播放器 OSD。
 
-    🛑 此容器 ffmpeg 4.4 的 %{pts\\:localtime} expansion 不可靠(會殘字/Unterminated,
-       與 violations.py 同款雷,實測燒出來變 raw epoch「1787...}」)→ 改用「每秒一個
-       textfile + enable=between(t,i,i+1)」逐秒切換;textfile 內容不過 filter parser,
-       完全避開 `:` escape 地雷,時間像監視器 OSD 逐秒跳。
-    - 攝影機名與時間都用 textfile → 支援中文(NotoSansCJK,對齊播放器 cameraDisplayName)。
+    🛑 時間戳寫法(此容器 ffmpeg 4.4):`text='%{pts\\:gmtime\\:<START+8h>}'` —— **單引號
+       + `\\:` escape 兩者都要**才生效!實測:少單引號→殘字 raw epoch「1787...}」、
+       少 escape→殘字(踩過整整一輪)。用 gmtime + 8h offset 顯示台北時間、不依賴容器 TZ。
+    - 單一 drawtext 涵蓋整段(不再逐秒 textfile)→ **支援全時段匯出**,長度只受 export 本身 1h 上限。
+    - 攝影機名走 textfile(避開特殊字/`:`),字型優先 NotoSansCJK → 中文攝影機名 OK,用顯示名非 cam_8。
     - osdx/osdy 為 0..1 比例(播放器上拖曳過的 OSD 位置換算),x=osdx*w、y=osdy*h。
-    - libx264 CPU 轉碼(容器無 nvenc)。finally 清 textfile + 刪 Frigate 匯出不留檔。
-    - 逐秒 textfile 有量,單次 OSD 上限 600 秒;更長請關 OSD 或縮短範圍。
+    - libx264 CPU 轉碼(容器無 nvenc)。finally 清 textfile 目錄 + 刪 Frigate 匯出不留檔。
     """
     import subprocess
     import uuid
     import shutil
-    from datetime import timezone as _tz, timedelta as _td
     base_name = os.path.basename(str(name or "").strip())
     if not base_name or ".." in base_name:
         raise HTTPException(status_code=400, detail="不合法的檔名")
-    seconds = int(dur or 0) or 60
-    if seconds > 600:
-        raise HTTPException(status_code=400, detail="OSD 匯出單次上限 10 分鐘,請縮短範圍或關閉 OSD")
     src_url = None
     for base in _frigate_base_urls():
         try:
@@ -1424,17 +1419,17 @@ def download_export_osd(name: str, cam: str = "", label: str = "", start: int = 
     cam_file = os.path.join(work, "cam.txt")
     with open(cam_file, "w", encoding="utf-8") as f:
         f.write(cam_text)
-    tpe = _tz(_td(hours=8))
-    base_dt = datetime.fromtimestamp(int(start), tz=tpe) if int(start or 0) > 0 else datetime.now(tpe)
+    # 時間 OSD:單一 drawtext 用 %{pts\:gmtime\:START+8h} 逐幀跳動,涵蓋整段(無逐秒
+    # textfile → 支援全時段匯出,長度只受 export 本身 1h 上限)。
+    # 🛑 必須「單引號 + \: escape」兩者都有才生效(實測:少單引號→殘字 raw epoch、
+    #    少 escape→殘字;A 版兩者齊備才對)。gmtime+8h offset 顯示台北時間、不依賴容器 TZ。
     common = f"fontfile={font}:fontsize=28:fontcolor=white:borderw=3:bordercolor=black@0.85"
     filters = [f"drawtext={common}:textfile={cam_file}:x={fx}*w:y={fy}*h"]
-    for i in range(seconds + 2):
-        sec_file = os.path.join(work, f"t_{i}.txt")
-        with open(sec_file, "w", encoding="utf-8") as f:
-            f.write((base_dt + _td(seconds=i)).strftime("%Y-%m-%d %H:%M:%S"))
-        filters.append(
-            f"drawtext={common}:textfile={sec_file}:x={fx}*w:y={fy}*h+38:enable='between(t,{i},{i + 1})'"
-        )
+    st = int(start or 0)
+    if st > 0:
+        filters.append(f"drawtext={common}:text='%{{pts\\:gmtime\\:{st + 8 * 3600}}}':x={fx}*w:y={fy}*h+38")
+    else:
+        filters.append(f"drawtext={common}:text='%{{pts\\:hms}}':x={fx}*w:y={fy}*h+38")
     vf = ",".join(filters)
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", src_url,
            "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
