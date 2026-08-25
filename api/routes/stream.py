@@ -1397,8 +1397,9 @@ def generate_frames_overlay(
         # 若 detection 完全未啟動才 fallback 自己讀 RTSP。
         ret = False
         frame = None
-        # 畫面優先吃 reader 的原始幀(原生速率),不必等偵測 worker。
-        # 疊加要用的偵測框在下方另外從 _shared_frames["detections"] 取,不受影響。
+        # 畫面優先吃 reader 的原始幀(原生速率 25fps 順),不必等偵測 worker。
+        # 疊加的框在下方從 _shared_frames["detections"] 取(較舊),並用 per-track 速度
+        # 小幅度往前外推 det_age 補上延遲,讓框貼車(見下方繪框處)。
         if camera_id is not None:
             _lf = _live_frames.get(camera_id)
             if _lf is not None:
@@ -1585,32 +1586,66 @@ def generate_frames_overlay(
                 for tid in stale_ids:
                     tracks.pop(tid, None)
 
+                # 預測式配對:用 track 速度把「配對用位置」預測到當前偵測時間 → 車由遠轉近、
+                # 一幀移 >400px 也配得到自己的舊 track(否則配不到→新 track→速度歸零→框凍住跟不上)。
+                _match_dts = float(_sf.get("ts", 0) or 0) if _sf else now_ts
+                for _tr in tracks.values():
+                    _dts = _tr.get("det_ts")
+                    if _dts and (_tr.get("vx") is not None) and _tr.get("det_center"):
+                        _el = _match_dts - _dts
+                        if 0.0 < _el < 1.0:
+                            _tr["center"] = (_tr["det_center"][0] + _tr["vx"] * _el,
+                                             _tr["det_center"][1] + _tr["vy"] * _el)
+
                 for det, cx, cy, in_speed_roi in valid_dets:
-                    track_id = _nearest_track_id((cx, cy), det["class_name"], tracks)
+                    # 疊加外推專用:4fps 偵測下快車一幀可移 200+px,配對門檻放寬到 250 才算得出
+                    # 速度(否則配不到→速度0→不外推→框留車尾)。位移上限 1.2×框防止誤配把框甩飛。
+                    track_id = _nearest_track_id((cx, cy), det["class_name"], tracks, max_dist=400.0)
                     if track_id is None:
                         track_id = next_track_id
                         next_track_id += 1
                         tracks[track_id] = {"center": (cx, cy), "t": now_ts, "class_name": det["class_name"], "speed_kmh": None}
                     prev = tracks.get(track_id, {})
-                    prev_center = prev.get("center", (cx, cy))
-                    prev_t = prev.get("t", now_ts)
-                    dt = max(1e-3, now_ts - prev_t)
-                    px_dist = ((cx - prev_center[0]) ** 2 + (cy - prev_center[1]) ** 2) ** 0.5
-                    pxps = px_dist / dt
-                    raw_kmh = pxps * speed_kmh_per_pxps
-                    prev_kmh = prev.get("speed_kmh")
-                    if prev_kmh is None:
-                        speed_kmh = raw_kmh
+                    _cur_det_ts = float(_sf.get("ts", 0) or 0) if _sf else now_ts
+                    _pv_x = prev.get("vx"); _pv_y = prev.get("vy")
+                    # det_center/det_ts/速度 只在「偵測換新一幀」時更新;stale 幀(8fps輸出/4fps偵測)
+                    # 保留上一偵測的值,速度沿用 —— 這樣預測配對才能用「上一偵測位置+速度」正確預測。
+                    if prev.get("det_ts") != _cur_det_ts:
+                        _pc = prev.get("det_center", (cx, cy))
+                        _pdts = prev.get("det_ts")
+                        _ddt = max(0.05, (_cur_det_ts - _pdts)) if _pdts else 0.05
+                        vx = (cx - _pc[0]) / _ddt
+                        vy = (cy - _pc[1]) / _ddt
+                        if _pv_x is not None:
+                            vx = 0.7 * vx + 0.3 * _pv_x   # 輕平滑,跟得上車速(0.35太重會低估)
+                            vy = 0.7 * vy + 0.3 * _pv_y
+                        _det_center_new = (cx, cy); _det_ts_new = _cur_det_ts
                     else:
-                        speed_kmh = (speed_smooth_alpha * raw_kmh) + ((1.0 - speed_smooth_alpha) * prev_kmh)
-                    tracks[track_id] = {"center": (cx, cy), "t": now_ts, "class_name": det["class_name"], "speed_kmh": speed_kmh}
+                        vx = _pv_x if _pv_x is not None else 0.0
+                        vy = _pv_y if _pv_y is not None else 0.0
+                        _det_center_new = prev.get("det_center", (cx, cy))
+                        _det_ts_new = prev.get("det_ts", _cur_det_ts)
+                    speed_kmh = ((vx * vx + vy * vy) ** 0.5) * speed_kmh_per_pxps
+                    tracks[track_id] = {"center": (cx, cy), "det_center": _det_center_new, "det_ts": _det_ts_new,
+                                        "vx": vx, "vy": vy, "t": now_ts,
+                                        "class_name": det["class_name"], "speed_kmh": speed_kmh}
 
                     b = det["bbox"]
+                    # 🔧 小幅度外推:框(來自 det_age 前的偵測)依速度往前推 min(det_age,0.35)s 補
+                    #    偵測延遲 → 框貼車(解「框落車尾」);位移上限 1.2×框,防速度異常把框甩飛
+                    #    (annotated 之前 0.8s 無上限才會飛掉)。b_draw 給框與標籤共用。
+                    _bx1, _by1, _bx2, _by2 = b["x1"], b["y1"], b["x2"], b["y2"]
+                    if render_overlay and det_age and (0.0 < det_age < 0.6):
+                        _hz = min(det_age, 0.6)
+                        _dx = int(vx * _hz); _dy = int(vy * _hz)
+                        _mw = int((_bx2 - _bx1) * 1.5); _mh = int((_by2 - _by1) * 1.5)
+                        _dx = max(-_mw, min(_mw, _dx)); _dy = max(-_mh, min(_mh, _dy))
+                        _bx1 += _dx; _bx2 += _dx; _by1 += _dy; _by2 += _dy
                     if render_overlay:
                         # stale 時改橙色、單線，作為「偵測跟不上影像」的視覺提示
                         color = (0, 140, 255) if stale_overlay else (0, 200, 0)
                         thick = 1 if stale_overlay else 2
-                        cv2.rectangle(frame, (b["x1"], b["y1"]), (b["x2"], b["y2"]), color, thick)
+                        cv2.rectangle(frame, (_bx1, _by1), (_bx2, _by2), color, thick)
                         _ZH = {"car": "小客車", "motorcycle": "機車", "truck": "大貨車", "bus": "公車", "heavy_truck": "重型貨車", "light_truck": "小貨車", "person": "行人", "bicycle": "自行車"}
                         truck_cls = det.get("truck_cls")
                         zh = str(truck_cls["label"]) if truck_cls and truck_cls.get("label") else _ZH.get(det["class_name"], det["class_name"])
@@ -1623,7 +1658,7 @@ def generate_frames_overlay(
                                 _show_speed = speed_kmh
                             if _show_speed is not None:
                                 label += f" {int(_show_speed)}km/h"
-                        _label_items.append((label, (b["x1"], max(2, b["y1"] - 24)), color, (0, 0, 0)))
+                        _label_items.append((label, (_bx1, max(2, _by1 - 24)), color, (0, 0, 0)))
             except Exception:
                 pass
         # 畫標籤（中文用 PIL，ASCII 用 cv2）
