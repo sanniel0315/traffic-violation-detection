@@ -1618,7 +1618,7 @@ setup(){
     if(downloading.value)return;
     startEpoch=Math.floor(startEpoch);endEpoch=Math.floor(endEpoch);
     downloading.value=true;
-    const loading=ElementPlus.ElLoading.service({text:'匯出中… Frigate 正在合併錄影,請稍候(長片段較久)'});
+    const loading=ElementPlus.ElLoading.service({text:'合併錄影中,請稍候…(長片段較久)'});
     try{
       // 先記下現有 export id(供 export_id 為 null 版本比對新檔),並順手清掉已完成的
       // 舊匯出檔 → Frigate 匯出清單不累積、不再顯示一堆「錄影資料」。
@@ -1645,7 +1645,7 @@ setup(){
                         .sort((a,b)=>String(b.name||'').localeCompare(String(a.name||'')))[0];
         if(cand&&!cand.in_progress&&cand.download_src){target=cand;break;}
       }
-      if(!target)throw new Error('匯出逾時或找不到檔案,請稍後於 Frigate 匯出清單確認');
+      if(!target)throw new Error('匯出逾時或找不到檔案,請稍後再試');
       // 檔名帶入 攝影機名稱_日期_起訖時間;下載完成後由後端自動刪除該匯出(cleanup=1)
       const st=(ep)=>{const d=new Date(ep*1000),p=n=>String(n).padStart(2,'0');
         return{date:`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}`,time:`${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`};};
