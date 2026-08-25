@@ -372,6 +372,7 @@ body {
 }
 .tl-zoom-btn:hover { color:var(--text-primary); background:var(--bg-hover); }
 .tl-zoom-btn.wide { width:auto; padding:0 9px; font-size:12px; }
+.tl-zoom-btn.active { background:var(--accent-blue); color:#fff; border-color:var(--accent-blue); }
 .tl-range-label {
   font-size:11px; color:var(--text-muted); font-variant-numeric:tabular-nums;
   white-space:nowrap;
@@ -853,7 +854,13 @@ body {
         <button class="tl-zoom-btn" type="button" @click="zoomOut" title="縮小刻度">&minus;</button>
         <span class="tl-range-label">{{ tlRangeLabel }}</span>
         <span class="tl-spacer"></span>
-        <span class="tl-range-label">滾輪縮放 / 拖曳平移 / 點擊定位</span>
+        <button class="tl-zoom-btn wide" type="button" :class="{active:selMode}" @click="toggleSelMode" :title="selMode?'關閉範圍標註':'拖曳時間軸標註起訖範圍後下載'">{{ selMode?'標註中(拖曳選範圍)':'標註範圍' }}</button>
+        <template v-if="selRange">
+          <span class="tl-range-label" style="color:var(--accent-blue);font-weight:600">選取 {{ formatDuration(selRange.dur) }}</span>
+          <button class="tl-zoom-btn wide" type="button" @click="downloadSelection" :disabled="downloading">&#11015; 下載選取</button>
+          <button class="tl-zoom-btn" type="button" @click="clearSel" title="清除選取">&times;</button>
+        </template>
+        <span v-else class="tl-range-label">滾輪縮放 / 拖曳平移 / 點擊定位</span>
         <button class="tl-zoom-btn wide" type="button" @click="tlGoNow" title="回到現在">現在</button>
       </div>
       <div class="timeline-bar" ref="tlBarEl" :class="{dragging:tlDragging}"
@@ -865,6 +872,7 @@ body {
                :class="bar.cls" :style="{flex:'1 1 0',opacity:bar.op}">
           </div>
         </div>
+        <div class="timeline-sel" v-if="selRange" :style="selBandStyle"></div>
         <div class="timeline-now" v-if="nowLeft>=0" :style="{left:nowLeft+'%'}"></div>
         <div class="timeline-playhead" v-if="playheadLeft>=0" :style="{left:playheadLeft+'%'}"></div>
       </div>
@@ -1435,12 +1443,22 @@ setup(){
     }
   };
   const onTlDown=(e)=>{
+    if(selMode.value){   // 標註範圍模式:拖曳選起訖,不平移
+      const t=tlTimeAt(e.clientX); if(t==null)return;
+      selA.value=t; selB.value=t; selecting.value=true;
+      try{ e.currentTarget.setPointerCapture(e.pointerId); }catch(_e){}
+      return;
+    }
     tlDrag.active=true; tlDrag.moved=false;
     tlDrag.x0=e.clientX; tlDrag.c0=tlCenter.value;
     tlDragging.value=true;
     try{ e.currentTarget.setPointerCapture(e.pointerId); }catch(_e){}
   };
   const onTlMove=(e)=>{
+    if(selMode.value){
+      if(selecting.value){ const t=tlTimeAt(e.clientX); if(t!=null)selB.value=t; }
+      return;
+    }
     if(!tlDrag.active)return;
     const el=tlBarEl.value, rect=el?el.getBoundingClientRect():null;
     if(!rect||!(rect.width>0))return;
@@ -1450,10 +1468,41 @@ setup(){
     tlCenter.value=Math.floor(tlDrag.c0-(dx/rect.width)*timelineRange.value.span);
   };
   const onTlUp=(e)=>{
+    if(selMode.value){
+      if(selecting.value){ selecting.value=false; try{ e.currentTarget.releasePointerCapture(e.pointerId); }catch(_e){} }
+      return;
+    }
     if(!tlDrag.active)return;
     tlDrag.active=false; tlDragging.value=false;
     try{ e.currentTarget.releasePointerCapture(e.pointerId); }catch(_e){}
     if(!tlDrag.moved){ const t=tlTimeAt(e.clientX); if(t!=null)seekToTime(t); }
+  };
+  // ── 時間軸拖曳標註範圍 → 下載 ──
+  const selMode=ref(false);
+  const selA=ref(null);
+  const selB=ref(null);
+  const selecting=ref(false);
+  const selRange=computed(()=>{
+    if(selA.value==null||selB.value==null)return null;
+    const s=Math.min(selA.value,selB.value), e=Math.max(selA.value,selB.value);
+    if(e-s<1)return null;
+    return {s,e,dur:e-s};
+  });
+  const selBandStyle=computed(()=>{
+    const r=selRange.value; if(!r)return {display:'none'};
+    const l=Math.max(0,Math.min(100,tlPctOf(r.s))), rr=Math.max(0,Math.min(100,tlPctOf(r.e)));
+    return {left:l+'%',width:Math.max(0,rr-l)+'%'};
+  });
+  const toggleSelMode=()=>{ selMode.value=!selMode.value; if(!selMode.value){selA.value=null;selB.value=null;} };
+  const clearSel=()=>{ selA.value=null; selB.value=null; };
+  const downloadSelection=async()=>{
+    const r=selRange.value;
+    if(!r){ElementPlus.ElMessage.warning('請先在時間軸拖曳選取範圍');return;}
+    const cell=cells[activeCell.value];
+    const cam=String((cell&&cell.camera)||filter.camera||'').trim();
+    if(!cam){ElementPlus.ElMessage.warning('請先選擇攝影機');return;}
+    if(r.dur>3600){ElementPlus.ElMessage.warning('單次匯出上限 1 小時,請縮小範圍');return;}
+    await runExport(cam,r.s,r.e);
   };
 
   // ── HLS 掛載 ──
