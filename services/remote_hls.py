@@ -47,6 +47,10 @@ def _spawn(cam: str) -> subprocess.Popen:
     cmd = [
         FFMPEG, "-nostdin", "-loglevel", "error",
         "-rtsp_transport", "tcp", "-fflags", "+genpts",
+        # 🛑 RTSP socket 逾時(μs)。沒有這個的話 TCP 半死(對端重啟/斷線未 FIN)
+        #    read 會永久 block:2026-08-26 實測四支從 12:00 卡到 23:00,
+        #    行程活著所以 watchdog 不重啟 → 遠端監控全部轉圈圈。
+        "-timeout", "10000000",
         "-i", f"{RTSP}/{name}",
         "-c", "copy", "-f", "hls",
         "-hls_time", HLS_TIME,
@@ -61,12 +65,31 @@ def _spawn(cam: str) -> subprocess.Popen:
 
 
 def _repack_loop():
+    spawn_ts: dict = {}
+    stall_sec = float(os.getenv("REMOTE_HLS_STALL_SEC", "20") or 20)
     while not _stop.is_set():
         for cam in CAMS:
             p = _procs.get(cam)
+            # 🛑 卡住偵測:行程活著但 index.m3u8 太久沒更新(= 上游斷流且 read
+            #    卡死)就殺掉,下一輪重生。只看行程死活不夠(2026-08-26 教訓)。
+            if p is not None and p.poll() is None:
+                m3u8 = os.path.join(ROOT, _src_name(cam), "index.m3u8")
+                try:
+                    last = os.stat(m3u8).st_mtime
+                except OSError:
+                    last = 0.0
+                fresh = max(last, spawn_ts.get(cam, 0.0))
+                if time.time() - fresh > stall_sec:
+                    print(f"[remote_hls] {_src_name(cam)} 卡住 {int(time.time()-fresh)}s,砍掉重生", flush=True)
+                    try:
+                        p.kill()
+                    except Exception:
+                        pass
+                    p = _procs[cam] = None
             if p is None or p.poll() is not None:
                 try:
                     _procs[cam] = _spawn(cam)
+                    spawn_ts[cam] = time.time()
                     print(f"[remote_hls] (re)spawn {_src_name(cam)}", flush=True)
                 except Exception as e:
                     print(f"[remote_hls] spawn {cam} failed: {e}", flush=True)
