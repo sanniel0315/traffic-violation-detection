@@ -16506,11 +16506,17 @@ const app=createApp({
             return `${proto}//${location.hostname}:8013/${encodeURIComponent(name)}/index.m3u8`;
         };
         // 這台攝影機目前實際在看的 go2rtc src(跟 getMonitorWsUrl 選同一條)
+        // 🛑 分支必須逐條鏡射 getMonitorWsUrl:省流+原始模式播的是 lite,這裡先前
+        //    不分模式一律回 lofi → 心跳登記到別條 → lite 編碼器(on-demand)沒需求
+        //    不啟動 → 沒 producer → 播放器連上了但永遠沒畫面(2026-08-27 實踩)。
         const monitorGo2rtcSrc=(camera)=>{
-            if(remoteSaver.value && hasGo2rtcLofi(camera))return go2rtcLofiName(camera);
             const overlay=resolveCameraStreamMode(camera)==='overlay';
+            if(remoteSaver.value){
+                if(overlay && hasGo2rtcLofi(camera))return go2rtcLofiName(camera);
+                if(!overlay && hasGo2rtcLite(camera))return go2rtcLiteName(camera);
+            }
             if(overlay && hasGo2rtcAnnotated(camera))return go2rtcAnnotatedName(camera);
-            if(!overlay && hasGo2rtcLite(camera))return go2rtcLiteName(camera);
+            if(!overlay && lowBandwidth.value && hasGo2rtcLite(camera))return go2rtcLiteName(camera);
             return go2rtcStreamName(camera);
         };
         // on-demand 心跳:每幾秒回報「正在看」的 annotated/lite/lofi src,讓後端維持編碼。
