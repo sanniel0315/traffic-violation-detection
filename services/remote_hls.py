@@ -40,6 +40,23 @@ def _src_name(cam: str) -> str:
     return f"cam_{cam}_lofi"
 
 
+def _rtsp_timeout_args() -> list:
+    """RTSP socket 逾時參數(μs),依 ffmpeg 版本挑選項名。
+    🛑 ffmpeg 4.x 叫 -stimeout;5.0+ 改名 -timeout。4.x 的 -timeout 是
+    RTSP「listen 模式」逾時 —— 誤用會去佔 8554 監聽 → Address already in use
+    秒退 → 無限重生(2026-08-26 實測)。"""
+    try:
+        out = subprocess.run([FFMPEG, "-hide_banner", "-h", "demuxer=rtsp"],
+                             capture_output=True, text=True, timeout=10).stdout
+        opt = "-stimeout" if "stimeout" in out else "-timeout"
+        return [opt, "10000000"]
+    except Exception:
+        return []
+
+
+_TIMEOUT_ARGS = _rtsp_timeout_args()
+
+
 def _spawn(cam: str) -> subprocess.Popen:
     name = _src_name(cam)
     d = os.path.join(ROOT, name)
@@ -47,10 +64,10 @@ def _spawn(cam: str) -> subprocess.Popen:
     cmd = [
         FFMPEG, "-nostdin", "-loglevel", "error",
         "-rtsp_transport", "tcp", "-fflags", "+genpts",
-        # 🛑 RTSP socket 逾時(μs)。沒有這個的話 TCP 半死(對端重啟/斷線未 FIN)
+        # 🛑 RTSP socket 逾時。沒有這個的話 TCP 半死(對端重啟/斷線未 FIN)
         #    read 會永久 block:2026-08-26 實測四支從 12:00 卡到 23:00,
         #    行程活著所以 watchdog 不重啟 → 遠端監控全部轉圈圈。
-        "-timeout", "10000000",
+        *_TIMEOUT_ARGS,
         "-i", f"{RTSP}/{name}",
         "-c", "copy", "-f", "hls",
         "-hls_time", HLS_TIME,
