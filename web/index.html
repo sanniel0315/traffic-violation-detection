@@ -3503,7 +3503,11 @@
         .ptz-body.h .ptz-fns { width:168px; }
         .ptz-body.h .ptz-preset { width:140px; }
         .ptz-body.h .ptz-track { width:168px; }
+        .ptz-body.h .ptz-lockrow { width:168px; }
         .ptz-body.h .ptz-misc { width:130px; }
+        .ptz-lockrow { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+        .ptz-active { background:var(--gov-primary) !important; border-color:var(--gov-primary) !important; color:#fff !important; }
+        .ptz-lock-cursor { cursor:crosshair; }
         .camera-preview .badge { position: absolute; top: 8px; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
         .camera-preview .status-badge { right: 8px; }
         .camera-preview .detection-badge { left: 8px; background: #0d6e9f; color: #fff; }
@@ -5343,7 +5347,7 @@
                                 </div>
                             </div>
                         </template>
-                        <div class="monitor-zoom-stage">
+                        <div class="monitor-zoom-stage" :class="{'ptz-lock-cursor':ptzLockMode}" @click="ptzStageClick($event)">
                             <!-- 放大也走 H.264:原生就是 1080p,不必像 MJPEG 那樣
                                  分割格送小張、放大再換一條高解析度串流。 -->
                             <div
@@ -5413,6 +5417,11 @@
                                     <div class="ptz-sec ptz-track">
                                         <button class="ptz-btn ptz-ok" :disabled="ptzTrackBusy" @click="ptzTracking(true)">啟動追蹤</button>
                                         <button class="ptz-btn ptz-danger" :disabled="ptzTrackBusy" @click="ptzTracking(false)">停止追蹤</button>
+                                    </div>
+                                    <div class="ptz-sec ptz-lockrow">
+                                        <button class="ptz-btn" :class="{'ptz-active':ptzLockMode}" style="grid-column:1 / -1" @click="ptzToggleLockMode()">{{ ptzLockMode?'點影像鎖定…(再按取消)':'鎖定目標' }}</button>
+                                        <button class="ptz-btn" @click="ptzSetFilter(true)">只追車</button>
+                                        <button class="ptz-btn" @click="ptzSetFilter(false)">人車都追</button>
                                     </div>
                                     <div class="ptz-sec ptz-misc">
                                         <button class="ptz-btn" style="width:100%" @click="ptzQuery()">查詢位置</button>
@@ -17288,6 +17297,36 @@ const app=createApp({
             ptzTrackBusy.value=false;
             if(d)ElementPlus.ElMessage.success(on?'已啟動追蹤':'已停止追蹤');
         };
+        // 手動鎖定目標:進入鎖定模式後,在影像上點一下就把該點送給相機鎖定追蹤
+        const ptzLockMode=ref(false);
+        const ptzToggleLockMode=()=>{
+            ptzLockMode.value=!ptzLockMode.value;
+            if(ptzLockMode.value)ElementPlus.ElMessage.info('請在影像上點要追蹤的目標');
+        };
+        const ptzStageClick=async(e)=>{
+            if(!ptzLockMode.value)return;
+            const stage=e.currentTarget;
+            const media=stage.querySelector('video')||stage.querySelector('img');
+            if(!media)return;
+            const mw=media.videoWidth||media.naturalWidth||0;
+            const mh=media.videoHeight||media.naturalHeight||0;
+            const r=media.getBoundingClientRect();
+            if(!mw||!mh||!r.width||!r.height)return;
+            // object-fit:contain 等比置中會留黑邊,要先換算實際顯示矩形
+            const sc=Math.min(r.width/mw, r.height/mh);
+            const dw=mw*sc, dh=mh*sc;
+            const ox=r.left+(r.width-dw)/2, oy=r.top+(r.height-dh)/2;
+            const xr=(e.clientX-ox)/dw, yr=(e.clientY-oy)/dh;
+            if(xr<0 || xr>1 || yr<0 || yr>1)return;   // 點在黑邊上不送
+            ptzLockMode.value=false;
+            const d=await _ptzApi('/tracking/target-lock',{x_ratio:xr,y_ratio:yr});
+            if(d)ElementPlus.ElMessage.success('已鎖定目標,相機開始追蹤');
+        };
+        // 物件過濾:只追車(LPR 場景)或人車都追
+        const ptzSetFilter=async(vehicleOnly)=>{
+            const d=await _ptzApi('/tracking/object-filter',{vehicle_only:!!vehicleOnly});
+            if(d)ElementPlus.ElMessage.success(vehicleOnly?'已設定只追車輛':'已設定人車都追');
+        };
         let monitorWatchTimer=null;
         let monitorRecycleTimer=null;
         // 每 60 秒自動 recycle 串流連線：解 MJPEG 在瀏覽器長連線記憶體累積/buffer 堆積導致頓
@@ -21518,7 +21557,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzQuery,ptzTracking,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzQuery,ptzTracking,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
