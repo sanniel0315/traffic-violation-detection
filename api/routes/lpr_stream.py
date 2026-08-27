@@ -1780,6 +1780,8 @@ class LPRStreamTask:
         self.hanwha_last_zoom_at = 0.0
         self.hanwha_tracking_started = False
         self.hanwha_stopped_track_ids: set[int] = set()
+        self._hanwha_ptz_query_at = 0.0   # PTZ 查詢節流(見 _handle_hanwha_lpr_gate)
+        self._hanwha_ptz_pos = None
         self._load_hanwha_tracking_config()
 
     @staticmethod
@@ -2917,17 +2919,34 @@ class LPRStreamTask:
             self.last_error = f"hanwha_tracking_start_failed: {e}"
             print(f"[LPR-Hanwha] cam{self.camera_id} 啟動追蹤失敗: {e}", flush=True)
 
+    def _mark_hanwha_track_done(self, track_id: Optional[int]) -> None:
+        """把 track 記成「已處理完」→ gate 之後直接跳過。集合要設上限:
+        tracker 的 id 單調遞增,長跑不清會無限成長。"""
+        if track_id is None or int(track_id) <= 0:
+            return
+        self.hanwha_stopped_track_ids.add(int(track_id))
+        if len(self.hanwha_stopped_track_ids) >= 500:
+            drop = sorted(self.hanwha_stopped_track_ids)[:250]
+            self.hanwha_stopped_track_ids.difference_update(drop)
+
     def _stop_hanwha_tracking(self, track_id: Optional[int] = None) -> None:
         if not self.hanwha_enabled or self.hanwha_client is None:
             return
-        if track_id is not None and int(track_id) > 0:
-            self.hanwha_stopped_track_ids.add(int(track_id))
+        # 🛑 追蹤沒在跑就不打攝影機:stop 是 2 個 HTTP 請求(Digest 各兩趟往返),
+        #    攝影機斷線時會卡數秒;之前沒這個 guard,每次 task.stop() 都硬打。
+        if not self.hanwha_tracking_started:
+            self._mark_hanwha_track_done(track_id)
+            return
         try:
             self.hanwha_client.stop_digital_autotracking(
                 channel=self.hanwha_channel,
                 profile=self.hanwha_profile,
             )
             self.hanwha_tracking_started = False
+            # 🛑 成功才標記 done。先標記的話:停止失敗 → track 已進集合 →
+            #    這台車永遠不進 OCR、攝影機卻還在追(部分失敗窗)。失敗就留給
+            #    下一幀重試(gate 的 stop_tracking 分支會再進來)。
+            self._mark_hanwha_track_done(track_id)
             print(f"[LPR-Hanwha] cam{self.camera_id} 已停止追蹤", flush=True)
         except Exception as e:
             self.last_error = f"hanwha_tracking_stop_failed: {e}"
@@ -2948,14 +2967,24 @@ class LPRStreamTask:
             return True
         if not (isinstance(plate_bbox, (list, tuple)) and len(plate_bbox) == 4):
             return False
+        # 前一台車觸發停止後,新 track 出現時重新啟動追蹤(否則第一台車之後
+        # 就永遠沒有 autotracking 了)。
+        if not self.hanwha_tracking_started:
+            self._ensure_hanwha_tracking_started()
 
         ptz_position = None
         if self.hanwha_ptz_stop_window is not None:
-            try:
-                ptz_position = self.hanwha_client.query_position(channel=self.hanwha_channel)
-            except SunapiError as e:
-                self.last_error = f"hanwha_ptz_query_failed: {e}"
-                print(f"[LPR-Hanwha] cam{self.camera_id} PTZ 查詢失敗: {e}", flush=True)
+            # 🛑 節流:這裡在分析執行緒的每一個車牌幀被呼叫,每次都同步查 PTZ
+            #    (Digest 兩趟往返,逾時 4 秒)會把 LPR FPS 拖垮。0.5 秒內用快取。
+            now_q = time.time()
+            if (now_q - self._hanwha_ptz_query_at) >= 0.5:
+                try:
+                    self._hanwha_ptz_pos = self.hanwha_client.query_position(channel=self.hanwha_channel)
+                except SunapiError as e:
+                    self.last_error = f"hanwha_ptz_query_failed: {e}"
+                    print(f"[LPR-Hanwha] cam{self.camera_id} PTZ 查詢失敗: {e}", flush=True)
+                self._hanwha_ptz_query_at = now_q
+            ptz_position = self._hanwha_ptz_pos
 
         workflow = build_plate_lpr_workflow(
             plate_bbox=BBox(int(plate_bbox[0]), int(plate_bbox[1]), int(plate_bbox[2]), int(plate_bbox[3])),
@@ -3002,7 +3031,8 @@ class LPRStreamTask:
             return
         self.running = True
         self.load_zones()
-        self._ensure_hanwha_tracking_started()
+        # 🛑 Hanwha 追蹤啟動移到工作執行緒(_run 開頭):start() 常被 async endpoint
+        #    直接呼叫,blocking 的 SUNAPI 請求會卡住整個 event loop。
         # 一定要給名字:GPU 推論通道的用量是依 thread 名歸戶的,匿名執行緒在
         # /api/stream/gpu-lock-stats 只會顯示成 "Thread-N (_run)",查不出是誰。
         # 2026-08-18 就是因為這樣,花了額外工夫才確認吃掉一半通道的是 LPR。
@@ -3013,13 +3043,22 @@ class LPRStreamTask:
         
     def stop(self):
         self.running = False
-        self._stop_hanwha_tracking()
+        # 🛑 先 join 再停追蹤:反過來的話,還在跑的最後一幀可能又 area_zoom
+        #    把剛停好的攝影機轉走。
         if self.thread:
             self.thread.join(timeout=5)
+        # 🛑 丟背景執行緒:stop 是 2 個 HTTP 請求(Digest 各兩趟),攝影機斷線會
+        #    卡數秒;stop() 常被 async endpoint 直接呼叫,不能阻塞 event loop。
+        #    guard 在 _stop_hanwha_tracking 裡(沒在追蹤就不打)。
+        if self.hanwha_enabled and self.hanwha_client is not None and self.hanwha_tracking_started:
+            threading.Thread(target=self._stop_hanwha_tracking, daemon=True,
+                             name=f"hanwha-stop-{self.camera_id}").start()
         self._flush_cumulative_stats(force=True)
         print(f"[LPR] 停止: {self.camera_name}")
             
     def _run(self):
+        # Hanwha 追蹤在工作執行緒內啟動(blocking SUNAPI 請求不能放在 async start())
+        self._ensure_hanwha_tracking_started()
         # Watchdog: 從外部 thread 監控 last_frame_at，超時 forcibly release cap
         cap_holder = {"cap": None}
         watchdog_stop = threading.Event()
