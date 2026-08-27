@@ -2,11 +2,13 @@
 """Hanwha SUNAPI 球機追蹤與車牌放大 API。"""
 from __future__ import annotations
 
+import threading
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from api.models import Camera, get_db
 from api.routes.auth import get_current_user
@@ -313,6 +315,151 @@ def goto_preset(
     except SunapiError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"camera_id": camera.id, "result": result}
+
+
+class StopWindowRequest(BaseModel):
+    """「追到這個座標就停止追蹤」:至少填一軸,公差內視為到達。"""
+
+    pan: Optional[float] = None
+    tilt: Optional[float] = None
+    zoom: Optional[float] = None
+    pan_tolerance: float = Field(default=2.0, ge=0.0)
+    tilt_tolerance: float = Field(default=2.0, ge=0.0)
+    zoom_tolerance: float = Field(default=1.0, ge=0.0)
+    enabled: bool = True
+    channel: int = DEFAULT_CHANNEL
+
+
+# ── 到點停追背景監看:每秒查 PTZ,進入停止窗(外→內轉態)就停止追蹤 ──────────
+_stop_watchers: dict[int, threading.Event] = {}
+_stop_watchers_lock = threading.Lock()
+
+
+def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_evt: threading.Event):
+    inside_prev = False
+    print(f"[Hanwha] cam{camera_id} 到點停追監看啟動 window={window.as_dict()}", flush=True)
+    while not stop_evt.is_set():
+        try:
+            pos = client.query_position()
+            inside = window.contains(pos)
+            if inside and not inside_prev:
+                client.stop_digital_autotracking()
+                print(f"[Hanwha] cam{camera_id} 到達停止座標 {pos.as_dict()},已停止追蹤", flush=True)
+            inside_prev = inside
+        except Exception as e:
+            print(f"[Hanwha] cam{camera_id} 到點停追監看錯誤: {e}", flush=True)
+            stop_evt.wait(3.0)
+        stop_evt.wait(1.0)
+    print(f"[Hanwha] cam{camera_id} 到點停追監看結束", flush=True)
+
+
+def _disarm_stop_watcher(camera_id: int) -> None:
+    with _stop_watchers_lock:
+        evt = _stop_watchers.pop(camera_id, None)
+    if evt:
+        evt.set()
+
+
+def _arm_stop_watcher(camera_id: int, client, window: PtzStopWindow) -> None:
+    _disarm_stop_watcher(camera_id)
+    evt = threading.Event()
+    with _stop_watchers_lock:
+        _stop_watchers[camera_id] = evt
+    threading.Thread(
+        target=_stop_window_watch_loop, args=(camera_id, client, window, evt),
+        name=f"hanwha-stopwin-{camera_id}", daemon=True,
+    ).start()
+
+
+@router.post("/{camera_id}/tracking/stop-window")
+def set_tracking_stop_window(
+    camera_id: int,
+    req: StopWindowRequest,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """設定/啟停「追到指定座標就停止追蹤」。設定存進 camera detection_config,
+    LPR 追蹤工作流與背景監看共用同一組停止窗。"""
+    camera, client = _client_for_camera(db, camera_id)
+    if req.enabled and req.pan is None and req.tilt is None and req.zoom is None:
+        raise HTTPException(status_code=400, detail="至少要輸入一個座標(P/T/Z)")
+
+    window_cfg = {
+        "pan": req.pan, "tilt": req.tilt, "zoom": req.zoom,
+        "pan_tolerance": req.pan_tolerance,
+        "tilt_tolerance": req.tilt_tolerance,
+        "zoom_tolerance": req.zoom_tolerance,
+    }
+    cfg = dict(camera.detection_config or {})
+    tracking_cfg = dict(cfg.get("hanwha_lpr_tracking") or {})
+    tracking_cfg["ptz_stop_window"] = window_cfg
+    tracking_cfg["ptz_stop_watch"] = bool(req.enabled)
+    cfg["hanwha_lpr_tracking"] = tracking_cfg
+    camera.detection_config = cfg
+    flag_modified(camera, "detection_config")
+    db.commit()
+
+    if req.enabled:
+        window = PtzStopWindow(
+            pan=req.pan, tilt=req.tilt, zoom=req.zoom,
+            pan_tolerance=req.pan_tolerance,
+            tilt_tolerance=req.tilt_tolerance,
+            zoom_tolerance=req.zoom_tolerance,
+        )
+        _arm_stop_watcher(camera.id, client, window)
+    else:
+        _disarm_stop_watcher(camera.id)
+
+    return {"camera_id": camera.id, "enabled": bool(req.enabled), "stop_window": window_cfg}
+
+
+@router.get("/{camera_id}/tracking/stop-window")
+def get_tracking_stop_window(
+    camera_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """讀取目前的停止窗設定與監看狀態。"""
+    camera = _get_camera_or_404(db, camera_id)
+    cfg = (camera.detection_config or {}).get("hanwha_lpr_tracking") or {}
+    with _stop_watchers_lock:
+        armed = camera_id in _stop_watchers
+    return {
+        "camera_id": camera.id,
+        "enabled": bool(cfg.get("ptz_stop_watch")),
+        "armed": armed,
+        "stop_window": cfg.get("ptz_stop_window"),
+    }
+
+
+@router.on_event("startup")
+def _rearm_stop_watchers_on_startup() -> None:
+    """服務重啟後,把 DB 裡標記啟用的到點停追監看重新掛回來。"""
+    try:
+        from api.models import SessionLocal
+        db = SessionLocal()
+        try:
+            cams = db.query(Camera).all()
+            for cam in cams:
+                cfg = (cam.detection_config or {}).get("hanwha_lpr_tracking") or {}
+                win = cfg.get("ptz_stop_window") or {}
+                if not cfg.get("ptz_stop_watch") or not win:
+                    continue
+                try:
+                    client = build_sunapi_client_from_camera(cam)
+                except Exception:
+                    continue
+                window = PtzStopWindow(
+                    pan=win.get("pan"), tilt=win.get("tilt"), zoom=win.get("zoom"),
+                    pan_tolerance=float(win.get("pan_tolerance", 2.0)),
+                    tilt_tolerance=float(win.get("tilt_tolerance", 2.0)),
+                    zoom_tolerance=float(win.get("zoom_tolerance", 1.0)),
+                )
+                _arm_stop_watcher(cam.id, client, window)
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[Hanwha] 到點停追監看重掛失敗: {e}", flush=True)
 
 
 class TargetLockRequest(BaseModel):
