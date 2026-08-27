@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -135,20 +136,36 @@ class HanwhaSunapiClient:
         if self.username:
             self._session.auth = HTTPDigestAuth(self.username, self.password)
 
+    # SUNAPI NG 錯誤碼 → 中文說明(使用者介面直接顯示,不要出現英文)
+    _NG_ERROR_ZH = {
+        "600": "此機型不支援這個功能",
+        "601": "動作不存在",
+        "602": "參數名稱不正確",
+        "603": "缺少必要參數",
+        "604": "參數值不正確",
+        "605": "參數過多",
+        "608": "此機型未實作這個功能",
+    }
+
     def _request(self, path: str, params: dict[str, Any]) -> requests.Response:
         url = f"{self.base_url}{path}"
         try:
             resp = self._session.get(url, params=params, timeout=self.timeout)
         except requests.RequestException as exc:
-            raise SunapiError(f"SUNAPI 連線失敗: {exc}") from exc
+            raise SunapiError("無法連線到攝影機(逾時或網路不通)") from exc
+        if resp.status_code == 401:
+            raise SunapiError("攝影機認證失敗(帳號或密碼錯誤)")
         if resp.status_code >= 400:
-            raise SunapiError(f"SUNAPI 回應 HTTP {resp.status_code}: {resp.text[:200]}")
+            raise SunapiError(f"攝影機回應錯誤(HTTP {resp.status_code})")
         # 🛑 SUNAPI 的指令錯誤是 HTTP 200 + "NG\r\nError Code: ..." 文字,
         #    只看狀態碼會把失敗當成功吞掉(2026-08-28 實測:Pan=50 超出 -6~6
         #    範圍回 200+NG 604,前端無錯誤、相機不動)。
         body_head = (resp.text or "")[:64].strip()
         if body_head.startswith("NG"):
-            raise SunapiError(f"SUNAPI NG: {body_head[:120]}")
+            m = re.search(r"Error Code:\s*(\d+)", resp.text or "")
+            code = m.group(1) if m else ""
+            zh = self._NG_ERROR_ZH.get(code, "攝影機拒絕這個指令")
+            raise SunapiError(f"{zh}(錯誤碼 {code or '?'})")
         return resp
 
     @staticmethod
@@ -227,13 +244,14 @@ class HanwhaSunapiClient:
         return result
 
     def _digital_autotracking(self, mode: str, profile: int, channel: int) -> dict[str, Any]:
+        # 🛑 不送 Profile:62 站實測帶 Profile 會回 602 參數名稱不正確,
+        #    正確格式只有 Channel + Mode(profile 引數保留給呼叫端相容,不上線路)。
         resp = self._request(
             "/stw-cgi/ptzcontrol.cgi",
             {
                 "msubmenu": "digitalautotracking",
                 "action": "control",
                 "Channel": int(channel),
-                "Profile": int(profile),
                 "Mode": mode,
             },
         )
