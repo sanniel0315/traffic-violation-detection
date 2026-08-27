@@ -433,6 +433,7 @@ class CongestionDetector:
         spots[:] = [s for s in spots if (now - s["last_seen"]).total_seconds() <= _SPOT_GAP_SEC]
         prev_frame_centers = self.prev_center_map.get(camera_key) or []
         curr_frame_centers: List[tuple] = []
+        frame_boxes: List[tuple] = []  # (bbox, 是否停止中) — 給固定點遮擋保命用
         active_ids: set[int] = set()
         stopped_ids: set[int] = set()
         static_ids: set[int] = set()
@@ -476,6 +477,7 @@ class CongestionDetector:
             if spot is not None and (now - spot["first_seen"]).total_seconds() >= static_object_sec:
                 static_ids.add(track_id)
                 state["stopped"] = False
+                frame_boxes.append((bbox, True))
                 continue
             if len(history) >= stop_min_frames:
                 recent = history[-stop_min_frames:]
@@ -485,6 +487,19 @@ class CongestionDetector:
                     stopped_ids.add(track_id)
             else:
                 state["stopped"] = False
+            frame_boxes.append((bbox, bool(state["stopped"])))
+        # 固定點遮擋保命:紅燈時真車會停在標線上蓋住它(標線偵測消失>30秒→固定點
+        # 過期歸零→車開走後又要重新累積 5 分鐘)。本幀沒被命中的固定點,若中心被
+        # 「停止中」車輛的 bbox 蓋住,視為被遮擋而非消失,last_seen 續命(年齡照累積)。
+        # 只認停止中的車:綠燈流動車輛掃過停止線點不續命,停等熱點在綠燈期間照樣過期。
+        for s in spots:
+            if s["last_seen"] is now:
+                continue
+            sx, sy = s["center"]
+            for _b, _stopped in frame_boxes:
+                if _stopped and _b.get("x1", 0) <= sx <= _b.get("x2", 0) and _b.get("y1", 0) <= sy <= _b.get("y2", 0):
+                    s["last_seen"] = now
+                    break
         for track_id in list(meta.keys()):
             if track_id not in active_ids and track_id not in getattr(self.tracker_map.get(camera_key), "tracks", {}):
                 meta.pop(track_id, None)
