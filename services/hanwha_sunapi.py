@@ -290,6 +290,17 @@ class HanwhaSunapiClient:
         resp = self._request("/stw-cgi/eventsources.cgi", params)
         return {"ok": True, "vehicle_only": bool(vehicle_only), "status_code": resp.status_code}
 
+    def set_camera_tracking_zoom(self, enable: bool = True, channel: int = DEFAULT_CHANNEL) -> dict[str, Any]:
+        """球機追蹤引擎的自動變倍(ZoomControl):開了之後相機追蹤時會自己拉近目標。
+        🛑 這類球機追蹤中會持續控制 PTZ,我們手動 areazoom 會立刻被蓋回去 —
+        要放大就得用它自己的 ZoomControl(2026-08-28 實測)。"""
+        resp = self._request(
+            "/stw-cgi/eventsources.cgi",
+            {"msubmenu": "autotracking", "action": "set", "Channel": int(channel),
+             "ZoomControl": "On" if enable else "Off"},
+        )
+        return {"ok": True, "zoom_control": bool(enable), "status_code": resp.status_code}
+
     def _eventsources_autotracking(self, enable: bool, channel: int) -> dict[str, Any]:
         """傳統球機的自動追蹤開關(eventsources.cgi autotracking set Enable)。"""
         resp = self._request(
