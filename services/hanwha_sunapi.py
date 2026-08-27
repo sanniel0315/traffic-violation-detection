@@ -275,17 +275,18 @@ class HanwhaSunapiClient:
         channel: int = DEFAULT_CHANNEL,
     ) -> dict[str, Any]:
         """物件過濾:只追車(Vehicle) 或 人車都追(關閉過濾)。
-        🛑 參數名 OjbectFilterEnable 是相機韌體自己拼錯的,照它的能力表送。"""
+        🛑 相機能力表把參數名拼成 OjbectFilterEnable,但實際 API 只收正確拼法
+        ObjectFilterEnable(62 站實測:錯拼 602、正拼 OK)。"""
         params: dict[str, Any] = {
             "msubmenu": "autotracking",
             "action": "set",
             "Channel": int(channel),
         }
         if vehicle_only:
-            params["OjbectFilterEnable"] = "True"
+            params["ObjectFilterEnable"] = "True"
             params["ObjectTypeFilter"] = "Vehicle"
         else:
-            params["OjbectFilterEnable"] = "False"
+            params["ObjectFilterEnable"] = "False"
         resp = self._request("/stw-cgi/eventsources.cgi", params)
         return {"ok": True, "vehicle_only": bool(vehicle_only), "status_code": resp.status_code}
 
