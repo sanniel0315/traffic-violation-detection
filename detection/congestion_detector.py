@@ -89,6 +89,12 @@ class CongestionDetector:
         track_hold_frames = max(1, int(params.get("track_hold_frames", 3)))
         safety_gap_m = max(0.0, float(params.get("queue_vehicle_gap_m", self.DEFAULT_SAFETY_GAP_M)))
         queue_activate_score = max(0.0, float(params.get("queue_activate_score", medium_t)))
+        # 固定物抑制：從「出生」起總位移一直 < static_object_px 且存在超過 static_object_sec
+        # 的 track，視為被誤判成車的固定物（實例：cam_3 地上白色轉彎箭頭被低信心偵測判成 car，
+        # track 靜止數小時、佔用率長灌 1.6%）。真車一定是移動進畫面的（位移史大），紅燈停等車
+        # 也不會被誤殺；門檻要遠小於 stop_distance_px（那是抓緩行排隊用的，45px 太鬆）。
+        static_object_sec = max(30.0, float(params.get("static_object_sec", 300.0)))
+        static_object_px = max(2.0, float(params.get("static_object_px", 12.0)))
         now = datetime.now()
 
         h, w = frame.shape[:2]
@@ -132,12 +138,20 @@ class CongestionDetector:
         tracked_vehicles = tracker.update([dict(v) for v in vehicles])
         if not tracked_vehicles:
             tracked_vehicles = self._recover_recent_tracks(camera_key, tracker, max_age_frames=track_hold_frames)
-        stopped_track_ids = self._update_track_motion(
+        stopped_track_ids, static_track_ids = self._update_track_motion(
             camera_key,
             tracked_vehicles,
             stop_distance_px=stop_distance_px,
             stop_min_frames=stop_min_frames,
+            static_object_sec=static_object_sec,
+            static_object_px=static_object_px,
+            now=now,
         )
+        if static_track_ids:
+            tracked_vehicles = [
+                v for v in tracked_vehicles
+                if int(v.get("track_id", 0)) not in static_track_ids
+            ]
         
         # 佔用率 = 車輛 bbox「聯集 ∩ ROI」/ ROI面積。原本用 bbox 面積「加總」會把重疊區與
         # 超出 ROI 的部分重複計入,近鏡頭大車 2 台就灌到 100%(實測 100%→45%)→ 假性嚴重壅塞。
@@ -391,10 +405,20 @@ class CongestionDetector:
         *,
         stop_distance_px: float,
         stop_min_frames: int,
-    ) -> set[int]:
+        static_object_sec: float = 300.0,
+        static_object_px: float = 12.0,
+        now: Optional[datetime] = None,
+    ) -> tuple[set[int], set[int]]:
+        """回傳 (停等中的 track ids, 固定物 track ids)。
+
+        固定物 = 從第一次出現起總位移從未超過 static_object_px、且已存在
+        static_object_sec 以上的 track（地上標線/反光鏡等被誤判成車的靜態物）。
+        """
+        now = now or datetime.now()
         meta = self.track_meta_map[camera_key]
         active_ids: set[int] = set()
         stopped_ids: set[int] = set()
+        static_ids: set[int] = set()
         for v in vehicles:
             track_id = int(v.get("track_id") or 0)
             if track_id <= 0:
@@ -409,9 +433,23 @@ class CongestionDetector:
             history = state.setdefault("history", [])
             state["class_name"] = str(v.get("class_name") or state.get("class_name") or "car")
             state["bbox"] = bbox
+            if "spawn" not in state:
+                state["spawn"] = center
+                state["first_seen"] = now
+                state["max_disp"] = 0.0
+            _dx = center[0] - state["spawn"][0]
+            _dy = center[1] - state["spawn"][1]
+            _disp = float((_dx * _dx + _dy * _dy) ** 0.5)
+            if _disp > float(state.get("max_disp", 0.0)):
+                state["max_disp"] = _disp
             history.append(center)
             if len(history) > max(stop_min_frames * 2, 12):
                 del history[:-max(stop_min_frames * 2, 12)]
+            age_sec = (now - state.get("first_seen", now)).total_seconds()
+            if age_sec >= static_object_sec and float(state.get("max_disp", 0.0)) <= static_object_px:
+                static_ids.add(track_id)
+                state["stopped"] = False
+                continue
             if len(history) >= stop_min_frames:
                 recent = history[-stop_min_frames:]
                 move_dist = self._path_displacement(recent)
@@ -423,7 +461,7 @@ class CongestionDetector:
         for track_id in list(meta.keys()):
             if track_id not in active_ids and track_id not in getattr(self.tracker_map.get(camera_key), "tracks", {}):
                 meta.pop(track_id, None)
-        return stopped_ids
+        return stopped_ids, static_ids
 
     def _path_displacement(self, centers: List[tuple[int, int]]) -> float:
         if len(centers) < 2:
