@@ -3458,11 +3458,17 @@
            系統本身已經有「線上/離線」「偵測中」標籤,這條只是疊上去互相打架,
            而且 RTC 這種字串對使用者沒有意義。整條藏掉。 */
         .go2rtc-host video-stream .info { display: none !important; }
-        /* PTZ 控制面板按鈕(放大視窗) */
-        .ptz-btn { background:#1e293b; color:#e2e8f0; border:1px solid #334155; border-radius:6px;
+        /* PTZ 控制面板(放大視窗) — 跟站內政府藍淺色風格一致 */
+        .ptz-panel { margin-top:12px; padding:12px 16px; background:var(--gov-surface);
+                     border:1px solid var(--gov-border); border-radius:10px;
+                     color:var(--gov-text); box-shadow:var(--shadow-sm); }
+        .ptz-label { font-size:12px; color:var(--gov-muted); margin-bottom:6px; }
+        .ptz-btn { background:var(--gov-surface-2); color:var(--gov-text-2);
+                   border:1px solid var(--gov-border-strong); border-radius:6px;
                    height:36px; cursor:pointer; font-size:14px; user-select:none; }
-        .ptz-btn:hover { background:#334155; }
-        .ptz-btn:active { background:#2563eb; border-color:#2563eb; }
+        .ptz-btn:hover { background:var(--ui-hover-bg); color:var(--ui-hover-text);
+                         border-color:var(--gov-primary-line); }
+        .ptz-btn:active { background:var(--gov-primary); border-color:var(--gov-primary); color:#fff; }
         .camera-preview .badge { position: absolute; top: 8px; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
         .camera-preview .status-badge { right: 8px; }
         .camera-preview .detection-badge { left: 8px; background: #0d6e9f; color: #fff; }
@@ -5333,10 +5339,10 @@
                             <div v-else style="color:#cbd5e1">沒有可顯示的畫面</div>
                         </div>
                         <!-- PTZ 控制面板(Hanwha SUNAPI):方向按住移動、變倍、對焦、預置點、追蹤 -->
-                        <div v-if="monitorZoomCamera" style="margin-top:12px;padding:12px 16px;background:#0f172a;border-radius:10px;color:#e2e8f0">
+                        <div v-if="monitorZoomCamera" class="ptz-panel">
                             <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start">
                                 <div>
-                                    <div style="font-size:12px;color:#94a3b8;margin-bottom:6px">PTZ 方向（按住移動）</div>
+                                    <div class="ptz-label">PTZ 方向（按住移動）</div>
                                     <div style="display:grid;grid-template-columns:repeat(3,42px);gap:5px">
                                         <button class="ptz-btn" @mousedown="ptzHold(-1,1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(-1,1,0)" @touchend="ptzRelease()">↖</button>
                                         <button class="ptz-btn" @mousedown="ptzHold(0,1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,1,0)" @touchend="ptzRelease()">↑</button>
@@ -5349,12 +5355,12 @@
                                         <button class="ptz-btn" @mousedown="ptzHold(1,-1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(1,-1,0)" @touchend="ptzRelease()">↘</button>
                                     </div>
                                     <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
-                                        <span style="font-size:12px;color:#94a3b8">速度</span>
+                                        <span class="ptz-label" style="margin-bottom:0">速度</span>
                                         <el-slider v-model="ptzSpeed" :min="10" :max="100" :step="10" style="width:110px"></el-slider>
                                     </div>
                                 </div>
                                 <div>
-                                    <div style="font-size:12px;color:#94a3b8;margin-bottom:6px">變倍 / 對焦</div>
+                                    <div class="ptz-label">變倍 / 對焦</div>
                                     <div style="display:grid;grid-template-columns:repeat(2,64px);gap:5px">
                                         <button class="ptz-btn" @mousedown="ptzHold(0,0,1)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,0,1)" @touchend="ptzRelease()">放大 +</button>
                                         <button class="ptz-btn" @mousedown="ptzHold(0,0,-1)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,0,-1)" @touchend="ptzRelease()">縮小 -</button>
@@ -5367,19 +5373,19 @@
                                     </div>
                                 </div>
                                 <div>
-                                    <div style="font-size:12px;color:#94a3b8;margin-bottom:6px">預置點</div>
+                                    <div class="ptz-label">預置點</div>
                                     <div style="display:flex;align-items:center;gap:6px">
                                         <el-input-number v-model="ptzPresetNo" :min="1" :max="255" size="small" style="width:100px"></el-input-number>
                                         <el-button size="small" type="primary" @click="ptzGotoPreset()">呼叫</el-button>
                                     </div>
-                                    <div style="font-size:12px;color:#94a3b8;margin:10px 0 6px">目標追蹤</div>
+                                    <div class="ptz-label" style="margin:10px 0 6px">目標追蹤</div>
                                     <div style="display:flex;gap:6px">
                                         <el-button size="small" type="success" :loading="ptzTrackBusy" @click="ptzTracking(true)">啟動追蹤</el-button>
                                         <el-button size="small" type="danger" :loading="ptzTrackBusy" @click="ptzTracking(false)">停止追蹤</el-button>
                                     </div>
                                 </div>
                                 <div>
-                                    <div style="font-size:12px;color:#94a3b8;margin-bottom:6px">PTZ 位置</div>
+                                    <div class="ptz-label">PTZ 位置</div>
                                     <el-button size="small" @click="ptzQuery()">查詢位置</el-button>
                                     <div v-if="ptzPos" style="margin-top:8px;font-size:13px;line-height:1.7">
                                         <div>Pan：<b>{{ ptzPos.pan ?? '-' }}</b></div>
