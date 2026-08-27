@@ -3485,6 +3485,25 @@
                    border:1px solid var(--gov-border); border-radius:8px; cursor:pointer;
                    box-shadow:var(--shadow-md); }
         .ptz-fab:hover { background:var(--ui-hover-bg); }
+        .ptz-drag { display:flex; align-items:center; justify-content:space-between;
+                    margin-bottom:6px; cursor:move; user-select:none; }
+        .ptz-sec { margin-top:6px; }
+        .ptz-sec:first-child { margin-top:0; }
+        .ptz-dirpad { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; }
+        .ptz-speed { display:flex; align-items:center; gap:6px; }
+        .ptz-fns { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+        .ptz-preset { display:flex; align-items:center; gap:4px; }
+        .ptz-track { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+        /* 橫式:面板貼底展開成一列,各區塊橫向排 */
+        .ptz-overlay.horiz { width:auto; max-width:calc(100% - 24px); }
+        .ptz-body.h { display:flex; align-items:flex-start; gap:10px; flex-wrap:nowrap; overflow-x:auto; }
+        .ptz-body.h .ptz-sec { margin-top:0; flex:0 0 auto; }
+        .ptz-body.h .ptz-dirpad { width:112px; }
+        .ptz-body.h .ptz-speed { width:140px; }
+        .ptz-body.h .ptz-fns { width:168px; }
+        .ptz-body.h .ptz-preset { width:140px; }
+        .ptz-body.h .ptz-track { width:168px; }
+        .ptz-body.h .ptz-misc { width:130px; }
         .camera-preview .badge { position: absolute; top: 8px; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
         .camera-preview .status-badge { right: 8px; }
         .camera-preview .detection-badge { left: 8px; background: #0d6e9f; color: #fff; }
@@ -5353,47 +5372,54 @@
                                  移掉 SVG 後,下面這個 v-else 才會正確接回上面的 <img v-else-if> ——
                                  原本它是接在 SVG 的 v-if 上,ROI 沒顯示時就會冒出「沒有可顯示的畫面」。 -->
                             <div v-else style="color:#cbd5e1">沒有可顯示的畫面</div>
-                            <!-- PTZ 浮動控制:蓋在影像右側,不用捲動就能邊看邊控 -->
+                            <!-- PTZ 浮動控制:蓋在影像上,標題列可拖移、可切橫/直版型 -->
                             <button v-if="monitorZoomCamera && !ptzPanelOpen" class="ptz-fab" @click="ptzPanelOpen=true">PTZ</button>
-                            <div v-if="monitorZoomCamera && ptzPanelOpen" class="ptz-overlay">
-                                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-                                    <span class="ptz-label" style="margin:0;font-weight:700">PTZ 控制</span>
-                                    <button class="ptz-btn ptz-close" @click="ptzPanelOpen=false">×</button>
+                            <div v-if="monitorZoomCamera && ptzPanelOpen" class="ptz-overlay" :class="{horiz:ptzPanelHoriz}" :style="ptzOverlayStyle">
+                                <div class="ptz-drag" @mousedown="ptzDragStart" @touchstart="ptzDragStart">
+                                    <span class="ptz-label" style="margin:0;font-weight:700">⠿ PTZ 控制</span>
+                                    <span style="display:flex;gap:4px">
+                                        <button class="ptz-btn ptz-close" :title="ptzPanelHoriz?'切成直式':'切成橫式'" @mousedown.stop @touchstart.stop @click="ptzToggleHoriz()">{{ ptzPanelHoriz?'直':'橫' }}</button>
+                                        <button class="ptz-btn ptz-close" title="收合" @mousedown.stop @touchstart.stop @click="ptzPanelOpen=false">×</button>
+                                    </span>
                                 </div>
-                                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px">
-                                    <button class="ptz-btn" @mousedown="ptzHold(-1,1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(-1,1,0)" @touchend="ptzRelease()">↖</button>
-                                    <button class="ptz-btn" @mousedown="ptzHold(0,1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,1,0)" @touchend="ptzRelease()">↑</button>
-                                    <button class="ptz-btn" @mousedown="ptzHold(1,1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(1,1,0)" @touchend="ptzRelease()">↗</button>
-                                    <button class="ptz-btn" @mousedown="ptzHold(-1,0,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(-1,0,0)" @touchend="ptzRelease()">←</button>
-                                    <button class="ptz-btn" @click="ptzRelease()">■</button>
-                                    <button class="ptz-btn" @mousedown="ptzHold(1,0,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(1,0,0)" @touchend="ptzRelease()">→</button>
-                                    <button class="ptz-btn" @mousedown="ptzHold(-1,-1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(-1,-1,0)" @touchend="ptzRelease()">↙</button>
-                                    <button class="ptz-btn" @mousedown="ptzHold(0,-1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,-1,0)" @touchend="ptzRelease()">↓</button>
-                                    <button class="ptz-btn" @mousedown="ptzHold(1,-1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(1,-1,0)" @touchend="ptzRelease()">↘</button>
-                                </div>
-                                <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
-                                    <span class="ptz-label" style="margin:0">速度</span>
-                                    <el-slider v-model="ptzSpeed" :min="10" :max="100" :step="10" size="small" style="flex:1;margin:0 6px"></el-slider>
-                                </div>
-                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px">
-                                    <button class="ptz-btn" @mousedown="ptzHold(0,0,1)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,0,1)" @touchend="ptzRelease()">放大＋</button>
-                                    <button class="ptz-btn" @mousedown="ptzHold(0,0,-1)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,0,-1)" @touchend="ptzRelease()">縮小－</button>
-                                    <button class="ptz-btn" @mousedown="ptzFocus('Near')" @mouseup="ptzFocus('Stop')" @mouseleave="ptzFocus('Stop')" @touchstart.prevent="ptzFocus('Near')" @touchend="ptzFocus('Stop')">焦近</button>
-                                    <button class="ptz-btn" @mousedown="ptzFocus('Far')" @mouseup="ptzFocus('Stop')" @mouseleave="ptzFocus('Stop')" @touchstart.prevent="ptzFocus('Far')" @touchend="ptzFocus('Stop')">焦遠</button>
-                                    <button class="ptz-btn" @click="ptzHome()">回 Home</button>
-                                    <button class="ptz-btn" @click="ptzFocus('Auto')">自動焦</button>
-                                </div>
-                                <div style="display:flex;align-items:center;gap:4px;margin-top:6px">
-                                    <el-input-number v-model="ptzPresetNo" :min="1" :max="255" size="small" :controls="false" style="width:56px"></el-input-number>
-                                    <button class="ptz-btn" style="flex:1" @click="ptzGotoPreset()">呼叫預置</button>
-                                </div>
-                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px">
-                                    <button class="ptz-btn ptz-ok" :disabled="ptzTrackBusy" @click="ptzTracking(true)">啟動追蹤</button>
-                                    <button class="ptz-btn ptz-danger" :disabled="ptzTrackBusy" @click="ptzTracking(false)">停止追蹤</button>
-                                </div>
-                                <button class="ptz-btn" style="width:100%;margin-top:6px" @click="ptzQuery()">查詢位置</button>
-                                <div v-if="ptzPos" style="margin-top:5px;font-size:12px;line-height:1.6;color:var(--gov-text-2)">
-                                    P {{ ptzPos.pan ?? '-' }}　T {{ ptzPos.tilt ?? '-' }}　Z {{ ptzPos.zoom ?? '-' }}
+                                <div class="ptz-body" :class="{h:ptzPanelHoriz}">
+                                    <div class="ptz-sec ptz-dirpad">
+                                        <button class="ptz-btn" @mousedown="ptzHold(-1,1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(-1,1,0)" @touchend="ptzRelease()">↖</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(0,1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,1,0)" @touchend="ptzRelease()">↑</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(1,1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(1,1,0)" @touchend="ptzRelease()">↗</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(-1,0,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(-1,0,0)" @touchend="ptzRelease()">←</button>
+                                        <button class="ptz-btn" @click="ptzRelease()">■</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(1,0,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(1,0,0)" @touchend="ptzRelease()">→</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(-1,-1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(-1,-1,0)" @touchend="ptzRelease()">↙</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(0,-1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,-1,0)" @touchend="ptzRelease()">↓</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(1,-1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(1,-1,0)" @touchend="ptzRelease()">↘</button>
+                                    </div>
+                                    <div class="ptz-sec ptz-speed">
+                                        <span class="ptz-label" style="margin:0">速度</span>
+                                        <el-slider v-model="ptzSpeed" :min="10" :max="100" :step="10" size="small" style="flex:1;margin:0 6px"></el-slider>
+                                    </div>
+                                    <div class="ptz-sec ptz-fns">
+                                        <button class="ptz-btn" @mousedown="ptzHold(0,0,1)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,0,1)" @touchend="ptzRelease()">放大＋</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(0,0,-1)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,0,-1)" @touchend="ptzRelease()">縮小－</button>
+                                        <button class="ptz-btn" @mousedown="ptzFocus('Near')" @mouseup="ptzFocus('Stop')" @mouseleave="ptzFocus('Stop')" @touchstart.prevent="ptzFocus('Near')" @touchend="ptzFocus('Stop')">焦近</button>
+                                        <button class="ptz-btn" @mousedown="ptzFocus('Far')" @mouseup="ptzFocus('Stop')" @mouseleave="ptzFocus('Stop')" @touchstart.prevent="ptzFocus('Far')" @touchend="ptzFocus('Stop')">焦遠</button>
+                                        <button class="ptz-btn" @click="ptzHome()">回 Home</button>
+                                        <button class="ptz-btn" @click="ptzFocus('Auto')">自動焦</button>
+                                    </div>
+                                    <div class="ptz-sec ptz-preset">
+                                        <el-input-number v-model="ptzPresetNo" :min="1" :max="255" size="small" :controls="false" style="width:56px"></el-input-number>
+                                        <button class="ptz-btn" style="flex:1" @click="ptzGotoPreset()">呼叫預置</button>
+                                    </div>
+                                    <div class="ptz-sec ptz-track">
+                                        <button class="ptz-btn ptz-ok" :disabled="ptzTrackBusy" @click="ptzTracking(true)">啟動追蹤</button>
+                                        <button class="ptz-btn ptz-danger" :disabled="ptzTrackBusy" @click="ptzTracking(false)">停止追蹤</button>
+                                    </div>
+                                    <div class="ptz-sec ptz-misc">
+                                        <button class="ptz-btn" style="width:100%" @click="ptzQuery()">查詢位置</button>
+                                        <div v-if="ptzPos" style="margin-top:5px;font-size:12px;line-height:1.6;color:var(--gov-text-2)">
+                                            P {{ ptzPos.pan ?? '-' }}　T {{ ptzPos.tilt ?? '-' }}　Z {{ ptzPos.zoom ?? '-' }}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -17188,6 +17214,47 @@ const app=createApp({
         // 按住=連續移動、放開=stop;速度由 ptzSpeed 滑桿決定。追蹤=digital autotracking。
         const ptzSpeed=ref(50);
         const ptzPanelOpen=ref(true);   // 浮動控制欄顯示/收合(蓋在影像上)
+        // 版型(橫/直)與位置:每台瀏覽器記住(客戶自己擺喜歡的位置)
+        const ptzPanelHoriz=ref(localStorage.getItem('ptzPanelHoriz')==='1');
+        const ptzPanelPos=ref(null);
+        try{ const _pp=JSON.parse(localStorage.getItem('ptzPanelPos')||'null');
+             if(_pp && typeof _pp.x==='number' && typeof _pp.y==='number') ptzPanelPos.value=_pp; }catch(e){}
+        const ptzOverlayStyle=computed(()=>{
+            const p=ptzPanelPos.value;
+            if(!p)return {};
+            return { left:p.x+'px', top:p.y+'px', right:'auto' };
+        });
+        const ptzToggleHoriz=()=>{
+            ptzPanelHoriz.value=!ptzPanelHoriz.value;
+            try{ localStorage.setItem('ptzPanelHoriz', ptzPanelHoriz.value?'1':'0'); }catch(e){}
+        };
+        let _ptzDrag=null;
+        const ptzDragStart=(e)=>{
+            const panel=e.currentTarget.closest('.ptz-overlay'); if(!panel)return;
+            const stage=panel.parentElement; if(!stage)return;
+            const pt=e.touches?e.touches[0]:e;
+            const pr=panel.getBoundingClientRect(), sr=stage.getBoundingClientRect();
+            _ptzDrag={ dx:pt.clientX-pr.left, dy:pt.clientY-pr.top, sr, pw:pr.width, ph:pr.height };
+            const move=(ev)=>{
+                if(!_ptzDrag)return;
+                const q=ev.touches?ev.touches[0]:ev;
+                let x=q.clientX-_ptzDrag.sr.left-_ptzDrag.dx;
+                let y=q.clientY-_ptzDrag.sr.top-_ptzDrag.dy;
+                x=Math.max(0, Math.min(_ptzDrag.sr.width-_ptzDrag.pw, x));
+                y=Math.max(0, Math.min(_ptzDrag.sr.height-_ptzDrag.ph, y));
+                ptzPanelPos.value={ x:Math.round(x), y:Math.round(y) };
+                if(ev.cancelable)ev.preventDefault();
+            };
+            const up=()=>{
+                window.removeEventListener('mousemove',move); window.removeEventListener('mouseup',up);
+                window.removeEventListener('touchmove',move); window.removeEventListener('touchend',up);
+                try{ localStorage.setItem('ptzPanelPos', JSON.stringify(ptzPanelPos.value||null)); }catch(e){}
+                _ptzDrag=null;
+            };
+            window.addEventListener('mousemove',move); window.addEventListener('mouseup',up);
+            window.addEventListener('touchmove',move,{passive:false}); window.addEventListener('touchend',up);
+            if(e.cancelable)e.preventDefault();
+        };
         const ptzPresetNo=ref(1);
         const ptzPos=ref(null);
         const ptzTrackBusy=ref(false);
@@ -21451,7 +21518,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,ptzSpeed,ptzPanelOpen,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzQuery,ptzTracking,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzQuery,ptzTracking,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
