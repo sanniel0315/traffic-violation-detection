@@ -5395,7 +5395,7 @@
                                 </div>
                             </div>
                         </div>
-                        <div v-if="monitorZoomCamera && congestionStatus[monitorZoomCamera.id] && congestionStatus[monitorZoomCamera.id].result" style="margin-top:12px;padding:12px 16px;background:#0f172a;border-radius:10px;color:#e2e8f0">
+                        <div v-if="monitorZoomCamera && congestionStatus[monitorZoomCamera.id] && congestionStatus[monitorZoomCamera.id].result" class="ptz-panel">
                             <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px;font-size:14px">
                                 <el-tag size="default" :type="getCongestionLevelType(congestionStatus[monitorZoomCamera.id].result.level)">
                                     壅塞 {{ congestionStatus[monitorZoomCamera.id].result.level_name || '-' }}
@@ -5412,7 +5412,7 @@
                                 </el-tag>
                             </div>
                         </div>
-                        <div v-else-if="monitorZoomCamera" style="margin-top:12px;padding:10px 14px;color:#64748b;font-size:13px;background:#0f172a;border-radius:10px">
+                        <div v-else-if="monitorZoomCamera" class="ptz-panel" style="font-size:13px;color:var(--gov-muted)">
                             尚未啟動壅塞偵測或暫無資料
                         </div>
                     </el-dialog>
