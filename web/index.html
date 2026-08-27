@@ -17348,6 +17348,24 @@ const app=createApp({
             const p=ptzPos.value;
             if(p){ ptzStopP.value=(p.pan??'')+''; ptzStopT.value=(p.tilt??'')+''; ptzStopZ.value=(p.zoom??'')+''; }
         };
+        // 開啟放大視窗(或換攝影機)時,把 DB 裡存的停止窗座標帶回輸入框
+        const ptzStopWinLoad=async()=>{
+            const cam=monitorZoomCamera.value; if(!cam)return;
+            ptzStopP.value=''; ptzStopT.value=''; ptzStopZ.value=''; ptzStopWinState.value='';
+            ptzPos.value=null;
+            try{
+                const r=await fetch(`/api/hanwha/${cam.id}/tracking/stop-window`);
+                const d=await r.json().catch(()=>({}));
+                if(!r.ok)return;
+                const w=d.stop_window||{};
+                if(w.pan!=null)ptzStopP.value=w.pan+'';
+                if(w.tilt!=null)ptzStopT.value=w.tilt+'';
+                if(w.zoom!=null)ptzStopZ.value=w.zoom+'';
+                if(d.enabled){ ptzStopWinState.value='✓ 已啟用:追到該座標會自動停止'; }
+                else if(w.pan!=null || w.tilt!=null || w.zoom!=null){ ptzStopWinState.value='已停用(座標已保存)'; }
+            }catch(e){}
+        };
+        watch(()=>monitorZoomCamera.value && monitorZoomCamera.value.id, (id)=>{ if(id)ptzStopWinLoad(); });
         const ptzStopWinSave=async(en)=>{
             const num=(v)=>{ const f=parseFloat(v); return isNaN(f)?null:f; };
             const body={ pan:num(ptzStopP.value), tilt:num(ptzStopT.value), zoom:num(ptzStopZ.value), enabled:!!en };
