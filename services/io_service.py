@@ -89,7 +89,10 @@ def _parse_lock_addrs(raw: str) -> tuple:
 
 LOCK_ADDRS, LOCK_NAMES = _parse_lock_addrs(os.getenv("LOCK_MODBUS_ADDR", "0"))   # 空 = 停用
 LOCK_ADDR = LOCK_ADDRS[0] if LOCK_ADDRS else 0   # 預設鎖(單鎖相容:未指定 addr 的操作走這顆)
-LOCK_SERIAL_PORT = os.getenv("LOCK_SERIAL_PORT", "").strip()  # 設了=鎖走獨立 USB-485(如 /dev/ttyUSB0,可完整讀 0xC000 卡號);空=走 THS2 io_module(讀不到卡號)
+LOCK_SERIAL_PORT = os.getenv("LOCK_SERIAL_PORT", "").strip()  # 設了=鎖走獨立 485 埠(如 /dev/ttyUSB0 或內建 COM /dev/ttyTHS1,可完整讀 0xC000 卡號);空=走 THS2 io_module(讀不到卡號)
+# 卡機/鎖的序列參數(現場卡機不一定是 9600,改 .env 不改碼)
+LOCK_BAUD = int(os.getenv("LOCK_BAUD", "9600") or 9600)
+LOCK_PARITY = ((os.getenv("LOCK_PARITY", "N") or "N").strip().upper() or "N")[:1]
 LOCK_ENABLED = bool(LOCK_ADDRS)
 # 狀態寄存器: 0x0020 手柄 / 0x0021 門磁 / 0x0022 鑰匙 / 0x0023 鎖具動作
 # ⚠ THS2 板載 RS-485 轉換器換向太慢,會吃掉「多暫存器長回應」的前段(實測不管讀
@@ -601,7 +604,8 @@ class IOService:
             return None
         if self._lock_dev is None:
             from services.pd3r3 import PD3R3
-            self._lock_dev = PD3R3(port=LOCK_SERIAL_PORT, address=LOCK_ADDR)
+            self._lock_dev = PD3R3(port=LOCK_SERIAL_PORT, address=LOCK_ADDR,
+                                   baudrate=LOCK_BAUD, parity=LOCK_PARITY)
         return self._lock_dev
 
     def _close_lock_dev(self):
