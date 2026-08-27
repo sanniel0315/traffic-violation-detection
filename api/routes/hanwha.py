@@ -350,12 +350,13 @@ def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_
           f"回預置={return_preset} 延遲={return_delay_sec}s", flush=True)
     while not stop_evt.is_set():
         try:
-            # keepalive:每 30 秒確認追蹤引擎還開著。這款球機收到手動 PTZ 或
-            # 面板停止後 Enable 會變 False 且不會自己回來(2026-08-28 實測兩度
-            # 被莫名關閉) → 發現關了就重新啟用,並記 log 供追查頻率。
+            # keepalive:每 10 秒確認追蹤引擎還開著。這款球機「追完一台車
+            # (目標離開視野/追丟)就自動把 Enable 關掉」(2026-08-28 整晚實測,
+            # 與鎖定/手動操作無關) → 發現關了就重新啟用。新車出現時 LPR gate
+            # 的 _ensure 也會即時重開,這裡是後備。
             if resume_tracking:
                 keepalive_n += 1
-                if keepalive_n >= 30:
+                if keepalive_n >= 10:
                     keepalive_n = 0
                     try:
                         r = client._request(
