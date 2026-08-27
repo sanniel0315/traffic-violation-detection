@@ -343,10 +343,28 @@ def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_
                             return_preset: Optional[int] = 1, return_delay_sec: float = 5.0,
                             resume_tracking: bool = True):
     inside_prev = False
+    keepalive_n = 0
     print(f"[Hanwha] cam{camera_id} 到點停追監看啟動 window={window.as_dict()} "
           f"回預置={return_preset} 延遲={return_delay_sec}s", flush=True)
     while not stop_evt.is_set():
         try:
+            # keepalive:每 30 秒確認追蹤引擎還開著。這款球機收到手動 PTZ 或
+            # 面板停止後 Enable 會變 False 且不會自己回來(2026-08-28 實測兩度
+            # 被莫名關閉) → 發現關了就重新啟用,並記 log 供追查頻率。
+            if resume_tracking:
+                keepalive_n += 1
+                if keepalive_n >= 30:
+                    keepalive_n = 0
+                    try:
+                        r = client._request(
+                            "/stw-cgi/eventsources.cgi",
+                            {"msubmenu": "autotracking", "action": "view", "Channel": 0},
+                        )
+                        if "Enable=False" in (r.text or ""):
+                            client.start_digital_autotracking()
+                            print(f"[Hanwha] cam{camera_id} 追蹤引擎被關閉,keepalive 已重新啟用", flush=True)
+                    except Exception:
+                        pass
             pos = client.query_position()
             inside = window.contains(pos)
             if inside and not inside_prev:
