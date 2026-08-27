@@ -3508,7 +3508,10 @@
         .ptz-body.h .ptz-misc { width:130px; }
         .ptz-lockrow { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
         .ptz-active { background:var(--gov-primary) !important; border-color:var(--gov-primary) !important; color:#fff !important; }
-        .ptz-lock-cursor { cursor:crosshair; }
+        /* 🛑 影像在 video-stream(shadow DOM)裡,單設容器會被內層樣式蓋掉,
+           連子元素一起強制 + !important 才會全區變十字 */
+        .ptz-lock-cursor, .ptz-lock-cursor * { cursor:crosshair !important; }
+        .ptz-lock-cursor video-stream, .ptz-lock-cursor video { cursor:crosshair !important; }
         .camera-preview .badge { position: absolute; top: 8px; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
         .camera-preview .status-badge { right: 8px; }
         .camera-preview .detection-badge { left: 8px; background: #0d6e9f; color: #fff; }
