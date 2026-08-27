@@ -301,8 +301,27 @@ class HanwhaSunapiClient:
         )
         return {"ok": True, "zoom_control": bool(enable), "status_code": resp.status_code}
 
+    def get_autotracking_enabled(self, channel: int = DEFAULT_CHANNEL) -> Optional[bool]:
+        """讀取球機追蹤引擎目前開關狀態(讀不到回 None)。"""
+        try:
+            resp = self._request(
+                "/stw-cgi/eventsources.cgi",
+                {"msubmenu": "autotracking", "action": "view", "Channel": int(channel)},
+            )
+            m = re.search(r"Channel\.\d+\.Enable=(True|False)", resp.text or "")
+            return (m.group(1) == "True") if m else None
+        except SunapiError:
+            return None
+
     def _eventsources_autotracking(self, enable: bool, channel: int) -> dict[str, Any]:
-        """傳統球機的自動追蹤開關(eventsources.cgi autotracking set Enable)。"""
+        """傳統球機的自動追蹤開關(eventsources.cgi autotracking set Enable)。
+        🛑 這款韌體把 set Enable 當「切換」:同值重送會翻轉(2026-08-28 實測
+        True→False→True→False,整晚引擎神祕開關就是這個)。所以一定要先讀
+        現況,狀態已符合就不送 → 冪等。"""
+        cur = self.get_autotracking_enabled(channel=channel)
+        if cur is not None and cur == bool(enable):
+            return {"ok": True, "mode": "Start" if enable else "Stop",
+                    "via": "eventsources", "status_code": 200, "unchanged": True}
         resp = self._request(
             "/stw-cgi/eventsources.cgi",
             {
