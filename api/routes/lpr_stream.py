@@ -1782,6 +1782,11 @@ class LPRStreamTask:
         self.hanwha_stopped_track_ids: set[int] = set()
         self._hanwha_ptz_query_at = 0.0   # PTZ 查詢節流(見 _handle_hanwha_lpr_gate)
         self._hanwha_ptz_pos = None
+        # 全自動鏈:YOLO 看到新車 → 自動把車輛 bbox 中心送相機鎖定
+        self.hanwha_auto_lock = True
+        self.hanwha_lock_cooldown_sec = 3.0
+        self.hanwha_locked_track_ids: set[int] = set()
+        self.hanwha_last_lock_at = 0.0
         self._load_hanwha_tracking_config()
 
     @staticmethod
@@ -1851,6 +1856,8 @@ class LPRStreamTask:
             self.hanwha_zoom_cooldown_sec = float(tracking_cfg.get("zoom_cooldown_sec", 1.2) or 1.2)
             self.hanwha_stop_zone = self._bbox_from_config(tracking_cfg.get("stop_zone"))
             self.hanwha_ptz_stop_window = self._ptz_stop_window_from_config(tracking_cfg.get("ptz_stop_window"))
+            self.hanwha_auto_lock = bool(tracking_cfg.get("auto_target_lock", True))
+            self.hanwha_lock_cooldown_sec = float(tracking_cfg.get("target_lock_cooldown_sec", 3.0) or 3.0)
             self.hanwha_client = build_sunapi_client_from_camera(cam)
             print(
                 f"[LPR-Hanwha] cam{self.camera_id} enabled channel={self.hanwha_channel} "
@@ -2952,6 +2959,35 @@ class LPRStreamTask:
             self.last_error = f"hanwha_tracking_stop_failed: {e}"
             print(f"[LPR-Hanwha] cam{self.camera_id} 停止追蹤失敗: {e}", flush=True)
 
+    def _maybe_hanwha_target_lock(self, track_id, x1: int, y1: int, x2: int, y2: int,
+                                  frame_w: int, frame_h: int) -> None:
+        """全自動鏈第一步:新出現的車輛 track 自動送相機鎖定(bbox 中心)。
+        每條 track 只鎖一次;冷卻時間內不搶鎖,避免車多時相機被拉來拉去。"""
+        if not self.hanwha_enabled or not self.hanwha_auto_lock or self.hanwha_client is None:
+            return
+        if track_id is None or int(track_id) <= 0:
+            return
+        tid = int(track_id)
+        if tid in self.hanwha_locked_track_ids or tid in self.hanwha_stopped_track_ids:
+            return
+        now = time.time()
+        if (now - self.hanwha_last_lock_at) < self.hanwha_lock_cooldown_sec:
+            return
+        try:
+            self._ensure_hanwha_tracking_started()   # 前一台停止後要先把追蹤引擎開回來
+            cx = ((x1 + x2) / 2.0) / max(1, frame_w)
+            cy = ((y1 + y2) / 2.0) / max(1, frame_h)
+            self.hanwha_client.target_lock(cx, cy)
+            self.hanwha_locked_track_ids.add(tid)
+            if len(self.hanwha_locked_track_ids) >= 500:
+                drop = sorted(self.hanwha_locked_track_ids)[:250]
+                self.hanwha_locked_track_ids.difference_update(drop)
+            self.hanwha_last_lock_at = now
+            print(f"[LPR-Hanwha] cam{self.camera_id} 自動鎖定 track {tid} 中心 ({cx:.2f},{cy:.2f})", flush=True)
+        except Exception as e:
+            self.last_error = f"hanwha_target_lock_failed: {e}"
+            print(f"[LPR-Hanwha] cam{self.camera_id} 自動鎖定失敗: {e}", flush=True)
+
     def _handle_hanwha_lpr_gate(
         self,
         *,
@@ -3330,6 +3366,8 @@ class LPRStreamTask:
                         if vx2 <= vx1 or vy2 <= vy1:
                             continue
                         self._update_vehicle_track_state(track_id, vehicle_type, [vx1, vy1, vx2, vy2], frame)
+                        # 全自動鏈:新車 track 出現就自動鎖定(不等車牌偵測到)
+                        self._maybe_hanwha_target_lock(track_id, vx1, vy1, vx2, vy2, iw, ih)
 
                         pb = result.get("plate_bbox")
                         if not (isinstance(pb, (list, tuple)) and len(pb) == 4):
