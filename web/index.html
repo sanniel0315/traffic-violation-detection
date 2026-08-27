@@ -10872,7 +10872,37 @@ const attachGo2rtc=(el,url)=>{
             node.src = el.__go2rtcUrl;   // 🛑 property,不是 attribute
         }
         clampGo2rtcPlaybackRate(node);
+        _armGo2rtcWatch(el);
     }).catch(()=>{ el.__go2rtcPending = false; el.innerHTML=''; });
+};
+// ── 無畫面自動重連 watchdog ──────────────────────────────────────────
+// 🛑 冷啟動競態:on-demand 變體(annotated/lite)的編碼器是心跳登記後才 spawn,
+//    瀏覽器直連 go2rtc 訂閱時 producer 可能還沒生出來;go2rtc 對「先連上、
+//    producer 後到」的觀眾不會補送媒體 → WS 掛著只有握手 311 bytes,畫面永遠
+//    轉圈(2026-08-27 VPN 現場實測)。等幾秒沒影像就整個 <video-stream> 重建
+//    重連,此時編碼器已被心跳養起來,第二次一定接得上。
+const _go2rtcAlive=(el)=>{ const v=el.querySelector('video'); return !!(v && v.videoWidth); };
+const _armGo2rtcWatch=(el)=>{
+    if(el.__go2rtcWatch){ clearInterval(el.__go2rtcWatch); }
+    el.__go2rtcRetries=0;
+    el.__go2rtcWatch=setInterval(()=>{
+        if(!document.body.contains(el) || !el.__go2rtcUrl){
+            clearInterval(el.__go2rtcWatch); el.__go2rtcWatch=null; return;
+        }
+        if(document.hidden)return;                  // 背景分頁不折騰
+        if(_go2rtcAlive(el)){ el.__go2rtcRetries=0; return; }
+        el.__go2rtcRetries++;
+        if(el.__go2rtcRetries>6){                   // 最多重試 6 次(~36 秒),避免無限打
+            clearInterval(el.__go2rtcWatch); el.__go2rtcWatch=null; return;
+        }
+        const old=el.querySelector('video-stream');
+        if(old)old.remove();
+        const node=document.createElement('video-stream');
+        el.appendChild(node);
+        node.__go2rtcSrc=el.__go2rtcUrl;
+        node.src=el.__go2rtcUrl;
+        clampGo2rtcPlaybackRate(node);
+    }, 6000);
 };
 // v-go2rtc:用指令掛載,而不是直接在模板寫 <video-stream>。
 // 🛑 原因:video-rtc.js 的 src 是 property setter 且沒有 observedAttributes,
@@ -10946,7 +10976,7 @@ const vHls={
 const vGo2rtc={
     mounted(el,binding){ attachGo2rtc(el,binding.value); },
     updated(el,binding){ if(binding.value!==binding.oldValue)attachGo2rtc(el,binding.value); },
-    unmounted(el){ el.innerHTML=''; }
+    unmounted(el){ if(el.__go2rtcWatch){clearInterval(el.__go2rtcWatch);el.__go2rtcWatch=null;} el.innerHTML=''; }
 };
 
 const app=createApp({
