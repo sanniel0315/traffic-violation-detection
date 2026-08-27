@@ -23,6 +23,13 @@ from api.models import SessionLocal, Camera, LPRCameraStat, LPRRecord
 from api.utils.feature_state import get_feature_state, set_feature_state
 from api.utils.camera_stream import capture_open_guard, resolve_analysis_source
 from detection.violation_detector import VehicleTracker
+from services.hanwha_sunapi import (
+    BBox,
+    PtzStopWindow,
+    SunapiError,
+    build_plate_lpr_workflow,
+    build_sunapi_client_from_camera,
+)
 
 router = APIRouter(prefix="/api/lpr/stream", tags=["lpr-stream"])
 
@@ -1759,6 +1766,102 @@ class LPRStreamTask:
         self._stats_lock = threading.Lock()
         self._stats_pending = {field: 0 for field in _LPR_CUMULATIVE_COUNTER_FIELDS}
         self._stats_last_flush = 0.0
+        self.hanwha_enabled = False
+        self.hanwha_auto_start = True
+        self.hanwha_channel = 0
+        self.hanwha_profile = 2
+        self.hanwha_min_plate_width = 160
+        self.hanwha_min_plate_height = 48
+        self.hanwha_zoom_padding_ratio = 0.35
+        self.hanwha_zoom_cooldown_sec = 1.2
+        self.hanwha_stop_zone: Optional[BBox] = None
+        self.hanwha_ptz_stop_window: Optional[PtzStopWindow] = None
+        self.hanwha_client = None
+        self.hanwha_last_zoom_at = 0.0
+        self.hanwha_tracking_started = False
+        self.hanwha_stopped_track_ids: set[int] = set()
+        self._load_hanwha_tracking_config()
+
+    @staticmethod
+    def _bbox_from_config(raw: Any) -> Optional[BBox]:
+        if not raw:
+            return None
+        try:
+            if isinstance(raw, dict):
+                return BBox(
+                    x1=int(raw.get("x1", 0)),
+                    y1=int(raw.get("y1", 0)),
+                    x2=int(raw.get("x2", 0)),
+                    y2=int(raw.get("y2", 0)),
+                )
+            if isinstance(raw, (list, tuple)) and len(raw) == 4:
+                return BBox(int(raw[0]), int(raw[1]), int(raw[2]), int(raw[3]))
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def _ptz_stop_window_from_config(raw: Any) -> Optional[PtzStopWindow]:
+        if not isinstance(raw, dict):
+            return None
+        try:
+            return PtzStopWindow(
+                pan=float(raw["pan"]) if raw.get("pan") is not None else None,
+                tilt=float(raw["tilt"]) if raw.get("tilt") is not None else None,
+                zoom=float(raw["zoom"]) if raw.get("zoom") is not None else None,
+                pan_tolerance=float(raw.get("pan_tolerance", 2.0)),
+                tilt_tolerance=float(raw.get("tilt_tolerance", 2.0)),
+                zoom_tolerance=float(raw.get("zoom_tolerance", 1.0)),
+            )
+        except Exception:
+            return None
+
+    def _load_hanwha_tracking_config(self) -> None:
+        """讀取攝影機 detection_config 內的 Hanwha 追蹤設定。"""
+        db = SessionLocal()
+        try:
+            cam = db.query(Camera).filter(Camera.id == self.camera_id).first()
+            if not cam:
+                return
+            cfg = cam.detection_config or {}
+            if not isinstance(cfg, dict):
+                return
+            tracking_cfg = (
+                cfg.get("hanwha_lpr_tracking")
+                or cfg.get("sunapi_lpr_tracking")
+                or cfg.get("hanwha")
+                or {}
+            )
+            if not isinstance(tracking_cfg, dict):
+                tracking_cfg = {}
+            sunapi_cfg = cfg.get("sunapi") if isinstance(cfg.get("sunapi"), dict) else {}
+            enabled = tracking_cfg.get("enabled", sunapi_cfg.get("lpr_tracking_enabled", False))
+            self.hanwha_enabled = str(enabled).lower() in {"1", "true", "yes", "on"} if not isinstance(enabled, bool) else enabled
+            if not self.hanwha_enabled:
+                return
+
+            self.hanwha_auto_start = bool(tracking_cfg.get("auto_start", True))
+            self.hanwha_channel = int(tracking_cfg.get("channel", sunapi_cfg.get("channel", 0)) or 0)
+            self.hanwha_profile = int(tracking_cfg.get("profile", sunapi_cfg.get("profile", 2)) or 2)
+            self.hanwha_min_plate_width = int(tracking_cfg.get("min_lpr_plate_width", 160) or 160)
+            self.hanwha_min_plate_height = int(tracking_cfg.get("min_lpr_plate_height", 48) or 48)
+            self.hanwha_zoom_padding_ratio = float(tracking_cfg.get("zoom_padding_ratio", 0.35) or 0.35)
+            self.hanwha_zoom_cooldown_sec = float(tracking_cfg.get("zoom_cooldown_sec", 1.2) or 1.2)
+            self.hanwha_stop_zone = self._bbox_from_config(tracking_cfg.get("stop_zone"))
+            self.hanwha_ptz_stop_window = self._ptz_stop_window_from_config(tracking_cfg.get("ptz_stop_window"))
+            self.hanwha_client = build_sunapi_client_from_camera(cam)
+            print(
+                f"[LPR-Hanwha] cam{self.camera_id} enabled channel={self.hanwha_channel} "
+                f"profile={self.hanwha_profile}",
+                flush=True,
+            )
+        except Exception as e:
+            self.hanwha_enabled = False
+            self.hanwha_client = None
+            self.last_error = f"hanwha_config_failed: {e}"
+            print(f"[LPR-Hanwha] cam{self.camera_id} 設定載入失敗: {e}", flush=True)
+        finally:
+            db.close()
 
     def _increment_debug_counter(self, field: str, delta: int = 1) -> None:
         if not hasattr(self, field):
@@ -2646,7 +2749,7 @@ class LPRStreamTask:
                 out["raw"] = crop_res.get("raw", "")
         return out
 
-    def _recognize_plate_best(self, frame, x1: int, y1: int, x2: int, y2: int, recognizer) -> Dict[str, Any]:
+    def _recognize_plate_best(self, frame, x1: int, y1: int, x2: int, y2: int, recognizer, run_ocr: bool = True) -> Dict[str, Any]:
         best: Dict[str, Any] = {
             "plate_number": None,
             "confidence": 0.0,
@@ -2697,6 +2800,11 @@ class LPRStreamTask:
             best["plate_bbox"] = [x1 + pbx1, y1 + pby1, x1 + pbx2, y1 + pby2]
             best["selected_candidate"] = "detector_primary_bbox"
             best["det_conf"] = float(ranked_detections[0].get("confidence") or 0.0)
+            if not run_ocr:
+                best["primary_plate_area"] = float(ranked_detections[0].get("rank_area") or 0.0)
+                best["secondary_plate_exists"] = len(ranked_detections) > 1
+                best.pop("_score", None)
+                return best
 
         secondary_candidates: List[str] = []
         primary_area = float(ranked_detections[0].get("rank_area") or 0.0)
@@ -2792,12 +2900,109 @@ class LPRStreamTask:
             if cv2.pointPolygonTest(polygon, (float(cx), float(cy)), False) >= 0:
                 return True
         return False
+
+    def _ensure_hanwha_tracking_started(self) -> None:
+        if not self.hanwha_enabled or not self.hanwha_auto_start or self.hanwha_tracking_started:
+            return
+        if self.hanwha_client is None:
+            return
+        try:
+            self.hanwha_client.start_digital_autotracking(
+                channel=self.hanwha_channel,
+                profile=self.hanwha_profile,
+            )
+            self.hanwha_tracking_started = True
+            print(f"[LPR-Hanwha] cam{self.camera_id} 已啟動 digital auto tracking", flush=True)
+        except Exception as e:
+            self.last_error = f"hanwha_tracking_start_failed: {e}"
+            print(f"[LPR-Hanwha] cam{self.camera_id} 啟動追蹤失敗: {e}", flush=True)
+
+    def _stop_hanwha_tracking(self, track_id: Optional[int] = None) -> None:
+        if not self.hanwha_enabled or self.hanwha_client is None:
+            return
+        if track_id is not None and int(track_id) > 0:
+            self.hanwha_stopped_track_ids.add(int(track_id))
+        try:
+            self.hanwha_client.stop_digital_autotracking(
+                channel=self.hanwha_channel,
+                profile=self.hanwha_profile,
+            )
+            self.hanwha_tracking_started = False
+            print(f"[LPR-Hanwha] cam{self.camera_id} 已停止追蹤", flush=True)
+        except Exception as e:
+            self.last_error = f"hanwha_tracking_stop_failed: {e}"
+            print(f"[LPR-Hanwha] cam{self.camera_id} 停止追蹤失敗: {e}", flush=True)
+
+    def _handle_hanwha_lpr_gate(
+        self,
+        *,
+        plate_bbox: List[int],
+        frame_width: int,
+        frame_height: int,
+        track_id: Optional[int],
+    ) -> bool:
+        """回傳 True 代表已處理 Hanwha 動作，本幀不進 OCR。"""
+        if not self.hanwha_enabled or self.hanwha_client is None:
+            return False
+        if track_id is not None and int(track_id) in self.hanwha_stopped_track_ids:
+            return True
+        if not (isinstance(plate_bbox, (list, tuple)) and len(plate_bbox) == 4):
+            return False
+
+        ptz_position = None
+        if self.hanwha_ptz_stop_window is not None:
+            try:
+                ptz_position = self.hanwha_client.query_position(channel=self.hanwha_channel)
+            except SunapiError as e:
+                self.last_error = f"hanwha_ptz_query_failed: {e}"
+                print(f"[LPR-Hanwha] cam{self.camera_id} PTZ 查詢失敗: {e}", flush=True)
+
+        workflow = build_plate_lpr_workflow(
+            plate_bbox=BBox(int(plate_bbox[0]), int(plate_bbox[1]), int(plate_bbox[2]), int(plate_bbox[3])),
+            frame_width=int(frame_width),
+            frame_height=int(frame_height),
+            stop_zone=self.hanwha_stop_zone,
+            ptz_position=ptz_position,
+            ptz_stop_window=self.hanwha_ptz_stop_window,
+            min_lpr_plate_width=self.hanwha_min_plate_width,
+            min_lpr_plate_height=self.hanwha_min_plate_height,
+            zoom_padding_ratio=self.hanwha_zoom_padding_ratio,
+        )
+
+        if "stop_tracking" in workflow["actions"]:
+            self._stop_hanwha_tracking(track_id=track_id)
+            return True
+
+        if "area_zoom" in workflow["actions"]:
+            now_ts = time.time()
+            if (now_ts - self.hanwha_last_zoom_at) < self.hanwha_zoom_cooldown_sec:
+                return True
+            try:
+                self.hanwha_client.area_zoom(
+                    bbox=BBox(*workflow["zoom_bbox"]),
+                    frame_width=int(frame_width),
+                    frame_height=int(frame_height),
+                    channel=self.hanwha_channel,
+                    profile=self.hanwha_profile,
+                )
+                self.hanwha_last_zoom_at = now_ts
+                print(
+                    f"[LPR-Hanwha] cam{self.camera_id} 車牌 {workflow['plate_size']} 太小，執行 Area Zoom",
+                    flush=True,
+                )
+            except Exception as e:
+                self.last_error = f"hanwha_area_zoom_failed: {e}"
+                print(f"[LPR-Hanwha] cam{self.camera_id} Area Zoom 失敗: {e}", flush=True)
+            return True
+
+        return False
         
     def start(self):
         if self.running:
             return
         self.running = True
         self.load_zones()
+        self._ensure_hanwha_tracking_started()
         # 一定要給名字:GPU 推論通道的用量是依 thread 名歸戶的,匿名執行緒在
         # /api/stream/gpu-lock-stats 只會顯示成 "Thread-N (_run)",查不出是誰。
         # 2026-08-18 就是因為這樣,花了額外工夫才確認吃掉一半通道的是 LPR。
@@ -2808,6 +3013,7 @@ class LPRStreamTask:
         
     def stop(self):
         self.running = False
+        self._stop_hanwha_tracking()
         if self.thread:
             self.thread.join(timeout=5)
         self._flush_cumulative_stats(force=True)
@@ -3068,7 +3274,15 @@ class LPRStreamTask:
                             continue
 
                         # 多裁切候選 + OCR 投票
-                        result = self._recognize_plate_best(frame, x1, y1, x2, y2, recognizer)
+                        result = self._recognize_plate_best(
+                            frame,
+                            x1,
+                            y1,
+                            x2,
+                            y2,
+                            recognizer,
+                            run_ocr=not self.hanwha_enabled,
+                        )
                         ih, iw = frame.shape[:2]
                         vx1 = max(0, min(iw - 1, int(x1)))
                         vy1 = max(0, min(ih - 1, int(y1)))
@@ -3091,6 +3305,13 @@ class LPRStreamTask:
                             continue
                         result["plate_bbox"] = [px1, py1, px2, py2]
                         fallback_only = bool(result.get("fallback_only"))
+                        if self._handle_hanwha_lpr_gate(
+                            plate_bbox=[px1, py1, px2, py2],
+                            frame_width=iw,
+                            frame_height=ih,
+                            track_id=track_id,
+                        ):
+                            continue
 
                         # 即使是 fallback bbox 也嘗試 OCR — 每台車��要辨識
                         # if fallback_only:
