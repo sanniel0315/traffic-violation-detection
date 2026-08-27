@@ -46,6 +46,9 @@ class CongestionDetector:
         self.tracker_map: Dict[str, VehicleTracker] = {}
         self.track_meta_map: Dict[str, Dict[int, Dict[str, Any]]] = defaultdict(dict)
         self.queue_state_map: Dict[str, Dict[str, Any]] = defaultdict(dict)
+        # 固定物候選點:{camera_key: [{"center":(x,y),"first_seen":dt,"last_seen":dt}]}
+        # 以「位置」記憶,跨 track 重生累積存在時間(低信心誤判會閃爍、track id 一直換)。
+        self.static_spot_map: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         print("✅ 壅塞偵測器初始化完成")
 
     def reset_camera_state(self, camera_key: str) -> None:
@@ -56,6 +59,7 @@ class CongestionDetector:
         self.tracker_map.pop(key, None)
         self.track_meta_map.pop(key, None)
         self.queue_state_map.pop(key, None)
+        self.static_spot_map.pop(key, None)
         # zone-level 也清（分數歷史 key 格式是 f"{camera_key}::zone_{idx}" 與 f"{camera_key}::overall"）
         prefix = f"{key}::"
         for sub_key in list(self.history_map.keys()):
@@ -411,11 +415,19 @@ class CongestionDetector:
     ) -> tuple[set[int], set[int]]:
         """回傳 (停等中的 track ids, 固定物 track ids)。
 
-        固定物 = 從第一次出現起總位移從未超過 static_object_px、且已存在
-        static_object_sec 以上的 track（地上標線/反光鏡等被誤判成車的靜態物）。
+        固定物 = 同一個「位置」被幾乎不動的偵測連續佔據 static_object_sec 以上
+        （地上標線/反光鏡等被誤判成車的靜態物）。存在時間記在 static_spot_map
+        的「固定點」上而非 track 上：低信心誤判會閃爍、track id 一直換
+        （實測 cam_3 箭頭 6 分鐘內 id 1→21），掛在 track 上永遠累積不到門檻。
+        固定點超過 _SPOT_GAP_SEC 沒被靜態偵測命中就重置——紅燈停等車開走後
+        （綠燈期間該點空著）計時歸零，不會跨紅燈週期累積到誤殺停止線車。
         """
+        _SPOT_GAP_SEC = 30.0
         now = now or datetime.now()
         meta = self.track_meta_map[camera_key]
+        spots = self.static_spot_map[camera_key]
+        # 過期固定點直接丟(等同計時歸零)
+        spots[:] = [s for s in spots if (now - s["last_seen"]).total_seconds() <= _SPOT_GAP_SEC]
         active_ids: set[int] = set()
         stopped_ids: set[int] = set()
         static_ids: set[int] = set()
@@ -435,7 +447,6 @@ class CongestionDetector:
             state["bbox"] = bbox
             if "spawn" not in state:
                 state["spawn"] = center
-                state["first_seen"] = now
                 state["max_disp"] = 0.0
             _dx = center[0] - state["spawn"][0]
             _dy = center[1] - state["spawn"][1]
@@ -445,11 +456,22 @@ class CongestionDetector:
             history.append(center)
             if len(history) > max(stop_min_frames * 2, 12):
                 del history[:-max(stop_min_frames * 2, 12)]
-            age_sec = (now - state.get("first_seen", now)).total_seconds()
-            if age_sec >= static_object_sec and float(state.get("max_disp", 0.0)) <= static_object_px:
-                static_ids.add(track_id)
-                state["stopped"] = False
-                continue
+            if float(state.get("max_disp", 0.0)) <= static_object_px:
+                # 靜態候選:掛到最近的固定點(或建新點),用固定點的年齡判定
+                spot = None
+                for s in spots:
+                    sx, sy = s["center"]
+                    if ((center[0] - sx) ** 2 + (center[1] - sy) ** 2) ** 0.5 <= static_object_px:
+                        spot = s
+                        break
+                if spot is None:
+                    spot = {"center": center, "first_seen": now, "last_seen": now}
+                    spots.append(spot)
+                spot["last_seen"] = now
+                if (now - spot["first_seen"]).total_seconds() >= static_object_sec:
+                    static_ids.add(track_id)
+                    state["stopped"] = False
+                    continue
             if len(history) >= stop_min_frames:
                 recent = history[-stop_min_frames:]
                 move_dist = self._path_displacement(recent)

@@ -1,17 +1,18 @@
-"""壅塞偵測固定物抑制:終生沒動過的 track(地上標線誤判)要被濾掉,真車不可誤殺。
+"""壅塞偵測固定物抑制:被誤判成車的地上標線要被濾掉,真車不可誤殺。
 
 實例:cam_3 (CCTV-N8-E-9-L-NE-2-SIG) 地上白色轉彎箭頭被低信心偵測(conf 0.12)
-判成 car,同一 track_id 靜止數小時,壅塞面板長期顯示「暢通車輛 1、佔用率 1.6%」。
+判成 car,壅塞面板長期顯示「暢通車輛 1、佔用率 1.6%」。
+🛑 誤判會閃爍、track id 一直換(實測 6 分鐘 id 1→21),所以存在時間掛在
+「固定點(位置)」上跨 track 累積,不能掛在 track 上。
 """
 import sys
+from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
-from collections import defaultdict
 
 from detection.congestion_detector import CongestionDetector
 
@@ -23,6 +24,7 @@ def _detector() -> CongestionDetector:
     det.tracker_map = {}
     det.track_meta_map = defaultdict(dict)
     det.queue_state_map = defaultdict(dict)
+    det.static_spot_map = defaultdict(list)
     return det
 
 
@@ -46,56 +48,79 @@ def _step(det, vehicles, now):
     )
 
 
-def test_static_marking_suppressed_after_grace():
-    """固定標線:滿 300 秒前照舊(頂多算停等),滿了之後進 static、退出 stopped。"""
+T0 = datetime(2026, 8, 27, 23, 0, 0)
+
+
+def test_static_marking_same_track():
+    """固定標線(track id 不變):滿 300 秒前照舊,滿了之後進 static、退出 stopped。"""
     det = _detector()
-    t0 = datetime(2026, 8, 27, 23, 0, 0)
-    # 前 299 秒:位置只抖動 ±1px
-    for sec in (0, 60, 120, 299):
-        stopped, static = _step(det, [_vehicle(5384, 793 + (sec % 2), 616)], t0 + timedelta(seconds=sec))
+    stopped = static = set()
+    for sec in range(0, 300, 10):  # 每 10 秒一幀,位置抖 ±1px
+        stopped, static = _step(det, [_vehicle(5384, 793 + (sec // 10 % 2), 616)], T0 + timedelta(seconds=sec))
     assert 5384 not in static  # 未滿門檻不可提前抑制(排隊車保護)
     assert 5384 in stopped     # 這段期間仍是「停等」語意
-    # 滿 300 秒:變固定物
-    stopped, static = _step(det, [_vehicle(5384, 793, 616)], t0 + timedelta(seconds=301))
+    stopped, static = _step(det, [_vehicle(5384, 793, 616)], T0 + timedelta(seconds=301))
     assert 5384 in static
     assert 5384 not in stopped
+
+
+def test_static_marking_flickering_track_ids():
+    """固定標線(閃爍、track id 一直換):存在時間仍要跨 track 累積到抑制。"""
+    det = _detector()
+    static = set()
+    for i, sec in enumerate(range(0, 302, 10)):
+        # 每幀都換一個新 track id,模擬低信心偵測閃斷重生
+        _, static = _step(det, [_vehicle(100 + i, 793, 616)], T0 + timedelta(seconds=sec))
+    assert static  # 最後一個 track id 已被抑制
+    assert 100 + 30 in static
 
 
 def test_real_queued_car_never_suppressed():
     """真車:移動進畫面後停等,就算停超過 300 秒也不可被當固定物。"""
     det = _detector()
-    t0 = datetime(2026, 8, 27, 23, 0, 0)
-    # 從遠處開進來(位移遠大於 12px)
     for i, cy in enumerate((400, 450, 500, 560, 616)):
-        _step(det, [_vehicle(77, 793, cy)], t0 + timedelta(seconds=i))
-    # 停在原地超過 300 秒(stopped 判定看最近 3 幀,要多餵幾幀靜止)
-    for sec in (200, 300, 400):
-        stopped, static = _step(det, [_vehicle(77, 793, 616)], t0 + timedelta(seconds=sec))
+        _step(det, [_vehicle(77, 793, cy)], T0 + timedelta(seconds=i * 5))
+    stopped = static = set()
+    for sec in range(30, 400, 10):
+        stopped, static = _step(det, [_vehicle(77, 793, 616)], T0 + timedelta(seconds=sec))
     assert 77 not in static
     assert 77 in stopped
 
 
-def test_two_tracks_independent():
-    """固定物與真車同框:只濾固定物。"""
+def test_red_light_cycles_do_not_accumulate():
+    """停止線頭車:每紅燈停 60 秒、綠燈空 90 秒(>30 秒 gap),固定點計時要歸零,
+    多個週期不可累積到誤殺。track id 每週期不同、都直接生在停止線(最壞情況)。"""
     det = _detector()
-    t0 = datetime(2026, 8, 27, 23, 0, 0)
-    for i, cy in enumerate((400, 500, 616)):
-        _step(
+    static = set()
+    t = 0
+    for cycle in range(6):  # 6 個週期共 900 秒,單點累積早超過 300 秒
+        tid = 200 + cycle
+        for sec in range(0, 60, 10):
+            _, static = _step(det, [_vehicle(tid, 793, 616)], T0 + timedelta(seconds=t + sec))
+            assert tid not in static
+        t += 60 + 90  # 綠燈 90 秒沒車在該點
+    assert not static
+
+
+def test_static_and_real_car_coexist():
+    """固定物與真車同框:只抑制固定物。"""
+    det = _detector()
+    static = set()
+    for sec in range(0, 302, 10):
+        cy = min(616, 300 + sec * 2)  # 真車持續移動
+        _, static = _step(
             det,
-            [_vehicle(5384, 793, 300), _vehicle(77, 900, cy)],
-            t0 + timedelta(seconds=i * 150),
+            [_vehicle(5384, 793, 200), _vehicle(88, 1100, cy)],
+            T0 + timedelta(seconds=sec),
         )
-    stopped, static = _step(
-        det,
-        [_vehicle(5384, 793, 300), _vehicle(77, 900, 616)],
-        t0 + timedelta(seconds=500),
-    )
-    assert static == {5384}
-    assert 77 not in static
+    assert 5384 in static
+    assert 88 not in static
 
 
 if __name__ == "__main__":
-    test_static_marking_suppressed_after_grace()
+    test_static_marking_same_track()
+    test_static_marking_flickering_track_ids()
     test_real_queued_car_never_suppressed()
-    test_two_tracks_independent()
+    test_red_light_cycles_do_not_accumulate()
+    test_static_and_real_car_coexist()
     print("OK")
