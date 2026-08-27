@@ -21,7 +21,7 @@ import os
 import threading
 from zoneinfo import ZoneInfo
 from api.models import init_db
-from api.routes import auth, frigate, lpr, lpr_stream, lpr_visual, violations, cameras, stream, traffic, nx
+from api.routes import auth, frigate, hanwha, lpr, lpr_stream, lpr_visual, violations, cameras, stream, traffic, nx
 from api.routes import go2rtc as go2rtc_route
 from api.routes import nport as nport_route
 from api.routes.auth import get_admin_user, get_current_user
@@ -455,6 +455,7 @@ async def signal_proxy(sub_path: str, request: Request,
     return Response(content=r.content, status_code=r.status_code,
                     media_type=r.headers.get("content-type", "application/json"))
 app.include_router(nx.router)
+app.include_router(hanwha.router)
 app.include_router(lpr.router)
 app.include_router(lpr_stream.router)
 app.include_router(lpr_visual.router)

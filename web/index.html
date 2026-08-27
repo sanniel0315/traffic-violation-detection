@@ -3458,6 +3458,11 @@
            系統本身已經有「線上/離線」「偵測中」標籤,這條只是疊上去互相打架,
            而且 RTC 這種字串對使用者沒有意義。整條藏掉。 */
         .go2rtc-host video-stream .info { display: none !important; }
+        /* PTZ 控制面板按鈕(放大視窗) */
+        .ptz-btn { background:#1e293b; color:#e2e8f0; border:1px solid #334155; border-radius:6px;
+                   height:36px; cursor:pointer; font-size:14px; user-select:none; }
+        .ptz-btn:hover { background:#334155; }
+        .ptz-btn:active { background:#2563eb; border-color:#2563eb; }
         .camera-preview .badge { position: absolute; top: 8px; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
         .camera-preview .status-badge { right: 8px; }
         .camera-preview .detection-badge { left: 8px; background: #0d6e9f; color: #fff; }
@@ -5326,6 +5331,63 @@
                                  移掉 SVG 後,下面這個 v-else 才會正確接回上面的 <img v-else-if> ——
                                  原本它是接在 SVG 的 v-if 上,ROI 沒顯示時就會冒出「沒有可顯示的畫面」。 -->
                             <div v-else style="color:#cbd5e1">沒有可顯示的畫面</div>
+                        </div>
+                        <!-- PTZ 控制面板(Hanwha SUNAPI):方向按住移動、變倍、對焦、預置點、追蹤 -->
+                        <div v-if="monitorZoomCamera" style="margin-top:12px;padding:12px 16px;background:#0f172a;border-radius:10px;color:#e2e8f0">
+                            <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start">
+                                <div>
+                                    <div style="font-size:12px;color:#94a3b8;margin-bottom:6px">PTZ 方向（按住移動）</div>
+                                    <div style="display:grid;grid-template-columns:repeat(3,42px);gap:5px">
+                                        <button class="ptz-btn" @mousedown="ptzHold(-1,1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(-1,1,0)" @touchend="ptzRelease()">↖</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(0,1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,1,0)" @touchend="ptzRelease()">↑</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(1,1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(1,1,0)" @touchend="ptzRelease()">↗</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(-1,0,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(-1,0,0)" @touchend="ptzRelease()">←</button>
+                                        <button class="ptz-btn" @click="ptzRelease()">■</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(1,0,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(1,0,0)" @touchend="ptzRelease()">→</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(-1,-1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(-1,-1,0)" @touchend="ptzRelease()">↙</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(0,-1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,-1,0)" @touchend="ptzRelease()">↓</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(1,-1,0)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(1,-1,0)" @touchend="ptzRelease()">↘</button>
+                                    </div>
+                                    <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+                                        <span style="font-size:12px;color:#94a3b8">速度</span>
+                                        <el-slider v-model="ptzSpeed" :min="10" :max="100" :step="10" style="width:110px"></el-slider>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style="font-size:12px;color:#94a3b8;margin-bottom:6px">變倍 / 對焦</div>
+                                    <div style="display:grid;grid-template-columns:repeat(2,64px);gap:5px">
+                                        <button class="ptz-btn" @mousedown="ptzHold(0,0,1)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,0,1)" @touchend="ptzRelease()">放大 +</button>
+                                        <button class="ptz-btn" @mousedown="ptzHold(0,0,-1)" @mouseup="ptzRelease()" @mouseleave="ptzRelease()" @touchstart.prevent="ptzHold(0,0,-1)" @touchend="ptzRelease()">縮小 -</button>
+                                        <button class="ptz-btn" @mousedown="ptzFocus('Near')" @mouseup="ptzFocus('Stop')" @mouseleave="ptzFocus('Stop')" @touchstart.prevent="ptzFocus('Near')" @touchend="ptzFocus('Stop')">焦近</button>
+                                        <button class="ptz-btn" @mousedown="ptzFocus('Far')" @mouseup="ptzFocus('Stop')" @mouseleave="ptzFocus('Stop')" @touchstart.prevent="ptzFocus('Far')" @touchend="ptzFocus('Stop')">焦遠</button>
+                                    </div>
+                                    <div style="margin-top:8px;display:flex;gap:6px">
+                                        <el-button size="small" @click="ptzHome()">回 Home</el-button>
+                                        <el-button size="small" @click="ptzFocus('Auto')">自動對焦</el-button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style="font-size:12px;color:#94a3b8;margin-bottom:6px">預置點</div>
+                                    <div style="display:flex;align-items:center;gap:6px">
+                                        <el-input-number v-model="ptzPresetNo" :min="1" :max="255" size="small" style="width:100px"></el-input-number>
+                                        <el-button size="small" type="primary" @click="ptzGotoPreset()">呼叫</el-button>
+                                    </div>
+                                    <div style="font-size:12px;color:#94a3b8;margin:10px 0 6px">目標追蹤</div>
+                                    <div style="display:flex;gap:6px">
+                                        <el-button size="small" type="success" :loading="ptzTrackBusy" @click="ptzTracking(true)">啟動追蹤</el-button>
+                                        <el-button size="small" type="danger" :loading="ptzTrackBusy" @click="ptzTracking(false)">停止追蹤</el-button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style="font-size:12px;color:#94a3b8;margin-bottom:6px">PTZ 位置</div>
+                                    <el-button size="small" @click="ptzQuery()">查詢位置</el-button>
+                                    <div v-if="ptzPos" style="margin-top:8px;font-size:13px;line-height:1.7">
+                                        <div>Pan：<b>{{ ptzPos.pan ?? '-' }}</b></div>
+                                        <div>Tilt：<b>{{ ptzPos.tilt ?? '-' }}</b></div>
+                                        <div>Zoom：<b>{{ ptzPos.zoom ?? '-' }}</b></div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         <div v-if="monitorZoomCamera && congestionStatus[monitorZoomCamera.id] && congestionStatus[monitorZoomCamera.id].result" style="margin-top:12px;padding:12px 16px;background:#0f172a;border-radius:10px;color:#e2e8f0">
                             <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px;font-size:14px">
@@ -17084,6 +17146,42 @@ const app=createApp({
             monitorZoomCamera.value._zoomReloadTick=Date.now();
             monitorUpdatedAt.value=new Date().toLocaleTimeString('zh-TW');
         };
+        // ── Hanwha SUNAPI PTZ 控制(放大視窗面板) ──────────────────────
+        // 按住=連續移動、放開=stop;速度由 ptzSpeed 滑桿決定。追蹤=digital autotracking。
+        const ptzSpeed=ref(50);
+        const ptzPresetNo=ref(1);
+        const ptzPos=ref(null);
+        const ptzTrackBusy=ref(false);
+        const _ptzApi=async(path,body)=>{
+            const cam=monitorZoomCamera.value; if(!cam)return null;
+            try{
+                const r=await fetch(`/api/hanwha/${cam.id}${path}`,{method:'POST',
+                    headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+                const d=await r.json().catch(()=>({}));
+                if(!r.ok){ElementPlus.ElMessage.error(d.detail||('PTZ 失敗 HTTP '+r.status));return null;}
+                return d;
+            }catch(e){ElementPlus.ElMessage.error('PTZ 連線失敗');return null;}
+        };
+        const ptzHold=(p,t,z)=>{const s=ptzSpeed.value;_ptzApi('/ptz/move',{pan:p*s,tilt:t*s,zoom:z*s});};
+        const ptzRelease=()=>{_ptzApi('/ptz/stop',{});};
+        const ptzFocus=(m)=>{_ptzApi('/ptz/focus',{mode:m});};
+        const ptzHome=()=>{_ptzApi('/ptz/home',{});};
+        const ptzGotoPreset=()=>{const n=parseInt(ptzPresetNo.value)||1;_ptzApi(`/presets/${n}/goto`,{});};
+        const ptzQuery=async()=>{
+            const cam=monitorZoomCamera.value; if(!cam)return;
+            try{
+                const r=await fetch(`/api/hanwha/${cam.id}/ptz`);
+                const d=await r.json().catch(()=>({}));
+                if(r.ok){ptzPos.value=d.position;}
+                else{ElementPlus.ElMessage.error(d.detail||'PTZ 查詢失敗');}
+            }catch(e){ElementPlus.ElMessage.error('PTZ 查詢失敗');}
+        };
+        const ptzTracking=async(on)=>{
+            ptzTrackBusy.value=true;
+            const d=await _ptzApi(on?'/tracking/start':'/tracking/stop',{});
+            ptzTrackBusy.value=false;
+            if(d)ElementPlus.ElMessage.success(on?'已啟動追蹤':'已停止追蹤');
+        };
         let monitorWatchTimer=null;
         let monitorRecycleTimer=null;
         // 每 60 秒自動 recycle 串流連線：解 MJPEG 在瀏覽器長連線記憶體累積/buffer 堆積導致頓
@@ -21314,7 +21412,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,ptzSpeed,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzQuery,ptzTracking,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
