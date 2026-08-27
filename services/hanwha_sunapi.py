@@ -294,6 +294,17 @@ class HanwhaSunapiClient:
         """球機追蹤引擎的自動變倍(ZoomControl):開了之後相機追蹤時會自己拉近目標。
         🛑 這類球機追蹤中會持續控制 PTZ,我們手動 areazoom 會立刻被蓋回去 —
         要放大就得用它自己的 ZoomControl(2026-08-28 實測)。"""
+        # 🛑 同 Enable:這韌體的 set 可能是切換語意,先讀現況、相同就不送(冪等)。
+        try:
+            r = self._request(
+                "/stw-cgi/eventsources.cgi",
+                {"msubmenu": "autotracking", "action": "view", "Channel": int(channel)},
+            )
+            m = re.search(r"ZoomControl=(On|Off)", r.text or "")
+            if m and (m.group(1) == "On") == bool(enable):
+                return {"ok": True, "zoom_control": bool(enable), "status_code": 200, "unchanged": True}
+        except SunapiError:
+            pass
         resp = self._request(
             "/stw-cgi/eventsources.cgi",
             {"msubmenu": "autotracking", "action": "set", "Channel": int(channel),

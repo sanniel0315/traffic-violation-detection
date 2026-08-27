@@ -149,6 +149,7 @@ def start_tracking(
 ):
     """啟動攝影機端 digital auto tracking。"""
     camera, client = _client_for_camera(db, camera_id)
+    print(f"[Hanwha] cam{camera_id} 手動啟動追蹤(面板/API)", flush=True)
     try:
         result = client.start_digital_autotracking(channel=req.channel, profile=req.profile)
     except SunapiError as exc:
@@ -165,6 +166,7 @@ def stop_tracking(
 ):
     """停止攝影機端 digital auto tracking，並送出 PTZ stop。"""
     camera, client = _client_for_camera(db, camera_id)
+    print(f"[Hanwha] cam{camera_id} 手動停止追蹤(面板/API)", flush=True)
     try:
         result = client.stop_digital_autotracking(channel=req.channel, profile=req.profile)
     except SunapiError as exc:
