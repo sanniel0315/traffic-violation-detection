@@ -129,12 +129,16 @@ class HanwhaSunapiClient:
         self.username = username or ""
         self.password = password or ""
         self.timeout = float(timeout)
+        # 🛑 共用 Session:沒有的話每次請求都重新 TCP 交握 + Digest 401 挑戰,
+        #    延遲直接翻倍;分析迴圈裡每個車牌幀都可能打,累積很可觀。
+        self._session = requests.Session()
+        if self.username:
+            self._session.auth = HTTPDigestAuth(self.username, self.password)
 
     def _request(self, path: str, params: dict[str, Any]) -> requests.Response:
         url = f"{self.base_url}{path}"
-        auth = HTTPDigestAuth(self.username, self.password) if self.username else None
         try:
-            resp = requests.get(url, params=params, auth=auth, timeout=self.timeout)
+            resp = self._session.get(url, params=params, timeout=self.timeout)
         except requests.RequestException as exc:
             raise SunapiError(f"SUNAPI 連線失敗: {exc}") from exc
         if resp.status_code >= 400:
