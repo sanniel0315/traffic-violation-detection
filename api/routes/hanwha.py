@@ -328,6 +328,10 @@ class StopWindowRequest(BaseModel):
     zoom_tolerance: float = Field(default=1.0, ge=0.0)
     enabled: bool = True
     channel: int = DEFAULT_CHANNEL
+    # 停止後行為:等 N 秒 → 回預置點 → 重新啟用追蹤(preset 給 None/0 = 不回)
+    return_preset: Optional[int] = 1
+    return_delay_sec: float = Field(default=5.0, ge=0.0)
+    resume_tracking: bool = True
 
 
 # ── 到點停追背景監看:每秒查 PTZ,進入停止窗(外→內轉態)就停止追蹤 ──────────
@@ -335,9 +339,12 @@ _stop_watchers: dict[int, threading.Event] = {}
 _stop_watchers_lock = threading.Lock()
 
 
-def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_evt: threading.Event):
+def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_evt: threading.Event,
+                            return_preset: Optional[int] = 1, return_delay_sec: float = 5.0,
+                            resume_tracking: bool = True):
     inside_prev = False
-    print(f"[Hanwha] cam{camera_id} 到點停追監看啟動 window={window.as_dict()}", flush=True)
+    print(f"[Hanwha] cam{camera_id} 到點停追監看啟動 window={window.as_dict()} "
+          f"回預置={return_preset} 延遲={return_delay_sec}s", flush=True)
     while not stop_evt.is_set():
         try:
             pos = client.query_position()
@@ -345,6 +352,22 @@ def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_
             if inside and not inside_prev:
                 client.stop_digital_autotracking()
                 print(f"[Hanwha] cam{camera_id} 到達停止座標 {pos.as_dict()},已停止追蹤", flush=True)
+                # 停止後等 N 秒 → 回預置點 → 重新啟用追蹤等下一台
+                if return_preset:
+                    stop_evt.wait(max(0.0, float(return_delay_sec)))
+                    if not stop_evt.is_set():
+                        try:
+                            client.goto_preset(int(return_preset))
+                            print(f"[Hanwha] cam{camera_id} 已回預置點 {return_preset}", flush=True)
+                        except Exception as e:
+                            print(f"[Hanwha] cam{camera_id} 回預置點失敗: {e}", flush=True)
+                        if resume_tracking:
+                            stop_evt.wait(2.0)   # 等相機走到定位再開追蹤
+                            try:
+                                client.start_digital_autotracking()
+                                print(f"[Hanwha] cam{camera_id} 追蹤已重新啟用,等待下一台", flush=True)
+                            except Exception as e:
+                                print(f"[Hanwha] cam{camera_id} 追蹤重啟失敗: {e}", flush=True)
             inside_prev = inside
         except Exception as e:
             print(f"[Hanwha] cam{camera_id} 到點停追監看錯誤: {e}", flush=True)
@@ -360,13 +383,16 @@ def _disarm_stop_watcher(camera_id: int) -> None:
         evt.set()
 
 
-def _arm_stop_watcher(camera_id: int, client, window: PtzStopWindow) -> None:
+def _arm_stop_watcher(camera_id: int, client, window: PtzStopWindow,
+                      return_preset: Optional[int] = 1, return_delay_sec: float = 5.0,
+                      resume_tracking: bool = True) -> None:
     _disarm_stop_watcher(camera_id)
     evt = threading.Event()
     with _stop_watchers_lock:
         _stop_watchers[camera_id] = evt
     threading.Thread(
-        target=_stop_window_watch_loop, args=(camera_id, client, window, evt),
+        target=_stop_window_watch_loop,
+        args=(camera_id, client, window, evt, return_preset, return_delay_sec, resume_tracking),
         name=f"hanwha-stopwin-{camera_id}", daemon=True,
     ).start()
 
@@ -389,6 +415,9 @@ def set_tracking_stop_window(
         "pan_tolerance": req.pan_tolerance,
         "tilt_tolerance": req.tilt_tolerance,
         "zoom_tolerance": req.zoom_tolerance,
+        "return_preset": req.return_preset,
+        "return_delay_sec": req.return_delay_sec,
+        "resume_tracking": req.resume_tracking,
     }
     cfg = dict(camera.detection_config or {})
     tracking_cfg = dict(cfg.get("hanwha_lpr_tracking") or {})
@@ -406,7 +435,10 @@ def set_tracking_stop_window(
             tilt_tolerance=req.tilt_tolerance,
             zoom_tolerance=req.zoom_tolerance,
         )
-        _arm_stop_watcher(camera.id, client, window)
+        _arm_stop_watcher(camera.id, client, window,
+                          return_preset=req.return_preset,
+                          return_delay_sec=req.return_delay_sec,
+                          resume_tracking=req.resume_tracking)
     else:
         _disarm_stop_watcher(camera.id)
 
@@ -455,7 +487,10 @@ def _rearm_stop_watchers_on_startup() -> None:
                     tilt_tolerance=float(win.get("tilt_tolerance", 2.0)),
                     zoom_tolerance=float(win.get("zoom_tolerance", 1.0)),
                 )
-                _arm_stop_watcher(cam.id, client, window)
+                _arm_stop_watcher(cam.id, client, window,
+                                  return_preset=win.get("return_preset", 1),
+                                  return_delay_sec=float(win.get("return_delay_sec", 5.0)),
+                                  resume_tracking=bool(win.get("resume_tracking", True)))
         finally:
             db.close()
     except Exception as e:

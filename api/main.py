@@ -479,10 +479,22 @@ try:
 except Exception as _e:
     print(f"[main] init_from_config (io_tcp) failed: {_e}", flush=True)
 # 靜態檔案
+class _NoCacheHtmlStaticFiles(StaticFiles):
+    """HTML 一律 no-cache:瀏覽器對沒有 Cache-Control 的回應會用啟發式快取,
+    使用者按 F5 仍拿到舊頁 → 每次改版都要教人 Ctrl+F5(2026-08-28 根治)。
+    js/css/圖片不動,照舊走 ETag/Last-Modified 協商。"""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if (response.headers.get("content-type") or "").startswith("text/html"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 if os.path.exists("./output"):
     app.mount("/files", StaticFiles(directory="./output"), name="files")
 if os.path.exists("./web"):
-    app.mount("/web", StaticFiles(directory="./web", html=True), name="web")
+    app.mount("/web", _NoCacheHtmlStaticFiles(directory="./web", html=True), name="web")
 
 
 @app.get("/")
