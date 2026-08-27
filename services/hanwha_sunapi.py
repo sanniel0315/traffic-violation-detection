@@ -376,9 +376,12 @@ class HanwhaSunapiClient:
         return {"ok": True, "preset": int(preset), "status_code": resp.status_code}
 
     def stop(self, channel: int = DEFAULT_CHANNEL) -> dict[str, Any]:
+        # 🛑 OperationType 是必要參數,缺了回 NG 603(之前被 200+NG 靜默吞掉,
+        #    stop 從來沒生效過;2026-08-28 實測抓到)。
         resp = self._request(
             "/stw-cgi/ptzcontrol.cgi",
-            {"msubmenu": "stop", "action": "control", "Channel": int(channel)},
+            {"msubmenu": "stop", "action": "control", "Channel": int(channel),
+             "OperationType": "All"},
         )
         return {"ok": True, "status_code": resp.status_code}
 
