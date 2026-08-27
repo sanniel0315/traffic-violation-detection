@@ -252,6 +252,43 @@ class HanwhaSunapiClient:
         self.stop(channel=channel)
         return result
 
+    def target_lock(self, x_ratio: float, y_ratio: float, channel: int = DEFAULT_CHANNEL) -> dict[str, Any]:
+        """手動鎖定追蹤目標:x/y 為畫面比例 0~1,轉成相機的 1~10000 正規化座標。
+        (eventsources autotracking control Mode=Start + TargetLockCoordinate)"""
+        x = max(1, min(10000, int(round(float(x_ratio) * 10000))))
+        y = max(1, min(10000, int(round(float(y_ratio) * 10000))))
+        resp = self._request(
+            "/stw-cgi/eventsources.cgi",
+            {
+                "msubmenu": "autotracking",
+                "action": "control",
+                "Channel": int(channel),
+                "Mode": "Start",
+                "TargetLockCoordinate": f"{x},{y}",
+            },
+        )
+        return {"ok": True, "coordinate": [x, y], "status_code": resp.status_code}
+
+    def set_tracking_object_filter(
+        self,
+        vehicle_only: bool,
+        channel: int = DEFAULT_CHANNEL,
+    ) -> dict[str, Any]:
+        """物件過濾:只追車(Vehicle) 或 人車都追(關閉過濾)。
+        🛑 參數名 OjbectFilterEnable 是相機韌體自己拼錯的,照它的能力表送。"""
+        params: dict[str, Any] = {
+            "msubmenu": "autotracking",
+            "action": "set",
+            "Channel": int(channel),
+        }
+        if vehicle_only:
+            params["OjbectFilterEnable"] = "True"
+            params["ObjectTypeFilter"] = "Vehicle"
+        else:
+            params["OjbectFilterEnable"] = "False"
+        resp = self._request("/stw-cgi/eventsources.cgi", params)
+        return {"ok": True, "vehicle_only": bool(vehicle_only), "status_code": resp.status_code}
+
     def _eventsources_autotracking(self, enable: bool, channel: int) -> dict[str, Any]:
         """傳統球機的自動追蹤開關(eventsources.cgi autotracking set Enable)。"""
         resp = self._request(

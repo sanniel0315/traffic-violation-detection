@@ -315,6 +315,51 @@ def goto_preset(
     return {"camera_id": camera.id, "result": result}
 
 
+class TargetLockRequest(BaseModel):
+    """點畫面鎖定目標:x/y 為相對整個影像內容的比例(0~1)。"""
+
+    x_ratio: float = Field(ge=0.0, le=1.0)
+    y_ratio: float = Field(ge=0.0, le=1.0)
+    channel: int = DEFAULT_CHANNEL
+
+
+class ObjectFilterRequest(BaseModel):
+    vehicle_only: bool = True
+    channel: int = DEFAULT_CHANNEL
+
+
+@router.post("/{camera_id}/tracking/target-lock")
+def tracking_target_lock(
+    camera_id: int,
+    req: TargetLockRequest,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """在畫面上點一個位置,鎖定該處目標開始追蹤。"""
+    camera, client = _client_for_camera(db, camera_id)
+    try:
+        result = client.target_lock(x_ratio=req.x_ratio, y_ratio=req.y_ratio, channel=req.channel)
+    except SunapiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"camera_id": camera.id, "result": result}
+
+
+@router.post("/{camera_id}/tracking/object-filter")
+def tracking_object_filter(
+    camera_id: int,
+    req: ObjectFilterRequest,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """追蹤物件過濾:只追車(Vehicle)或人車都追。"""
+    camera, client = _client_for_camera(db, camera_id)
+    try:
+        result = client.set_tracking_object_filter(vehicle_only=req.vehicle_only, channel=req.channel)
+    except SunapiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"camera_id": camera.id, "result": result}
+
+
 @router.post("/{camera_id}/plate/zoom")
 def zoom_plate_area(
     camera_id: int,
