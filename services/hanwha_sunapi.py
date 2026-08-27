@@ -143,6 +143,12 @@ class HanwhaSunapiClient:
             raise SunapiError(f"SUNAPI 連線失敗: {exc}") from exc
         if resp.status_code >= 400:
             raise SunapiError(f"SUNAPI 回應 HTTP {resp.status_code}: {resp.text[:200]}")
+        # 🛑 SUNAPI 的指令錯誤是 HTTP 200 + "NG\r\nError Code: ..." 文字,
+        #    只看狀態碼會把失敗當成功吞掉(2026-08-28 實測:Pan=50 超出 -6~6
+        #    範圍回 200+NG 604,前端無錯誤、相機不動)。
+        body_head = (resp.text or "")[:64].strip()
+        if body_head.startswith("NG"):
+            raise SunapiError(f"SUNAPI NG: {body_head[:120]}")
         return resp
 
     @staticmethod
@@ -292,6 +298,8 @@ class HanwhaSunapiClient:
             "msubmenu": "continuous",
             "action": "control",
             "Channel": int(channel),
+            # 🛑 沒有這個的話速度範圍是 -6~6,送 -100~100 會回 NG 604(實測)。
+            "NormalizedSpeed": "True",
         }
         if int(pan):
             params["Pan"] = max(-100, min(100, int(pan)))
