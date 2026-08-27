@@ -232,16 +232,39 @@ class HanwhaSunapiClient:
         profile: int = DEFAULT_PROFILE,
         channel: int = DEFAULT_CHANNEL,
     ) -> dict[str, Any]:
-        return self._digital_autotracking("Start", profile=profile, channel=channel)
+        # 🛑 兩套方言:AI PTZ 系列用 ptzcontrol digitalautotracking;
+        #    傳統球機(62 站實測 XNP 類)用 eventsources autotracking set Enable。
+        #    先試前者,回「不支援/未實作」就自動切後者。
+        try:
+            return self._digital_autotracking("Start", profile=profile, channel=channel)
+        except SunapiError:
+            return self._eventsources_autotracking(True, channel=channel)
 
     def stop_digital_autotracking(
         self,
         profile: int = DEFAULT_PROFILE,
         channel: int = DEFAULT_CHANNEL,
     ) -> dict[str, Any]:
-        result = self._digital_autotracking("Stop", profile=profile, channel=channel)
+        try:
+            result = self._digital_autotracking("Stop", profile=profile, channel=channel)
+        except SunapiError:
+            result = self._eventsources_autotracking(False, channel=channel)
         self.stop(channel=channel)
         return result
+
+    def _eventsources_autotracking(self, enable: bool, channel: int) -> dict[str, Any]:
+        """傳統球機的自動追蹤開關(eventsources.cgi autotracking set Enable)。"""
+        resp = self._request(
+            "/stw-cgi/eventsources.cgi",
+            {
+                "msubmenu": "autotracking",
+                "action": "set",
+                "Channel": int(channel),
+                "Enable": "True" if enable else "False",
+            },
+        )
+        return {"ok": True, "mode": "Start" if enable else "Stop",
+                "via": "eventsources", "status_code": resp.status_code}
 
     def _digital_autotracking(self, mode: str, profile: int, channel: int) -> dict[str, Any]:
         # 🛑 不送 Profile:62 站實測帶 Profile 會回 602 參數名稱不正確,
