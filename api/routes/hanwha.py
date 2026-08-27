@@ -346,6 +346,7 @@ def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_
                             resume_tracking: bool = True):
     inside_prev = False
     keepalive_n = 0
+    _keepalive_backoff_until = [0.0]
     print(f"[Hanwha] cam{camera_id} 到點停追監看啟動 window={window.as_dict()} "
           f"回預置={return_preset} 延遲={return_delay_sec}s", flush=True)
     while not stop_evt.is_set():
@@ -354,18 +355,27 @@ def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_
             # (目標離開視野/追丟)就自動把 Enable 關掉」(2026-08-28 整晚實測,
             # 與鎖定/手動操作無關) → 發現關了就重新啟用。新車出現時 LPR gate
             # 的 _ensure 也會即時重開,這裡是後備。
-            if resume_tracking:
+            if resume_tracking and stop_evt.wait(0) is False:
                 keepalive_n += 1
-                if keepalive_n >= 10:
+                if keepalive_n >= 10 and time.monotonic() >= _keepalive_backoff_until[0]:
                     keepalive_n = 0
                     try:
-                        r = client._request(
-                            "/stw-cgi/eventsources.cgi",
-                            {"msubmenu": "autotracking", "action": "view", "Channel": 0},
-                        )
-                        if "Enable=False" in (r.text or ""):
-                            client.start_digital_autotracking()
-                            print(f"[Hanwha] cam{camera_id} 追蹤引擎被關閉,keepalive 已重新啟用", flush=True)
+                        if client.get_autotracking_enabled() is False:
+                            # 🛑 set 是切換語意且 view 可能短暫過期 → 設定後必須回讀驗證,
+                            #    失敗再補一次;兩次都失敗就退避 5 分鐘,避免跟相機互相切換
+                            #    震盪(2026-08-28 實測每 12 秒關一次的循環就是這樣來的)。
+                            ok = False
+                            for _try in range(2):
+                                client.start_digital_autotracking()
+                                stop_evt.wait(1.2)
+                                if client.get_autotracking_enabled() is True:
+                                    ok = True
+                                    break
+                            if ok:
+                                print(f"[Hanwha] cam{camera_id} 追蹤引擎被關閉,keepalive 已重新啟用(驗證通過)", flush=True)
+                            else:
+                                _keepalive_backoff_until[0] = time.monotonic() + 300
+                                print(f"[Hanwha] cam{camera_id} keepalive 無法維持引擎開啟,退避 5 分鐘(可能有其他端在控制)", flush=True)
                     except Exception:
                         pass
             pos = client.query_position()
