@@ -362,6 +362,16 @@ def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_
                     keepalive_n = 0
                     try:
                         if client.get_autotracking_enabled() is False:
+                            # 引擎自停 = 一次追蹤結束(這韌體追完/追丟會自己關 Enable)。
+                            # 相機常吊在追丟的半路姿態 → 先回預置點,再重新啟用等下一台。
+                            # (已在預置點的話 goto 是無感 no-op)
+                            if return_preset:
+                                try:
+                                    client.goto_preset(int(return_preset))
+                                    print(f"[Hanwha] cam{camera_id} 追蹤結束(引擎自停),已回預置點 {return_preset}", flush=True)
+                                except Exception as e:
+                                    print(f"[Hanwha] cam{camera_id} 追蹤結束回預置失敗: {e}", flush=True)
+                                stop_evt.wait(2.0)
                             # 🛑 set 是切換語意且 view 可能短暫過期 → 設定後必須回讀驗證,
                             #    失敗再補一次;兩次都失敗就退避 5 分鐘,避免跟相機互相切換
                             #    震盪(2026-08-28 實測每 12 秒關一次的循環就是這樣來的)。

@@ -276,17 +276,36 @@ class HanwhaSunapiClient:
     ) -> dict[str, Any]:
         """物件過濾:只追車(Vehicle) 或 人車都追(關閉過濾)。
         🛑 相機能力表把參數名拼成 OjbectFilterEnable,但實際 API 只收正確拼法
-        ObjectFilterEnable(62 站實測:錯拼 602、正拼 OK)。"""
+        ObjectFilterEnable(62 站實測:錯拼 602、正拼 OK)。
+        🛑 這韌體的 set 可能是切換語意 → 先讀現況,只送有差異的參數(冪等)。"""
+        cur_enable = None
+        cur_types = None
+        try:
+            r = self._request(
+                "/stw-cgi/eventsources.cgi",
+                {"msubmenu": "autotracking", "action": "view", "Channel": int(channel)},
+            )
+            m = re.search(r"ObjectFilterEnable=(True|False)", r.text or "")
+            cur_enable = (m.group(1) == "True") if m else None
+            m2 = re.search(r"ObjectTypeFilter=([A-Za-z,]+)", r.text or "")
+            cur_types = m2.group(1) if m2 else None
+        except SunapiError:
+            pass
         params: dict[str, Any] = {
             "msubmenu": "autotracking",
             "action": "set",
             "Channel": int(channel),
         }
         if vehicle_only:
-            params["ObjectFilterEnable"] = "True"
-            params["ObjectTypeFilter"] = "Vehicle"
+            if cur_enable is not True:
+                params["ObjectFilterEnable"] = "True"
+            if cur_types != "Vehicle":
+                params["ObjectTypeFilter"] = "Vehicle"
         else:
-            params["ObjectFilterEnable"] = "False"
+            if cur_enable is not False:
+                params["ObjectFilterEnable"] = "False"
+        if len(params) == 3:   # 沒有任何差異 → 不送
+            return {"ok": True, "vehicle_only": bool(vehicle_only), "status_code": 200, "unchanged": True}
         resp = self._request("/stw-cgi/eventsources.cgi", params)
         return {"ok": True, "vehicle_only": bool(vehicle_only), "status_code": resp.status_code}
 
