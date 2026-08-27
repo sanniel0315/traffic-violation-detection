@@ -1787,6 +1787,12 @@ class LPRStreamTask:
         self.hanwha_lock_cooldown_sec = 3.0
         self.hanwha_locked_track_ids: set[int] = set()
         self.hanwha_last_lock_at = 0.0
+        # 移動性驗證:track 連續 ≥3 次且有實際位移才有鎖定資格。
+        # 夜間誤偵測(隧道壁標誌/燈光)是靜止的,永遠過不了 → 不會亂鎖亂放大。
+        self._hanwha_track_hist: dict[int, list] = {}   # tid -> [first_cx, first_cy, seen]
+        self.hanwha_lock_min_seen = 3
+        self.hanwha_lock_min_move_px = 20.0
+        self.hanwha_camera_side_tracking = False   # eventsources 方言=球機引擎自己控 PTZ/變倍
         self._load_hanwha_tracking_config()
 
     @staticmethod
@@ -2916,12 +2922,20 @@ class LPRStreamTask:
         if self.hanwha_client is None:
             return
         try:
-            self.hanwha_client.start_digital_autotracking(
+            _r = self.hanwha_client.start_digital_autotracking(
                 channel=self.hanwha_channel,
                 profile=self.hanwha_profile,
             )
+            # eventsources 方言 = 相機端追蹤引擎(它自己控制 PTZ 與變倍)
+            self.hanwha_camera_side_tracking = bool(isinstance(_r, dict) and _r.get("via") == "eventsources")
+            if self.hanwha_camera_side_tracking:
+                try:
+                    self.hanwha_client.set_camera_tracking_zoom(True, channel=self.hanwha_channel)
+                except Exception:
+                    pass
             self.hanwha_tracking_started = True
-            print(f"[LPR-Hanwha] cam{self.camera_id} 已啟動 digital auto tracking", flush=True)
+            print(f"[LPR-Hanwha] cam{self.camera_id} 已啟動 digital auto tracking"
+                  f"{'(球機引擎+自動變倍)' if self.hanwha_camera_side_tracking else ''}", flush=True)
         except Exception as e:
             self.last_error = f"hanwha_tracking_start_failed: {e}"
             print(f"[LPR-Hanwha] cam{self.camera_id} 啟動追蹤失敗: {e}", flush=True)
@@ -2970,6 +2984,21 @@ class LPRStreamTask:
         tid = int(track_id)
         if tid in self.hanwha_locked_track_ids or tid in self.hanwha_stopped_track_ids:
             return
+        # 移動性驗證:第一次看到只登記;之後累計出現次數與相對首見位置的位移,
+        # 兩者都達標才准鎖定(2026-08-28 夜間實測:靜止標誌被誤偵測成車+車牌)。
+        cx_px = (x1 + x2) / 2.0
+        cy_px = (y1 + y2) / 2.0
+        hist = self._hanwha_track_hist.get(tid)
+        if hist is None:
+            self._hanwha_track_hist[tid] = [cx_px, cy_px, 1]
+            if len(self._hanwha_track_hist) > 800:
+                for k in sorted(self._hanwha_track_hist)[:400]:
+                    self._hanwha_track_hist.pop(k, None)
+            return
+        hist[2] += 1
+        moved = ((cx_px - hist[0]) ** 2 + (cy_px - hist[1]) ** 2) ** 0.5
+        if hist[2] < self.hanwha_lock_min_seen or moved < max(self.hanwha_lock_min_move_px, 0.02 * frame_w):
+            return
         now = time.time()
         if (now - self.hanwha_last_lock_at) < self.hanwha_lock_cooldown_sec:
             return
@@ -3002,6 +3031,10 @@ class LPRStreamTask:
         if track_id is not None and int(track_id) in self.hanwha_stopped_track_ids:
             return True
         if not (isinstance(plate_bbox, (list, tuple)) and len(plate_bbox) == 4):
+            return False
+        # 全自動模式:只有通過移動性驗證、真的被鎖定的 track 才做 zoom/停止判斷。
+        # 沒這個的話,夜間誤偵測的靜物也會觸發 Area Zoom 把相機拉去看牆(實測)。
+        if self.hanwha_auto_lock and (track_id is None or int(track_id) not in self.hanwha_locked_track_ids):
             return False
         # 前一台車觸發停止後,新 track 出現時重新啟動追蹤(否則第一台車之後
         # 就永遠沒有 autotracking 了)。
@@ -3039,6 +3072,11 @@ class LPRStreamTask:
             return True
 
         if "area_zoom" in workflow["actions"]:
+            # 球機引擎追蹤中會持續控制 PTZ,手動 areazoom 發了也立刻被蓋回去
+            # (實測「有車但沒放大」) → 交給引擎的 ZoomControl 自己拉近,
+            # 這裡只跳過 OCR 等畫面變大。
+            if self.hanwha_camera_side_tracking and self.hanwha_tracking_started:
+                return True
             now_ts = time.time()
             if (now_ts - self.hanwha_last_zoom_at) < self.hanwha_zoom_cooldown_sec:
                 return True
