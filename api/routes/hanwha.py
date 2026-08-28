@@ -141,6 +141,16 @@ def get_supported_ptz_actions(
     return {"camera_id": camera.id, "camera_name": camera.name, "supported": actions}
 
 
+# 🛑 手動暫停旗標:使用者手動「停止追蹤」後,所有自動重啟路徑(keepalive、
+#    idle 回位、LPR 自動鎖定)都要停手,否則按了停止 10 秒內又被開回來 = 按鈕無效。
+#    手動「啟動追蹤」清除;讓手動控制永遠贏過自動鏈。
+_manual_paused: dict[int, bool] = {}
+
+
+def is_manual_paused(camera_id: int) -> bool:
+    return bool(_manual_paused.get(int(camera_id)))
+
+
 @router.post("/{camera_id}/tracking/start")
 def start_tracking(
     camera_id: int,
@@ -148,9 +158,10 @@ def start_tracking(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user),
 ):
-    """啟動攝影機端 digital auto tracking。"""
+    """啟動攝影機端 digital auto tracking(同時解除手動暫停,恢復自動鏈)。"""
     camera, client = _client_for_camera(db, camera_id)
-    print(f"[Hanwha] cam{camera_id} 手動啟動追蹤(面板/API)", flush=True)
+    _manual_paused[int(camera_id)] = False
+    print(f"[Hanwha] cam{camera_id} 手動啟動追蹤(面板/API),自動鏈恢復", flush=True)
     try:
         result = client.start_digital_autotracking(channel=req.channel, profile=req.profile)
     except SunapiError as exc:
@@ -165,9 +176,10 @@ def stop_tracking(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user),
 ):
-    """停止攝影機端 digital auto tracking，並送出 PTZ stop。"""
+    """停止追蹤並手動暫停自動鏈(keepalive/idle/自動鎖定都停手,直到手動再啟動)。"""
     camera, client = _client_for_camera(db, camera_id)
-    print(f"[Hanwha] cam{camera_id} 手動停止追蹤(面板/API)", flush=True)
+    _manual_paused[int(camera_id)] = True
+    print(f"[Hanwha] cam{camera_id} 手動停止追蹤(面板/API),自動鏈暫停", flush=True)
     try:
         result = client.stop_digital_autotracking(channel=req.channel, profile=req.profile)
     except SunapiError as exc:
@@ -444,6 +456,10 @@ def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_
             # (目標離開視野/追丟)就自動把 Enable 關掉」(2026-08-28 整晚實測,
             # 與鎖定/手動操作無關) → 發現關了就重新啟用。新車出現時 LPR gate
             # 的 _ensure 也會即時重開,這裡是後備。
+            if is_manual_paused(camera_id):
+                # 手動停止中:自動鏈全停手,不 keepalive、不 idle 回位
+                stop_evt.wait(1.0)
+                continue
             if resume_tracking and stop_evt.wait(0) is False:
                 keepalive_n += 1
                 if keepalive_n >= 10 and time.monotonic() >= _keepalive_backoff_until[0]:
