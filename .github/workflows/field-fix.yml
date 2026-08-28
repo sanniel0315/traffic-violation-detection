@@ -1,0 +1,44 @@
+name: Field Fix (one-shot maintenance)
+
+# 只手動觸發:清 ld.so.preload 殘留(rootkit 痕跡,擋住 SSH)+ 起 Docker 容器
+on:
+  workflow_dispatch:
+
+jobs:
+  fix:
+    runs-on: [self-hosted, agx-orin]
+    timeout-minutes: 10
+    steps:
+      - name: 清除 ld.so.preload 惡意持久化參照(先存證)
+        run: |
+          if [ -s /etc/ld.so.preload ]; then
+            echo "=== 目前 ld.so.preload 內容 ==="
+            sudo -n cat /etc/ld.so.preload || cat /etc/ld.so.preload || true
+            sudo -n cp -a /etc/ld.so.preload /root/ld.so.preload.evidence.$(date +%s) || true
+            sudo -n truncate -s 0 /etc/ld.so.preload || true
+            echo "=== 已清空 ==="
+          else
+            echo "ld.so.preload 已無內容或不存在"
+          fi
+
+      - name: 起 Docker 服務與容器
+        run: |
+          sudo -n systemctl start docker || true
+          sleep 3
+          sudo -n docker start tvd-proxy frigate 2>/dev/null || true
+          sleep 2
+          echo "=== 容器狀態 ==="
+          sudo -n docker ps --format '{{.Names}} {{.Status}}' || true
+
+      - name: 重啟串流重打包服務
+        run: |
+          sudo -n systemctl restart traffic-hls-remote || true
+          sleep 2
+          systemctl is-active traffic-api traffic-io traffic-hls-remote docker || true
+
+      - name: 回報埠狀態
+        run: |
+          for p in 80 8000 8013; do
+            code=$(curl -s -m 5 -o /dev/null -w "%{http_code}" http://localhost:$p/ || echo 000)
+            echo "port $p -> $code"
+          done
