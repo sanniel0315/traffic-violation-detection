@@ -90,6 +90,17 @@ def _send_expo(tokens: List[str], title: str, body: str, data: Optional[dict] = 
             pass
 
 
+def push_alert(title: str, body: str, data: Optional[dict] = None) -> None:
+    """給其他模組用的即時告警推播(如 Hanwha 球機追蹤事件)。
+    同步、非阻塞失敗吞掉;沒有註冊 token 就直接跳過。"""
+    try:
+        tokens = _load_tokens()
+        if tokens:
+            _send_expo(tokens, title, body, data)
+    except Exception:
+        pass
+
+
 async def _poller() -> None:
     """每 _POLL_SEC 秒查新違規並推播。起始時記住目前最大 id,不對歷史狂推。"""
     from api.models import SessionLocal, Violation
