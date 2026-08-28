@@ -7,9 +7,11 @@
   # lifespan 啟動時:push.start_poller()
 
 流程:
-  App 開啟推播 → POST /api/push/register {token}
-  背景 poller 每 20 秒查 Violation 表,有新的就呼叫 Expo Push API 推給所有 token。
-Token 存在專案根目錄 push_tokens.json(純檔案,不動 DB schema)。
+  App 開啟推播 → POST /api/push/register {token, types}
+  types 訂閱類別:violation=違規警報、lpr=車牌辨識(含球機追蹤);不帶=全訂(相容舊版 App)。
+  背景 poller 每 20 秒查 Violation 表,有新的就推給訂閱 violation 的 token。
+Token 存在專案根目錄 push_tokens.json(純檔案,不動 DB schema);
+舊格式(token 字串陣列)自動視為全訂,第一次存檔時升級成 {token: [types]}。
 """
 import asyncio
 import json
@@ -27,46 +29,67 @@ _EXPO_URL = "https://exp.host/--/api/v2/push/send"
 _POLL_SEC = 20
 
 
-def _load_tokens() -> List[str]:
+_ALL_TYPES = ["violation", "lpr"]
+
+
+def _load_token_map() -> dict:
+    """token → 訂閱類別列表;相容舊格式(字串陣列=全訂)"""
     try:
-        return list(json.loads(_TOKENS_FILE.read_text(encoding="utf-8")))
+        raw = json.loads(_TOKENS_FILE.read_text(encoding="utf-8"))
     except Exception:
-        return []
+        return {}
+    if isinstance(raw, list):
+        return {t: list(_ALL_TYPES) for t in raw if t}
+    if isinstance(raw, dict):
+        return {t: ([x for x in v if x in _ALL_TYPES] or list(_ALL_TYPES)) for t, v in raw.items() if t}
+    return {}
 
 
-def _save_tokens(tokens: List[str]) -> None:
+def _save_token_map(m: dict) -> None:
     try:
-        _TOKENS_FILE.write_text(json.dumps(sorted(set(tokens))), encoding="utf-8")
+        _TOKENS_FILE.write_text(json.dumps(m, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
 
 
+def _tokens_for(category: str) -> List[str]:
+    """訂閱了該類別的 token"""
+    return [t for t, types in _load_token_map().items() if category in types]
+
+
 class TokenBody(BaseModel):
     token: str
+    types: Optional[List[str]] = None   # 訂閱類別 violation/lpr;不帶=全訂(舊版 App)
 
 
 @router.post("/register")
 def register(body: TokenBody) -> dict:
-    """App 註冊 push token"""
-    tokens = _load_tokens()
-    if body.token and body.token not in tokens:
-        tokens.append(body.token)
-        _save_tokens(tokens)
-    return {"ok": True, "count": len(tokens)}
+    """App 註冊 push token(重複註冊=更新訂閱類別)"""
+    m = _load_token_map()
+    if body.token:
+        types = [t for t in (body.types or _ALL_TYPES) if t in _ALL_TYPES]
+        m[body.token] = types or list(_ALL_TYPES)
+        _save_token_map(m)
+    return {"ok": True, "count": len(m)}
 
 
 @router.post("/unregister")
 def unregister(body: TokenBody) -> dict:
     """App 關閉推播時移除 token"""
-    tokens = [t for t in _load_tokens() if t != body.token]
-    _save_tokens(tokens)
-    return {"ok": True, "count": len(tokens)}
+    m = _load_token_map()
+    m.pop(body.token, None)
+    _save_token_map(m)
+    return {"ok": True, "count": len(m)}
 
 
 @router.get("/status")
 def status() -> dict:
-    """目前註冊了幾個裝置"""
-    return {"tokens": len(_load_tokens()), "poll_sec": _POLL_SEC}
+    """目前註冊了幾個裝置(含各類別訂閱數)"""
+    m = _load_token_map()
+    return {"tokens": len(m),
+            "violation": sum(1 for v in m.values() if "violation" in v),
+            "lpr": sum(1 for v in m.values() if "lpr" in v),
+            "poll_sec": _POLL_SEC}
 
 
 def _send_expo(tokens: List[str], title: str, body: str, data: Optional[dict] = None) -> None:
@@ -90,11 +113,11 @@ def _send_expo(tokens: List[str], title: str, body: str, data: Optional[dict] = 
             pass
 
 
-def push_alert(title: str, body: str, data: Optional[dict] = None) -> None:
-    """給其他模組用的即時告警推播(如 Hanwha 球機追蹤事件)。
-    同步、非阻塞失敗吞掉;沒有註冊 token 就直接跳過。"""
+def push_alert(title: str, body: str, data: Optional[dict] = None, category: str = "lpr") -> None:
+    """給其他模組用的即時告警推播(如 Hanwha 球機追蹤事件,歸類 lpr)。
+    只推給有訂閱該 category 的 token;同步、失敗吞掉。"""
     try:
-        tokens = _load_tokens()
+        tokens = _tokens_for(category)
         if tokens:
             _send_expo(tokens, title, body, data)
     except Exception:
@@ -128,7 +151,7 @@ async def _poller() -> None:
         if not news:
             continue
         last_id = int(news[-1].id)
-        tokens = _load_tokens()
+        tokens = _tokens_for("violation")
         if not tokens:
             continue
         # 最多推最近 10 筆,避免一次湧入洗版
