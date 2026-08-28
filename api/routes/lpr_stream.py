@@ -1793,6 +1793,10 @@ class LPRStreamTask:
         self.hanwha_lock_min_seen = 3
         self.hanwha_lock_min_move_px = 20.0
         self.hanwha_camera_side_tracking = False   # eventsources 方言=球機引擎自己控 PTZ/變倍
+        # 即時追蹤告警推播(INSIGHT App)
+        self.hanwha_alert_push = False
+        self.hanwha_alert_min_gap_sec = 15.0
+        self._hanwha_last_alert_at = 0.0
         self._load_hanwha_tracking_config()
 
     @staticmethod
@@ -1864,6 +1868,8 @@ class LPRStreamTask:
             self.hanwha_ptz_stop_window = self._ptz_stop_window_from_config(tracking_cfg.get("ptz_stop_window"))
             self.hanwha_auto_lock = bool(tracking_cfg.get("auto_target_lock", True))
             self.hanwha_lock_cooldown_sec = float(tracking_cfg.get("target_lock_cooldown_sec", 3.0) or 3.0)
+            self.hanwha_alert_push = bool(tracking_cfg.get("alert_push", False))
+            self.hanwha_alert_min_gap_sec = float(tracking_cfg.get("alert_min_gap_sec", 15.0) or 15.0)
             self.hanwha_client = build_sunapi_client_from_camera(cam)
             print(
                 f"[LPR-Hanwha] cam{self.camera_id} enabled channel={self.hanwha_channel} "
@@ -3013,9 +3019,28 @@ class LPRStreamTask:
                 self.hanwha_locked_track_ids.difference_update(drop)
             self.hanwha_last_lock_at = now
             print(f"[LPR-Hanwha] cam{self.camera_id} 自動鎖定 track {tid} 中心 ({cx:.2f},{cy:.2f})", flush=True)
+            self._push_hanwha_alert(now)
         except Exception as e:
             self.last_error = f"hanwha_target_lock_failed: {e}"
             print(f"[LPR-Hanwha] cam{self.camera_id} 自動鎖定失敗: {e}", flush=True)
+
+    def _push_hanwha_alert(self, now: float) -> None:
+        """球機開始即時追蹤 → 推播告警給 INSIGHT App(Expo Push)。
+        節流:同一台相機最短間隔 hanwha_alert_min_gap_sec 才推一次,避免車多洗版。"""
+        if not self.hanwha_alert_push:
+            return
+        if (now - self._hanwha_last_alert_at) < self.hanwha_alert_min_gap_sec:
+            return
+        self._hanwha_last_alert_at = now
+        try:
+            from api.routes.push import push_alert
+            push_alert(
+                f"🎯 球機追蹤中 · {self.camera_name}",
+                "偵測到車輛,球機正在鎖定追蹤放大車牌",
+                {"type": "hanwha_tracking", "camera_id": self.camera_id},
+            )
+        except Exception as e:
+            print(f"[LPR-Hanwha] cam{self.camera_id} 告警推播失敗: {e}", flush=True)
 
     def _handle_hanwha_lpr_gate(
         self,
