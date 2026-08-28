@@ -348,8 +348,16 @@ def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_
     inside_prev = False
     keepalive_n = 0
     _keepalive_backoff_until = [0.0]
+    # idle 回位:相機停止移動(追完/過頭/追丟停在半路)超過 idle_sec 就回預置點。
+    # 🛑 比「精確座標比對」穩健:追蹤過頭/超越目標時座標窗抓不到,但「停止移動」
+    #    一定偵測得到(2026-08-28 需求)。
+    idle_sec = max(2.0, float(return_delay_sec))
+    _last_pos = None            # 上次座標(判斷有沒有在動)
+    _last_move_ts = time.monotonic()
+    _returned = False           # 已因 idle 回過預置(避免停在預置點時每 idle 就重觸發)
+    _return_pos = None          # 回預置後停穩的座標,用來判斷之後是否被新目標拉走
     print(f"[Hanwha] cam{camera_id} 到點停追監看啟動 window={window.as_dict()} "
-          f"回預置={return_preset} 延遲={return_delay_sec}s", flush=True)
+          f"回預置={return_preset} idle={idle_sec}s", flush=True)
     while not stop_evt.is_set():
         try:
             # keepalive:每 10 秒確認追蹤引擎還開著。這款球機「追完一台車
@@ -390,26 +398,65 @@ def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_
                     except Exception:
                         pass
             pos = client.query_position()
-            inside = window.contains(pos)
-            if inside and not inside_prev:
-                client.stop_digital_autotracking()
-                print(f"[Hanwha] cam{camera_id} 到達停止座標 {pos.as_dict()},已停止追蹤", flush=True)
-                # 停止後等 N 秒 → 回預置點 → 重新啟用追蹤等下一台
-                if return_preset:
-                    stop_evt.wait(max(0.0, float(return_delay_sec)))
-                    if not stop_evt.is_set():
+
+            # ── idle 回位:相機停止移動 idle_sec 秒就回預置(過頭/追丟都能回) ──
+            cur = None
+            if pos is not None and pos.pan is not None:
+                cur = (pos.pan or 0.0, pos.tilt or 0.0, pos.zoom or 0.0)
+            if return_preset and cur is not None:
+                if _last_pos is None:
+                    _last_pos = cur
+                    _last_move_ts = time.monotonic()
+                else:
+                    moved = (abs(cur[0] - _last_pos[0]) > 0.5
+                             or abs(cur[1] - _last_pos[1]) > 0.5
+                             or abs(cur[2] - _last_pos[2]) > 0.2)
+                    if moved:
+                        _last_pos = cur
+                        _last_move_ts = time.monotonic()
+                        # 已回過預置又被明顯拉走 = 新目標來了 → 解除,允許下次再回位
+                        if _returned and _return_pos is not None and (
+                                abs(cur[0] - _return_pos[0]) > 1.0
+                                or abs(cur[1] - _return_pos[1]) > 1.0):
+                            _returned = False
+                    elif (not _returned
+                          and (time.monotonic() - _last_move_ts) >= idle_sec):
+                        # 停止移動夠久 → 追蹤結束(停在目標/過頭/追丟半路),回預置點
+                        try:
+                            client.stop_digital_autotracking()
+                        except Exception:
+                            pass
                         try:
                             client.goto_preset(int(return_preset))
-                            print(f"[Hanwha] cam{camera_id} 已回預置點 {return_preset}", flush=True)
+                            print(f"[Hanwha] cam{camera_id} 停止移動 {int(idle_sec)}s(追完/過頭/追丟),已回預置點 {return_preset}", flush=True)
                         except Exception as e:
                             print(f"[Hanwha] cam{camera_id} 回預置點失敗: {e}", flush=True)
+                        _returned = True
                         if resume_tracking:
-                            stop_evt.wait(2.0)   # 等相機走到定位再開追蹤
+                            stop_evt.wait(2.0)   # 等走到預置定位再開追蹤
                             try:
                                 client.start_digital_autotracking()
                                 print(f"[Hanwha] cam{camera_id} 追蹤已重新啟用,等待下一台", flush=True)
-                            except Exception as e:
-                                print(f"[Hanwha] cam{camera_id} 追蹤重啟失敗: {e}", flush=True)
+                            except Exception:
+                                pass
+                        # 記錄回位後的座標,供之後判斷是否被新目標拉走
+                        try:
+                            p2 = client.query_position()
+                            if p2 is not None and p2.pan is not None:
+                                _return_pos = (p2.pan or 0.0, p2.tilt or 0.0, p2.zoom or 0.0)
+                                _last_pos = _return_pos
+                        except Exception:
+                            _return_pos = cur
+                        _last_move_ts = time.monotonic()
+
+            # ── 精確座標窗(可選的即時停止,有進到窗就立刻停,不必等 idle) ──
+            inside = window.contains(pos)
+            if inside and not inside_prev:
+                try:
+                    client.stop_digital_autotracking()
+                    print(f"[Hanwha] cam{camera_id} 到達停止座標 {pos.as_dict()},已停止追蹤", flush=True)
+                except Exception:
+                    pass
             inside_prev = inside
         except Exception as e:
             print(f"[Hanwha] cam{camera_id} 到點停追監看錯誤: {e}", flush=True)

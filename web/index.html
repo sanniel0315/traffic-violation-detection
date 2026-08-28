@@ -17339,9 +17339,16 @@ const app=createApp({
             try{
                 const r=await fetch(`/api/hanwha/${cam.id}/ptz`);
                 const d=await r.json().catch(()=>({}));
-                if(r.ok){ptzPos.value=d.position;}
-                else{ElementPlus.ElMessage.error(d.detail||'PTZ 查詢失敗');}
-            }catch(e){ElementPlus.ElMessage.error('PTZ 查詢失敗');}
+                if(r.ok && d.position){
+                    ptzPos.value=d.position;
+                    if(d.position.pan==null && d.position.tilt==null){
+                        ElementPlus.ElMessage.warning('此攝影機沒有回傳座標(可能是定焦/槍型機)');
+                    }
+                }else{
+                    ptzPos.value=null;
+                    ElementPlus.ElMessage.error(d.detail||'PTZ 查詢失敗(此機型可能不支援)');
+                }
+            }catch(e){ ptzPos.value=null; ElementPlus.ElMessage.error('PTZ 查詢失敗'); }
         };
         const ptzTracking=async(on)=>{
             ptzTrackBusy.value=true;
