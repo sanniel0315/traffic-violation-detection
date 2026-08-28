@@ -2927,6 +2927,13 @@ class LPRStreamTask:
             return
         if self.hanwha_client is None:
             return
+        # 使用者手動停止追蹤時,所有自動啟動路徑都要停手(中央堵點,手動控制優先)
+        try:
+            from api.routes.hanwha import is_manual_paused
+            if is_manual_paused(self.camera_id):
+                return
+        except Exception:
+            pass
         try:
             _r = self.hanwha_client.start_digital_autotracking(
                 channel=self.hanwha_channel,
