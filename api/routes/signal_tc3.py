@@ -35,7 +35,7 @@ import time
 from collections import Counter, deque
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.routes.auth import get_current_user
 from api.routes.logs import add_log
@@ -46,6 +46,43 @@ router = APIRouter(prefix="/api/signal", tags=["signal"])
 SIGNAL_HOST = os.getenv("SIGNAL_TC3_HOST", "10.42.40.222")
 SIGNAL_PORT = int(os.getenv("SIGNAL_TC3_PORT", "1001") or 1001)
 SIGNAL_ENABLED = os.getenv("SIGNAL_TC3_ENABLED", "1") != "0"
+
+# ── 執行期連線設定(可從網頁改 IP/埠/開關,不必改 env 重啟) ──────────────
+# env 只當「首次預設」,之後以 signal_conn.json 為準(重開機保留)。
+# 🛑 reader 迴圈改讀 _conn(而非 module 常數),改 IP 時關掉現有 socket 迫使重連。
+_CONN_PATH = os.getenv("SIGNAL_CONN_CONFIG",
+                       "/workspace/config/system/signal_conn.json")
+_conn: dict = {"host": SIGNAL_HOST, "port": SIGNAL_PORT, "enabled": SIGNAL_ENABLED}
+_conn_reconnect = threading.Event()   # 設了就叫 reader 丟掉現在的連線重連
+
+
+def _load_conn_config() -> None:
+    try:
+        if os.path.exists(_CONN_PATH):
+            with open(_CONN_PATH, encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, dict):
+                _conn["host"] = str(d.get("host") or _conn["host"])
+                _conn["port"] = int(d.get("port") or _conn["port"])
+                _conn["enabled"] = bool(d.get("enabled", _conn["enabled"]))
+    except Exception as exc:
+        print(f"[signal_tc3] 讀連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
+
+
+def _save_conn_config() -> None:
+    try:
+        os.makedirs(os.path.dirname(_CONN_PATH), exist_ok=True)
+        with open(_CONN_PATH, "w", encoding="utf-8") as f:
+            json.dump({"host": _conn["host"], "port": _conn["port"],
+                       "enabled": _conn["enabled"]}, f, ensure_ascii=False, indent=1)
+    except Exception as exc:
+        print(f"[signal_tc3] 存連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
+
+
+_load_conn_config()
+SIGNAL_HOST = _conn["host"]
+SIGNAL_PORT = _conn["port"]
+SIGNAL_ENABLED = _conn["enabled"]
 # 連上之後多久沒看到任何 TC3 訊框就判定「打到錯的機器」並主動斷線重試。
 # 🛑 為什麼需要:號誌來源是 MiiNePort(現場 10.42.40.222)。MaxConnect=1、又只
 #    此一條線,對端靜默或被交控中心搶走時,TCP 連得上卻永遠沒有資料 —— 沒有這
@@ -454,13 +491,27 @@ def decode_frame(frame: bytes) -> Optional[dict]:
 
 
 def _recorder_loop() -> None:
-    """常駐抄錄。斷線退避重連;被中心搶走(MaxConnect=1)時安靜等待。"""
+    """常駐抄錄。斷線退避重連;被中心搶走(MaxConnect=1)時安靜等待。
+    🛑 host/port/enabled 改讀 _conn(可從網頁改),迴圈每輪重讀 → 改 IP 即時生效。"""
     backoff = 2.0
-    print(f"📶 [signal-tc3] 抄錄器啟動 {SIGNAL_HOST}:{SIGNAL_PORT}(只讀)", flush=True)
+    print(f"📶 [signal-tc3] 抄錄器啟動 {_conn['host']}:{_conn['port']}(只讀)", flush=True)
     while not shutdown_event.is_set():
+        # 停用中:不連線,閒置等待被重新啟用(每秒看一次開關/重連旗標)
+        if not _conn["enabled"]:
+            with _lock:
+                _state["connected"] = False
+                _state["enabled"] = False
+            _conn_reconnect.wait(1.0)
+            _conn_reconnect.clear()
+            continue
+        with _lock:
+            _state["enabled"] = True
+            _state["host"] = _conn["host"]
+            _state["port"] = _conn["port"]
+        cur_host, cur_port = _conn["host"], _conn["port"]
         sock = None
         try:
-            sock = socket.create_connection((SIGNAL_HOST, SIGNAL_PORT), timeout=8)
+            sock = socket.create_connection((cur_host, cur_port), timeout=8)
             sock.settimeout(3.0)
             # 把目前這條 socket 交出去給號控用。TCP 的收送方向是獨立的,
             # 從別的執行緒 send 不會干擾這裡的 recv。
@@ -474,6 +525,11 @@ def _recorder_loop() -> None:
             last_rx = connected_at      # 最近一次切出合法碼框的時間(停擺看門狗用)
             got_tc3 = False
             while not shutdown_event.is_set():
+                # 網頁改了 IP/埠 或 按了重連/停用 → 丟掉現在的連線去重評估
+                if (_conn["host"] != cur_host or _conn["port"] != cur_port
+                        or not _conn["enabled"] or _conn_reconnect.is_set()):
+                    _conn_reconnect.clear()
+                    raise ConnectionError("設定變更,主動重連")
                 try:
                     d = sock.recv(4096)
                 except socket.timeout:
@@ -484,7 +540,7 @@ def _recorder_loop() -> None:
                             with _lock:
                                 _state["bad_peer"] += 1
                                 _state["peer_note"] = (
-                                    f"連上 {SIGNAL_HOST}:{SIGNAL_PORT} 但 "
+                                    f"連上 {cur_host}:{cur_port} 但 "
                                     f"{int(SIGNAL_PEER_TIMEOUT)} 秒內沒有任何 TC3 訊框 —— "
                                     "很可能打到同 IP 的另一台設備(檢查 ARP/路由)")
                             raise ConnectionError("peer 不是 TC3 來源")
@@ -575,10 +631,50 @@ _thread: Optional[threading.Thread] = None
 
 def start_recorder() -> None:
     global _thread
-    if not SIGNAL_ENABLED or (_thread is not None and _thread.is_alive()):
+    # 🛑 不再用 SIGNAL_ENABLED 擋:reader 常駐,停用時在迴圈裡閒置(才能被網頁
+    #    重新啟用)。只有 thread 已在跑就不重複起。
+    if _thread is not None and _thread.is_alive():
         return
     _thread = threading.Thread(target=_recorder_loop, daemon=True, name="signal-tc3")
     _thread.start()
+
+
+def get_conn_config() -> dict:
+    with _lock:
+        return {"host": _conn["host"], "port": _conn["port"],
+                "enabled": _conn["enabled"], "connected": bool(_state.get("connected"))}
+
+
+def set_conn_config(host: Optional[str] = None, port: Optional[int] = None,
+                    enabled: Optional[bool] = None) -> dict:
+    """改連線設定 → 存檔 + 迫使 reader 重連(改 IP/開關即時生效)。"""
+    if host is not None:
+        _conn["host"] = str(host).strip()
+    if port is not None:
+        _conn["port"] = int(port)
+    if enabled is not None:
+        _conn["enabled"] = bool(enabled)
+    _save_conn_config()
+    start_recorder()            # 確保 reader 常駐著(停用→啟用時要有人在跑迴圈)
+    _conn_reconnect.set()       # 叫迴圈丟掉現有連線,用新設定重連
+    return get_conn_config()
+
+
+def test_connection(host: str, port: int, timeout: float = 5.0) -> dict:
+    """對指定 host:port 試連(TCP),回報成功與延遲。不動現有抄錄連線。"""
+    t0 = time.time()
+    s = None
+    try:
+        s = socket.create_connection((str(host).strip(), int(port)), timeout=float(timeout))
+        return {"ok": True, "latency_ms": round((time.time() - t0) * 1000, 1)}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:160]}
+    finally:
+        if s is not None:
+            try:
+                s.close()
+            except Exception:
+                pass
 
 
 # ── 中央中繼:寫控制器 / 轉發中央 / server 迴圈 ────────────────────────────
@@ -796,6 +892,45 @@ def start_center_relay() -> None:
     _center_thread = threading.Thread(target=_center_relay_loop, daemon=True,
                                       name="signal-tc3-center")
     _center_thread.start()
+
+
+@router.get("/connection", summary="號誌來源連線設定(IP/埠/開關/是否連上)")
+async def get_connection(_user=Depends(get_current_user)):
+    return get_conn_config()
+
+
+@router.post("/connection", summary="設定號誌來源 IP/埠/開關(即時重連生效)")
+async def set_connection(request: Request, _user=Depends(get_current_user)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    host = body.get("host")
+    port = body.get("port")
+    enabled = body.get("enabled")
+    if host is not None and not str(host).strip():
+        raise HTTPException(status_code=400, detail="IP 不可空白")
+    if port is not None:
+        try:
+            p = int(port)
+            if not (1 <= p <= 65535):
+                raise ValueError
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="埠必須是 1~65535")
+    return set_conn_config(host=host, port=port, enabled=enabled)
+
+
+@router.post("/connection/test", summary="測試與號誌來源的通訊(TCP試連,不動現有抄錄)")
+async def test_conn(request: Request, _user=Depends(get_current_user)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    host = body.get("host") or _conn["host"]
+    port = body.get("port") or _conn["port"]
+    if not str(host).strip():
+        raise HTTPException(status_code=400, detail="IP 不可空白")
+    return test_connection(str(host), int(port))
 
 
 @router.get("/status", summary="號誌即時燈態與抄錄器狀態")

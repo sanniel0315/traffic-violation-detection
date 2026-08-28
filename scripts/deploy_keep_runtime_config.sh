@@ -26,7 +26,8 @@ config/frigate/ui_settings.json \
 config/frigate/go2rtc.yaml \
 config/system/feature_state.json \
 config/system/io_settings.json \
-config/system/nx_settings.json}"
+config/system/nx_settings.json \
+config/system/signal_conn.json}"
 
 cmd="${1:-}"
 
