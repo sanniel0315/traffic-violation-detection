@@ -4842,6 +4842,7 @@
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='lock'}" @click="page='lock'"><svg class="nav-icon"><use href="#i-lock"/></svg><span>{{ $t('nav_lock') }}</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='nport'}" @click="page='nport'"><svg class="nav-icon"><use href="#i-server"/></svg><span>MOXA NPort</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal'}" @click="page='signal';loadSignal();startSignalTimer()"><svg class="nav-icon"><use href="#i-zap"/></svg><span>號誌燈態</span></div>
+            <div v-if="isAdmin" class="menu-item" :class="{active:page==='push_settings'}" @click="page='push_settings';loadPushDevices()"><svg class="nav-icon"><use href="#i-alert"/></svg><span>告警通知</span></div>
             </div><!-- /sidebar-menu-area -->
 
             <!-- sidebar 底部 status (動態 health 切換 online / fault) -->
@@ -6648,6 +6649,63 @@
                         </div>
                         <div class="card-body">
                             <nx-camera-viewer :key="nxViewerKey"></nx-camera-viewer>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 告警通知(App 推播訂閱規則) -->
+                <div v-if="page==='push_settings'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use href="#i-alert"/></svg></div>
+                                <h1 class="ds-section-title">告警<b>通知</b></h1>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span>裝置 <b>{{ pushDevices.length }}</b></span>
+                                <span>啟用 <b>{{ pushDevices.filter(d=>d.enabled).length }}</b></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-alert"/></svg>裝置訂閱規則</span>
+                            <el-button size="small" @click="loadPushDevices">重新整理</el-button>
+                        </div>
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">每支安裝 INSIGHT App 並開啟推播的手機會出現在這裡,各自設定要收的告警。分類 / 攝影機「全不勾 = 全部」;時段留空 = 全天,可跨夜(如 22:00~07:00 只在夜間推)。</div>
+                            <div v-if="!pushDevices.length" style="color:var(--gov-muted);padding:18px 4px">目前沒有已註冊的裝置 —— 請在 App「設定 → 告警通知」開啟「接收告警推播」。</div>
+                            <div v-for="d in pushDevices" :key="d.token" style="border:1px solid var(--gov-border,#dce3ea);border-radius:8px;padding:12px;margin-bottom:12px">
+                                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                                    <el-switch v-model="d.enabled" active-text="啟用"></el-switch>
+                                    <el-input v-model="d.note" placeholder="裝置備註(例:站長的 iPhone)" size="small" style="width:220px"></el-input>
+                                    <span style="font-family:monospace;font-size:12px;color:var(--gov-muted)">…{{ d.token.slice(-10) }}</span>
+                                    <span v-if="d.last_seen" style="font-size:12px;color:var(--gov-muted)">最後註冊 {{ d.last_seen }}</span>
+                                    <span style="flex:1"></span>
+                                    <el-button size="small" @click="testPushDevice(d)">發測試通知</el-button>
+                                    <el-button size="small" type="primary" :loading="pushSaving===d.token" @click="savePushDevice(d)">儲存</el-button>
+                                    <el-button size="small" type="danger" plain @click="deletePushDevice(d)">移除</el-button>
+                                </div>
+                                <div style="margin-top:10px">
+                                    <div style="font-size:12px;color:var(--gov-muted);margin-bottom:4px">告警分類(全不勾 = 全部)</div>
+                                    <el-checkbox-group v-model="d.categories">
+                                        <el-checkbox v-for="(label,key) in pushCategories" :key="key" :label="key">{{ label }}</el-checkbox>
+                                    </el-checkbox-group>
+                                </div>
+                                <div style="margin-top:8px">
+                                    <div style="font-size:12px;color:var(--gov-muted);margin-bottom:4px">攝影機(全不勾 = 全部)</div>
+                                    <el-checkbox-group v-model="d.cameras">
+                                        <el-checkbox v-for="c in pushCams" :key="c.id" :label="c.id">{{ c.name }} (cam{{ c.id }})</el-checkbox>
+                                    </el-checkbox-group>
+                                </div>
+                                <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                                    <span style="font-size:12px;color:var(--gov-muted)">推播時段</span>
+                                    <input type="time" v-model="d.window.start" style="padding:3px 6px;border:1px solid var(--gov-border,#dce3ea);border-radius:6px">
+                                    <span>~</span>
+                                    <input type="time" v-model="d.window.end" style="padding:3px 6px;border:1px solid var(--gov-border,#dce3ea);border-radius:6px">
+                                    <el-button size="small" text @click="d.window.start='';d.window.end=''">清除(全天)</el-button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -20808,6 +20866,49 @@ const app=createApp({
             }catch(e){ ElementPlus.ElMessage.error('儲存失敗'); }
             finally{ sigConnSaving.value=false; }
         };
+        // ── 告警通知(App 推播訂閱規則)頁 ──
+        const pushDevices=ref([]);
+        const pushCategories=ref({});
+        const pushCams=ref([]);
+        const pushSaving=ref('');
+        const loadPushDevices=async()=>{
+            try{
+                const r=await fetch('/api/push/devices',{credentials:'include'});
+                const d=await r.json().catch(()=>({}));
+                if(!r.ok){ ElementPlus.ElMessage.error(d.detail||'讀取裝置失敗'); return; }
+                pushDevices.value=(d.devices||[]).map(x=>({ ...x, note:x.note||'', categories:x.categories||[], cameras:(x.cameras||[]).map(Number), window:{ start:(x.window&&x.window.start)||'', end:(x.window&&x.window.end)||'' } }));
+                pushCategories.value=d.categories||{};
+            }catch(_){ ElementPlus.ElMessage.error('讀取裝置失敗'); }
+            try{
+                const c=await(await fetch('/api/cameras',{credentials:'include'})).json();
+                pushCams.value=(c.items||[]).map(x=>({id:Number(x.id),name:x.name||('cam'+x.id)}));
+            }catch(_){ }
+        };
+        const savePushDevice=async(d)=>{
+            pushSaving.value=d.token;
+            try{
+                const r=await fetch('/api/push/devices',{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:d.token,enabled:d.enabled,note:d.note,categories:d.categories,cameras:d.cameras,window:d.window})});
+                const j=await r.json().catch(()=>({}));
+                if(r.ok)ElementPlus.ElMessage.success('已儲存');
+                else ElementPlus.ElMessage.error(j.detail||'儲存失敗');
+            }catch(_){ ElementPlus.ElMessage.error('儲存失敗'); }
+            finally{ pushSaving.value=''; }
+        };
+        const deletePushDevice=async(d)=>{
+            try{ await ElementPlus.ElMessageBox.confirm('移除這支裝置?它將不再收到任何推播(App 重開推播會重新註冊)。','移除裝置',{type:'warning'}); }catch(_){ return; }
+            try{
+                const r=await fetch('/api/push/devices/delete',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:d.token})});
+                if(r.ok){ ElementPlus.ElMessage.success('已移除'); loadPushDevices(); }
+                else ElementPlus.ElMessage.error('移除失敗');
+            }catch(_){ ElementPlus.ElMessage.error('移除失敗'); }
+        };
+        const testPushDevice=async(d)=>{
+            try{
+                const r=await fetch('/api/push/devices/test',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:d.token})});
+                if(r.ok)ElementPlus.ElMessage.success('測試通知已送出,幾秒內應到手機');
+                else ElementPlus.ElMessage.error('測試發送失敗');
+            }catch(_){ ElementPlus.ElMessage.error('測試發送失敗'); }
+        };
         const loadSignal=async()=>{
             loadSigConn();
             try{
@@ -21754,7 +21855,8 @@ const app=createApp({
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
-            ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory};
+            ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
+            pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
 });
 window.__vueApp=app;
