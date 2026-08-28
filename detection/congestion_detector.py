@@ -96,6 +96,10 @@ class CongestionDetector:
         track_hold_frames = max(1, int(params.get("track_hold_frames", 3)))
         safety_gap_m = max(0.0, float(params.get("queue_vehicle_gap_m", self.DEFAULT_SAFETY_GAP_M)))
         queue_activate_score = max(0.0, float(params.get("queue_activate_score", medium_t)))
+        # 🛑 排隊佔用率下限:真排隊車擠滿路面,佔用率必然夠高。佔用率極低卻宣告排隊
+        #    (實測 1.5% 佔用 + 2 台誤判停滯 → 假排隊 11.5m)是物理不可能,一律擋掉。
+        #    真的匝道排隊佔用率遠高於此,不受影響。
+        queue_min_occupancy = max(0.0, float(params.get("queue_min_occupancy", 0.05)))
         # 固定物抑制：同一個「位置」被幾乎不動(每幀位移<=static_object_px)的偵測連續佔據
         # 超過 static_object_sec → 視為被誤判成車的固定物（實例：cam_3 地上白色轉彎箭頭被
         # 低信心偵測判成 car，靜止數小時、佔用率長灌 1.6%）。紅燈停等車開走後計時歸零
@@ -186,6 +190,7 @@ class CongestionDetector:
         ]
         queue_active = (
             len(queue_vehicles) >= queue_min_vehicles
+            and occupancy >= queue_min_occupancy
             and (queue_score >= queue_activate_score or occupancy >= medium_t or stopped_ratio >= 0.5)
         )
         estimated_queue_length_m = (
@@ -268,6 +273,7 @@ class CongestionDetector:
             ]
             z_queue_active = (
                 len(z_queue_vehicles) >= queue_min_vehicles
+                and z_occ_raw >= queue_min_occupancy
                 and (z_queue_score >= queue_activate_score or z_occ_raw >= medium_t or z_stopped_ratio >= 0.5)
             )
             z_queue_length_m = (
