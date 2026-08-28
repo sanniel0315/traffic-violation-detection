@@ -3389,7 +3389,14 @@ class LPRStreamTask:
                         y2 = int(bbox.get("y2", 0))
                         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
                         if not self.in_any_zone(cx, cy):
-                            continue
+                            # 球機追蹤放大時,畫面已不是畫 ROI 的廣角預置點視角,車道 ROI
+                            # 對不上 → 目標車被這裡靜默丟掉 = 追蹤了卻永遠沒有 LPR 辨識/截圖。
+                            # 放大後的車佔幀面積很大(廣角下車最多 ~0.3%),用面積比當旁路:
+                            # 球機相機上佔幀 ≥5% 的車即使不在 ROI 內也放行。
+                            _fh, _fw = frame.shape[:2]
+                            _area_ratio = max(0, x2 - x1) * max(0, y2 - y1) / max(1, _fw * _fh)
+                            if not (self.hanwha_enabled and _area_ratio >= 0.05):
+                                continue
                         tracked_inputs.append({
                             "class_name": vehicle_type,
                             "confidence": float(det.get("confidence") or 0.0),
