@@ -53,7 +53,8 @@ SIGNAL_ENABLED = os.getenv("SIGNAL_TC3_ENABLED", "1") != "0"
 # 🛑 reader 迴圈改讀 _conn(而非 module 常數),改 IP 時關掉現有 socket 迫使重連。
 _CONN_PATH = os.getenv("SIGNAL_CONN_CONFIG",
                        "/workspace/config/system/signal_conn.json")
-_conn: dict = {"host": SIGNAL_HOST, "port": SIGNAL_PORT, "enabled": SIGNAL_ENABLED}
+_conn: dict = {"host": SIGNAL_HOST, "port": SIGNAL_PORT, "enabled": SIGNAL_ENABLED,
+               "center_relay": None}   # None=尚未定(下面用 env 補預設)
 _conn_reconnect = threading.Event()   # 設了就叫 reader 丟掉現在的連線重連
 
 
@@ -66,6 +67,8 @@ def _load_conn_config() -> None:
                 _conn["host"] = str(d.get("host") or _conn["host"])
                 _conn["port"] = int(d.get("port") or _conn["port"])
                 _conn["enabled"] = bool(d.get("enabled", _conn["enabled"]))
+                if "center_relay" in d:
+                    _conn["center_relay"] = bool(d.get("center_relay"))
     except Exception as exc:
         print(f"[signal_tc3] 讀連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
 
@@ -75,7 +78,9 @@ def _save_conn_config() -> None:
         os.makedirs(os.path.dirname(_CONN_PATH), exist_ok=True)
         with open(_CONN_PATH, "w", encoding="utf-8") as f:
             json.dump({"host": _conn["host"], "port": _conn["port"],
-                       "enabled": _conn["enabled"]}, f, ensure_ascii=False, indent=1)
+                       "enabled": _conn["enabled"],
+                       "center_relay": bool(_conn.get("center_relay"))},
+                      f, ensure_ascii=False, indent=1)
     except Exception as exc:
         print(f"[signal_tc3] 存連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
 
@@ -231,6 +236,10 @@ _seq_next: dict = {"n": 0}              # 送出用的序號,逐次遞增
 #    預設行為是轉發;上面兩個鉤子讓我方邏輯可在任一方向插入自己的 frame。
 # 🛑 opt-in:SIGNAL_TC3_CENTER_RELAY=1 才啟用;預設關,完全不動現有抄錄行為。
 CENTER_RELAY_ENABLED = os.getenv("SIGNAL_TC3_CENTER_RELAY", "0") == "1"
+# 中央中繼(上傳中央)runtime 開關:signal_conn.json 有存就以它為準,否則用 env 預設。
+# 🛑 這開關只控制「轉發給中央」,不影響 recorder 抄錄(抄錄一律照抄所有訊框)。
+if _conn.get("center_relay") is None:
+    _conn["center_relay"] = CENTER_RELAY_ENABLED
 CENTER_LISTEN_HOST = os.getenv("SIGNAL_TC3_CENTER_LISTEN_HOST", "0.0.0.0")
 CENTER_LISTEN_PORT = int(os.getenv("SIGNAL_TC3_CENTER_LISTEN_PORT", "1001") or 1001)
 # 🛑 廠商 HardwareStatus 說明「寫反」(極性顛倒):bit14 實際 1=信號驅動單元正常。
@@ -254,7 +263,7 @@ _center_sock_ref: dict = {"sock": None}  # 目前中央的連線(單一,MaxConne
 _ctrl_tx_lock = threading.Lock()         # 序列化「寫控制器」(號控下傳+中央轉發共用一條)
 _center_tx_lock = threading.Lock()       # 序列化「寫中央」(轉發控制器回報+我方自報共用一條)
 _center_state: dict = {
-    "enabled": CENTER_RELAY_ENABLED,
+    "enabled": bool(_conn.get("center_relay")),   # 反映持久化設定(非只看 env)
     "listen": f"{CENTER_LISTEN_HOST}:{CENTER_LISTEN_PORT}",
     "connected": False, "peer": "", "since": 0.0,
     "from_center_bytes": 0, "to_center_bytes": 0, "center_frames": 0,
@@ -577,12 +586,13 @@ def _recorder_loop() -> None:
                     rec = decode_frame(frame)
                     if rec is None:
                         # 完整框但解不出:仍原封轉給中央,保持透明。
-                        if CENTER_RELAY_ENABLED:
+                        if _conn.get("center_relay"):
                             _tee_to_center(frame)
                         continue
                     rec["src"] = "controller"   # 來源:號誌控制器(上行)
                     # 逐框轉給中央(0F04/0FC1 會翻 HardwareStatus bit14 校正)。
-                    if CENTER_RELAY_ENABLED:
+                    # 🛑 抄錄一律進行(下面照記所有訊框),這裡只決定要不要「上傳中央」。
+                    if _conn.get("center_relay"):
                         _forward_controller_frame_to_center(frame, rec)
                     got_tc3 = True      # 切出合法碼框 = 對方確實是 TC3 來源
                     last_rx = rec["ts"]
@@ -802,6 +812,18 @@ def _center_relay_loop() -> None:
     srv = None
     while not shutdown_event.is_set():
         try:
+            # 上傳中央關閉時:不聽 port、斷開已連的中央,閒置等待被開啟。
+            # (recorder 不受影響,持續抄錄所有訊框)
+            if not _conn.get("center_relay"):
+                if srv is not None:
+                    try:
+                        srv.close()
+                    except Exception:
+                        pass
+                    srv = None
+                _close_center()
+                shutdown_event.wait(1.0)
+                continue
             if srv is None:
                 srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -884,10 +906,9 @@ _center_thread: Optional[threading.Thread] = None
 
 
 def start_center_relay() -> None:
-    """啟動中央中繼 server(opt-in)。SIGNAL_TC3_CENTER_RELAY=1 才會真的起。"""
+    """中央中繼 server 常駐執行緒:實際聽不聽 port 由 _conn['center_relay'] 決定
+    (關閉時迴圈內閒置、不聽 port)。這樣才能執行期開關,不用重啟 daemon。"""
     global _center_thread
-    if not CENTER_RELAY_ENABLED:
-        return
     if _center_thread is not None and _center_thread.is_alive():
         return
     _center_thread = threading.Thread(target=_center_relay_loop, daemon=True,
@@ -919,6 +940,29 @@ async def set_connection(request: Request, _user=Depends(get_current_user)):
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="埠必須是 1~65535")
     return set_conn_config(host=host, port=port, enabled=enabled)
+
+
+@router.get("/center-relay", summary="上傳中央(中央中繼)開關狀態")
+async def get_center_relay(_user=Depends(get_current_user)):
+    with _lock:
+        connected = bool(_center_state.get("connected"))
+    return {"enabled": bool(_conn.get("center_relay")), "connected": connected,
+            "listen": f"{CENTER_LISTEN_HOST}:{CENTER_LISTEN_PORT}"}
+
+
+@router.post("/center-relay", summary="開關上傳中央(不影響抄錄,抄錄一律照抄)")
+async def set_center_relay(request: Request, _user=Depends(get_current_user)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    enabled = bool(body.get("enabled"))
+    _conn["center_relay"] = enabled
+    _center_state["enabled"] = enabled       # /status 診斷檢視同步
+    _save_conn_config()
+    start_center_relay()   # 確保常駐執行緒在(聽不聽 port 由旗標決定)
+    print(f"[signal_tc3] 上傳中央 {'開啟' if enabled else '關閉'}(抄錄不受影響)", flush=True)
+    return {"enabled": enabled}
 
 
 @router.post("/connection/test", summary="測試與號誌來源的通訊(TCP試連,不動現有抄錄)")
