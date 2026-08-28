@@ -514,6 +514,45 @@ class HanwhaSunapiClient:
         )
         return {"ok": True, "preset": int(preset), "status_code": resp.status_code}
 
+    def set_preset(self, preset: int, name: Optional[str] = None,
+                   channel: int = DEFAULT_CHANNEL) -> dict[str, Any]:
+        """把相機「目前位置」存成預置點(action=add)。"""
+        params: dict[str, Any] = {
+            "msubmenu": "preset",
+            "action": "add",
+            "Channel": int(channel),
+            "Preset": int(preset),
+        }
+        if name:
+            params["Name"] = str(name)[:15]
+        resp = self._request("/stw-cgi/ptzcontrol.cgi", params)
+        return {"ok": True, "preset": int(preset), "status_code": resp.status_code}
+
+    def get_object_size(self, channel: int = DEFAULT_CHANNEL) -> Optional[str]:
+        """讀取追蹤引擎目前的 ObjectSize(Small/Medium/Large)。"""
+        try:
+            resp = self._request(
+                "/stw-cgi/eventsources.cgi",
+                {"msubmenu": "autotracking", "action": "view", "Channel": int(channel)},
+            )
+            m = re.search(r"ObjectSize=(Small|Medium|Large)", resp.text or "")
+            return m.group(1) if m else None
+        except SunapiError:
+            return None
+
+    def set_object_size(self, size: str, channel: int = DEFAULT_CHANNEL) -> dict[str, Any]:
+        """設追蹤目標大小(影響引擎拉近程度)。🛑 這款韌體 set 會把 Enable 關掉,
+        呼叫端要記得補開追蹤(start_digital_autotracking)。"""
+        size = str(size).strip().capitalize()
+        if size not in {"Small", "Medium", "Large"}:
+            raise ValueError(f"ObjectSize 只能是 Small/Medium/Large: {size}")
+        resp = self._request(
+            "/stw-cgi/eventsources.cgi",
+            {"msubmenu": "autotracking", "action": "set",
+             "Channel": int(channel), "ObjectSize": size},
+        )
+        return {"ok": True, "object_size": size, "status_code": resp.status_code}
+
     def stop(self, channel: int = DEFAULT_CHANNEL) -> dict[str, Any]:
         # 🛑 OperationType 是必要參數,缺了回 NG 603(之前被 200+NG 靜默吞掉,
         #    stop 從來沒生效過;2026-08-28 實測抓到)。

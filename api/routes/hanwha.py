@@ -287,6 +287,65 @@ def ptz_home(
     return {"camera_id": camera.id, "result": result}
 
 
+class ObjectSizeRequest(BaseModel):
+    size: str = Field(pattern="^(Small|Medium|Large|small|medium|large)$")
+    channel: int = DEFAULT_CHANNEL
+
+
+class SetPresetRequest(BaseModel):
+    name: Optional[str] = None
+    channel: int = DEFAULT_CHANNEL
+
+
+@router.get("/{camera_id}/tracking/object-size")
+def get_object_size(
+    camera_id: int,
+    channel: int = DEFAULT_CHANNEL,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """讀取追蹤目標大小(Small/Medium/Large,影響 zoom 拉近程度)。"""
+    camera, client = _client_for_camera(db, camera_id)
+    return {"camera_id": camera.id, "object_size": client.get_object_size(channel=channel)}
+
+
+@router.post("/{camera_id}/tracking/object-size")
+def set_object_size(
+    camera_id: int,
+    req: ObjectSizeRequest,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """設追蹤目標大小 → zoom 拉近程度。set 後自動補開追蹤(此韌體 set 會關 Enable)。"""
+    camera, client = _client_for_camera(db, camera_id)
+    try:
+        result = client.set_object_size(req.size, channel=req.channel)
+        try:
+            client.start_digital_autotracking(channel=req.channel)
+        except Exception:
+            pass
+    except (SunapiError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"camera_id": camera.id, "result": result}
+
+
+@router.post("/{camera_id}/presets/{preset_no}/set")
+def set_preset(
+    camera_id: int,
+    preset_no: int,
+    req: SetPresetRequest,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """把相機目前位置存成預置點。"""
+    camera, client = _client_for_camera(db, camera_id)
+    try:
+        result = client.set_preset(preset_no, name=req.name, channel=req.channel)
+    except SunapiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"camera_id": camera.id, "result": result}
+
+
 @router.get("/{camera_id}/presets")
 def list_presets(
     camera_id: int,
