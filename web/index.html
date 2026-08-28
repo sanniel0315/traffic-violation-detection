@@ -5321,7 +5321,12 @@
                                     <el-button size="small" type="primary" @click="stopLprByCamera(c.id)" v-else>停止</el-button>
                                 </div>
                                 <div v-if="congestionStatus[c.id]?.result" style="margin-top:8px;font-size:12px;color:#475569">
-                                    <el-tag size="small" :type="getCongestionLevelType(congestionStatus[c.id]?.result?.level)">
+                                    <template v-if="resolveCongestionLaneRows(congestionStatus[c.id]?.result).length">
+                                        <el-tag v-for="(lr, li) in resolveCongestionLaneRows(congestionStatus[c.id]?.result)" :key="`top-${c.id}-${li}`" size="small" :type="getCongestionLevelType(lr.level)" style="margin-right:4px">
+                                            車道{{ lr.lane_no || (li+1) }} {{ lr.level_name || '-' }}
+                                        </el-tag>
+                                    </template>
+                                    <el-tag v-else size="small" :type="getCongestionLevelType(congestionStatus[c.id]?.result?.level)">
                                         {{ congestionStatus[c.id]?.result?.level_name || '-' }}
                                     </el-tag>
                                     <span style="margin-left:8px">車輛 {{ congestionStatus[c.id]?.result?.vehicle_count || 0 }}</span>
@@ -5469,7 +5474,12 @@
                         </div>
                         <div v-if="monitorZoomCamera && congestionStatus[monitorZoomCamera.id] && congestionStatus[monitorZoomCamera.id].result" class="ptz-panel">
                             <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px;font-size:14px">
-                                <el-tag size="default" :type="getCongestionLevelType(congestionStatus[monitorZoomCamera.id].result.level)">
+                                <template v-if="resolveCongestionLaneRows(congestionStatus[monitorZoomCamera.id].result).length">
+                                    <el-tag v-for="(lr, li) in resolveCongestionLaneRows(congestionStatus[monitorZoomCamera.id].result)" :key="'top-lane-'+li" size="default" :type="getCongestionLevelType(lr.level)">
+                                        車道 {{ lr.lane_no || (li+1) }} · {{ lr.level_name || '-' }}
+                                    </el-tag>
+                                </template>
+                                <el-tag v-else size="default" :type="getCongestionLevelType(congestionStatus[monitorZoomCamera.id].result.level)">
                                     壅塞 {{ congestionStatus[monitorZoomCamera.id].result.level_name || '-' }}
                                 </el-tag>
                                 <span>車輛 <b>{{ congestionStatus[monitorZoomCamera.id].result.vehicle_count || 0 }}</b></span>
