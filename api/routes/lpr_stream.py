@@ -2985,6 +2985,13 @@ class LPRStreamTask:
         每條 track 只鎖一次;冷卻時間內不搶鎖,避免車多時相機被拉來拉去。"""
         if not self.hanwha_enabled or not self.hanwha_auto_lock or self.hanwha_client is None:
             return
+        # 使用者手動停止追蹤時,自動鎖定也停手(手動控制優先)
+        try:
+            from api.routes.hanwha import is_manual_paused
+            if is_manual_paused(self.camera_id):
+                return
+        except Exception:
+            pass
         if track_id is None or int(track_id) <= 0:
             return
         tid = int(track_id)
