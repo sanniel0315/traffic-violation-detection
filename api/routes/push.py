@@ -15,6 +15,8 @@ Token 存在專案根目錄 push_tokens.json(純檔案,不動 DB schema);
 """
 import asyncio
 import json
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -25,6 +27,8 @@ from pydantic import BaseModel
 router = APIRouter(prefix="/api/push", tags=["推播"])
 
 _TOKENS_FILE = Path(__file__).resolve().parent.parent.parent / "push_tokens.json"
+_EVENTS_FILE = Path(__file__).resolve().parent.parent.parent / "push_events.json"
+_EVENTS_MAX = 200
 _EXPO_URL = "https://exp.host/--/api/v2/push/send"
 _POLL_SEC = 20
 
@@ -113,10 +117,46 @@ def _send_expo(tokens: List[str], title: str, body: str, data: Optional[dict] = 
             pass
 
 
+def _record_event(title: str, body: str, data: Optional[dict], category: str) -> None:
+    """把即時告警事件寫進 push_events.json(環形,最多 _EVENTS_MAX 筆),給 App 告警面板查歷史"""
+    try:
+        try:
+            events = json.loads(_EVENTS_FILE.read_text(encoding="utf-8"))
+            if not isinstance(events, list):
+                events = []
+        except Exception:
+            events = []
+        events.append({
+            "id": int(time.time() * 1000),
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "title": title,
+            "body": body,
+            "data": data or {},
+            "category": category,
+        })
+        _EVENTS_FILE.write_text(json.dumps(events[-_EVENTS_MAX:], ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+@router.get("/events")
+def events(limit: int = 40) -> dict:
+    """最近的即時告警事件(球機追蹤等),新到舊;App 告警面板用"""
+    try:
+        evs = json.loads(_EVENTS_FILE.read_text(encoding="utf-8"))
+        if not isinstance(evs, list):
+            evs = []
+    except Exception:
+        evs = []
+    return {"events": list(reversed(evs))[:max(1, min(limit, _EVENTS_MAX))]}
+
+
 def push_alert(title: str, body: str, data: Optional[dict] = None, category: str = "lpr") -> None:
     """給其他模組用的即時告警推播(如 Hanwha 球機追蹤事件,歸類 lpr)。
-    只推給有訂閱該 category 的 token;同步、失敗吞掉。"""
+    只推給有訂閱該 category 的 token;同步、失敗吞掉。
+    無論有沒有 token 都會記進事件檔,App 告警面板才查得到歷史。"""
     try:
+        _record_event(title, body, data, category)
         tokens = _tokens_for(category)
         if tokens:
             _send_expo(tokens, title, body, data)
