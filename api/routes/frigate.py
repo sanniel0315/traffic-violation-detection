@@ -865,6 +865,13 @@ async def set_record_fps(camera_name: str, req: RecordFpsRequest):
             )
         # 以來源 URL 為基底，去掉既有 fps 參數後重設
         base_url = str(base[0])
+        # Hanwha/Samsung SUNAPI(media.smp)不吃 ?fps=N,硬設會讓 rec 串流拉不到流
+        # → Frigate 該相機整個沒幀(latest.jpg 變佔位圖、錄影停擺),直接擋下
+        if "media.smp" in base_url:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{camera_name} 是 Hanwha/Samsung 相機,不支援 RTSP ?fps 降幀(僅 Axis 支援),未變更設定",
+            )
         clean = re.sub(r'[?&]fps=\d+', '', base_url)
         sep = '&' if '?' in clean else '?'
         rec_url = f"{clean}{sep}fps={req.fps}"
