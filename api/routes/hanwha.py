@@ -342,6 +342,27 @@ _stop_watchers: dict[int, threading.Event] = {}
 _stop_watchers_lock = threading.Lock()
 
 
+def _push_return_alert(camera_id: int, preset, reason: str) -> None:
+    """追蹤結束/回預置 → 推告警給 INSIGHT App(僅該相機有開 alert_push 才推)。"""
+    try:
+        from api.models import SessionLocal, Camera
+        db = SessionLocal()
+        try:
+            cam = db.query(Camera).filter(Camera.id == camera_id).first()
+            cfg = (cam.detection_config or {}).get("hanwha_lpr_tracking") or {} if cam else {}
+            if not cfg.get("alert_push"):
+                return
+            name = cam.name if cam else f"cam{camera_id}"
+        finally:
+            db.close()
+        from api.routes.push import push_alert
+        push_alert(f"✅ 追蹤結束 · {name}",
+                   f"{reason},已回預置點 {preset},等待下一台",
+                   {"type": "hanwha_return", "camera_id": camera_id})
+    except Exception:
+        pass
+
+
 def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_evt: threading.Event,
                             return_preset: Optional[int] = 1, return_delay_sec: float = 5.0,
                             resume_tracking: bool = True):
@@ -377,6 +398,7 @@ def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_
                                 try:
                                     client.goto_preset(int(return_preset))
                                     print(f"[Hanwha] cam{camera_id} 追蹤結束(引擎自停),已回預置點 {return_preset}", flush=True)
+                                    _push_return_alert(camera_id, return_preset, "追蹤結束")
                                 except Exception as e:
                                     print(f"[Hanwha] cam{camera_id} 追蹤結束回預置失敗: {e}", flush=True)
                                 stop_evt.wait(2.0)
@@ -429,6 +451,7 @@ def _stop_window_watch_loop(camera_id: int, client, window: PtzStopWindow, stop_
                         try:
                             client.goto_preset(int(return_preset))
                             print(f"[Hanwha] cam{camera_id} 停止移動 {int(idle_sec)}s(追完/過頭/追丟),已回預置點 {return_preset}", flush=True)
+                            _push_return_alert(camera_id, return_preset, "追蹤結束(停止移動)")
                         except Exception as e:
                             print(f"[Hanwha] cam{camera_id} 回預置點失敗: {e}", flush=True)
                         _returned = True
