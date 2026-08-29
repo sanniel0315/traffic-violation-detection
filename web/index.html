@@ -6845,6 +6845,38 @@
 
                     <div class="card">
                         <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-alert"/></svg>安全網(手動/故障/異動監看)</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <el-tag size="small" :type="sigSafety.manual?'danger':'success'">{{ sigSafety.manual?'手動介入中':'自動運轉' }}</el-tag>
+                                <el-tag v-if="sigSafety.abnormal_text" size="small" type="danger">{{ sigSafety.abnormal_text }}</el-tag>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">
+                                唯讀監看號誌控制器回報:控制策略異動(5F00/5FC0)、現場面板操作(5F08)、現場資料異動(5F0A)、異常步階(故障全紅/各種閃光)。值改變才記事件,不對號誌下任何命令。
+                            </div>
+                            <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:8px">
+                                <span style="font-size:13px;color:var(--gov-muted)">目前控制策略</span>
+                                <el-tag size="small" :type="sigSafety.manual?'danger':'info'">{{ sigSafety.strategy_text||'尚未收到' }}</el-tag>
+                                <span style="font-size:13px;color:var(--gov-muted)">事件推播</span>
+                                <el-switch v-model="sigSafetyPush" size="small" @change="sigSetSafetyPush" active-text="開" inactive-text="關" inline-prompt></el-switch>
+                                <span style="font-size:12px;color:var(--gov-mute-2)">關閉只停推播,事件照記;推播對象在「告警通知」頁訂閱「號誌事件」分類</span>
+                            </div>
+                            <div v-if="sigSafetyEvents.length" style="margin-top:10px;max-height:280px;overflow-y:auto;border:1px solid var(--gov-line,#e5e7eb);border-radius:6px">
+                                <div v-for="(ev,ei) in sigSafetyEvents" :key="'sse'+ei"
+                                     style="display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;padding:6px 10px;border-bottom:1px solid var(--gov-line,#f1f5f9);font-size:13px">
+                                    <span style="color:#64748b;font-variant-numeric:tabular-nums;white-space:nowrap">{{ sigFmtTs(ev.ts) }}</span>
+                                    <el-tag size="small" :type="ev.severity==='warn'?'danger':'info'">{{ ev.severity==='warn'?'告警':'記錄' }}</el-tag>
+                                    <b style="white-space:nowrap">{{ ev.title }}</b>
+                                    <span style="color:var(--gov-muted);min-width:0">{{ ev.detail }}</span>
+                                </div>
+                            </div>
+                            <p v-else style="font-size:13px;color:#64748b;margin-top:10px">尚無事件。抄到手動介入、故障閃光或現場異動時會出現在這裡。</p>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-list"/></svg>命令覆蓋矩陣</span>
                             <div style="display:flex;gap:8px;align-items:center">
                                 <el-tag size="small" type="success">已抄到 {{ sigCovSummary.seen_total }} / {{ sigCovSummary.catalog_total }}</el-tag>
@@ -20852,6 +20884,32 @@ const app=createApp({
                 else{ sigCenterRelay.value=!val; ElementPlus.ElMessage.error(d.detail||'設定失敗'); }
             }catch(e){ sigCenterRelay.value=!val; ElementPlus.ElMessage.error('設定失敗'); }
         };
+        // 安全網(Phase 0):手動/故障/異動監看狀態與事件(唯讀)+推播開關
+        const sigSafety=ref({manual:false,strategy_text:'',abnormal_text:'',push_enabled:true});
+        const sigSafetyEvents=ref([]);
+        const sigSafetyPush=ref(true);
+        const sigFmtTs=(ts)=>{
+            if(!ts)return '';
+            const d=new Date(ts*1000), p=n=>String(n).padStart(2,'0');
+            return (d.getMonth()+1)+'/'+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+        };
+        const loadSigSafety=async()=>{
+            try{
+                const r=await fetch('/api/signal/safety',{credentials:'include'});
+                if(r.ok){ const d=await r.json(); sigSafety.value=d;
+                    sigSafetyEvents.value=d.events||[]; sigSafetyPush.value=!!d.push_enabled; }
+            }catch(_){ }
+        };
+        const sigSetSafetyPush=async(val)=>{
+            try{
+                const r=await fetch('/api/signal/safety',{method:'POST',credentials:'include',
+                    headers:{'Content-Type':'application/json'},body:JSON.stringify({push:!!val})});
+                const d=await r.json().catch(()=>({}));
+                if(r.ok){ sigSafetyPush.value=!!d.push_enabled;
+                    ElementPlus.ElMessage.success(d.push_enabled?'號誌事件推播已開':'號誌事件推播已關(事件照記)'); }
+                else{ sigSafetyPush.value=!val; ElementPlus.ElMessage.error(d.detail||'設定失敗'); }
+            }catch(e){ sigSafetyPush.value=!val; ElementPlus.ElMessage.error('設定失敗'); }
+        };
         const sigConnTest=async()=>{
             sigConnTesting.value=true; sigConnTestResult.value=null;
             try{
@@ -20917,6 +20975,7 @@ const app=createApp({
         };
         const loadSignal=async()=>{
             loadSigConn();
+            loadSigSafety();
             try{
                 const r=await fetch('/api/signal/status',{credentials:'include'});
                 if(r.ok){
@@ -21858,7 +21917,7 @@ const app=createApp({
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
