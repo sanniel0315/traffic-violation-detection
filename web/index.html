@@ -16205,7 +16205,7 @@ const app=createApp({
                         const d=await r.json();
                         if(d?.status==='online' && Number(d?.uptime||0)>60){
                             nvrRestarting.value=false;
-                            console.warn('[guard] nvrRestarting 卡死，Frigate uptime '+d.uptime+'s 已自動解鎖');
+                            console.warn('[guard] nvrRestarting 卡死，NVR uptime '+d.uptime+'s 已自動解鎖');
                         }
                     }catch(_){}
                 }
@@ -18585,7 +18585,7 @@ const app=createApp({
                     const r=await fetch('/api/frigate/status',{cache:'no-store'});
                     const d=await r.json();
                     if(d?.status==='online' && Number(d?.uptime||0)>60){
-                        console.warn('[nvr-watchdog] Frigate uptime '+d.uptime+'s，自動解鎖');
+                        console.warn('[nvr-watchdog] NVR uptime '+d.uptime+'s，自動解鎖');
                         nvrRestarting.value=false;
                         clearInterval(_nvrWatchdog); _nvrWatchdog=null;
                     }

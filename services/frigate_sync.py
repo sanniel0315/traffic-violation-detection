@@ -95,7 +95,7 @@ def sync(db=None, restart: bool = True) -> dict:
 
         with _lock:
             if not os.path.exists(CONFIG_PATH):
-                _log("error", f"Frigate 設定檔不存在，跳過同步: {CONFIG_PATH}")
+                _log("error", f"NVR 設定檔不存在，跳過同步: {CONFIG_PATH}")
                 return {"ok": False, "msg": "config not found"}
             with open(CONFIG_PATH, encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
@@ -131,7 +131,7 @@ def sync(db=None, restart: bool = True) -> dict:
             if changed:
                 from api.routes.frigate import _safe_write_config
                 _safe_write_config(CONFIG_PATH, cfg)
-                _log("info", "Frigate 設定已同步 "
+                _log("info", "NVR 設定已同步 "
                              f"(新增 {added or '-'} / 更新 {updated or '-'} / 移除 {removed or '-'})")
             summary = {"ok": True, "changed": changed, "added": added,
                        "updated": updated, "removed": removed,
@@ -141,7 +141,7 @@ def sync(db=None, restart: bool = True) -> dict:
             _schedule_restart()
         return summary
     except Exception as e:
-        _log("error", f"Frigate 設定同步失敗: {e}")
+        _log("error", f"NVR 設定同步失敗: {e}")
         return {"ok": False, "msg": str(e)}
     finally:
         if own_db:
@@ -160,7 +160,7 @@ def _schedule_restart() -> None:
         _restart_timer = threading.Timer(RESTART_DEBOUNCE_SEC, _do_restart)
         _restart_timer.daemon = True
         _restart_timer.start()
-    _log("info", f"Frigate 將於 {RESTART_DEBOUNCE_SEC:.0f} 秒後套用新設定（重啟）")
+    _log("info", f"NVR 將於 {RESTART_DEBOUNCE_SEC:.0f} 秒後套用新設定（重啟）")
 
 
 def _do_restart() -> None:
@@ -168,12 +168,12 @@ def _do_restart() -> None:
     try:
         r = subprocess.run(RESTART_CMD.split(), capture_output=True, timeout=120)
         if r.returncode == 0:
-            _log("info", "Frigate 已重啟，新攝影機設定生效")
+            _log("info", "NVR 已重啟，新攝影機設定生效")
         else:
-            _log("error", f"Frigate 重啟失敗 (rc={r.returncode}): "
+            _log("error", f"NVR 重啟失敗 (rc={r.returncode}): "
                           f"{(r.stderr or b'').decode(errors='ignore')[:200]}")
     except Exception as e:
-        _log("error", f"Frigate 重啟失敗: {e}")
+        _log("error", f"NVR 重啟失敗: {e}")
 
 
 def sync_async(db=None) -> None:

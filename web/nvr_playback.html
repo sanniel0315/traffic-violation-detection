@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NVR Playback</title>
+<title>NVR 錄影回放</title>
 <link rel="icon" href="/favicon.ico">
 <script src="/web/lib/hls.min.js"></script>
 <script src="/web/lib/vue.global.prod.js"></script>
@@ -560,7 +560,7 @@ body {
   <div class="top-bar">
     <div class="top-logo">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-      NVR Playback
+      NVR 錄影回放
     </div>
     <button class="top-btn" :class="{active:showLeft}" @click="showLeft=!showLeft" title="裝置面板">&#9776;</button>
     <div style="display:flex;gap:2px;margin-left:8px">
@@ -581,7 +581,7 @@ body {
   <!-- ── Left Panel: Device Tree ── -->
   <div class="left-panel" v-show="showLeft && viewMode==='playback'">
     <div class="panel-head">
-      <span class="panel-head-title">Resource Tree</span>
+      <span class="panel-head-title">裝置清單</span>
       <div class="device-search">
         <input v-model="deviceSearch" placeholder="搜尋攝影機...">
       </div>
