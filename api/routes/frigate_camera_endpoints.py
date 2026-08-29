@@ -20,7 +20,7 @@ async def add_frigate_camera(camera: FrigateCameraAdd):
     try:
         config_path = Path(FRIGATE_CONFIG_PATH)
         if not config_path.exists():
-            raise HTTPException(status_code=404, detail="Frigate 設定檔不存在")
+            raise HTTPException(status_code=404, detail="NVR 設定檔不存在")
 
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f) or {}
@@ -98,7 +98,7 @@ async def delete_frigate_camera(name: str):
     try:
         config_path = Path(FRIGATE_CONFIG_PATH)
         if not config_path.exists():
-            raise HTTPException(status_code=404, detail="Frigate 設定檔不存在")
+            raise HTTPException(status_code=404, detail="NVR 設定檔不存在")
 
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f) or {}

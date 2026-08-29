@@ -1258,7 +1258,7 @@ def start_recording_export(
         f"/api/export/{camera}/start/{int(start)}/end/{int(end)}", json_body=body, timeout=20,
     )
     if r is None:
-        raise HTTPException(status_code=502, detail=f"連不到 Frigate:{err}")
+        raise HTTPException(status_code=502, detail=f"連不到 NVR:{err}")
     if r.status_code not in (200, 202):
         raise HTTPException(status_code=r.status_code, detail=f"匯出失敗:{r.text[:200]}")
     try:
@@ -1308,7 +1308,7 @@ def delete_recording_export(export_id: str):
         raise HTTPException(status_code=400, detail="不合法的 export_id")
     r, _url, err = _delete_frigate(f"/api/export/{eid}", timeout=15)
     if r is None:
-        raise HTTPException(status_code=502, detail=f"連不到 Frigate:{err}")
+        raise HTTPException(status_code=502, detail=f"連不到 NVR:{err}")
     return {"ok": True, "id": eid, "status": r.status_code}
 
 
@@ -1950,7 +1950,7 @@ def restart_nvr():
         try:
             r = _req.post("http://localhost:5000/api/restart", timeout=10)
             if r.ok:
-                add_log("warning", "NVR 重啟中（Frigate API）", "nvr")
+                add_log("warning", "NVR 重啟中", "nvr")
                 return {"status": "success", "message": "NVR 正在重啟（約 30 秒）"}
         except Exception:
             pass
