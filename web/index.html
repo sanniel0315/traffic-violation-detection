@@ -20401,7 +20401,7 @@ const app=createApp({
             }
             const controller=new AbortController();
             hwReqController=controller;
-            const timeoutId=setTimeout(()=>controller.abort(),5000);
+            const timeoutId=setTimeout(()=>controller.abort(),8000);   // 5s→8s:主機忙時讀 tegrastats 可能較久,免得面板空白「沒出來」
             try{
                 try{
                     const dr=await fetch(`${apiBase}/api/system/device-id`,{credentials:'include'});
