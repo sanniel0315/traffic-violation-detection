@@ -100,6 +100,9 @@ class CongestionDetector:
         #    (實測 1.5% 佔用 + 2 台誤判停滯 → 假排隊 11.5m)是物理不可能,一律擋掉。
         #    真的匝道排隊佔用率遠高於此,不受影響。
         queue_min_occupancy = max(0.0, float(params.get("queue_min_occupancy", 0.05)))
+        # 佔用率虛高防呆:車在流動(停車比例 < 此值)時,佔用率不納入壅塞判級,只看排隊。
+        # 匝道近鏡頭幾台流動車就吃掉 ROI 40%,但無排隊/停等 ≠ 壅塞(實例 ID3:43%佔用/0m排隊)。
+        flowing_stopped_ratio = max(0.0, float(params.get("flowing_stopped_ratio", 0.3)))
         # 固定物抑制：同一個「位置」被幾乎不動(每幀位移<=static_object_px)的偵測連續佔據
         # 超過 static_object_sec → 視為被誤判成車的固定物（實例：cam_3 地上白色轉彎箭頭被
         # 低信心偵測判成 car，靜止數小時、佔用率長灌 1.6%）。紅燈停等車開走後計時歸零
@@ -198,7 +201,10 @@ class CongestionDetector:
             if queue_active else 0.0
         )
         queue_duration_sec = self._update_queue_duration(f"{camera_key}::overall", active=queue_active, now=now)
-        congestion_score = max(occupancy, queue_score)
+        # 【壅塞判級:加排隊條件(根治佔用率虛高誤報)】占用率只在「有停等」時才納入判級;
+        # 車在流動(stopped_ratio < flowing_stopped_ratio)時只看排隊分數。車在流動 ≠ 壅塞。
+        occ_for_level = occupancy if stopped_ratio >= flowing_stopped_ratio else 0.0
+        congestion_score = max(occ_for_level, queue_score)
         history.append(congestion_score)
         if len(history) > window:
             history.pop(0)
