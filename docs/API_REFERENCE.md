@@ -143,38 +143,63 @@
 | `GET` | `/api/stream/{camera_id}/live` | 即時串流 (MJPEG) |
 | `GET` | `/api/stream/{camera_id}/live-overlay` | 帶偵測疊圖的即時串流 |
 | `GET` | `/api/stream/{camera_id}/snapshot` | 單張快照 |
-| `POST` | `/api/stream/{camera_id}/detection/start` | 啟動偵測服務 |
-| `POST` | `/api/stream/{camera_id}/detection/stop` | 停止偵測服務 |
+| `POST` | `/api/stream/{camera_id}/detection/start` | 啟動偵測服務(`?mode=traffic\|speed\|all`) |
+| `POST` | `/api/stream/{camera_id}/detection/stop` | 停止偵測服務(`?mode=traffic\|speed\|all`) |
 | `GET` | `/api/stream/{camera_id}/detection/status` | 取得偵測狀態 |
 | `GET` | `/api/stream/detection/all` | 取得所有偵測服務狀態 |
 
 ### POST /api/stream/{camera_id}/detection/start
 
-```json
-// Request (optional body)
-{
-  "conf_threshold": 0.5,
-  "enable_truck_cls": true
-}
+車流偵測與車速偵測共用同一支 worker,可用 `mode` 各自啟停:
 
+| mode | 作用 |
+|------|------|
+| `traffic` | 只開車流計數(ROI 進出、TrafficEvent 寫入) |
+| `speed` | 只開車速估算(含超速開單、疊加畫面的 km/h) |
+| `all`(預設) | 兩者都開 |
+
+worker 已在跑時只是把旗標打開,不會重啟執行緒、串流不會斷。
+
+```json
+// POST /api/stream/1/detection/start?mode=traffic
 // Response 200
 {
   "status": "started",
-  "camera_id": 1,
-  "message": "偵測服務已啟動"
+  "modes": {"traffic": true, "speed": false},
+  "message": "車流偵測已啟動: 中正路口"
+}
+```
+
+### POST /api/stream/{camera_id}/detection/stop
+
+`mode` 同上。只關其中一項時另一項繼續跑,`status` 回 `partial`;
+兩項都關才真的停掉 worker,`status` 回 `stopped`。
+
+```json
+// POST /api/stream/1/detection/stop?mode=speed
+// Response 200
+{
+  "status": "partial",
+  "modes": {"traffic": true, "speed": false},
+  "running": true,
+  "message": "車速偵測已停止"
 }
 ```
 
 ### GET /api/stream/{camera_id}/detection/status
 
+`traffic_running` / `speed_running` = worker 有在跑 **且** 該子功能旗標是開的,
+前端的啟動/停止按鈕直接看這兩個欄位。
+
 ```json
 // Response 200
 {
-  "camera_id": 1,
   "running": true,
-  "fps": 15.2,
-  "detections_count": 342,
-  "uptime_sec": 1800
+  "modes": {"traffic": true, "speed": false},
+  "traffic_running": true,
+  "speed_running": false,
+  "detections": 342,
+  "last_detection": "2026-08-30T10:12:03"
 }
 ```
 
