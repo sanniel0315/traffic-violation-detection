@@ -690,8 +690,8 @@ curl -X POST http://localhost:8000/api/cameras \
 | `GET` | `/api/stream/{id}/live` | MJPEG 即時串流 |
 | `GET` | `/api/stream/{id}/live-overlay` | MJPEG 疊加串流（ROI/辨識） |
 | `GET` | `/api/stream/{id}/snapshot` | 取得截圖 |
-| `POST` | `/api/stream/{id}/detection/start` | 啟動偵測 |
-| `POST` | `/api/stream/{id}/detection/stop` | 停止偵測 |
+| `POST` | `/api/stream/{id}/detection/start` | 啟動偵測(`?mode=traffic\|speed\|all`,車流/車速可分開) |
+| `POST` | `/api/stream/{id}/detection/stop` | 停止偵測(`?mode=traffic\|speed\|all`) |
 | `GET` | `/api/stream/detection/all` | 所有偵測狀態 |
 
 ---
