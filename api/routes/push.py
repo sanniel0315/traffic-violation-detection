@@ -43,6 +43,7 @@ CATEGORIES: Dict[str, str] = {
     "speeding": "超速",
     "red_line_stop": "紅線臨停",
     "lpr": "車牌辨識",
+    "signal": "號誌事件",
     "other": "其他告警",
 }
 
