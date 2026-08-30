@@ -11,15 +11,16 @@ from typing import Dict
 STATE_PATH = Path("/workspace/config/system/feature_state.json")
 _LOCK = threading.Lock()
 
+# 所有會被持久化的功能名稱。
+# detection = 偵測 worker 是否要跑(車流 or 車速 任一啟用就要跑);
+# detection_traffic / detection_speed = 同一支 worker 內的兩個子功能,可各自啟停。
+FEATURES = ("detection", "detection_traffic", "detection_speed", "congestion", "lpr")
+
 
 def _default_state() -> dict:
     return {
         "updated_at": None,
-        "features": {
-            "detection": {},
-            "congestion": {},
-            "lpr": {},
-        },
+        "features": {name: {} for name in FEATURES},
     }
 
 
@@ -31,7 +32,7 @@ def _load() -> dict:
                 state = _default_state()
                 feats = raw.get("features", {})
                 if isinstance(feats, dict):
-                    for key in ("detection", "congestion", "lpr"):
+                    for key in FEATURES:
                         val = feats.get(key, {})
                         if isinstance(val, dict):
                             state["features"][key] = {
@@ -73,7 +74,7 @@ def clear_camera_state(camera_id: int) -> None:
         state = _load()
         feats = state.get("features", {})
         touched = False
-        for name in ("detection", "congestion", "lpr"):
+        for name in FEATURES:
             val = feats.get(name)
             if isinstance(val, dict) and key in val:
                 val.pop(key, None)

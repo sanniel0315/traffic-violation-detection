@@ -566,6 +566,9 @@ async def create_camera(data: CameraCreate, db: Session = Depends(get_db)):
     try:
         from api.utils.feature_state import set_feature_state
         set_feature_state("detection", c.id, bool(c.detection_enabled))
+        # 車流 / 車速兩個子功能同步寫,否則會沿用被回收 id 的殘留子項
+        set_feature_state("detection_traffic", c.id, bool(c.detection_enabled))
+        set_feature_state("detection_speed", c.id, bool(c.detection_enabled))
     except Exception:
         pass
     _sync_frigate()
@@ -624,6 +627,8 @@ async def update_camera(camera_id: int, data: CameraUpdate, db: Session = Depend
         c.detection_enabled = False
         c.status = "offline"
         set_feature_state("detection", camera_id, False)
+        set_feature_state("detection_traffic", camera_id, False)
+        set_feature_state("detection_speed", camera_id, False)
         set_feature_state("congestion", camera_id, False)
         set_feature_state("lpr", camera_id, False)
     elif "enabled" in payload and bool(payload.get("enabled")) and not previous_enabled:
