@@ -40,6 +40,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.routes.auth import get_current_user
 from api.routes.logs import add_log
+from api.routes.push import push_alert
 from api.utils.shutdown import shutdown_event
 
 router = APIRouter(prefix="/api/signal", tags=["signal"])
@@ -54,7 +55,8 @@ SIGNAL_ENABLED = os.getenv("SIGNAL_TC3_ENABLED", "1") != "0"
 _CONN_PATH = os.getenv("SIGNAL_CONN_CONFIG",
                        "/workspace/config/system/signal_conn.json")
 _conn: dict = {"host": SIGNAL_HOST, "port": SIGNAL_PORT, "enabled": SIGNAL_ENABLED,
-               "center_relay": None}   # None=尚未定(下面用 env 補預設)
+               "center_relay": None,   # None=尚未定(下面用 env 補預設)
+               "safety_push": True}    # 安全網事件(手動/故障/異動)要不要推播
 _conn_reconnect = threading.Event()   # 設了就叫 reader 丟掉現在的連線重連
 
 
@@ -69,6 +71,8 @@ def _load_conn_config() -> None:
                 _conn["enabled"] = bool(d.get("enabled", _conn["enabled"]))
                 if "center_relay" in d:
                     _conn["center_relay"] = bool(d.get("center_relay"))
+                if "safety_push" in d:
+                    _conn["safety_push"] = bool(d.get("safety_push"))
     except Exception as exc:
         print(f"[signal_tc3] 讀連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
 
@@ -79,7 +83,8 @@ def _save_conn_config() -> None:
         with open(_CONN_PATH, "w", encoding="utf-8") as f:
             json.dump({"host": _conn["host"], "port": _conn["port"],
                        "enabled": _conn["enabled"],
-                       "center_relay": bool(_conn.get("center_relay"))},
+                       "center_relay": bool(_conn.get("center_relay")),
+                       "safety_push": bool(_conn.get("safety_push", True))},
                       f, ensure_ascii=False, indent=1)
     except Exception as exc:
         print(f"[signal_tc3] 存連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
@@ -497,6 +502,16 @@ def decode_frame(frame: bytes) -> Optional[dict]:
                 for i in range(len(st))
             ],
         }
+    # 安全網監看用的輕量欄位(協定 5-9/5-10/5-82/5-83)。只解 byte,不做判斷 ——
+    # 判斷(邊緣觸發/推播)在 _safety_watch,這裡保持純解碼。
+    elif dev == 0x5F and cmd in (0x00, 0xC0) and len(info) >= 3:
+        out["strategy"] = info[2]                       # ControlStrategy 位元遮罩
+        out["strategy_extra"] = info[3] if len(info) >= 4 else None  # EffectTime/BeginEnd
+    elif dev == 0x5F and cmd == 0x08 and len(info) >= 3:
+        out["field_operate"] = info[2]                  # 現場面板操作代碼
+    elif dev == 0x5F and cmd == 0x0A and len(info) >= 3:
+        out["update_db"] = info[2]                      # 現場更動的資料庫別
+        out["sub_db_id"] = info[3] if len(info) >= 4 else None
     return out
 
 
@@ -617,6 +632,9 @@ def _recorder_loop() -> None:
                             a = rec.get("addr")
                             if isinstance(a, int):
                                 _by_addr[a] = rec
+                    # 安全網監看(只吃 CKS 正確的框;上面 cks 壞的已 continue 掉)。
+                    # 🛑 放在鎖外:事件要寫 DB/推播,不能卡住抄錄熱路徑。
+                    _safety_watch(rec)
         except Exception as exc:
             with _lock:
                 _state["connected"] = False
@@ -648,6 +666,179 @@ def start_recorder() -> None:
         return
     _thread = threading.Thread(target=_recorder_loop, daemon=True, name="signal-tc3")
     _thread.start()
+
+
+# ── 安全網(Phase 0):手動/故障/異動監看 ─────────────────────────────────
+# 唯讀:只看抄錄到的訊框,不下任何號誌命令。補規範 §(3)A 現場操作回報、
+# §(6)I 異動回報、§(G) 手動因應、§(E) 故障監看 的「知道發生了」這一半。
+#   5F00/5FC0  控制策略(位元遮罩,協定 5-7):bit2 路口手動 / bit3 中央手動
+#   5F08       現場面板操作(協定 5-82):01 手動 / 02 全紅 / 40 閃光 / 80 回復
+#   5F0A       現場人員更動設定(協定 5-83)
+#   5F03       step_id 特殊值(協定 5-26):9F 啟動全紅3秒、AF 故障全紅、BF~FF 各種閃光
+# 🛑 邊緣觸發:只在「值改變」時記事件。現場實測策略值平常就會變
+#    (0x01↔0x05↔0x14,TOD/測試都會切),「≠0x01 就報」會整天誤報。
+STRATEGY_BITS = ["定時控制", "動態控制", "路口手動", "中央手動",
+                 "時相控制", "即時控制", "觸動控制", "特勤路線"]
+STRATEGY_MANUAL_MASK = 0x04 | 0x08      # bit2 路口手動 + bit3 中央手動
+FIELD_OPERATE = {0x01: "手動", 0x02: "全紅", 0x40: "閃光", 0x80: "回復自動"}
+
+_safety = {"strategy": None, "strategy_ts": 0.0, "abnormal_step": None}
+_safety_events: deque = deque(maxlen=100)   # 記憶體副本(DB 讀不到時的後路)
+_safety_dedup: dict = {}                    # 事件鍵 -> 上次記錄時間(擋重送框)
+_safety_db_ready = False
+
+
+def _strategy_text(v: int) -> str:
+    on = [name for i, name in enumerate(STRATEGY_BITS) if v & (1 << i)]
+    return f"{v:02X}H " + ("+".join(on) if on else "(全部關閉)")
+
+
+def _safety_db():
+    global _safety_db_ready
+    conn = _sqlite3.connect(_QDB_PATH, timeout=20)
+    conn.execute("PRAGMA busy_timeout=20000")
+    if not _safety_db_ready:
+        conn.execute("""CREATE TABLE IF NOT EXISTS signal_safety_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, kind TEXT,
+            severity TEXT, code TEXT, addr INTEGER, title TEXT, detail TEXT,
+            value INTEGER)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_sse_ts ON signal_safety_events(ts)")
+        conn.commit()
+        _safety_db_ready = True
+    return conn
+
+
+def _safety_event(kind: str, severity: str, title: str, detail: str,
+                  code: str, addr: Optional[int], value: Optional[int]) -> None:
+    """記一筆安全網事件:DB + 記憶體 + 系統日誌;warn 級才推播(info 只記錄)。"""
+    ev = {"ts": time.time(), "kind": kind, "severity": severity, "code": code,
+          "addr": addr, "title": title, "detail": detail, "value": value}
+    _safety_events.append(ev)
+    try:
+        conn = _safety_db()
+        conn.execute("INSERT INTO signal_safety_events "
+                     "(ts,kind,severity,code,addr,title,detail,value) VALUES (?,?,?,?,?,?,?,?)",
+                     (ev["ts"], kind, severity, code, addr, title, detail, value))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    try:
+        add_log("warning" if severity == "warn" else "info",
+                f"{title} — {detail}", source="signal")
+    except Exception:
+        pass
+    if severity == "warn" and _conn.get("safety_push", True):
+        site = _addr_name(addr) if isinstance(addr, int) else "號誌路口"
+        push_alert(title, f"{site}:{detail}",
+                   {"kind": kind, "code": code, "value": value}, category="signal")
+
+
+def _safety_dedup_ok(key: str, window: float = 30.0) -> bool:
+    """同鍵事件 window 秒內只記一次(控制器會重送同一則回報)。"""
+    now = time.time()
+    if now - _safety_dedup.get(key, 0.0) < window:
+        return False
+    _safety_dedup[key] = now
+    return True
+
+
+def _safety_watch(rec: dict) -> None:
+    """抄錄迴圈每收到一個 CKS 正確的控制器訊框呼叫一次。失敗全吞,不影響抄錄。"""
+    try:
+        code = rec.get("code") or ""
+        addr = rec.get("addr")
+        # 控制策略(5F00 主動回報 / 5FC0 查詢回報):值改變才記
+        v = rec.get("strategy")
+        if v is not None:
+            prev = _safety["strategy"]
+            _safety["strategy"] = v
+            _safety["strategy_ts"] = rec["ts"]
+            if prev is not None and v != prev:
+                manual = bool(v & STRATEGY_MANUAL_MASK)
+                was_manual = bool(prev & STRATEGY_MANUAL_MASK)
+                if manual and not was_manual:
+                    title, sev = "號誌:手動介入", "warn"
+                elif was_manual and not manual:
+                    title, sev = "號誌:手動解除", "warn"
+                else:
+                    title, sev = "號誌:控制策略異動", "info"
+                _safety_event("strategy", sev, title,
+                              f"{_strategy_text(prev)} → {_strategy_text(v)}",
+                              code, addr, v)
+        # 現場面板操作(5F08):每一次都是真人動作,記;回復自動之外都是 warn
+        v = rec.get("field_operate")
+        if v is not None and _safety_dedup_ok(f"field:{v}"):
+            op = FIELD_OPERATE.get(v, f"未知({v:02X}H)")
+            _safety_event("field_op", "info" if v == 0x80 else "warn",
+                          f"號誌:現場操作 {op}", f"控制器面板操作代碼 {v:02X}H({op})",
+                          code, addr, v)
+        # 現場更動設定(5F0A):現場人員改了控制器資料庫
+        v = rec.get("update_db")
+        if v is not None and _safety_dedup_ok(f"updatedb:{v}:{rec.get('sub_db_id')}"):
+            sub = rec.get("sub_db_id")
+            _safety_event("update_db", "warn", "號誌:現場資料異動",
+                          f"現場人員更動控制器設定(資料庫別 {v:02X}H"
+                          + (f",子庫 {sub:02X}H)" if isinstance(sub, int) else ")"),
+                          code, addr, v)
+        # 燈態特殊步階(5F03):進入/離開異常狀態各記一次
+        ph = rec.get("phase")
+        if ph:
+            step = ph.get("step_id")
+            ab = step if isinstance(step, int) and step in STEP_SPECIAL else None
+            prev = _safety["abnormal_step"]
+            if ab != prev:
+                _safety["abnormal_step"] = ab
+                if ab is not None:
+                    # 0x9F 啟動全紅3秒是開機過渡,只記錄;0xAF 起是故障/閃光,推播
+                    _safety_event("fault_step", "info" if ab == 0x9F else "warn",
+                                  f"號誌:{STEP_SPECIAL[ab]}",
+                                  f"燈態進入特殊步階 {ab:02X}H({STEP_SPECIAL[ab]})",
+                                  code, addr, ab)
+                elif prev is not None and prev != 0x9F:
+                    _safety_event("fault_step", "info", "號誌:燈態回復正常",
+                                  f"離開特殊步階 {prev:02X}H({STEP_SPECIAL.get(prev, '')})",
+                                  code, addr, step)
+    except Exception:
+        pass
+
+
+@router.get("/safety", summary="安全網狀態(控制策略/異常步階/最近事件)")
+async def safety_status(limit: int = 50, _user=Depends(get_current_user)):
+    v = _safety["strategy"]
+    events: list = []
+    try:
+        conn = _safety_db()
+        rows = conn.execute(
+            "SELECT ts,kind,severity,code,addr,title,detail,value "
+            "FROM signal_safety_events ORDER BY id DESC LIMIT ?",
+            (max(1, min(200, int(limit or 50))),)).fetchall()
+        conn.close()
+        events = [{"ts": r[0], "kind": r[1], "severity": r[2], "code": r[3],
+                   "addr": r[4], "title": r[5], "detail": r[6], "value": r[7]}
+                  for r in rows]
+    except Exception:
+        events = list(reversed(list(_safety_events)))[:50]
+    return {
+        "push_enabled": bool(_conn.get("safety_push", True)),
+        "strategy": v,
+        "strategy_text": _strategy_text(v) if isinstance(v, int) else None,
+        "strategy_ts": _safety["strategy_ts"] or None,
+        "manual": bool(v & STRATEGY_MANUAL_MASK) if isinstance(v, int) else False,
+        "abnormal_step": _safety["abnormal_step"],
+        "abnormal_text": STEP_SPECIAL.get(_safety["abnormal_step"], "")
+                         if _safety["abnormal_step"] is not None else "",
+        "events": events,
+    }
+
+
+@router.post("/safety", summary="安全網推播開關(事件照記,只關推播)")
+async def safety_config(request: Request, _user=Depends(get_current_user)):
+    body = await request.json()
+    if "push" in body:
+        _conn["safety_push"] = bool(body.get("push"))
+        _save_conn_config()
+    return {"push_enabled": bool(_conn.get("safety_push", True))}
 
 
 def get_conn_config() -> dict:
