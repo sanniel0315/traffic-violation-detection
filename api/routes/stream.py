@@ -121,6 +121,58 @@ def _seg_intersect(p1, p2, q1, q2) -> bool:
 
 # 偵測服務狀態
 detection_services: Dict[int, dict] = {}
+
+# ---- 車流 / 車速 兩個子功能的啟停 ----
+# 兩者共用同一支偵測 worker:YOLO 推論是整條 pipeline 最貴的一段,拆成兩條執行緒
+# 等於 Jetson GPU 負載翻倍,而它們吃的是同一批偵測結果。所以改用 modes 旗標控制
+# 「同一輪偵測結果要不要餵給該子功能」:
+#   traffic → ROI 進出計數 / TrafficEvent 寫入
+#   speed   → 速度估算 / 超速開單 / 疊加畫面的 km/h 標籤
+# worker 每輪重讀旗標,單獨啟停其中一項不需要重啟執行緒(不會斷 RTSP 重連)。
+DETECTION_MODES = ("traffic", "speed")
+
+
+def _detection_modes(camera_id: int, default: bool = True) -> dict:
+    """取得該攝影機兩個子功能的啟用旗標;沒有紀錄時一律回 default。"""
+    try:
+        svc = detection_services.get(int(camera_id)) or {}
+    except (TypeError, ValueError):
+        return {m: bool(default) for m in DETECTION_MODES}
+    modes = svc.get("modes")
+    if not isinstance(modes, dict):
+        return {m: bool(default) for m in DETECTION_MODES}
+    return {m: bool(modes.get(m, default)) for m in DETECTION_MODES}
+
+
+def _detection_mode_on(camera_id, mode: str, default: bool = True) -> bool:
+    """單一子功能是否啟用。camera_id 為 None(臨時預覽串流)時回 default。"""
+    if camera_id is None:
+        return bool(default)
+    return _detection_modes(camera_id, default).get(mode, bool(default))
+
+
+def _persist_detection_modes(camera_id: int, modes: dict) -> None:
+    """把子功能啟停寫進 feature_state,重啟後可還原。
+
+    `detection` 這個舊 key 維持「worker 要不要跑」的語意 —— watchdog 與舊版
+    resume 都看它,任一子功能啟用就是 True。
+    """
+    set_feature_state("detection_traffic", camera_id, bool(modes.get("traffic")))
+    set_feature_state("detection_speed", camera_id, bool(modes.get("speed")))
+    set_feature_state("detection", camera_id, any(bool(modes.get(m)) for m in DETECTION_MODES))
+
+
+def resolve_detection_modes_intent(camera_id: int, default: bool) -> dict:
+    """重啟 / watchdog 要還原的子功能狀態。
+
+    舊版 feature_state 只有 `detection` 一個 key,沒有子項紀錄 —— 這時兩個子功能
+    都跟著它走,行為與升級前完全一致。
+    """
+    master = get_feature_enabled("detection", camera_id, default=bool(default))
+    return {
+        "traffic": get_feature_enabled("detection_traffic", camera_id, default=master),
+        "speed": get_feature_enabled("detection_speed", camera_id, default=master),
+    }
 # detection 服務共享最新 frame 給 overlay（避免 NX 串流開第二條連線）
 _shared_frames: Dict[int, dict] = {}  # {camera_id: {"frame": ndarray, "ts": float}}
 # 純畫面共用區,由 reader 以 RTSP 原生速率更新(不含偵測結果)。
@@ -1650,7 +1702,9 @@ def generate_frames_overlay(
                         truck_cls = det.get("truck_cls")
                         zh = str(truck_cls["label"]) if truck_cls and truck_cls.get("label") else _ZH.get(det["class_name"], det["class_name"])
                         label = zh
-                        if in_speed_roi:
+                        # 車速偵測關掉就不標 km/h —— 疊加畫面自己也會估一版 pixel 速度,
+                        # 不擋的話使用者停了車速偵測畫面上照樣有速度,看起來像沒生效。
+                        if in_speed_roi and _detection_mode_on(camera_id, "speed"):
                             # 優先用 detection thread 算好的 speed（Homography + 5-frame gate），fallback 才用 overlay 自己估的
                             _det_speed = det.get("speed_kmh")
                             _show_speed = _det_speed if isinstance(_det_speed, (int, float)) and _det_speed > 0 else None
@@ -1982,63 +2036,131 @@ async def snapshot(camera_id: int, overlay: int = 0, db: Session = Depends(get_d
     )
 
 
+_DETECTION_MODE_LABEL = {"traffic": "車流偵測", "speed": "車速偵測", "all": "車流/車速偵測"}
+
+
+def _parse_detection_mode(mode: str) -> tuple:
+    """query 參數 mode → 要操作的子功能。traffic / speed / all(預設,兩者)。"""
+    m = str(mode or "all").strip().lower()
+    if m in ("", "all", "both"):
+        return DETECTION_MODES
+    if m in DETECTION_MODES:
+        return (m,)
+    raise HTTPException(status_code=400, detail=f"不支援的 mode: {mode}(可用 traffic / speed / all)")
+
+
+def _detection_status_payload(camera_id: int, svc: dict = None) -> dict:
+    """狀態回傳格式。除了原本的 running,再給前端兩個子功能各自的執行狀態。"""
+    if svc is None:
+        svc = detection_services.get(camera_id)
+    if not svc:
+        return {
+            "running": False,
+            "modes": {m: False for m in DETECTION_MODES},
+            "traffic_running": False,
+            "speed_running": False,
+        }
+    out = {k: v for k, v in svc.items() if not k.startswith("_")}
+    modes = out.get("modes")
+    # 舊 worker(升級前就在跑的)沒有 modes,視為兩個子功能都開
+    if not isinstance(modes, dict):
+        modes = {m: True for m in DETECTION_MODES}
+    modes = {m: bool(modes.get(m, True)) for m in DETECTION_MODES}
+    out["modes"] = modes
+    running = bool(out.get("running"))
+    out["traffic_running"] = running and modes["traffic"]
+    out["speed_running"] = running and modes["speed"]
+    return out
+
+
 @router.post("/{camera_id}/detection/start")
-async def start_detection(camera_id: int, db: Session = Depends(get_db)):
-    """啟動偵測服務"""
+async def start_detection(camera_id: int, mode: str = "all", db: Session = Depends(get_db)):
+    """啟動偵測服務。
+
+    mode=traffic 只開車流計數、mode=speed 只開車速估算、all(預設)兩者都開。
+    兩個子功能共用同一支 worker,已在跑的話只是把旗標打開,不會重啟執行緒。
+    """
+    targets = _parse_detection_mode(mode)
+    label = _DETECTION_MODE_LABEL["all" if len(targets) > 1 else targets[0]]
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:
         raise HTTPException(status_code=404, detail="攝影機不存在")
     if not bool(camera.enabled):
         raise HTTPException(status_code=409, detail="攝影機已關閉")
+
     if camera_id in detection_services and detection_services[camera_id].get('running'):
-        add_log("info", f"偵測服務已在執行中: {camera.name} (ID={camera_id})", "detection")
-        return {"status": "already_running", "message": "偵測服務已在執行中"}
-    
-    started = _start_detection_service(camera)
+        modes = _detection_modes(camera_id)
+        if all(modes.get(m) for m in targets):
+            add_log("info", f"{label}已在執行中: {camera.name} (ID={camera_id})", "detection")
+            return {"status": "already_running", "modes": modes,
+                    "message": f"{label}已在執行中"}
+        for m in targets:
+            modes[m] = True
+        detection_services[camera_id]["modes"] = modes
+        camera.detection_enabled = True
+        db.commit()
+        _persist_detection_modes(camera_id, modes)
+        add_log("success", f"{label}已啟動: {camera.name} (ID={camera_id})", "detection")
+        return {"status": "started", "modes": modes, "message": f"{label}已啟動: {camera.name}"}
+
+    modes = {m: (m in targets) for m in DETECTION_MODES}
+    started = _start_detection_service(camera, modes)
     if not started:
-        raise HTTPException(status_code=409, detail="偵測服務啟動失敗")
-    
+        raise HTTPException(status_code=409, detail=f"{label}啟動失敗")
+
     # 更新攝影機狀態
     camera.status = "online"
     camera.detection_enabled = True
     db.commit()
-    set_feature_state("detection", camera_id, True)
-    add_log("success", f"偵測服務已啟動: {camera.name} (ID={camera_id})", "detection")
-    
-    return {"status": "started", "message": f"偵測服務已啟動: {camera.name}"}
+    _persist_detection_modes(camera_id, modes)
+    add_log("success", f"{label}已啟動: {camera.name} (ID={camera_id})", "detection")
+
+    return {"status": "started", "modes": modes, "message": f"{label}已啟動: {camera.name}"}
 
 
 @router.post("/{camera_id}/detection/stop")
-async def stop_detection(camera_id: int, db: Session = Depends(get_db)):
-    """停止偵測服務"""
+async def stop_detection(camera_id: int, mode: str = "all", db: Session = Depends(get_db)):
+    """停止偵測服務。
+
+    mode=traffic / speed 只關該子功能,另一個還開著時 worker 繼續跑(串流不會斷);
+    兩個都關(或 mode=all)才真的把執行緒停掉。
+    """
+    targets = _parse_detection_mode(mode)
+    label = _DETECTION_MODE_LABEL["all" if len(targets) > 1 else targets[0]]
+    svc = detection_services.get(camera_id) or {}
+    # 沒有服務紀錄時預設兩個子功能都是關的,免得「只關車流」反而把另一個標成啟用
+    modes = _detection_modes(camera_id, default=bool(svc.get("running")))
+    for m in targets:
+        modes[m] = False
+    still_on = any(modes.values())
     if camera_id in detection_services:
-        detection_services[camera_id]['running'] = False
-    
+        detection_services[camera_id]["modes"] = modes
+        if not still_on:
+            detection_services[camera_id]['running'] = False
+
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     camera_name = f"camera_{camera_id}"
     if camera:
         camera_name = camera.name
-        camera.detection_enabled = False
+        camera.detection_enabled = still_on
         db.commit()
-    set_feature_state("detection", camera_id, False)
-    add_log("info", f"偵測服務已停止: {camera_name} (ID={camera_id})", "detection")
-    
-    return {"status": "stopped", "message": "偵測服務已停止"}
+    _persist_detection_modes(camera_id, modes)
+    add_log("info", f"{label}已停止: {camera_name} (ID={camera_id})", "detection")
+
+    return {"status": "partial" if still_on else "stopped", "modes": modes,
+            "running": still_on, "message": f"{label}已停止"}
 
 
 @router.get("/{camera_id}/detection/status")
 async def detection_status(camera_id: int):
     """取得偵測服務狀態"""
-    if camera_id in detection_services:
-        v = detection_services[camera_id]
-        return {k: vv for k, vv in v.items() if not k.startswith("_")}
-    return {"running": False}
+    return _detection_status_payload(camera_id)
 
 
 @router.get("/detection/all")
 async def all_detection_status():
     """取得所有偵測服務狀態"""
-    return {k: {kk: vv for kk, vv in v.items() if not kk.startswith("_")} for k, v in detection_services.items()}
+    return {k: _detection_status_payload(k, v) for k, v in detection_services.items()}
 
 
 @router.get("/gpu-lock-stats", summary="GPU 推論通道(全 process 唯一)的吞吐與排隊")
@@ -2097,13 +2219,18 @@ async def debug_shared_frames():
     return {"shared_frames": result, "threads": threads}
 
 
-def _start_detection_service(camera: Camera) -> bool:
+def _start_detection_service(camera: Camera, modes: dict = None) -> bool:
+    """啟動偵測 worker。modes 指定車流 / 車速兩個子功能各自要不要跑,None = 兩個都跑。"""
     if camera.id in detection_services and detection_services[camera.id].get("running"):
         return False
+    _modes = {m: True for m in DETECTION_MODES} if modes is None else {
+        m: bool((modes or {}).get(m)) for m in DETECTION_MODES
+    }
     detection_services[camera.id] = {
         "running": True,
         "started_at": datetime.now().isoformat(),
         "camera_name": camera.name,
+        "modes": _modes,
     }
     # location 從 cam.location 來,空字串 fallback 用 cam.name (不然 violations
     # 寫入時 location='' → analytics hotspots 無法 group by,user 看「未設定位置」)
@@ -2145,11 +2272,11 @@ def resume_detection_services() -> dict:
             # Pre-warm snapshots at boot to reduce first-open placeholder rate.
             if cam.enabled and cam.source:
                 _schedule_snapshot_warm(cam.id, cam.source)
-            want = get_feature_enabled("detection", cam.id, default=bool(cam.detection_enabled))
-            if not want:
+            _modes = resolve_detection_modes_intent(cam.id, default=bool(cam.detection_enabled))
+            if not any(_modes.values()):
                 cam.detection_enabled = False
                 continue
-            if _start_detection_service(cam):
+            if _start_detection_service(cam, _modes):
                 resumed += 1
             cam.detection_enabled = True
         db.commit()
@@ -2527,6 +2654,12 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                    >= _min_bbox_area
             ]
 
+        # 車流 / 車速兩個子功能各自的啟停旗標。每輪重讀 —— 使用者在網頁上單獨關掉
+        # 其中一項時,worker 不重啟(串流不會斷),下一輪就跳過那一段運算。
+        _modes_now = _detection_modes(camera_id)
+        _mode_traffic = _modes_now["traffic"]
+        _mode_speed = _modes_now["speed"]
+
         # 進出計數要用「ROI 過濾前」的清單:過濾後看不到框外的車,就看不到車開出框。
         # (now_ts / _match_dist 也一起在這裡算 —— 下面的車速區塊只在過濾後還有車時
         #  才跑,但進出計數在框內沒車時也要跑,不能依賴那裡的變數。)
@@ -2555,7 +2688,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
 
         # 車速 ROI：保留給超速判定，同時背景任務也會估算 speed_kmh 寫入 traffic_events
         speed_zone_vehicles = []
-        if vehicles and speed_zones:
+        if _mode_speed and vehicles and speed_zones:
             if speed_zones:
                 for v in vehicles:
                     b = v['bbox']
@@ -2569,7 +2702,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                 break
 
         # 背景速度估算（與 live-overlay 同邏輯）
-        if vehicles:
+        if _mode_speed and vehicles:
                     stale_ids = [tid for tid, tr in tracks.items() if (now_ts - tr.get("t", now_ts)) > track_ttl_sec]
                     for tid in stale_ids:
                         tracks.pop(tid, None)
@@ -2798,10 +2931,30 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             tracks[track_id]["center_bottom_prev"] = curr_pt
                         else:
                             tracks[track_id]["center_bottom_prev"] = (float(_ground_x), float(_ground_y))
-                
+        elif _mode_traffic and vehicles:
+            # 車速偵測關掉時仍要配 track_id:車流事件的「同一台車同一框 30 秒只記一筆」
+            # 防重複完全靠 track_id(見下方 _EVENT_LOG_COOLDOWN),少了它塞車時同一台車
+            # 會每幀寫一筆。這裡只做最省的最近鄰配對,不算速度、不做 homography。
+            for _tid in [_t for _t, _tr in tracks.items()
+                         if (now_ts - _tr.get("t", now_ts)) > track_ttl_sec]:
+                tracks.pop(_tid, None)
+            for v in vehicles:
+                b = v.get("bbox", {}) or {}
+                cx = int((b.get("x1", 0) + b.get("x2", 0)) / 2)
+                cy = int((b.get("y1", 0) + b.get("y2", 0)) / 2)
+                cls = str(v.get("class_name") or "")
+                track_id = _nearest_track_id((cx, cy), cls, tracks, max_dist=_match_dist)
+                if track_id is None:
+                    track_id = next_track_id
+                    next_track_id += 1
+                _existing = tracks.get(track_id) or {}
+                _existing.update({"center": (cx, cy), "t": now_ts, "class_name": cls})
+                tracks[track_id] = _existing
+                v["track_id"] = track_id
+
         # 用 _vehicles_all 當條件:框內沒車但畫面上還有車時,進出計數仍要跑
         # (最後一台開出框的那一幀,filtered 會是空的 → 舊寫法會漏掉那筆 EXIT)
-        if (vehicles or _vehicles_all) and det_zones:
+        if _mode_traffic and (vehicles or _vehicles_all) and det_zones:
             detection_count += 1
 
             # 更新服務狀態
@@ -3169,7 +3322,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
 
             # 每 50 次偵測記錄一次違規 (模擬)
             # P0: real SPEEDING only - no random fakes
-            if detection_config.get('speeding') and speed_zones and speed_zone_vehicles:
+            if _mode_speed and detection_config.get('speeding') and speed_zones and speed_zone_vehicles:
                 _speed_limit_kmh = float(detection_config.get("speed_limit", 50) or 50)
                 _overspeed_threshold_kmh = 10.0
                 _zone_cfg = speed_zones[0] or {}

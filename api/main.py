@@ -110,20 +110,24 @@ def _service_watchdog():
                 cam_id = cam.id
 
                 # --- Detection watchdog ---
-                want_det = get_feature_enabled("detection", cam_id, default=bool(cam.detection_enabled))
+                # 車流 / 車速是同一支 worker 的兩個子功能,重啟要沿用使用者各自的啟停,
+                # 不然只開了車流的攝影機一被 watchdog 拉起就連車速一起跑回來。
+                det_modes = stream.resolve_detection_modes_intent(
+                    cam_id, default=bool(cam.detection_enabled))
+                want_det = any(det_modes.values())
                 if want_det:
                     svc = stream.detection_services.get(cam_id, {})
                     t = svc.get("_thread")
                     if t is not None and not t.is_alive():
                         # thread 掛掉 → 清掉殘留狀態後重啟
                         stream.detection_services.pop(cam_id, None)
-                        stream._start_detection_service(cam)
+                        stream._start_detection_service(cam, det_modes)
                         restarted.append(f"detection-{cam_id}")
                     elif t is None and not svc.get("running"):
                         # 從沒啟動過(例如剛上傳影片新建的攝影機) → 首次拉起，
                         # 否則畫面會一直停在第一幀不會播。這裡不 pop，讓
                         # _start_detection_service 自身的防重複判斷生效。
-                        stream._start_detection_service(cam)
+                        stream._start_detection_service(cam, det_modes)
                         restarted.append(f"detection-{cam_id}(首次啟動)")
                     # 每輪對帳:偵測確實在跑就把狀態補成 online。
                     # 不能只在「本輪剛啟動」時做 — 服務啟動時 resume 拉起的
