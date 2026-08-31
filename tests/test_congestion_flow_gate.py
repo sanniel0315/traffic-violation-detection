@@ -76,10 +76,12 @@ def test_flow_isolated_per_camera(det):
 # ---- 封頂邏輯:直接打真的 _cap_level,不重寫一份規則 ----
 
 
-def _apply_cap(det, level, n_veh, flow_vpm, *, min_high=2, min_critical=3, free_flow=0.0):
+def _apply_cap(det, level, n_veh, flow_vpm, *, min_high=2, min_critical=3, free_flow=0.0,
+               large=True):
     lv, _reason = det._cap_level(
         level,
         vehicle_count=n_veh,
+        large_vehicle_present=large,
         flow_vpm=flow_vpm,
         min_vehicles_high=min_high,
         min_vehicles_critical=min_critical,
@@ -126,3 +128,36 @@ def test_cap_never_upgrades(det):
 def test_strictest_cap_wins(det):
     """車輛數封在 high、流量封在 medium → 取 medium。"""
     assert _apply_cap(det, "critical", n_veh=2, flow_vpm=20.0, free_flow=12.0) == "medium"
+
+
+def test_cap_only_applies_to_large_vehicles(det):
+    """幾台小客車把 ROI 塞到 60% 是真的擠,不可以被車輛數封頂壓下來。
+
+    會「一台就灌爆佔用率」的只有大貨車/大客車。
+    """
+    assert _apply_cap(det, "critical", n_veh=1, flow_vpm=0.0, large=False) == "critical"
+    assert _apply_cap(det, "critical", n_veh=2, flow_vpm=0.0, large=False) == "critical"
+
+
+def test_large_vehicle_still_capped(det):
+    """有大型車在場才套車輛數封頂。"""
+    assert _apply_cap(det, "critical", n_veh=1, flow_vpm=0.0, large=True) == "medium"
+    assert _apply_cap(det, "critical", n_veh=2, flow_vpm=0.0, large=True) == "high"
+
+
+def test_flow_cap_ignores_vehicle_class(det):
+    """流量封頂跟車種無關 —— 順暢通過就不是壅塞,不管是什麼車。"""
+    assert _apply_cap(det, "critical", n_veh=10, flow_vpm=20.0,
+                      free_flow=12.0, large=False) == "medium"
+
+
+def test_large_vehicle_classes_cover_bus_and_truck(det):
+    """大貨車(heavy_truck/truck)與大客車(bus)都要算大型車。
+
+    細分類沒跑或判不出來時類別會停在 truck,前端顯示就是「大貨車」,
+    漏掉它等於這條規則在細分類降頻後大半時間失效。
+    """
+    from detection.congestion_detector import CongestionDetector
+    assert {"heavy_truck", "bus", "truck"} <= set(CongestionDetector.LARGE_VEHICLE_CLASSES)
+    assert "car" not in CongestionDetector.LARGE_VEHICLE_CLASSES
+    assert "motorcycle" not in CongestionDetector.LARGE_VEHICLE_CLASSES

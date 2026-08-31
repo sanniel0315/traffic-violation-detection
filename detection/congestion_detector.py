@@ -13,6 +13,10 @@ class CongestionDetector:
     
     LEVEL_NAMES = {'low': '暢通', 'medium': '中等', 'high': '擁擠', 'critical': '嚴重壅塞'}
     LEVEL_RANK = {'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
+    # 大型車 = 大貨車 + 大客車。只有這類車能「一台就把佔用率灌到嚴重壅塞」,
+    # 車輛數封頂只針對它們,不誤傷「幾台小客車真的塞住」的情況。
+    # 'truck' 也算:細分類沒跑或判不出來時類別會停在 truck,前端顯示就是「大貨車」。
+    LARGE_VEHICLE_CLASSES = frozenset({'heavy_truck', 'bus', 'truck'})
     DEFAULT_DETECT_CONF = 0.12
     DEFAULT_FALLBACK_CONF = 0.05
     # 停等長度評估用：每種車輛佔用的等效路面長度（公尺）
@@ -260,9 +264,14 @@ class CongestionDetector:
         else:
             level = 'low'
 
+        large_vehicle_count = sum(
+            1 for v in tracked_vehicles
+            if v.get('class_name') in self.LARGE_VEHICLE_CLASSES
+        )
         level, _cap_reason = self._cap_level(
             level,
             vehicle_count=len(tracked_vehicles),
+            large_vehicle_present=large_vehicle_count > 0,
             flow_vpm=flow_vpm,
             min_vehicles_high=min_veh_high,
             min_vehicles_critical=min_veh_critical,
@@ -384,6 +393,7 @@ class CongestionDetector:
             'queue_duration_sec': int(round(queue_duration_sec)),
             'raw_score': round(congestion_score, 3),
             'flow_vpm': round(flow_vpm, 1),
+            'large_vehicle_count': large_vehicle_count,
             'level_capped_by': _cap_reason,
             'density_score': round(count_density, 3),
             'occupancy': round(smoothed, 3),
@@ -442,6 +452,7 @@ class CongestionDetector:
         level: str,
         *,
         vehicle_count: int,
+        large_vehicle_present: bool,
         flow_vpm: float,
         min_vehicles_high: int,
         min_vehicles_critical: int,
@@ -455,15 +466,18 @@ class CongestionDetector:
            但一台車不是壅塞。流量條件擋不住這個(停著的車流量趨近 0,
            看起來反而更像壅塞),只能靠車輛數。
            「單一大車卡住前方」仍看得到,只是封頂在「擁擠」不喊最高級。
+           🛑 只在畫面上有大貨車/大客車時才套用 —— 會「一台就灌爆佔用率」的
+              只有大型車;幾台小客車就把 ROI 塞到 60% 那是真的擠,不該被壓下來。
         2. `free_flow` —— 車正在順暢通過,佔用率再高也不是壅塞。
            流量會低估(見 _update_flow_vpm),所以只准降級不准升級。
         """
         ceiling: Optional[str] = None
         reason: Optional[str] = None
-        if vehicle_count < min_vehicles_high:
-            ceiling, reason = 'medium', 'vehicle_count'
-        elif vehicle_count < min_vehicles_critical:
-            ceiling, reason = 'high', 'vehicle_count'
+        if large_vehicle_present:
+            if vehicle_count < min_vehicles_high:
+                ceiling, reason = 'medium', 'vehicle_count'
+            elif vehicle_count < min_vehicles_critical:
+                ceiling, reason = 'high', 'vehicle_count'
         if free_flow_vpm > 0 and flow_vpm >= free_flow_vpm:
             if ceiling is None or self.LEVEL_RANK['medium'] < self.LEVEL_RANK[ceiling]:
                 ceiling, reason = 'medium', 'free_flow'
