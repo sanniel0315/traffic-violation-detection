@@ -974,6 +974,18 @@
         .repeat-risk.risk-high     { background: #fbe7e3; color: var(--gov-fault); }
         .repeat-risk.risk-mid      { background: #fdf3e3; color: var(--gov-warn); }
         .repeat-risk.risk-low      { background: var(--gov-primary-soft); color: var(--gov-primary); }
+        /* 嚴重壅塞標籤：比 danger 更強的深紅實心 + 脈動，避免和「擁擠」混淆 */
+        .el-tag.cong-critical {
+            background: #a8071a !important;
+            border-color: #a8071a !important;
+            color: #fff !important;
+            font-weight: 700;
+            animation: cong-critical-pulse 1.2s ease-in-out infinite;
+        }
+        @keyframes cong-critical-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(168,7,26,0.55); }
+            50%      { box-shadow: 0 0 0 6px rgba(168,7,26,0); }
+        }
         .repeat-plate-cell { font-family: var(--font-mono); font-weight: 700; letter-spacing: 0.04em; }
         .repeat-plate-link { color: var(--gov-primary); cursor: pointer; text-decoration: none; }
         .repeat-plate-link:hover { color: var(--gov-primary-strong); text-decoration: underline; }
@@ -5326,11 +5338,11 @@
                                 </div>
                                 <div v-if="congestionStatus[c.id]?.result" style="margin-top:8px;font-size:12px;color:#475569">
                                     <template v-if="resolveCongestionLaneRows(congestionStatus[c.id]?.result).length">
-                                        <el-tag v-for="(lr, li) in resolveCongestionLaneRows(congestionStatus[c.id]?.result)" :key="`top-${c.id}-${li}`" size="small" :type="getCongestionLevelType(lr.level)" style="margin-right:4px">
+                                        <el-tag v-for="(lr, li) in resolveCongestionLaneRows(congestionStatus[c.id]?.result)" :key="`top-${c.id}-${li}`" size="small" :type="getCongestionLevelType(lr.level)" :class="getCongestionLevelClass(lr.level)" style="margin-right:4px">
                                             車道{{ lr.lane_no || (li+1) }} {{ lr.level_name || '-' }}
                                         </el-tag>
                                     </template>
-                                    <el-tag v-else size="small" :type="getCongestionLevelType(congestionStatus[c.id]?.result?.level)">
+                                    <el-tag v-else size="small" :type="getCongestionLevelType(congestionStatus[c.id]?.result?.level)" :class="getCongestionLevelClass(congestionStatus[c.id]?.result?.level)">
                                         {{ congestionStatus[c.id]?.result?.level_name || '-' }}
                                     </el-tag>
                                     <span style="margin-left:8px">車輛 {{ congestionStatus[c.id]?.result?.vehicle_count || 0 }}</span>
@@ -5338,7 +5350,7 @@
                                     <span style="margin-left:8px">排隊 {{ formatQueueLengthCell(congestionStatus[c.id]?.result?.estimated_queue_length_m,'0.0') }}m</span>
                                     <span style="margin-left:8px">持續 {{ formatQueueDurationCell(congestionStatus[c.id]?.result?.queue_duration_sec,'-') }}</span>
                                     <div v-if="resolveCongestionLaneRows(congestionStatus[c.id]?.result).length" style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
-                                        <el-tag v-for="(lr, li) in resolveCongestionLaneRows(congestionStatus[c.id]?.result)" :key="`z-${c.id}-${li}`" size="small" :type="getCongestionLevelType(lr.level)">
+                                        <el-tag v-for="(lr, li) in resolveCongestionLaneRows(congestionStatus[c.id]?.result)" :key="`z-${c.id}-${li}`" size="small" :type="getCongestionLevelType(lr.level)" :class="getCongestionLevelClass(lr.level)">
                                             {{ lr.title }} {{ ((lr.occupancy || 0) * 100).toFixed(0) }}% / {{ formatQueueLengthCell(lr.estimated_queue_length_m,'0.0') }}m
                                         </el-tag>
                                     </div>
@@ -5479,11 +5491,11 @@
                         <div v-if="monitorZoomCamera && congestionStatus[monitorZoomCamera.id] && congestionStatus[monitorZoomCamera.id].result" class="ptz-panel">
                             <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px;font-size:14px">
                                 <template v-if="resolveCongestionLaneRows(congestionStatus[monitorZoomCamera.id].result).length">
-                                    <el-tag v-for="(lr, li) in resolveCongestionLaneRows(congestionStatus[monitorZoomCamera.id].result)" :key="'top-lane-'+li" size="default" :type="getCongestionLevelType(lr.level)">
+                                    <el-tag v-for="(lr, li) in resolveCongestionLaneRows(congestionStatus[monitorZoomCamera.id].result)" :key="'top-lane-'+li" size="default" :type="getCongestionLevelType(lr.level)" :class="getCongestionLevelClass(lr.level)">
                                         車道 {{ lr.lane_no || (li+1) }} · {{ lr.level_name || '-' }}
                                     </el-tag>
                                 </template>
-                                <el-tag v-else size="default" :type="getCongestionLevelType(congestionStatus[monitorZoomCamera.id].result.level)">
+                                <el-tag v-else size="default" :type="getCongestionLevelType(congestionStatus[monitorZoomCamera.id].result.level)" :class="getCongestionLevelClass(congestionStatus[monitorZoomCamera.id].result.level)">
                                     壅塞 {{ congestionStatus[monitorZoomCamera.id].result.level_name || '-' }}
                                 </el-tag>
                                 <span>車輛 <b>{{ congestionStatus[monitorZoomCamera.id].result.vehicle_count || 0 }}</b></span>
@@ -5493,7 +5505,7 @@
                                 <span>持續 <b>{{ formatQueueDurationCell(congestionStatus[monitorZoomCamera.id].result.queue_duration_sec,'-') }}</b></span>
                             </div>
                             <div v-if="resolveCongestionLaneRows(congestionStatus[monitorZoomCamera.id].result).length" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px">
-                                <el-tag v-for="(lr, li) in resolveCongestionLaneRows(congestionStatus[monitorZoomCamera.id].result)" :key="'zoom-lane-'+li" size="small" :type="getCongestionLevelType(lr.level)">
+                                <el-tag v-for="(lr, li) in resolveCongestionLaneRows(congestionStatus[monitorZoomCamera.id].result)" :key="'zoom-lane-'+li" size="small" :type="getCongestionLevelType(lr.level)" :class="getCongestionLevelClass(lr.level)">
                                     車道 {{ lr.lane_no || (li+1) }} · {{ lr.level_name || '-' }} · {{ lr.vehicle_count || 0 }} 車 · {{ ((lr.occupancy || 0) * 100).toFixed(1) }}% · {{ formatQueueLengthCell(lr.estimated_queue_length_m,'0.0') }}m
                                 </el-tag>
                             </div>
@@ -10260,7 +10272,7 @@
                             <div class="analysis-setting-head">3. 即時壅塞結果</div>
                             <div style="font-size:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px">
                                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                                    <el-tag size="small" :type="getCongestionLevelType(congestionStatus[previewCamera?.id]?.result?.level)">
+                                    <el-tag size="small" :type="getCongestionLevelType(congestionStatus[previewCamera?.id]?.result?.level)" :class="getCongestionLevelClass(congestionStatus[previewCamera?.id]?.result?.level)">
                                         {{ congestionStatus[previewCamera?.id]?.result?.level_name || '-' }}
                                     </el-tag>
                                     <span>車輛 {{ congestionStatus[previewCamera?.id]?.result?.vehicle_count || 0 }}</span>
@@ -10276,7 +10288,7 @@
                                     <div style="font-weight:600;margin-bottom:6px">各車道狀態</div>
                                     <div v-for="(lr, li) in resolveCongestionLaneRows(congestionStatus[previewCamera?.id]?.result)" :key="`pz-${li}`" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">
                                         <div style="display:flex;align-items:center;gap:6px;min-width:0">
-                                            <el-tag size="small" :type="getCongestionLevelType(lr.level)">{{ lr.level_name }}</el-tag>
+                                            <el-tag size="small" :type="getCongestionLevelType(lr.level)" :class="getCongestionLevelClass(lr.level)">{{ lr.level_name }}</el-tag>
                                             <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ lr.title }}</span>
                                         </div>
                                         <div style="color:#475569;white-space:nowrap">
@@ -20511,7 +20523,9 @@ const app=createApp({
         const getTagType=(t)=>({RED_LIGHT:'primary',SPEEDING:'warning',ILLEGAL_PARKING:'info'}[t]||'');
         const getStatusType=(s)=>({pending:'warning',confirmed:'success',rejected:'info'}[s]||'');
         const getStatusText=(s)=>({pending:'未處理',confirmed:'已舉發',rejected:'不舉發'}[s]||s);
-        const getCongestionLevelType=(l)=>({low:'success',medium:'warning',high:'danger',critical:'primary'}[l]||'info');
+        const getCongestionLevelType=(l)=>({low:'success',medium:'warning',high:'danger',critical:'danger'}[l]||'info');
+        // 嚴重壅塞要比「擁擠」更醒目：深紅實心 + 脈動（el-tag 沒有比 danger 更強的內建型別）
+        const getCongestionLevelClass=(l)=>(String(l||'').toLowerCase()==='critical'?'cong-critical':'');
         const getCongestionLevelRank=(l)=>({low:1,medium:2,high:3,critical:4}[String(l||'').toLowerCase()]||0);
         const parseCongestionLaneNo=(raw)=>{
             if(raw===null || raw===undefined || raw==='')return null;
@@ -21937,7 +21951,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
