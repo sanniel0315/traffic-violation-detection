@@ -43,6 +43,11 @@ def get_truck_cls_model_path() -> str:
     return os.path.join(model_dir, value)
 
 
+# 細分類的最小框短邊(px)。低於此值直接判定「判不出來」,不送 GPU。
+# 0 = 不啟用(全部都送,舊行為)。
+MIN_CROP_PX = int(os.getenv("TRUCK_CLS_MIN_CROP_PX", "48") or 0)
+
+
 class TruckClassifier:
     """
     大型車輛細分類器
@@ -116,6 +121,15 @@ class TruckClassifier:
         h, w = frame.shape[:2]
         x1, y1, x2, y2 = bbox["x1"], bbox["y1"], bbox["x2"], bbox["y2"]
         bw, bh = x2 - x1, y2 - y1
+        # 🛑 太小的框不送 GPU。imgsz 是 224,一個 30px 的遠處框放大 7 倍只有插值出來的
+        #    糊圖,實測 top1conf 幾乎都低於 conf_threshold → 回 _default_result(unknown)
+        #    → 依 vehicle_detector 的規則 unknown 不進快取 → 下一幀再算一次,永遠白花。
+        #    2026-08-31 87 實測:GPU 鎖飽和度 1.0、細分類佔 52% GPU 時間、
+        #    每幀 2.27 次呼叫但快取命中率只有 15.4%,分析率掉到 0.3 fps
+        #    (疊加框比畫面舊 6.4 秒)。擋掉這些必定判不出來的呼叫直接換回分析率。
+        #    門檻取短邊 —— 遠處車是等比縮小,短邊比面積更能代表「還剩多少細節」。
+        if min(bw, bh) < MIN_CROP_PX:
+            return self._default_result()
         pad_x = int(bw * pad_ratio)
         pad_y = int(bh * pad_ratio)
         x1 = max(0, x1 - pad_x)
