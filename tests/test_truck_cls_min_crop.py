@@ -34,6 +34,10 @@ def tc():
                 mod.get_model_dir = lambda *a, **k: "."
             if not hasattr(mod, "get_truck_cls_model_path"):
                 mod.get_truck_cls_model_path = lambda *a, **k: "x.pt"
+            # 這個 stub 會被留在 sys.modules 給後面的測試檔用,所以別的模組
+            # 需要的屬性也要補齊,否則誰先跑誰決定另一邊會不會 ImportError。
+            if not hasattr(mod, "get_detect_model_pt"):
+                mod.get_detect_model_pt = lambda *a, **k: "x.pt"
     import detection.truck_classifier as m
     return m
 

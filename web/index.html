@@ -10304,7 +10304,11 @@
                             <div class="config-item"><span>擁擠門檻</span><el-input-number v-model="congestionParamsForm.high_threshold" :min="0" :max="1" :step="0.1" :precision="1" size="small" style="width:120px"/></div>
                             <div class="config-item"><span>嚴重門檻</span><el-input-number v-model="congestionParamsForm.critical_threshold" :min="0" :max="1" :step="0.1" :precision="1" size="small" style="width:120px"/></div>
                             <div class="config-item"><span>平滑視窗</span><el-input-number v-model="congestionParamsForm.smoothing_window" :min="1" :max="60" size="small" style="width:120px"/></div>
-                            <div class="config-item"><span>分析頻率(秒)</span><el-input-number v-model="congestionParamsForm.analyze_interval_sec" :min="0.1" :max="5" :step="0.1" :precision="1" size="small" style="width:120px"/></div>
+                            <div class="config-item"><span>分析頻率(秒)</span><el-input-number v-model="congestionParamsForm.analyze_interval_sec" :min="0.1" :max="5" :step="0.1" :precision="1" size="small" style="width:120px"></el-input-number></div>
+                            <div class="config-item"><span title="車在順暢通過就不是壅塞。最近一個統計窗內通過的流量達到此值，判級封頂在「中等」。0 = 不啟用。">順暢流量(輛/分)</span><el-input-number v-model="congestionParamsForm.free_flow_vpm" :min="0" :max="200" :step="1" :precision="0" size="small" style="width:120px"></el-input-number></div>
+                            <div class="config-item"><span title="流量的統計窗長度。">流量統計窗(秒)</span><el-input-number v-model="congestionParamsForm.flow_window_sec" :min="10" :max="600" :step="10" :precision="0" size="small" style="width:120px"></el-input-number></div>
+                            <div class="config-item"><span title="判到「擁擠」需要的最少車輛數。">擁擠最少車數</span><el-input-number v-model="congestionParamsForm.min_vehicles_high" :min="1" :max="50" size="small" style="width:120px"></el-input-number></div>
+                            <div class="config-item"><span title="判到「嚴重壅塞」需要的最少車輛數。一台大貨車停在近鏡頭就能吃掉 ROI 六成面積，但一台車不是壅塞。">嚴重最少車數</span><el-input-number v-model="congestionParamsForm.min_vehicles_critical" :min="1" :max="50" size="small" style="width:120px"></el-input-number></div>
                             <el-button size="small" type="primary" style="width:100%;margin-top:8px" @click="saveCongestionParams(previewCamera.id)">儲存壅塞參數</el-button>
                         </div>
                     </template>
@@ -11982,6 +11986,10 @@ const app=createApp({
             medium_threshold:0.2,
             high_threshold:0.4,
             critical_threshold:0.6,
+            free_flow_vpm:0,
+            flow_window_sec:60,
+            min_vehicles_high:2,
+            min_vehicles_critical:3,
             smoothing_window:10,
             analyze_interval_sec:1.0
         });
@@ -20132,6 +20140,10 @@ const app=createApp({
                 medium_threshold:Number(congestionParamsForm.medium_threshold),
                 high_threshold:Number(congestionParamsForm.high_threshold),
                 critical_threshold:Number(congestionParamsForm.critical_threshold),
+                free_flow_vpm:Number(congestionParamsForm.free_flow_vpm),
+                flow_window_sec:Number(congestionParamsForm.flow_window_sec),
+                min_vehicles_high:Number(congestionParamsForm.min_vehicles_high),
+                min_vehicles_critical:Number(congestionParamsForm.min_vehicles_critical),
                 smoothing_window:Math.round(Number(congestionParamsForm.smoothing_window)),
                 analyze_interval_sec:Number(congestionParamsForm.analyze_interval_sec)
             };

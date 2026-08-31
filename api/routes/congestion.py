@@ -31,6 +31,15 @@ DEFAULT_CONGESTION_PARAMS = {
     "critical_threshold": 0.6,
     "smoothing_window": 10,
     "analyze_interval_sec": 1.0,
+    # 流量納入判級:最近 flow_window_sec 秒通過 >= free_flow_vpm 輛/分 → 判級封頂在「中等」。
+    # 車在順暢通過就不是壅塞,不管佔用率多高。0 = 不啟用。
+    "free_flow_vpm": 0.0,
+    "flow_window_sec": 60.0,
+    # 判到「擁擠」「嚴重壅塞」各自需要的最少車輛數。
+    # 一台大貨車停在近鏡頭就能吃掉 ROI 六成面積,但一台車不是壅塞;
+    # 流量條件擋不住它(停著的車流量趨近 0),所以另外用車輛數擋。
+    "min_vehicles_high": 2,
+    "min_vehicles_critical": 3,
 }
 
 
@@ -72,6 +81,10 @@ class CongestionParamsUpdate(BaseModel):
     critical_threshold: float = Field(ge=0.0, le=1.0, default=0.6)
     smoothing_window: int = Field(ge=1, le=60, default=10)
     analyze_interval_sec: float = Field(ge=0.1, le=5.0, default=1.0)
+    free_flow_vpm: float = Field(ge=0.0, le=200.0, default=0.0)
+    flow_window_sec: float = Field(ge=10.0, le=600.0, default=60.0)
+    min_vehicles_high: int = Field(ge=1, le=50, default=2)
+    min_vehicles_critical: int = Field(ge=1, le=50, default=3)
 
 # 共享偵測器實例與推論鎖（避免 YOLO 並發推論造成不穩定）
 _detector = None
