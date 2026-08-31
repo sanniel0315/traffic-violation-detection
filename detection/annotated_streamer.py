@@ -139,7 +139,13 @@ if _want_hw and not USE_HW:
 #   代價是畫面延遲這麼久 —— 監看用途可以接受,換來的是框準。
 # 0 = 自動(依實測偵測延遲自己調,建議);>0 = 固定值
 STREAM_DELAY_SEC = float(os.getenv("ANNOTATED_STREAM_DELAY", "0") or 0)
-DELAY_MIN, DELAY_MAX = 0.25, 1.20
+DELAY_MIN = float(os.getenv("ANNOTATED_STREAM_DELAY_MIN", "0.25") or 0.25)
+# 🛑 上限寫死 1.20 等於把「壓畫面等偵測」這個機制關掉:
+#    2026-08-31 87 實測偵測延遲 p95 已經 2.5 秒(GPU 飽和、分析率 0.55),
+#    自動延遲算出來要 2.6 秒卻被夾在 1.20 → 畫面永遠比偵測早到 →
+#    配對只能拿舊的那組 → gap 中位 2.0 秒 → 使用者看到「框標不準」。
+#    可調之後,忙的機器可以用畫面延遲換框的準確度(監看用途的取捨)。
+DELAY_MAX = float(os.getenv("ANNOTATED_STREAM_DELAY_MAX", "1.20") or 1.20)
 # 配到的偵測比這張畫面舊超過這麼久就不畫框。0 = 不啟用(預設)。
 # 🛑 預設不啟用是產品決定,不是技術取捨:
 #    「要不要看框」是使用者用「原始畫面 / 辨識疊加」自己選的,
@@ -171,6 +177,14 @@ INTERP_MAX_SEC = float(os.getenv("ANNOTATED_STREAM_INTERP_MAX", "0.5") or 0.5)
 #    等於 0.08 只有 <40km/h 的車會被外推,高速公路等於沒開。放寬到 ~0.20 涵蓋
 #    ~110km/h;env 可依現場 analysis_fps 再調(機器越慢/偵測越稀疏,位移越大要越大)。
 INTERP_MATCH_RATIO = float(os.getenv("ANNOTATED_STREAM_INTERP_MATCH", "0.08") or 0.08)
+# 兩組偵測相隔超過這麼久,速度就不可信,不外推。
+# 🛑 原本寫死 1.5 秒。分析率掉到 0.55 時偵測間隔約 1.8 秒 → 每一組都超過 →
+#    外推整個失效,框只能凍在偵測當下的位置。要跟著現場分析率調。
+INTERP_SPAN_MAX_SEC = float(os.getenv("ANNOTATED_STREAM_INTERP_SPAN_MAX", "1.5") or 1.5)
+# 外推位移上限,以框自身尺寸為單位。
+# 🛑 這條之前沒有,所以 INTERP_MAX 一放大框就會被速度異常甩飛(既有註解記過這件事)。
+#    有了上限才敢把 INTERP_MAX 開大。MJPEG 那條疊加用的是 1.5 倍,這裡對齊。
+INTERP_MAX_SHIFT = float(os.getenv("ANNOTATED_STREAM_INTERP_MAX_SHIFT", "1.5") or 1.5)
 # 同時再推一條「不畫框」的低頻寬串流 cam_N_lite。
 # 🛑 為什麼需要:87 對外上行只有 1.4 Mbps,而原始 H.264 是原生 1080p 5.08 Mbps
 #    —— 使用者切「原始畫面」遠端還是會頓,只有疊加那條(0.81 Mbps)塞得下。
@@ -743,7 +757,7 @@ class AnnotatedStreamer:
             return dets
         prev_ts, prev_dets = prev
         span = dets_ts - prev_ts
-        if span <= 1e-6 or span > 1.5:    # 前一組太舊,速度不可信
+        if span <= 1e-6 or span > INTERP_SPAN_MAX_SEC:   # 前一組太舊,速度不可信
             return dets
         thr = (self.width or 1920) * INTERP_MATCH_RATIO
         out = []
@@ -774,6 +788,13 @@ class AnnotatedStreamer:
             vy = (c[1] - best_prev[1]) / span
             dx, dy = vx * dt, vy * dt
             b = det["bbox"]
+            # 位移上限:速度估錯(配到別台車、偵測抖動)時不讓框飛出去。
+            # 以框自身尺寸為單位 —— 遠處小框本來就不該被推很遠。
+            if INTERP_MAX_SHIFT > 0:
+                _mw = (b["x2"] - b["x1"]) * INTERP_MAX_SHIFT
+                _mh = (b["y2"] - b["y1"]) * INTERP_MAX_SHIFT
+                dx = max(-_mw, min(_mw, dx))
+                dy = max(-_mh, min(_mh, dy))
             nb = dict(b)
             nb["x1"] = int(b["x1"] + dx); nb["x2"] = int(b["x2"] + dx)
             nb["y1"] = int(b["y1"] + dy); nb["y2"] = int(b["y2"] + dy)
