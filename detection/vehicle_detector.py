@@ -89,7 +89,12 @@ def detect_timing_stats() -> dict:
 #    萬一第一次分錯也不會永久留著。
 # 順帶的好處:同一台車的標籤在連續幀之間會穩定下來,不會忽大貨車忽小客車。
 TRUCK_CLS_CACHE = os.getenv("TRUCK_CLS_CACHE", "1") != "0"
-TRUCK_CLS_CACHE_SEC = float(os.getenv("TRUCK_CLS_CACHE_SEC", "2.0") or 2.0)
+# 🛑 TTL 必須大於「實際偵測間隔」,否則每次要用時都已經過期,快取等於沒開。
+#    2026-08-31 87 實測 analysis_fps 0.3~0.4(偵測間隔約 3 秒),而 TTL 是 2 秒
+#    → 命中率只有 15.4%,細分類每幀照跑 2.27 次。6 秒可涵蓋 3 秒間隔仍有餘裕,
+#    停等區排隊車輛(位置不動、IoU 過得了 0.6)會穩定命中。
+#    誤分類最久留 6 秒;IoU 0.6 仍要求位置重疊,車走掉就不會沿用到別台車。
+TRUCK_CLS_CACHE_SEC = float(os.getenv("TRUCK_CLS_CACHE_SEC", "6.0") or 6.0)
 TRUCK_CLS_CACHE_IOU = float(os.getenv("TRUCK_CLS_CACHE_IOU", "0.6") or 0.6)
 # 影子稽核:命中快取時「照樣真的跑一次分類」,比對沿用的標籤跟現算的一不一致。
 # 這是唯一能證明快取在真實車流上安全的方法 —— 單元測試只能證明它照邏輯運作,
