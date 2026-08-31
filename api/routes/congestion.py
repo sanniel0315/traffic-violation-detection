@@ -40,6 +40,9 @@ DEFAULT_CONGESTION_PARAMS = {
     # 流量條件擋不住它(停著的車流量趨近 0),所以另外用車輛數擋。
     "min_vehicles_high": 2,
     "min_vehicles_critical": 3,
+    # 「嚴重壅塞」必須真的有排隊。排隊 0 公尺卻說嚴重壅塞在物理上是矛盾的;
+    # 這條不分車種,擋的是「車道 ROI 小,一台小客車就佔掉六成」。
+    "critical_requires_queue": True,
 }
 
 
@@ -85,6 +88,7 @@ class CongestionParamsUpdate(BaseModel):
     flow_window_sec: float = Field(ge=10.0, le=600.0, default=60.0)
     min_vehicles_high: int = Field(ge=1, le=50, default=2)
     min_vehicles_critical: int = Field(ge=1, le=50, default=3)
+    critical_requires_queue: bool = True
 
 # 共享偵測器實例與推論鎖（避免 YOLO 並發推論造成不穩定）
 _detector = None
