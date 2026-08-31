@@ -5346,12 +5346,12 @@
                                         {{ congestionStatus[c.id]?.result?.level_name || '-' }}
                                     </el-tag>
                                     <span style="margin-left:8px">車輛 {{ congestionStatus[c.id]?.result?.vehicle_count || 0 }}</span>
-                                    <span style="margin-left:8px">佔用率 {{ ((congestionStatus[c.id]?.result?.occupancy || 0) * 100).toFixed(1) }}%</span>
+                                    <span style="margin-left:8px">佔用率 {{ ((congestionStatus[c.id]?.result?.raw_occupancy || 0) * 100).toFixed(1) }}%</span>
                                     <span style="margin-left:8px">排隊 {{ formatQueueLengthCell(congestionStatus[c.id]?.result?.estimated_queue_length_m,'0.0') }}m</span>
                                     <span style="margin-left:8px">持續 {{ formatQueueDurationCell(congestionStatus[c.id]?.result?.queue_duration_sec,'-') }}</span>
                                     <div v-if="resolveCongestionLaneRows(congestionStatus[c.id]?.result).length" style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
                                         <el-tag v-for="(lr, li) in resolveCongestionLaneRows(congestionStatus[c.id]?.result)" :key="`z-${c.id}-${li}`" size="small" :type="getCongestionLevelType(lr.level)" :class="getCongestionLevelClass(lr.level)">
-                                            {{ lr.title }} {{ ((lr.occupancy || 0) * 100).toFixed(0) }}% / {{ formatQueueLengthCell(lr.estimated_queue_length_m,'0.0') }}m
+                                            {{ lr.title }} {{ ((lr.raw_occupancy || 0) * 100).toFixed(0) }}% / {{ formatQueueLengthCell(lr.estimated_queue_length_m,'0.0') }}m
                                         </el-tag>
                                     </div>
                                 </div>
@@ -5506,7 +5506,7 @@
                             </div>
                             <div v-if="resolveCongestionLaneRows(congestionStatus[monitorZoomCamera.id].result).length" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px">
                                 <el-tag v-for="(lr, li) in resolveCongestionLaneRows(congestionStatus[monitorZoomCamera.id].result)" :key="'zoom-lane-'+li" size="small" :type="getCongestionLevelType(lr.level)" :class="getCongestionLevelClass(lr.level)">
-                                    車道 {{ lr.lane_no || (li+1) }} · {{ lr.level_name || '-' }} · {{ lr.vehicle_count || 0 }} 車 · {{ ((lr.occupancy || 0) * 100).toFixed(1) }}% · {{ formatQueueLengthCell(lr.estimated_queue_length_m,'0.0') }}m
+                                    車道 {{ lr.lane_no || (li+1) }} · {{ lr.level_name || '-' }} · {{ lr.vehicle_count || 0 }} 車 · {{ ((lr.raw_occupancy || 0) * 100).toFixed(1) }}% · {{ formatQueueLengthCell(lr.estimated_queue_length_m,'0.0') }}m
                                 </el-tag>
                             </div>
                         </div>
@@ -10292,7 +10292,7 @@
                                             <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ lr.title }}</span>
                                         </div>
                                         <div style="color:#475569;white-space:nowrap">
-                                            {{ ((lr.occupancy || 0) * 100).toFixed(1) }}% · {{ lr.vehicle_count || 0 }} 車 · {{ formatQueueLengthCell(lr.estimated_queue_length_m,'0.0') }}m · {{ formatQueueDurationCell(lr.queue_duration_sec,'-') }}
+                                            {{ ((lr.raw_occupancy || 0) * 100).toFixed(1) }}% · {{ lr.vehicle_count || 0 }} 車 · {{ formatQueueLengthCell(lr.estimated_queue_length_m,'0.0') }}m · {{ formatQueueDurationCell(lr.queue_duration_sec,'-') }}
                                         </div>
                                     </div>
                                 </div>
