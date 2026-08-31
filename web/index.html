@@ -10309,6 +10309,7 @@
                             <div class="config-item"><span title="流量的統計窗長度。">流量統計窗(秒)</span><el-input-number v-model="congestionParamsForm.flow_window_sec" :min="10" :max="600" :step="10" :precision="0" size="small" style="width:120px"></el-input-number></div>
                             <div class="config-item"><span title="判到「擁擠」需要的最少車輛數。">擁擠最少車數</span><el-input-number v-model="congestionParamsForm.min_vehicles_high" :min="1" :max="50" size="small" style="width:120px"></el-input-number></div>
                             <div class="config-item"><span title="判到「嚴重壅塞」需要的最少車輛數。一台大貨車停在近鏡頭就能吃掉 ROI 六成面積，但一台車不是壅塞。">嚴重最少車數</span><el-input-number v-model="congestionParamsForm.min_vehicles_critical" :min="1" :max="50" size="small" style="width:120px"></el-input-number></div>
+                            <div class="config-item"><span title="「嚴重壅塞」必須真的有排隊。排隊 0 公尺卻判嚴重壅塞在物理上是矛盾的；關掉會回到只看佔用率的舊行為。">嚴重需有排隊</span><el-switch v-model="congestionParamsForm.critical_requires_queue"></el-switch></div>
                             <el-button size="small" type="primary" style="width:100%;margin-top:8px" @click="saveCongestionParams(previewCamera.id)">儲存壅塞參數</el-button>
                         </div>
                     </template>
@@ -11990,6 +11991,7 @@ const app=createApp({
             flow_window_sec:60,
             min_vehicles_high:2,
             min_vehicles_critical:3,
+            critical_requires_queue:true,
             smoothing_window:10,
             analyze_interval_sec:1.0
         });
@@ -20144,6 +20146,7 @@ const app=createApp({
                 flow_window_sec:Number(congestionParamsForm.flow_window_sec),
                 min_vehicles_high:Number(congestionParamsForm.min_vehicles_high),
                 min_vehicles_critical:Number(congestionParamsForm.min_vehicles_critical),
+                critical_requires_queue:!!congestionParamsForm.critical_requires_queue,
                 smoothing_window:Math.round(Number(congestionParamsForm.smoothing_window)),
                 analyze_interval_sec:Number(congestionParamsForm.analyze_interval_sec)
             };

@@ -107,6 +107,8 @@ class CongestionDetector:
         # 流量條件擋不住這個(停著的車流量趨近 0,看起來反而更像壅塞),要靠車輛數。
         min_veh_high = max(1, int(params.get("min_vehicles_high", 2)))
         min_veh_critical = max(1, int(params.get("min_vehicles_critical", 3)))
+        # 「嚴重壅塞」必須真的有排隊。排隊 0 公尺卻說嚴重壅塞是矛盾的。
+        critical_requires_queue = bool(params.get("critical_requires_queue", True))
         window = max(1, int(params.get("smoothing_window", 10)))
         # stop_distance_px 18→45 / stop_min_frames 4→3: 原值只認「完全靜止」,抓不到緩行車隊;
         # 放寬後緩行排隊(實測國8 匝道 19m)抓得到,自由車流(>45px/3f)仍排除。
@@ -276,9 +278,11 @@ class CongestionDetector:
             vehicle_count=len(tracked_vehicles),
             large_vehicle_present=large_vehicle_count > 0,
             flow_vpm=flow_vpm,
+            queue_active=queue_active,
             min_vehicles_high=min_veh_high,
             min_vehicles_critical=min_veh_critical,
             free_flow_vpm=free_flow_vpm,
+            critical_requires_queue=critical_requires_queue,
         )
 
         stats = {}
@@ -373,9 +377,11 @@ class CongestionDetector:
                 vehicle_count=zveh_n,
                 large_vehicle_present=z_large > 0,
                 flow_vpm=z_flow,
+                queue_active=z_queue_active,
                 min_vehicles_high=min_veh_high,
                 min_vehicles_critical=min_veh_critical,
                 free_flow_vpm=free_flow_vpm,
+                critical_requires_queue=critical_requires_queue,
             )
             lane_no = self._parse_lane_no(z)
             movement = self._normalize_movement(z.get("lane"), z.get("type"))
@@ -480,9 +486,11 @@ class CongestionDetector:
         vehicle_count: int,
         large_vehicle_present: bool,
         flow_vpm: float,
+        queue_active: bool,
         min_vehicles_high: int,
         min_vehicles_critical: int,
         free_flow_vpm: float,
+        critical_requires_queue: bool,
     ) -> tuple[str, Optional[str]]:
         """把等級往下修到合理上限。回傳 (等級, 封頂原因或 None)。
 
@@ -496,6 +504,12 @@ class CongestionDetector:
               只有大型車;幾台小客車就把 ROI 塞到 60% 那是真的擠,不該被壓下來。
         2. `free_flow` —— 車正在順暢通過,佔用率再高也不是壅塞。
            流量會低估(見 _update_flow_vpm),所以只准降級不准升級。
+        3. `no_queue` —— 「嚴重壅塞」但排隊 0 公尺在物理上是矛盾的。
+           壅塞的定義就是車擠在一起且走不動,沒有排隊就沒有壅塞。
+           這條不分車種,擋的是「車道 ROI 小,一台車就佔掉六成」——
+           車輛數封頂只看大型車,擋不到小客車把窄車道灌爆的情況
+           (2026-08-31 現場 cam3 車道1:1 台車、佔用率 64%、排隊 0.0m,
+            卻顯示嚴重壅塞)。只封 critical,不影響「擁擠」以下。
         """
         ceiling: Optional[str] = None
         reason: Optional[str] = None
@@ -507,6 +521,9 @@ class CongestionDetector:
         if free_flow_vpm > 0 and flow_vpm >= free_flow_vpm:
             if ceiling is None or self.LEVEL_RANK['medium'] < self.LEVEL_RANK[ceiling]:
                 ceiling, reason = 'medium', 'free_flow'
+        if critical_requires_queue and not queue_active:
+            if ceiling is None or self.LEVEL_RANK['high'] < self.LEVEL_RANK[ceiling]:
+                ceiling, reason = 'high', 'no_queue'
         if ceiling is not None and self.LEVEL_RANK[level] > self.LEVEL_RANK[ceiling]:
             return ceiling, reason
         return level, None

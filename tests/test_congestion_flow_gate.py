@@ -77,15 +77,17 @@ def test_flow_isolated_per_camera(det):
 
 
 def _apply_cap(det, level, n_veh, flow_vpm, *, min_high=2, min_critical=3, free_flow=0.0,
-               large=True):
+               large=True, queue=True, need_queue=True):
     lv, _reason = det._cap_level(
         level,
         vehicle_count=n_veh,
         large_vehicle_present=large,
         flow_vpm=flow_vpm,
+        queue_active=queue,
         min_vehicles_high=min_high,
         min_vehicles_critical=min_critical,
         free_flow_vpm=free_flow,
+        critical_requires_queue=need_queue,
     )
     return lv
 
@@ -185,3 +187,40 @@ def test_reset_clears_zone_flow_state():
     assert "cam1" not in det.flow_state_map
     assert "cam1::zone::車道1" not in det.flow_state_map
     assert "cam2::zone::車道1" in det.flow_state_map      # 別台不受影響
+
+
+def test_no_queue_caps_critical(det):
+    """排隊 0 公尺卻判嚴重壅塞在物理上是矛盾的 —— 封頂在擁擠。
+
+    這條不分車種:車道 ROI 小,一台小客車就能佔掉六成,
+    車輛數封頂(只看大型車)擋不到它。
+    """
+    assert _apply_cap(det, "critical", n_veh=1, flow_vpm=0.0,
+                      large=False, queue=False) == "high"
+    assert _apply_cap(det, "critical", n_veh=10, flow_vpm=0.0,
+                      large=False, queue=False) == "high"
+
+
+def test_no_queue_does_not_touch_lower_levels(det):
+    """只封 critical,「擁擠」以下不受影響。"""
+    for lv in ("low", "medium", "high"):
+        assert _apply_cap(det, lv, n_veh=10, flow_vpm=0.0,
+                          large=False, queue=False) == lv
+
+
+def test_queue_active_allows_critical(det):
+    """真的有排隊就放行。"""
+    assert _apply_cap(det, "critical", n_veh=10, flow_vpm=0.0,
+                      large=False, queue=True) == "critical"
+
+
+def test_critical_requires_queue_can_be_disabled(det):
+    """留退路:關掉要能回到舊行為。"""
+    assert _apply_cap(det, "critical", n_veh=10, flow_vpm=0.0,
+                      large=False, queue=False, need_queue=False) == "critical"
+
+
+def test_strictest_cap_wins_with_no_queue(det):
+    """沒排隊封在 high、流量高封在 medium → 取 medium。"""
+    assert _apply_cap(det, "critical", n_veh=10, flow_vpm=30.0, free_flow=12.0,
+                      large=False, queue=False) == "medium"
