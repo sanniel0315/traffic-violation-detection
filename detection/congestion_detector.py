@@ -3,7 +3,7 @@
 import cv2
 import numpy as np
 from typing import Dict, List, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 from detection.violation_detector import VehicleTracker
 
@@ -51,6 +51,11 @@ class CongestionDetector:
         self.static_spot_map: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         # 上一幀所有偵測中心(跨 track):靜止證據 = 本幀中心跟上一幀某中心幾乎重合。
         self.prev_center_map: Dict[str, List[tuple]] = {}
+        # 流量:{camera_key: {"seen": {track_id: 最後出現時間}, "passed": [通過時間, ...]}}
+        # 「通過」= 一個 track 出現過又消失。用來區分「車多但在動」與「車多且動不了」。
+        self.flow_state_map: Dict[str, Dict[str, Any]] = defaultdict(
+            lambda: {"seen": {}, "passed": []}
+        )
         print("✅ 壅塞偵測器初始化完成")
 
     def reset_camera_state(self, camera_key: str) -> None:
@@ -61,6 +66,7 @@ class CongestionDetector:
         self.tracker_map.pop(key, None)
         self.track_meta_map.pop(key, None)
         self.queue_state_map.pop(key, None)
+        self.flow_state_map.pop(key, None)
         self.static_spot_map.pop(key, None)
         self.prev_center_map.pop(key, None)
         # zone-level 也清（分數歷史 key 格式是 f"{camera_key}::zone_{idx}" 與 f"{camera_key}::overall"）
@@ -86,6 +92,14 @@ class CongestionDetector:
         medium_t = float(params.get("medium_threshold", 0.2))
         high_t = float(params.get("high_threshold", 0.4))
         critical_t = float(params.get("critical_threshold", 0.6))
+        # 【流量納入判級】車在順暢通過就不是壅塞,不管佔用率多高。
+        # 0 = 不啟用(舊行為)。只會往下修等級,不會往上升 —— 見 _update_flow_vpm 的說明。
+        free_flow_vpm = max(0.0, float(params.get("free_flow_vpm", 0.0)))
+        flow_window_sec = max(10.0, float(params.get("flow_window_sec", 60.0)))
+        # 【最少車輛數】一台大貨車停在近鏡頭就能吃掉 ROI 六成面積,但一台車不是壅塞。
+        # 流量條件擋不住這個(停著的車流量趨近 0,看起來反而更像壅塞),要靠車輛數。
+        min_veh_high = max(1, int(params.get("min_vehicles_high", 2)))
+        min_veh_critical = max(1, int(params.get("min_vehicles_critical", 3)))
         window = max(1, int(params.get("smoothing_window", 10)))
         # stop_distance_px 18→45 / stop_min_frames 4→3: 原值只認「完全靜止」,抓不到緩行車隊;
         # 放寬後緩行排隊(實測國8 匝道 19m)抓得到,自由車流(>45px/3f)仍排除。
@@ -210,6 +224,11 @@ class CongestionDetector:
             history.pop(0)
         smoothed = sum(history) / len(history)
 
+        # 流量(輛/分):判級封頂用,見下方【流量 + 車輛數封頂】
+        flow_vpm = self._update_flow_vpm(
+            camera_key, tracked_vehicles, window_sec=flow_window_sec, now=now
+        )
+
         # 即時 fast-path：raw vehicles 連 2 frame 都 0 車 → 立刻 force level=low
         # 不等 smoothing + tracker max_age，車一清就馬上降級
         _zero_key = f"{camera_key}::raw_zero_count"
@@ -240,7 +259,16 @@ class CongestionDetector:
             )
         else:
             level = 'low'
-        
+
+        level, _cap_reason = self._cap_level(
+            level,
+            vehicle_count=len(tracked_vehicles),
+            flow_vpm=flow_vpm,
+            min_vehicles_high=min_veh_high,
+            min_vehicles_critical=min_veh_critical,
+            free_flow_vpm=free_flow_vpm,
+        )
+
         stats = {}
         for v in tracked_vehicles:
             t = v['class_name']
@@ -355,6 +383,8 @@ class CongestionDetector:
             'estimated_queue_length_m': round(estimated_queue_length_m, 1),
             'queue_duration_sec': int(round(queue_duration_sec)),
             'raw_score': round(congestion_score, 3),
+            'flow_vpm': round(flow_vpm, 1),
+            'level_capped_by': _cap_reason,
             'density_score': round(count_density, 3),
             'occupancy': round(smoothed, 3),
             'level': level,
@@ -406,6 +436,75 @@ class CongestionDetector:
         return {'timestamp': datetime.now().isoformat(), 'vehicle_count': 0, 'vehicle_stats': {}, 
                 'occupancy': 0, 'level': 'low', 'level_name': '暢通', 'zone_results': [], 'vehicles': [],
                 'estimated_queue_length_m': 0.0, 'queue_duration_sec': 0, 'queue_active': False}
+
+    def _cap_level(
+        self,
+        level: str,
+        *,
+        vehicle_count: int,
+        flow_vpm: float,
+        min_vehicles_high: int,
+        min_vehicles_critical: int,
+        free_flow_vpm: float,
+    ) -> tuple[str, Optional[str]]:
+        """把等級往下修到合理上限。回傳 (等級, 封頂原因或 None)。
+
+        🛑 只往下修,不往上升。兩個理由分別擋掉兩種誤報:
+
+        1. `vehicle_count` —— 一台大貨車停在近鏡頭就能吃掉 ROI 六成面積,
+           但一台車不是壅塞。流量條件擋不住這個(停著的車流量趨近 0,
+           看起來反而更像壅塞),只能靠車輛數。
+           「單一大車卡住前方」仍看得到,只是封頂在「擁擠」不喊最高級。
+        2. `free_flow` —— 車正在順暢通過,佔用率再高也不是壅塞。
+           流量會低估(見 _update_flow_vpm),所以只准降級不准升級。
+        """
+        ceiling: Optional[str] = None
+        reason: Optional[str] = None
+        if vehicle_count < min_vehicles_high:
+            ceiling, reason = 'medium', 'vehicle_count'
+        elif vehicle_count < min_vehicles_critical:
+            ceiling, reason = 'high', 'vehicle_count'
+        if free_flow_vpm > 0 and flow_vpm >= free_flow_vpm:
+            if ceiling is None or self.LEVEL_RANK['medium'] < self.LEVEL_RANK[ceiling]:
+                ceiling, reason = 'medium', 'free_flow'
+        if ceiling is not None and self.LEVEL_RANK[level] > self.LEVEL_RANK[ceiling]:
+            return ceiling, reason
+        return level, None
+
+    def _update_flow_vpm(
+        self,
+        camera_key: str,
+        vehicles: List[Dict[str, Any]],
+        *,
+        window_sec: float = 60.0,
+        now: Optional[datetime] = None,
+    ) -> float:
+        """回傳這台相機最近 window_sec 秒的通過流量(輛/分)。
+
+        「通過」= 一個 track_id 出現過、之後從畫面消失。停著不走的車 track 一直在,
+        不會被計入 —— 這正是要的:流量衡量的是「車走掉的速率」,不是「車有多少」。
+
+        🛑 這個數字會低估。分析率只有 0.8 fps(2026-08-31 87 實測),快車可能兩幀
+           之間就穿過 ROI,track 接不起來就當成沒出現過。所以它只能用來
+           「往下修」判級(流量高 → 一定不是壅塞),絕對不能拿來往上升級 ——
+           低估的流量會看起來像壅塞,那是錯的方向。
+        """
+        now = now or datetime.now()
+        st = self.flow_state_map[camera_key]
+        seen: Dict[int, datetime] = st["seen"]
+        passed: List[datetime] = st["passed"]
+
+        cur_ids = {int(v.get("track_id", 0)) for v in vehicles if v.get("track_id") is not None}
+        # 消失的 track = 通過一台
+        for tid in list(seen.keys()):
+            if tid not in cur_ids:
+                passed.append(seen.pop(tid))
+        for tid in cur_ids:
+            seen[tid] = now
+
+        cutoff = now - timedelta(seconds=window_sec)
+        st["passed"] = [t for t in passed if t >= cutoff]
+        return len(st["passed"]) * (60.0 / window_sec) if window_sec > 0 else 0.0
 
     def _vehicle_density_score(self, vehicles: List[Dict[str, Any]], roi_area: int) -> float:
         if roi_area <= 0 or not vehicles:
