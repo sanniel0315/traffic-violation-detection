@@ -1364,6 +1364,41 @@ def _parse_go2rtc_sdp(sdp: str) -> dict:
     return result
 
 
+@router.get("/door-status", summary="電子鎖門狀態 — 任一門開即回「開門」,兩門都關才回「關上」")
+def external_door_status(
+    api_key: ApiKey = Depends(require_scope("door_status")),
+):
+    """機箱電子鎖的門狀態,給外部系統輪詢。
+
+    **判定規則**(現場需求):
+
+    | 情況 | `state` | `label` |
+    |------|---------|---------|
+    | 任何一道門是開的 | `open` | 開門 |
+    | 兩道門都確認關上 | `closed` | 關上 |
+    | 有鎖離線讀不到,無法確認全關 | `unknown` | 狀態不明 |
+
+    🛑 讀不到的鎖**不會**被當成「關上」—— 規則是「兩個門都關上才顯示關上」,
+    讀不到就無法確認那一道是關的。但另一道若確定是開的,仍然回 `open`:
+    「開門」只要一道成立就成立,不必看另一道。
+
+    `doors[]` 帶每一道門的明細(位址、名稱、線上與否、各自狀態),
+    需要細分是哪一道門時用它;只要顯示一個狀態就看頂層 `state` / `label`。
+    """
+    from api.utils.door_state import aggregate_door_state
+    from services.io_service import get_service
+
+    try:
+        block = get_service().status().get("lock", {})
+    except Exception as e:
+        block = {}
+        agg = aggregate_door_state(None)
+        agg["error"] = str(e)
+        return {"meta": _meta(), "status": "success", "data": agg}
+
+    return {"meta": _meta(), "status": "success", "data": aggregate_door_state(block)}
+
+
 @router.get("/streams", summary="即時影像串流清單 — 取得 cam id 與 RTSP/HLS/MJPEG URL")
 def external_streams(
     api_key: ApiKey = Depends(require_scope("streams")),
