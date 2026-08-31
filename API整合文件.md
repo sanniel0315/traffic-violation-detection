@@ -543,6 +543,55 @@ GET /api/v1/external/streams
 
 ---
 
+### 5. 電子鎖門狀態
+
+機箱電子鎖的門狀態，供外部系統輪詢。
+
+```
+GET /api/v1/external/door-status
+```
+
+**判定規則**
+
+| 情況 | `state` | `label` |
+|------|---------|---------|
+| 任何一道門是開的 | `open` | 開門 |
+| 兩道門都確認關上 | `closed` | 關上 |
+| 有鎖離線讀不到，無法確認全關 | `unknown` | 狀態不明 |
+
+> 讀不到的鎖**不會**被當成「關上」——規則是「兩個門都關上才顯示關上」，讀不到就無法確認那一道是關的。
+> 但另一道若確定是開的，仍然回 `open`：「開門」只要一道成立就成立，不必看另一道。
+
+```json
+{
+  "status": "success",
+  "data": {
+    "state": "open",
+    "label": "開門",
+    "enabled": true,
+    "door_count": 2,
+    "open_count": 1,
+    "closed_count": 1,
+    "unknown_count": 0,
+    "doors": [
+      { "addr": 2, "name": "後門", "online": true,  "state": "open",   "label": "開門" },
+      { "addr": 3, "name": "前門", "online": true,  "state": "closed", "label": "關上" }
+    ]
+  }
+}
+```
+
+| 欄位 | 說明 |
+|------|------|
+| `state` / `label` | 聚合後的門狀態，只要顯示一個狀態就看這兩個欄位 |
+| `enabled` | 電子鎖功能是否啟用（未啟用時 `state` 一律 `unknown`） |
+| `open_count` / `closed_count` / `unknown_count` | 各狀態的門數 |
+| `doors[]` | 每一道門的明細（位址、名稱、是否線上、各自狀態），需要細分是哪一道門時用 |
+
+所需 scope：`door_status`
+
+---
+
 ## API Key 管理
 
 > 以下端點需 admin 登入 session，非 API Key 認證。
@@ -577,6 +626,8 @@ POST /api/auth/api-keys
 |-------|---------|
 | `vd_report` | `/api/v1/external/vd-report` |
 | `congestion_report` | `/api/v1/external/congestion-report` |
+| `streams` | `/api/v1/external/streams` |
+| `door_status` | `/api/v1/external/door-status` |
 
 **Response：**
 
