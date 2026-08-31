@@ -81,6 +81,9 @@ class CongestionDetector:
         for sub_key in list(self.queue_state_map.keys()):
             if sub_key.startswith(prefix):
                 self.queue_state_map.pop(sub_key, None)
+        for sub_key in list(self.flow_state_map.keys()):
+            if sub_key.startswith(prefix):
+                self.flow_state_map.pop(sub_key, None)
 
     def analyze(
         self,
@@ -354,6 +357,26 @@ class CongestionDetector:
                 )
             else:
                 z_level = 'low'
+            # 🛑 車道層要跟整體層套同一組封頂,否則整體被壓成「擁擠」、
+            #    車道還在喊「嚴重壅塞」,兩邊講的話不一樣。
+            #    (2026-08-31 現場:cam3 車道1 全畫面只有 1 台車、佔用率 64%,
+            #     整體判級已被封頂,車道層沒套 → 前端顯示「車道1 嚴重壅塞」。)
+            z_large = sum(
+                1 for v in zvehicles
+                if v.get('class_name') in self.LARGE_VEHICLE_CLASSES
+            )
+            z_flow = self._update_flow_vpm(
+                zkey, zvehicles, window_sec=flow_window_sec, now=now
+            )
+            z_level, z_cap_reason = self._cap_level(
+                z_level,
+                vehicle_count=zveh_n,
+                large_vehicle_present=z_large > 0,
+                flow_vpm=z_flow,
+                min_vehicles_high=min_veh_high,
+                min_vehicles_critical=min_veh_critical,
+                free_flow_vpm=free_flow_vpm,
+            )
             lane_no = self._parse_lane_no(z)
             movement = self._normalize_movement(z.get("lane"), z.get("type"))
             lane_tags = z.get("lane_tags") if isinstance(z.get("lane_tags"), list) else []
@@ -378,6 +401,9 @@ class CongestionDetector:
                 "occupancy": round(z_occ, 3),
                 "level": z_level,
                 "level_name": self.LEVEL_NAMES[z_level],
+                "flow_vpm": round(z_flow, 1),
+                "large_vehicle_count": z_large,
+                "level_capped_by": z_cap_reason,
             })
         
         return {

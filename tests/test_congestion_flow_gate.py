@@ -161,3 +161,27 @@ def test_large_vehicle_classes_cover_bus_and_truck(det):
     assert {"heavy_truck", "bus", "truck"} <= set(CongestionDetector.LARGE_VEHICLE_CLASSES)
     assert "car" not in CongestionDetector.LARGE_VEHICLE_CLASSES
     assert "motorcycle" not in CongestionDetector.LARGE_VEHICLE_CLASSES
+
+
+def test_reset_clears_zone_flow_state():
+    """檔案來源 loop 回開頭時,車道層的流量狀態也要清掉。
+
+    只清相機層的 key 會讓上一輪的通過紀錄灌到新一輪的判級。
+    """
+    from detection.congestion_detector import CongestionDetector
+    from collections import defaultdict
+    det = CongestionDetector.__new__(CongestionDetector)
+    for attr in ("history_map", "track_meta_map", "queue_state_map", "static_spot_map"):
+        setattr(det, attr, defaultdict(dict))
+    det.tracker_map = {}
+    det.prev_center_map = {}
+    det.flow_state_map = defaultdict(lambda: {"seen": {}, "passed": []})
+    det.flow_state_map["cam1"]["passed"].append(1.0)
+    det.flow_state_map["cam1::zone::車道1"]["passed"].append(1.0)
+    det.flow_state_map["cam2::zone::車道1"]["passed"].append(1.0)
+
+    det.reset_camera_state("cam1")
+
+    assert "cam1" not in det.flow_state_map
+    assert "cam1::zone::車道1" not in det.flow_state_map
+    assert "cam2::zone::車道1" in det.flow_state_map      # 別台不受影響
