@@ -19,15 +19,21 @@ if str(ROOT) not in sys.path:
 @pytest.fixture
 def tc():
     """載入 truck_classifier,不真的載 YOLO。"""
+    # 🛑 別的測試檔可能已經先塞過同名 stub(缺我們要的屬性),所以是「補屬性」
+    #    不是「不存在才建」—— 否則 pytest 的執行順序會決定這個測試會不會爆。
     for name in ("ultralytics", "model_paths"):
-        if name not in sys.modules:
+        mod = sys.modules.get(name)
+        if mod is None:
             mod = types.ModuleType(name)
-            if name == "ultralytics":
-                mod.YOLO = object
-            else:
-                mod.get_model_dir = lambda *a, **k: "."
-                mod.get_truck_cls_model_path = lambda *a, **k: "x.pt"
             sys.modules[name] = mod
+        if name == "ultralytics":
+            if not hasattr(mod, "YOLO"):
+                mod.YOLO = object
+        else:
+            if not hasattr(mod, "get_model_dir"):
+                mod.get_model_dir = lambda *a, **k: "."
+            if not hasattr(mod, "get_truck_cls_model_path"):
+                mod.get_truck_cls_model_path = lambda *a, **k: "x.pt"
     import detection.truck_classifier as m
     return m
 
