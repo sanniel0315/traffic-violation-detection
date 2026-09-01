@@ -7,6 +7,8 @@ from sqlalchemy.orm.attributes import flag_modified
 from typing import Dict
 from pydantic import BaseModel, Field
 import cv2
+import numpy as np
+import os
 import time
 import threading
 from datetime import datetime, timedelta, timezone
@@ -106,12 +108,17 @@ def get_effective_params(camera_id: int):
     return _normalize_params(congestion_params.get(camera_id, {}))
 
 
-def analyze_with_lock(frame, zones, camera_id: int):
-    """序列化壅塞推論，降低原生庫並發崩潰風險"""
+def analyze_with_lock(frame, zones, camera_id: int, state_key: str | None = None):
+    """序列化壅塞推論，降低原生庫並發崩潰風險。
+
+    state_key 留空時用 camera_id —— 那是「正在跑的那條分析」的狀態。
+    一次性的呼叫(例如快照)一定要給自己的 key,否則會污染執行中的判定。
+    """
     detector = get_detector()
     params = get_effective_params(camera_id)
     with _detector_lock:
-        return detector.analyze(frame, zones, camera_key=str(camera_id), params=params)
+        return detector.analyze(frame, zones,
+                                camera_key=str(state_key or camera_id), params=params)
 
 
 def _to_utc_naive(value: datetime | None) -> datetime | None:
@@ -321,7 +328,12 @@ def congestion_snapshot(camera_id: int, db: Session = Depends(get_db)):
     
     congestion_params[camera_id] = _load_params_from_camera(camera)
     zones = _congestion_zones(camera)
-    result = analyze_with_lock(frame, zones, camera_id)
+    # 🛑 用獨立的 state key,不可以跟執行中的壅塞執行緒共用。
+    #    共用的話每呼叫一次快照就等於往那台相機的判定狀態插入一張「別的時間點」的畫面:
+    #    平滑歷史多一筆、tracker 的軌跡被打斷(車會被當成新出現)、
+    #    flow 的「出現又消失」被誤計成通過、排隊持續時間被重算。
+    #    快照是唯讀的除錯工具,不該改變正在跑的判定。
+    result = analyze_with_lock(frame, zones, camera_id, state_key=f"{camera_id}::snapshot")
     
     # 繪製結果
     annotated = draw_congestion(frame, result)
@@ -376,6 +388,53 @@ def generate_congestion_stream(camera_id: int, source: str, zones: list):
     cap.release()
 
 
+_CJK_FONT_PATHS = (
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/workspace/web/fonts/NotoSansCJK-Regular.ttc",
+)
+
+
+def _cjk_font(size: int = 22):
+    """找得到 CJK 字型就回 PIL font,找不到回 None(呼叫端退回英文)。"""
+    try:
+        from PIL import ImageFont
+    except Exception:
+        return None
+    for path in _CJK_FONT_PATHS:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    return None
+
+
+def _draw_status_text(img, text: str, org: tuple, color: tuple) -> None:
+    """在影像上畫中文狀態列。color 是 BGR(跟 cv2 一致)。"""
+    font = _cjk_font(22)
+    if font is None:
+        # 沒有 CJK 字型 → 換成 ASCII,不要畫出一排問號。
+        # 等級名稱(暢通/中等/擁擠/嚴重壅塞)是「值」不是標籤,也要一起換,
+        # 否則只換標籤仍會留下中文 → 還是問號。
+        ascii_text = text
+        for zh, en in (("嚴重壅塞", "CRITICAL"), ("擁擠", "HIGH"), ("中等", "MEDIUM"),
+                       ("暢通", "LOW"), ("壅塞", "Level"), ("車輛", "Veh"),
+                       ("停滯", "Stop"), ("排隊", "Queue"), ("分數", "Score")):
+            ascii_text = ascii_text.replace(zh, en)
+        # 保險:還有漏網的非 ASCII 一律丟掉,寧可少字也不要畫問號
+        ascii_text = "".join(ch for ch in ascii_text if ord(ch) < 128)
+        cv2.putText(img, ascii_text, (org[0], org[1] + 19),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        return
+    from PIL import Image, ImageDraw
+    pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    ImageDraw.Draw(pil).text(org, text, font=font,
+                             fill=(int(color[2]), int(color[1]), int(color[0])))
+    img[:] = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+
+
 def draw_congestion(frame, result):
     """繪製壅塞視覺化"""
     annotated = frame.copy()
@@ -400,7 +459,9 @@ def draw_congestion(frame, result):
         f"排隊: {result.get('estimated_queue_length_m', 0):.1f}m | "
         f"分數: {result.get('occupancy', 0)*100:.1f}%"
     )
-    cv2.putText(annotated, text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, level_color, 2)
+    # 🛑 cv2.putText 的 Hershey 字型只有 ASCII,中文會變成 ??????(現場實際看到)。
+    #    走 PIL + CJK 字型;字型找不到時退回英文標籤,至少數字看得懂。
+    _draw_status_text(annotated, text, (10, 6), level_color)
     
     # 底部進度條
     bar_w = int((w - 20) * result.get('occupancy', 0))
