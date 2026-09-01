@@ -114,6 +114,14 @@ class CongestionDetector:
         # 放寬後緩行排隊(實測國8 匝道 19m)抓得到,自由車流(>45px/3f)仍排除。
         stop_distance_px = max(4.0, float(params.get("stop_distance_px", 45.0)))
         stop_min_frames = max(2, int(params.get("stop_min_frames", 3)))
+        # 【停等判定改用速度】原本是「連續 N 幀位移 < X px」—— 那是**每幀**基準,
+        # 門檻會隨分析率漂移:8 fps 時 3 幀 = 0.375 秒(等於 120 px/秒),
+        # 0.7 fps 時 3 幀 = 4.3 秒(等於 10 px/秒)。同一組參數在不同負載下
+        # 代表完全不同的判定標準,而分析率隨車流量變動 —— 排隊量測的地基不能這樣。
+        # 改成 px/秒後門檻不隨分析率變。0 = 不啟用,維持舊的每幀位移行為(可退回)。
+        stop_speed_px_per_sec = max(0.0, float(params.get("stop_speed_px_per_sec", 0.0)))
+        # 速度模式下的最小觀察時間:太短的窗口一次偵測抖動就會翻轉判定。
+        stop_min_window_sec = max(0.3, float(params.get("stop_min_window_sec", 1.0)))
         # queue_min_vehicles 維持 2: 降為 1 會讓單一台停/緩行車誤判成排隊(實測疏流段 19/26 幀假陽性)。
         queue_min_vehicles = max(2, int(params.get("queue_min_vehicles", 2)))
         track_hold_frames = max(1, int(params.get("track_hold_frames", 3)))
@@ -180,6 +188,8 @@ class CongestionDetector:
             tracked_vehicles,
             stop_distance_px=stop_distance_px,
             stop_min_frames=stop_min_frames,
+            stop_speed_px_per_sec=stop_speed_px_per_sec,
+            stop_min_window_sec=stop_min_window_sec,
             static_object_sec=static_object_sec,
             static_object_px=static_object_px,
             now=now,
@@ -580,6 +590,8 @@ class CongestionDetector:
         *,
         stop_distance_px: float,
         stop_min_frames: int,
+        stop_speed_px_per_sec: float = 0.0,
+        stop_min_window_sec: float = 1.0,
         static_object_sec: float = 300.0,
         static_object_px: float = 12.0,
         now: Optional[datetime] = None,
@@ -617,11 +629,18 @@ class CongestionDetector:
             )
             state = meta.setdefault(track_id, {"history": []})
             history = state.setdefault("history", [])
+            # 與 history 平行的時間戳(秒)。速度模式要用「實際經過多久」而不是「幾幀」。
+            # 另存一條而不是改 history 的元素型別 —— history 還有別處在用。
+            ts_history = state.setdefault("ts_history", [])
             state["class_name"] = str(v.get("class_name") or state.get("class_name") or "car")
             state["bbox"] = bbox
             history.append(center)
-            if len(history) > max(stop_min_frames * 2, 12):
-                del history[:-max(stop_min_frames * 2, 12)]
+            ts_history.append(now.timestamp())
+            _keep = max(stop_min_frames * 2, 12)
+            if len(history) > _keep:
+                del history[:-_keep]
+            if len(ts_history) > _keep:
+                del ts_history[:-_keep]
             curr_frame_centers.append(center)
             # 靜止證據 = 本幀中心跟「上一幀任一偵測中心」幾乎重合(跨 track 比對)。
             # 不能用 track 生涯位移——真車開過標線時 tracker 會把標線 track 短暫
@@ -647,7 +666,26 @@ class CongestionDetector:
                 state["stopped"] = False
                 frame_boxes.append((bbox, True))
                 continue
-            if len(history) >= stop_min_frames:
+            if stop_speed_px_per_sec > 0:
+                # 速度模式:往回取到「至少觀察了 stop_min_window_sec」為止,
+                # 用該窗口的位移 ÷ 實際秒數。窗口不夠久就不下結論(維持未停等),
+                # 寧可晚一點才認定排隊,也不要用 1~2 個取樣點就翻轉判定。
+                state["stopped"] = False
+                if len(history) >= 2:
+                    t_now = ts_history[-1]
+                    idx = None
+                    for i in range(len(ts_history) - 2, -1, -1):
+                        if t_now - ts_history[i] >= stop_min_window_sec:
+                            idx = i
+                            break
+                    if idx is not None:
+                        elapsed = t_now - ts_history[idx]
+                        move_dist = self._path_displacement(history[idx:])
+                        if elapsed > 0 and (move_dist / elapsed) <= stop_speed_px_per_sec:
+                            state["stopped"] = True
+                if state["stopped"]:
+                    stopped_ids.add(track_id)
+            elif len(history) >= stop_min_frames:
                 recent = history[-stop_min_frames:]
                 move_dist = self._path_displacement(recent)
                 state["stopped"] = move_dist <= stop_distance_px

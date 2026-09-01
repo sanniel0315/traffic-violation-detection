@@ -45,6 +45,12 @@ DEFAULT_CONGESTION_PARAMS = {
     # 「嚴重壅塞」必須真的有排隊。排隊 0 公尺卻說嚴重壅塞在物理上是矛盾的;
     # 這條不分車種,擋的是「車道 ROI 小,一台小客車就佔掉六成」。
     "critical_requires_queue": True,
+    # 停等判定的速度門檻(px/秒)。0 = 用舊的「連續 N 幀位移 < stop_distance_px」。
+    # 🛑 每幀基準的門檻會隨分析率漂移(8fps 時 3 幀=0.375 秒;0.7fps 時 3 幀=4.3 秒),
+    #    而分析率隨車流量變動 —— 排隊量測的地基不能這樣。
+    #    20 px/秒 取自 2026-09-01 87 實測(可配對 track 的速度 p90=13.3、p95=24.8)。
+    "stop_speed_px_per_sec": 20.0,
+    "stop_min_window_sec": 1.0,
 }
 
 
@@ -91,6 +97,8 @@ class CongestionParamsUpdate(BaseModel):
     min_vehicles_high: int = Field(ge=1, le=50, default=2)
     min_vehicles_critical: int = Field(ge=1, le=50, default=3)
     critical_requires_queue: bool = True
+    stop_speed_px_per_sec: float = Field(ge=0.0, le=500.0, default=20.0)
+    stop_min_window_sec: float = Field(ge=0.3, le=30.0, default=1.0)
 
 # 共享偵測器實例與推論鎖（避免 YOLO 並發推論造成不穩定）
 _detector = None

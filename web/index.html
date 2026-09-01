@@ -10309,6 +10309,8 @@
                             <div class="config-item"><span title="流量的統計窗長度。">流量統計窗(秒)</span><el-input-number v-model="congestionParamsForm.flow_window_sec" :min="10" :max="600" :step="10" :precision="0" size="small" style="width:120px"></el-input-number></div>
                             <div class="config-item"><span title="判到「擁擠」需要的最少車輛數。">擁擠最少車數</span><el-input-number v-model="congestionParamsForm.min_vehicles_high" :min="1" :max="50" size="small" style="width:120px"></el-input-number></div>
                             <div class="config-item"><span title="判到「嚴重壅塞」需要的最少車輛數。一台大貨車停在近鏡頭就能吃掉 ROI 六成面積，但一台車不是壅塞。">嚴重最少車數</span><el-input-number v-model="congestionParamsForm.min_vehicles_critical" :min="1" :max="50" size="small" style="width:120px"></el-input-number></div>
+                            <div class="config-item"><span title="判定車輛「停等」的速度門檻。0 = 改用舊的每幀位移判定（門檻會隨分析率漂移，不建議）。">停等門檻(px/秒)</span><el-input-number v-model="congestionParamsForm.stop_speed_px_per_sec" :min="0" :max="500" :step="5" :precision="0" size="small" style="width:120px"></el-input-number></div>
+                            <div class="config-item"><span title="至少要觀察這麼久才判定停等，避免一兩個取樣點就翻轉判定。">停等觀察窗(秒)</span><el-input-number v-model="congestionParamsForm.stop_min_window_sec" :min="0.3" :max="30" :step="0.5" :precision="1" size="small" style="width:120px"></el-input-number></div>
                             <div class="config-item"><span title="「嚴重壅塞」必須真的有排隊。排隊 0 公尺卻判嚴重壅塞在物理上是矛盾的；關掉會回到只看佔用率的舊行為。">嚴重需有排隊</span><el-switch v-model="congestionParamsForm.critical_requires_queue"></el-switch></div>
                             <el-button size="small" type="primary" style="width:100%;margin-top:8px" @click="saveCongestionParams(previewCamera.id)">儲存壅塞參數</el-button>
                         </div>
@@ -11992,6 +11994,8 @@ const app=createApp({
             min_vehicles_high:2,
             min_vehicles_critical:3,
             critical_requires_queue:true,
+            stop_speed_px_per_sec:20,
+            stop_min_window_sec:1.0,
             smoothing_window:10,
             analyze_interval_sec:1.0
         });
@@ -20147,6 +20151,8 @@ const app=createApp({
                 min_vehicles_high:Number(congestionParamsForm.min_vehicles_high),
                 min_vehicles_critical:Number(congestionParamsForm.min_vehicles_critical),
                 critical_requires_queue:!!congestionParamsForm.critical_requires_queue,
+                stop_speed_px_per_sec:Number(congestionParamsForm.stop_speed_px_per_sec),
+                stop_min_window_sec:Number(congestionParamsForm.stop_min_window_sec),
                 smoothing_window:Math.round(Number(congestionParamsForm.smoothing_window)),
                 analyze_interval_sec:Number(congestionParamsForm.analyze_interval_sec)
             };
