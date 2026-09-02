@@ -3178,16 +3178,23 @@ class LPRStreamTask:
         def _watchdog():
             while not watchdog_stop.is_set():
                 time.sleep(2.0)
+                # 🛑 這個 watchdog 只為「cap.read() 卡死」而存在 —— 強制 release cap
+                #    讓 read() 拋例外解卡。shared_frames 模式(cam_3/4/5)根本沒有 cap
+                #    (frame 來自別的執行緒),沒有可以卡死的 read;機器過載時 shared frame
+                #    暫時變慢是正常現象,不該被當成卡死。若照樣把 last_frame_at 歸零,
+                #    reconnect 路徑又走不到(沒有 cap),只會讓執行緒空轉最後在收尾崩潰。
+                #    2026-09-02:這是 LPR thrash → GPU 佔滿 → 過熱的連鎖起點,故 shared
+                #    模式直接跳過 watchdog。
+                c = cap_holder.get("cap")
+                if c is None:
+                    continue
                 last = self.last_frame_at
                 if last and (time.time() - last > 8.0):
-                    # cap.read() 卡死，強制 release（會讓 read() 拋例外或回 ret=False）
-                    c = cap_holder.get("cap")
-                    if c is not None:
-                        try:
-                            c.release()
-                        except Exception:
-                            pass
-                        self.last_frame_at = 0.0
+                    try:
+                        c.release()
+                    except Exception:
+                        pass
+                    self.last_frame_at = 0.0
         wd_thread = threading.Thread(target=_watchdog, daemon=True)
         wd_thread.start()
 
@@ -3603,7 +3610,13 @@ class LPRStreamTask:
 
                 time.sleep(0.05)
 
-            cap.release()
+            # 🛑 shared_frames 模式(cam_3/4/5)下 cap 從頭到尾都是 None(繞過 cap.read),
+            #    無條件 cap.release() 會拋 'NoneType' object has no attribute 'release'
+            #    → 執行緒異常結束 → watchdog 每幾秒重啟 → 又崩潰,無限循環。
+            #    這正是 2026-09-02 GPU 被 LPR 佔 46%、機器過熱(tj 91°C)、疊加框
+            #    追不上(gap 11 秒)的根因。收尾一律做 null-check。
+            if cap is not None:
+                cap.release()
             self._flush_completed_tracks(force=True)
             self._flush_inactive_vehicle_tracks(force=True)
             self._flush_cumulative_stats(force=True)
