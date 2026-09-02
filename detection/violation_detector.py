@@ -113,7 +113,17 @@ class VehicleTracker:
         if not detections:
             self._age_tracks()
             return []
-        
+
+        # 🛑 先去掉「同一台車的重複框」再配對。
+        #    這個 tracker 只解決「偵測↔track」配對,不處理「偵測本身重複」:
+        #    若 YOLO 同一幀對同一台車吐出兩個高度重疊的框(NMS 沒濾掉),
+        #    第一個框配到 track A、第二個框因 A 已被佔用而**新建 track B**,
+        #    兩個 track 從此並存 → 車輛數×2、排隊長度×2。
+        #    2026-09-03 現場實測(cam3):track 323 與 325 的 IoU=0.93、
+        #    中心只差 3px,一台車被算成兩台,排隊從 ~5m 變成 11.5m,
+        #    而排隊正在餵給 OPAC 做號誌配時決策。
+        detections = self._dedupe_detections(detections)
+
         results = []
         matched_tracks = set()
         
@@ -151,6 +161,38 @@ class VehicleTracker:
         self._age_tracks(matched_tracks)
         return results
     
+    # 同類別兩框 IoU 超過此值即視為同一台車的重複偵測。
+    # 0.7 是保守值:真正相鄰的兩台車(前後車)IoU 遠低於此,
+    # 而 NMS 漏掉的重複框實測在 0.9 以上。
+    DEDUPE_IOU = 0.7
+
+    def _dedupe_detections(self, detections: List[Dict]) -> List[Dict]:
+        """同一台車被吐出多個框時只留一個(保留面積最大的那個)。
+
+        只比對同類別,避免把「車上載的東西」或不同車種誤併。
+        """
+        if len(detections) < 2:
+            return detections
+
+        def area(d):
+            b = d.get('bbox') or {}
+            return max(0, b.get('x2', 0) - b.get('x1', 0)) *                    max(0, b.get('y2', 0) - b.get('y1', 0))
+
+        # 面積大的優先保留 —— 被切開時通常較完整的那個框比較大
+        ordered = sorted(detections, key=area, reverse=True)
+        kept: List[Dict] = []
+        for det in ordered:
+            dup = False
+            for k in kept:
+                if det.get('class_name') != k.get('class_name'):
+                    continue
+                if self._calculate_iou(det['bbox'], k['bbox']) >= self.DEDUPE_IOU:
+                    dup = True
+                    break
+            if not dup:
+                kept.append(det)
+        return kept
+
     def get_history(self, track_id: int) -> List[Tuple[int, int]]:
         """取得追蹤歷史軌跡"""
         if track_id in self.tracks:
