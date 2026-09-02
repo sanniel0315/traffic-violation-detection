@@ -516,14 +516,19 @@ def _realtime_rows(db: Session, since: datetime, start: datetime,
         target = d if is_overall else d["lanes"].get(lane_no)
         if target is None:
             continue
+        # 🛑 上面的 `if r[x] is not None` 已判斷過「有沒有資料」,
+        #    後面不可再 `or None` —— 那會把「四捨五入後是 0.0」的合法值變成
+        #    None(=沒量到),違反對外約定「null 代表沒有量到,不是 0」。
+        #    2026-09-03 實測:cam4 有 81 筆樣本、零筆 null、avg=0.14,
+        #    卻在 API 回成 null,就是被那個 `or None` 吃掉。
         if r[3] is not None:
-            target["avgQueueLengthM"] = round(float(r[3]), 1) or None
+            target["avgQueueLengthM"] = round(float(r[3]), 1)
         if r[4] is not None:
-            target["maxQueueLengthM"] = round(float(r[4]), 1) or None
+            target["maxQueueLengthM"] = round(float(r[4]), 1)
         if r[5] is not None:
-            target["queueDurationSec"] = round(float(r[5]), 1) or None
+            target["queueDurationSec"] = round(float(r[5]), 1)
         if r[6] is not None:
-            target["maxQueueDurationSec"] = round(float(r[6]), 1) or None
+            target["maxQueueDurationSec"] = round(float(r[6]), 1)
         if is_overall and r[7] is not None and not d["_oc_n"]:
             occ = float(r[7])
             d["avgOccupancyPct"] = round(occ * 100.0 if occ <= 1 else occ, 1)
