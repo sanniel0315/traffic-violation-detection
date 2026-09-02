@@ -60,3 +60,21 @@ def test_no_falsy_check_left_in_queue_fields():
             if key in line and " else None" in line and "_num_or_none" not in line:
                 raise AssertionError(
                     "排隊欄位又出現 falsy 判斷(0 會被當成 None):%s" % line.strip())
+
+
+def test_no_or_none_on_queue_assignments():
+    """回歸防護:排隊/時長的賦值不可再出現 `or None`。
+
+    2026-09-03 第二處 bug:SQL 聚合後寫成
+        if r[3] is not None:
+            target["avgQueueLengthM"] = round(float(r[3]), 1) or None
+    前面已判斷過有無資料,後面的 `or None` 會把「四捨五入後 0.0」的合法值
+    變成 None。實測 cam4 有 81 筆樣本、零筆 null、avg=0.14,仍回 null。
+    """
+    src = (ROOT / "api" / "routes" / "external.py").read_text(encoding="utf-8")
+    for line in src.splitlines():
+        t = line.strip()
+        if t.startswith("#"):
+            continue
+        if ("QueueLengthM" in t or "QueueDurationSec" in t) and "or None" in t:
+            raise AssertionError("排隊欄位賦值不可用 `or None`:%s" % t)
