@@ -584,3 +584,50 @@ OPAC 續綠到 55 秒才切。** 我方模型判斷應提早切換 —— 綠側
 ⚠️ 待驗證:OPAC 為何在綠側無車時仍續綠 —— 可能是其 pn2 有殘量未歸零
 (它的 swl 來源是「差分法」而非我方的實測排隊,configmap 註解自承
 「差分法長期漂移出假隊伍」)。若屬實,則我方用實測排隊反而更準確。
+
+## 🔴 重大發現:我方餵給 OPAC 的排隊資料 80% 是 null(2026-09-03)
+
+### 一夜影子結果(6707 筆 / 9 小時)
+一致率 **95.5%**(6060 筆列入)。不一致 275 筆:
+- 我方 SWITCH / OPAC KEEP:**269 筆**(主要模式)
+- 我方 KEEP / OPAC SWITCH:6 筆
+不一致時平均:**綠側排隊 1.3m、紅側 16.0m、綠燈已亮 90 秒**。
+
+### 追根究柢:不是 OPAC 演算法差,是我方供料品質差
+
+OPAC 在那些時刻自己看到的是:
+```
+el=80~95  swlG=0 faG=0 saG=0 | swlR=0 faR=0 saR=0 | pn1=0 pn2=0 | KEEP
+```
+**紅側也是 0** → 它以為兩邊都沒車 → 平手 KEEP → 綠燈一直亮。
+在它的邏輯裡完全正確。但我方同時量到紅側有 16 公尺。
+
+原因:它從我方拉到的 queueM 大量為 null。實測今日 4075 筆輪詢:
+```
+四台全部 null: 2347 筆 (57.6%)
+NE-1 null 83.3% / NE-2 78.2% / WN-1 76.5% / WN-2 81.7%
+```
+
+### null 的程式根因(api/utils/report_aggregation.py)
+```python
+411: if queue_length is not None and queue_length > 0:   # 0 公尺被擋掉不計入
+412:     row["queue_length_sum"] += queue_length
+413:     row["queue_length_count"] += 1
+442: "avg_queue_length_m": (sum/count) if count else None   # count=0 → None
+443: "max_queue_length_m": max if count else None
+```
+→ **「沒有排隊」與「沒有量到」被混成同一個 null**,OPAC 無法分辨。
+
+### 更關鍵的落差:兩邊取的不是同一份資料
+- 我方影子模式讀 `congestion_results` 的**即時值**(所以看得到 16m)
+- OPAC 拉的是對外 API 的**每分鐘聚合值**(那一分鐘算不出來就 null)
+
+### ⚠️ 更正昨日推論
+昨天寫「OPAC 空放行可能因差分法漂移、我方實測較準」—— **不成立**。
+OPAC config 已設 `queue-source: MEASURED`(吃我方實測),漂移是設定檔註解
+記載的**歷史問題**(有人比對 10 小時發現 ~55 輛假隊伍後才改設定),
+OPAC 執行時並不會自我偵測漂移。真正原因是我方供料為 null。
+
+### 待決策(未擅自更動,因為會直接改變 OPAC 的控制行為)
+1. 對外 API 排隊欄位:0 公尺應回 **0** 而非 null,讓「沒車」與「沒量到」可區分
+2. 是否讓 OPAC 改拉即時值而非每分鐘聚合值(它 5 秒拉一次,配分鐘桶本就不匹配)
