@@ -470,3 +470,39 @@ OPAC 以「路側手動+時相控制」接管時是**逐步階下 5F1C 指令**�
 
 **另注意**:官方時制表部分計畫的 max_green 是 **999**(計畫9、11),
 代表官方對某些時段本就允許很長綠燈;而 OPAC 一律用 100s,不分計畫。
+
+## 「路側手動」來源調查(2026-09-02 完整實證)
+
+### 結論:roadSideManual=1 是 OPAC 寫的,不是現場控制箱
+
+**① 現場控制箱沒有停在手動** —— 異動紀錄 FIELD_OPERATION(5F08)18 筆:
+```
+2026-08-28 14:15:51  128 = 回復自動   ← 最後一筆
+2026-08-28 14:15:50    1 = 手動
+... 全部 18 筆成對出現(手動→回復自動,間隔 1~14 秒)
+最近一次現場操作:8/28(五天前),今天無任何現場操作
+```
+→ **現場是自動狀態**,沒人把它留在手動。
+(對照我方 signal_tc3.py:FIELD_OPERATE={0x01:手動, 0x02:全紅, 0x40:閃光, 0x80:回復自動})
+
+**② roadSideManual 來自 OPAC 的 takeover-strategy**:
+- configmap 明寫 `road-side-manual: 1`
+- 攔截的 19 筆 5F10 續約,值全是 `roadSideManual:1, phase:1`
+- 回退後 roadSideManual 仍是 1 → 是 OPAC 最後寫入的殘留:
+  5F10 設定整組策略,effectTime 到期只讓 phase 失效回 fixTime,
+  **roadSideManual 這個 bit 不會被清掉**
+
+### 停止測試後的預期狀態
+```
+fixTime=1, phase=0, roadSideManual=1(殘留), dynamic=0
+→ 跑定時計畫1(週期85s/分相1綠35s/分相2綠40s),與官方時制表 08:30-16:30 時段一致
+→ 16:30 後控制器依自己時段表切計畫37
+```
+若要連 roadSideManual 也清掉,需**主動送一次 5F10** 設 `roadSideManual:0, fixTime:1`
+(從管理系統控制策略頁面),但須先停 OPAC,否則 60 秒內會被續約覆蓋。
+
+### 待與中心端確認
+1. takeover-strategy 用 `road-side-manual:1` 而非 `dynamic:1` —— 語意上
+   roadSideManual 是「現場人員手動」,OPAC 是遠端演算法,用此旗標會造成
+   管理系統顯示誤導。需確認控制器在 dynamic 模式下是否接受外部 5F1C 指令。
+2. max-green-seconds:100 vs 官方時制表 210(部分計畫甚至 999)。
