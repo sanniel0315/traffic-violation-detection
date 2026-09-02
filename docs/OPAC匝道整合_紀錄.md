@@ -137,6 +137,68 @@ kubectl scale deploy opac-adaptive-control --replicas=1
 
 ---
 
+## 六之二、控制比對參考（.35 動作 + 中心端回報，2026-09-02 實測）
+
+供後續我方控制比對用。整條迴路端到端已跑通、下發成功、控制器有回應。
+
+### 完整控制迴路（實證）
+
+```
+我方 API(排隊) ─拉→ OPAC 決策 ─→ icagent ─5F1C下發→ 控制器 ─5F03回報→ icagent
+   queueM         decision.log     IcAgentClient   號誌實際切換    即時燈態
+```
+
+### (1) OPAC 決策紀錄（decision.log，每 5 秒一筆）
+
+欄位：`green`=目前綠燈方向｜`greenElapsed`=已亮綠秒｜`action`=KEEP/SWITCH｜
+`pn1/pn2`=兩相壓力值｜`swl/fa/sa`=各相排隊指標｜`el=3 cl=2`=切換成本模型｜
+`forcedByMaxGreen`=是否撞 max-green 上限｜`mode`=ADAPTIVE/DEGRADED。
+
+實例（可看到 KEEP→SWITCH 的決策點）：
+```
+EXIT_WN 綠15s pn1=1 pn2=1 → KEEP     (兩相壓力相等,保持)
+EXIT_WN 綠20s pn1=1 pn2=1 → KEEP
+EXIT_WN 綠25s pn1=4 pn2=3 → SWITCH   (對向壓力上升,切相位)
+ENTRY_NE綠15s pn1=3 pn2=1 → SWITCH
+```
+守住 min-green 15s、無 forcedByMaxGreen（未撞上限）。
+
+### (2) 下發指令（OPAC → icagent → 控制器）
+
+OPAC IcAgentClient 送 TC3 命令，控制器回 success：
+```
+5F1C 分相1 步階1 秒數=0 → CommandResponse[packageStatus=success, resData=0F805F1C]
+```
+`5F1C` = 分相步階秒數命令（動態配時下發）。`resData 0F80...` = 成功回應。
+
+### (3) 控制器即時燈態回報（5F03，中心端回報）
+
+控制器主動回 `signalStatusReport`（cmdId 5F03），icagent 解出逐方向燈色：
+```
+subPhaseId:1  stepId:2  stepSec:2  signalCount:6
+signalMap: 北1 東北1 東1 東南1 南1 西南0 西1 西北0
+各方向 signalStatus: [綠+行綠+行紅] × N / [紅+行紅] × N
+控制器 ACK: aa dd 79 00 01 00 08 07
+tcCommStatus: true
+原始框: aa bb 78 ff ff 00 19 5f 03 00 5f 06 01 02 00 02 c4 c4 81 81 c4 81 aa cc 57
+```
+
+### (4) 我方比對錨點
+
+| 中心端（權威） | 我方對照來源 |
+|---|---|
+| OPAC `green`/`controlState` | `signal_tc3.py` 5F03 解出的綠燈方向 |
+| OPAC `greenElapsed` | `signal_tc3.py` step_sec |
+| 控制器 5F03 燈態 | `signal_tc3.py` `lights[]`（同一份 5F03） |
+| OPAC 決策用的 `queueM` | 我方 `estimated_queue_length_m` |
+| icagent tcCommStatus | 我方 TC3 抄錄連線狀態 |
+
+> 我方 `signal_tc3.py` 與 icagent **讀的是同一顆控制器的同一份 5F03**，
+> 所以燈態/相位/step 應完全一致 —— 這是控制比對的基準點。
+> 若我方 5F03 與中心端顯示不一致,先查兩邊是否連到同一控制器與連線狀態。
+
+---
+
 ## 七、待確認/待辦
 
 - [ ] OPAC `queueM` ↔ 我方 `avg_queue_length_m`/`max_queue_length_m` 欄位對應（開起來驗）
