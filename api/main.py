@@ -91,6 +91,11 @@ def _mark_camera_online(db, cam) -> None:
             pass
 
 
+# LPR 多久沒有新幀才視為卡住(秒)。忙碌時 LPR 可能只是在排隊等 GPU 鎖,
+# 太短會誤判成卡住而重啟,反而讓 GPU 更塞。可用 env 調。
+_LPR_STALL_SEC = float(os.getenv("LPR_STALL_RESTART_SEC", "90") or 90)
+
+
 def _service_watchdog():
     """定期監控 detection / LPR / congestion 服務，掛掉自動重啟。"""
     from api.models import SessionLocal, Camera
@@ -147,8 +152,14 @@ def _service_watchdog():
                         need_restart = True
                     elif task.thread is not None and not task.thread.is_alive():
                         need_restart = True
-                    elif task.last_frame_at and (_time.time() - task.last_frame_at) > 20:
-                        # 超過 60 秒沒有新幀 → 串流卡住，重啟
+                    elif task.last_frame_at and (_time.time() - task.last_frame_at) > _LPR_STALL_SEC:
+                        # 超過 _LPR_STALL_SEC 沒有新幀 → 串流卡住，重啟
+                        # 🛑 原本寫死 20 秒(且註解誤寫 60)。GPU 飽和時光排隊等鎖
+                        #    wait_p95 就有 2 秒,LPR 拿不到鎖 20 秒沒新幀很容易發生 →
+                        #    watchdog 誤判卡住 → 重啟 → 重啟要載模型/建 CUDA context
+                        #    拿著鎖不放(實測 GR3D 僅 4% 但 hold 490ms) → GPU 更塞 →
+                        #    再度誤判,形成 thrash 循環(2026-09-02 實測 lpr-3/4 反覆重啟,
+                        #    分析率崩到 0.17)。拉高門檻讓忙碌時不要急著重啟。
                         need_restart = True
                     if need_restart:
                         if task:
