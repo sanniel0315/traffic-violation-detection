@@ -3432,7 +3432,26 @@
         .xn-dot.green { background:#22c55e; transform:scale(1.12); box-shadow:0 0 10px 2px rgba(34,197,94,.85), inset 0 0 3px rgba(255,255,255,.4); }
         /* 黃燈(即將換相):亮著時閃爍提示 */
         .xn-dot.amber { animation:xnAmber 1s ease-in-out infinite; }
-        @keyframes xnAmber { 0%,100%{opacity:1} 50%{opacity:.45} }
+        @keyframes xnAmber { 0%,100%{opacity:1}
+        /* 轉向箭頭燈:用 CSS 三角形畫,只在該向亮起時才出現(不佔位、不用文字) */
+        .xn-arrow { width:0; height:0; align-self:center; filter:drop-shadow(0 0 5px rgba(34,197,94,.9));
+                    animation:xnLampIn .35s cubic-bezier(.34,1.56,.64,1); }
+        .xn-arrow.up    { border-left:7px solid transparent; border-right:7px solid transparent;
+                          border-bottom:11px solid #22c55e; }
+        .xn-arrow.left  { border-top:7px solid transparent; border-bottom:7px solid transparent;
+                          border-right:11px solid #22c55e; }
+        .xn-arrow.right { border-top:7px solid transparent; border-bottom:7px solid transparent;
+                          border-left:11px solid #22c55e; }
+        /* 行人燈:小人圖示,綠/紅/綠閃三態 */
+        .xn-ped { display:flex; align-items:center; justify-content:center; width:15px; height:15px;
+                  border-radius:3px; animation:xnLampIn .35s cubic-bezier(.34,1.56,.64,1); }
+        .xn-ped svg { width:13px; height:13px; }
+        .xn-ped.green { color:#22c55e; filter:drop-shadow(0 0 5px rgba(34,197,94,.9)); }
+        .xn-ped.red   { color:#f87171; filter:drop-shadow(0 0 5px rgba(248,113,113,.85)); }
+        .xn-ped.flash { color:#22c55e; filter:drop-shadow(0 0 5px rgba(34,197,94,.9));
+                        animation:xnPedFlash 1s steps(2,start) infinite; }
+        @keyframes xnPedFlash { 0%,100%{opacity:1} 50%{opacity:.25} }
+        @keyframes xnLampIn { from{opacity:0;transform:scale(.6)} to{opacity:1;transform:scale(1)} } 50%{opacity:.45} }
         .xn-foot { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
         .xn-chip { display:flex; align-items:baseline; gap:5px; padding:4px 10px; border-radius:8px;
                    background:#f1f5f9; border:1px solid var(--gov-border); font-size:13px; }
@@ -3445,20 +3464,6 @@
         .xn-chip .k { font-size:11px; color:#94a3b8; }
         .xn-chip b { font-weight:700; color:var(--gov-text); font-variant-numeric:tabular-nums; }
         .xn-stale { color:#f59e0b; font-size:12px; }
-        /* 各方向亮燈細節(參照號誌管理系統的逐燈標示做法) */
-        .xn-lamps { display:flex; flex-wrap:wrap; gap:6px 12px; padding:6px 10px 8px;
-                    border-top:1px dashed var(--gov-line,#e2e8f0); font-size:11px; }
-        .xn-lamp-row { display:inline-flex; align-items:center; gap:4px; }
-        .xn-lamp-dir { color:var(--gov-muted,#64748b); font-weight:700; min-width:2.2em; }
-        .xn-lamp-tag { padding:1px 6px; border-radius:8px; font-weight:700; line-height:1.6;
-                       background:#f1f5f9; color:#64748b; }
-        .xn-lamp-tag.red   { background:#fee2e2; color:#b91c1c; }
-        .xn-lamp-tag.amber { background:#fef3c7; color:#b45309; }
-        .xn-lamp-tag.green { background:#dcfce7; color:#15803d; }
-        .xn-lamp-tag.pgreen{ background:#d1fae5; color:#047857; }
-        .xn-lamp-tag.pred  { background:#fce7f3; color:#be185d; }
-        .xn-lamp-tag.ped   { background:#ccfbf1; color:#0f766e; }
-        .xn-lamp-tag.off   { background:#f8fafc; color:#94a3b8; font-weight:500; }
         /* 燈態明細裡的小紅綠燈(橫式燈箱) */
         .sd-row { display:flex; align-items:center; gap:8px; margin:4px 0; }
         .sd-signal { display:inline-flex; gap:4px; padding:4px 5px; border-radius:7px;
@@ -4528,6 +4533,7 @@
     <symbol id="i-bar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="13" width="4" height="8" rx="1"/><rect x="10" y="8" width="4" height="13" rx="1"/><rect x="17" y="4" width="4" height="17" rx="1"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6"/><path d="M21 21l-6.5-6.5"/></symbol>
     <symbol id="i-pie" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12A9 9 0 1 1 12 3v9z"/><path d="M21 12A9 9 0 0 0 12 3v9z" fill="currentColor" opacity="0.25" stroke="none"/></symbol>
+    <symbol id="i-ped" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="4" r="2.2"/><path d="M12 7c-1 0-1.8.6-2.1 1.5L8.2 13h1.9l.6-1.7V21h1.6v-4.6h1.4V21h1.6V11.3l.6 1.7h1.9l-1.7-4.5C15.8 7.6 15 7 14 7h-2z"/></symbol>
     <symbol id="i-road" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3 4 21M18 3l2 18M12 3v3M12 11v3M12 19v2"/></symbol>
     <symbol id="i-filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8v6l-4 2v-8L3 5z"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
@@ -6837,6 +6843,17 @@
                                             <span class="xn-dot" :class="{red:xnLampOn(L,'red')}"></span>
                                             <span class="xn-dot" :class="{amber:xnLampOn(L,'amber')}"></span>
                                             <span class="xn-dot" :class="{green:xnLampOn(L,'green')}"></span>
+                                            <!-- 轉向箭頭燈:只在該向亮起時才出現(協定 bit3/4/5) -->
+                                            <span v-if="xnBit(L,0x08)" class="xn-arrow left" title="左轉綠"></span>
+                                            <span v-if="xnBit(L,0x10)" class="xn-arrow up" title="直行綠"></span>
+                                            <span v-if="xnBit(L,0x20)" class="xn-arrow right" title="右轉綠"></span>
+                                            <!-- 行人燈:行綠+行紅同亮=綠閃(號誌判讀慣例) -->
+                                            <span v-if="xnPedFlash(L)" class="xn-ped flash" title="行人綠閃">
+                                                <svg viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                            <span v-else-if="xnBit(L,0x40)" class="xn-ped green" title="行人綠燈">
+                                                <svg viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                            <span v-else-if="xnBit(L,0x80)" class="xn-ped red" title="行人紅燈">
+                                                <svg viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
                                         </div>
                                         <div class="xn-center">
                                             <div class="xn-count" :key="'c'+xn.addr+'-'+xnRemainLive(xn)"
@@ -6851,19 +6868,7 @@
                                         <span class="xn-chip"><span class="k">狀態</span><b>{{ xn.phase.step_desc }}</b></span>
                                         <span v-if="xn.stale" class="xn-stale">· 資料過期</span>
                                     </div>
-                                    <!-- 各方向亮著的燈(含轉向綠與行人燈)。後端 LIGHT_BITS 本來就解得出,
-                                         但路口圖只畫紅/黃/綠三顆,這裡把細節補回來。 -->
-                                    <div class="xn-lamps" v-if="xn.phase && xn.phase.lights && xn.phase.lights.length">
-                                        <span class="xn-lamp-row" v-for="(L, li) in xn.phase.lights" :key="'d'+xn.addr+li">
-                                            <b class="xn-lamp-dir">{{ L.dir }}</b>
-                                            <span v-if="sigPedFlash(L)" class="xn-lamp-tag ped">行人綠閃</span>
-                                            <template v-else>
-                                                <span v-for="(d, di) in sigLampDetails(L)" :key="'dd'+li+di"
-                                                      class="xn-lamp-tag" :class="d.key">{{ d.label }}</span>
-                                                <span v-if="!sigLampDetails(L).length" class="xn-lamp-tag off">全暗</span>
-                                            </template>
-                                        </span>
-                                    </div>
+
                                 </div>
                             </div>
                             <div v-if="sigPhase" style="margin-top:16px">
@@ -20937,29 +20942,10 @@ const app=createApp({
             return 'off';
         };
         // 逐燈細節:協定 P5-22 SignalStatus 八個位元。
-        // sigLampClass 只回「最顯著的一色」給路口圖的三顆燈用,
-        // 但後端其實解得出 圓頭綠/左綠/直綠/右綠/行綠/行紅 —— 那些資訊
-        // 原本被前端丟掉了。這裡把它們還原成可讀標籤,補在方向卡上。
-        const SIG_BIT_LABELS=[
-            {bit:0x01, key:'red',    label:'紅燈'},
-            {bit:0x02, key:'amber',  label:'黃燈'},
-            {bit:0x04, key:'green',  label:'圓頭綠'},
-            {bit:0x08, key:'green',  label:'左轉綠'},
-            {bit:0x10, key:'green',  label:'直行綠'},
-            {bit:0x20, key:'green',  label:'右轉綠'},
-            {bit:0x40, key:'pgreen', label:'行人綠'},
-            {bit:0x80, key:'pred',   label:'行人紅'},
-        ];
-        // 回傳這個方向「亮著的所有燈」的標籤陣列(可能同時多顆)
-        const sigLampDetails=(L)=>{
-            const v=Number((L&&L.value)||0);
-            return SIG_BIT_LABELS.filter(b=>v & b.bit);
-        };
-        // 同一方向「行綠+行紅」同時亮 = 行人綠閃(號誌管理系統的判讀慣例)
-        const sigPedFlash=(L)=>{
-            const v=Number((L&&L.value)||0);
-            return !!((v & 0x40) && (v & 0x80));
-        };
+        // 燈桿圖案用:某個位元是否亮(協定 P5-22 SignalStatus)
+        const xnBit=(L,mask)=>!!(Number((L&&L.value)||0) & mask);
+        // 行綠+行紅同亮 = 行人綠閃(號誌判讀慣例)
+        const xnPedFlash=(L)=>{const v=Number((L&&L.value)||0); return !!((v&0x40)&&(v&0x80));};
         const sigHex=(v)=>{
             const n=Number(v||0);
             return '0x'+n.toString(16).toUpperCase().padStart(2,'0')+' = '+n.toString(2).padStart(8,'0')+'b';
@@ -22030,7 +22016,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,sigLampDetails,sigPedFlash,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
