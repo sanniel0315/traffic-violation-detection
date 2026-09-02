@@ -688,6 +688,20 @@ def _validate_time_range(start_time: datetime, end_time: datetime, bucket_size: 
         })
 
 
+def _num_or_none(v):
+    """數值欄位:量到 0 就回 0.0,沒量到才回 None。
+
+    🛑 對外約定(即時車流查詢說明 §四.3):「null 代表沒有量到,不是 0」——
+       null 與 0 意義完全不同,呼叫端被明確要求不可把 null 當 0。
+       但原本寫成 `round(v or 0,1) if v else None`,**0 是 falsy** →
+       「量到 0 公尺(確實沒車排隊)」被回成 null(看起來像偵測掛了)。
+       2026-09-03 實測後果:OPAC 每 5 秒拉 /realtime?mode=minute,
+       今日 4075 筆中四台 queueM 全 null 佔 57.6%(各台 76~83%),
+       它把 null 當 swl=0,綠側空、紅側積 16m 時仍判兩側平手 → 綠燈一直亮。
+    """
+    return None if v is None else round(float(v), 1)
+
+
 def _num(value, digits: int = 1):
     """有量到才給數字，沒量到給 null。
 
@@ -725,10 +739,10 @@ def _vd_rows_to_records(rows: list, bucket: str, span: timedelta | None = None) 
                 "large_vehicle_flow": ld.get("largeFlow", 0),
                 "avg_speed_kmh": _num(ld.get("avgSpeed")),
                 "avg_occupancy_pct": _num(ld.get("avgOccupancyPct")),
-                "avg_queue_length_m": round(ld.get("avgQueueLengthM") or 0, 1) if ld.get("avgQueueLengthM") else None,
-                "max_queue_length_m": round(ld.get("maxQueueLengthM") or 0, 1) if ld.get("maxQueueLengthM") else None,
-                "queue_duration_sec": round(ld.get("queueDurationSec") or 0, 1) if ld.get("queueDurationSec") else None,
-                "max_queue_duration_sec": round(ld.get("maxQueueDurationSec") or 0, 1) if ld.get("maxQueueDurationSec") else None,
+                "avg_queue_length_m": _num_or_none(ld.get("avgQueueLengthM")),
+                "max_queue_length_m": _num_or_none(ld.get("maxQueueLengthM")),
+                "queue_duration_sec": _num_or_none(ld.get("queueDurationSec")),
+                "max_queue_duration_sec": _num_or_none(ld.get("maxQueueDurationSec")),
             })
 
         records.append({
@@ -754,10 +768,10 @@ def _vd_rows_to_records(rows: list, bucket: str, span: timedelta | None = None) 
             # 它已經計入 total_flow;再加到 in/out 就是重複計算。
             # 87 實測:directionCounts={straight:67, IN:40, INOUT:40, EXIT:39},
             # 舊公式會得到 in=80/out=79(灌水約 100%),正解是 in=40/out=39。
-            "avg_queue_length_m": round(row.get("avgQueueLengthM") or 0, 1) if row.get("avgQueueLengthM") else None,
-            "max_queue_length_m": round(row.get("maxQueueLengthM") or 0, 1) if row.get("maxQueueLengthM") else None,
-            "queue_duration_sec": round(row.get("queueDurationSec") or 0, 1) if row.get("queueDurationSec") else None,
-            "max_queue_duration_sec": round(row.get("maxQueueDurationSec") or 0, 1) if row.get("maxQueueDurationSec") else None,
+            "avg_queue_length_m": _num_or_none(row.get("avgQueueLengthM")),
+            "max_queue_length_m": _num_or_none(row.get("maxQueueLengthM")),
+            "queue_duration_sec": _num_or_none(row.get("queueDurationSec")),
+            "max_queue_duration_sec": _num_or_none(row.get("maxQueueDurationSec")),
             "lane_count": row.get("laneCount", 0),
             "lanes": lanes,
         })
