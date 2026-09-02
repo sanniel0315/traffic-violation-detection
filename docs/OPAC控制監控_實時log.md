@@ -657,3 +657,30 @@ track 323 vs 325: IoU=0.93、中心只差 3px、框寬 185
 
 **部署後驗證**:連續 8 次取樣高重疊配對 0 筆(惟該時段車少,
 需多車時段再確認)。
+
+## 2026-09-03 07:13 控制模式判讀在現場生效 + 部署缺口
+
+**驗證成功**:
+```
+strategy: 20 (0x14) = 路口手動 + 時相控制
+control_mode: {code:'external_dynamic', label:'動態控制中(外部接管)'}
+同時燈號完全清楚:北 紅+行紅 / 東 黃+行紅 / 西 黃+行紅,分相2 步階1 倒數 1/2 秒
+```
+0x14 同時有 roadSideManual(bit2)+phase(bit4),正是 OPAC 接管特徵,
+我方判成「動態控制中」而非誤判成手動 —— 判讀規則在真實資料上正確。
+
+**「誰在控制」與「現在什麼燈」是兩個獨立資訊,都看得到,不衝突。**
+
+### ⚠️ 部署缺口:traffic-signal daemon 不會被自動部署重啟
+
+抄錄器跑在獨立服務 `traffic-signal.service`(services/signal_daemon.py),
+但 GitHub Actions 的自動部署**只重啟 traffic-api**。
+實測:daemon 的 ExecMainStartTimestamp 停在 2026-08-28 18:11,
+今天所有對 signal_tc3.py 的修改(含 _control_mode)在它身上都沒生效,
+直到手動 `systemctl restart traffic-signal` 才載入。
+
+→ 凡是改到 signal_tc3.py / signal_daemon.py 的部署,都要記得重啟
+   traffic-signal,否則改了等於沒改。建議把它加進部署腳本。
+
+另注意:重啟後 _safety["strategy"] 是記憶體變數會歸零,
+要等下一個 5FC0 訊框(約每分鐘一次,由 icagent 續約觸發)才會有值。
