@@ -3266,7 +3266,14 @@ class LPRStreamTask:
             if _lpr_decode_skip:
                 print(f"[LPR] cam_{self.camera_id} 跳幀解碼 skip={_lpr_decode_skip}", flush=True)
 
-            frame_skip = 1
+            # LPR 專屬 YOLO 推論節流(與 detection 無關,只降 LPR 的 GPU)。
+            # 🛑 不要動 decode_skip_frames —— 那是偵測與 LPR 共用鍵,調它會連偵測一起拖慢。
+            #    frame_skip 只 gate LPR 自己的 yolo.detect,frame 仍照推(snapshot 不受影響)。
+            #    熱受限期把 GPU 讓給排隊偵測(OPAC 要的)時,設 LPR_INFER_SKIP=2/3 降 LPR。
+            #    車牌在畫面停留數幀,5fps 對辨識仍足夠。預設 1=原每幀行為,可退回。
+            frame_skip = max(1, int(os.getenv("LPR_INFER_SKIP", "1") or 1))
+            if frame_skip > 1:
+                print(f"[LPR] cam_{self.camera_id} YOLO 推論節流 每{frame_skip}幀1次", flush=True)
             last_shared_ts = 0.0
             last_frigate_fetch = 0.0  # cam_6 fallback rate-limit
             while self.running:
