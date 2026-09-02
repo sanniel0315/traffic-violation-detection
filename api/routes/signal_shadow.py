@@ -43,6 +43,8 @@ PHASE_CAMERA = {
     2: int(os.getenv("SIGNAL_SHADOW_CAM_PHASE2", "4") or 4),
 }
 
+# 抄錄器所在的獨立服務(traffic-signal.service)。燈態只有它有。
+SIGNAL_DAEMON_URL = os.getenv("SIGNAL_DAEMON_URL", "http://127.0.0.1:8012").rstrip("/")
 _DB_PATH = os.getenv("SIGNAL_SHADOW_DB",
                      os.getenv("SIGNAL_TC3_QDB", "data/signal_shadow.db"))
 _lock = threading.Lock()
@@ -83,16 +85,30 @@ def _queue_m(camera_id: int) -> Optional[float]:
 
 
 def _live_phase() -> Optional[dict]:
-    """取控制器當下的分相/步階（我方 signal_tc3 抄錄的 5F03）。"""
+    """取控制器當下的分相/步階（5F03）。
+
+    🛑 **必須跟 signal_daemon 要，不可以讀 traffic-api 行程內的 _by_addr。**
+       抄錄器是獨立服務 `traffic-signal.service`
+       (`uvicorn services.signal_daemon:app --port 8012`)，
+       它才是真正連著 MiiNePort :1001 在抄錄的那一個。traffic-api 這個行程
+       的 _by_addr 永遠是空的 —— 影子模式第一版就是讀它，結果空轉沒資料。
+       而且 services/signal_daemon.py 明寫「traffic-api 那邊絕不可再
+       start_recorder，否則搶 :1001 / 雙抄錄」，所以也不能自己開一份。
+    """
     try:
-        from api.routes.signal_tc3 import _by_addr, _lock as _sig_lock
-        with _sig_lock:
-            by_addr = dict(_by_addr)
-        for _addr, rec in sorted(by_addr.items()):
-            ph = rec.get("phase") or {}
+        import urllib.request as _u
+        with _u.urlopen(f"{SIGNAL_DAEMON_URL}/api/signal/status", timeout=3) as r:
+            import json as _j
+            data = _j.load(r)
+        for xn in (data.get("intersections") or []):
+            ph = xn.get("phase") or {}
             if ph.get("sub_phase_id") is not None:
                 return {"sub_phase_id": int(ph["sub_phase_id"]),
-                        "ts": rec.get("ts")}
+                        "ts": xn.get("age_sec")}
+        latest = data.get("latest") or {}
+        ph = latest.get("phase") or {}
+        if ph.get("sub_phase_id") is not None:
+            return {"sub_phase_id": int(ph["sub_phase_id"]), "ts": latest.get("ts")}
     except Exception:
         pass
     return None
