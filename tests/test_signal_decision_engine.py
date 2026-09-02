@@ -1,7 +1,10 @@
-"""影子決策引擎:安全約束與切換規則。
+"""影子決策引擎:我方自己的延滯成本模型 + 安全約束。
 
-規則來源:2026-09-02 從 OPAC decision.log 41 筆樣本反推,SWITCH ⟺ pn1 > pn2。
-本引擎只算不送 —— 任何下發都要走 signal_tc3 的 control/send(預設關閉)。
+不複製 OPAC 的 pn1/pn2(2026-09-02 用 400 筆測過 15 種假設全失敗,
+那是它內部狀態機的耦合計數器,無法外部重建)。改用交通工程標準目標:
+最小化總延滯 —— 比較「紅側繼續等的成本」與「綠側續綠的價值 + 換相成本」。
+
+本引擎只算不送。任何下發都要走 signal_tc3 的 control/send(預設關閉)。
 """
 import sys
 from pathlib import Path
@@ -12,40 +15,42 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from detection.signal_decision_engine import ApproachState, decide, compare
+from detection.signal_decision_engine import (
+    ApproachState, decide, compare, evaluate_outcome,
+)
 
 
-def _st(phase, queue_m=None, arrivals=0.0, storage_m=None, priority=False):
+def _st(phase, queue_m=None, arrivals=0.0, storage_m=None, priority=False, waiting=0.0):
     return ApproachState(phase_no=phase, queue_m=queue_m, arrivals=arrivals,
-                         storage_m=storage_m, priority=priority)
+                         storage_m=storage_m, priority=priority, waiting_sec=waiting)
 
 
 def _decide(green_q=None, red_q=None, elapsed=30, mn=15, mx=100,
-            green_arr=0.0, red_arr=0.0, g_priority=False, g_storage=None):
+            green_arr=0.0, red_arr=0.0, g_priority=False, g_storage=None,
+            red_wait=0.0):
     return decide(
         green_phase=2, green_elapsed_sec=elapsed,
         green_side=_st(2, green_q, green_arr, g_storage, g_priority),
-        red_side=_st(1, red_q, red_arr),
+        red_side=_st(1, red_q, red_arr, waiting=red_wait),
         min_green_sec=mn, max_green_sec=mx,
     )
 
 
-# ---- 安全約束(優先於一般規則) ----
+# ---- 安全約束(優先於成本比較) ----
 
 def test_min_green_blocks_switch():
-    """未滿最小綠一律 KEEP,即使紅側需求爆表。"""
+    """未滿最小綠一律 KEEP,即使紅側延滯爆表。"""
     d = _decide(green_q=0, red_q=700, elapsed=10, mn=15)
     assert d.action == "KEEP" and "最小綠" in d.reason
 
 
 def test_max_green_forces_switch():
-    """達最大綠強制切,即使綠側還有需求。"""
     d = _decide(green_q=700, red_q=0, elapsed=100, mx=100)
     assert d.action == "SWITCH" and d.forced_by_max_green
 
 
-def test_max_green_priority_over_mainline_protection():
-    """max-green 檢查在主線保護之前 —— 到頂就是要切,不能無限長綠。"""
+def test_max_green_beats_mainline_protection():
+    """max-green 檢查在主線保護之前 —— 不可無限長綠。"""
     d = _decide(green_q=700, red_q=0, elapsed=120, mx=100,
                 g_priority=True, g_storage=600)
     assert d.action == "SWITCH" and d.forced_by_max_green
@@ -53,62 +58,113 @@ def test_max_green_priority_over_mainline_protection():
 
 def test_mainline_protection_blocks_switch():
     """主線保護:下匝道(優先相)排隊逼近儲車上限,不可被切走。"""
-    # 儲車 600m,排隊 500m = 83% ≥ 80% 門檻
     d = _decide(green_q=500, red_q=700, elapsed=30,
                 g_priority=True, g_storage=600)
     assert d.action == "KEEP" and d.blocked_by_priority
 
 
-def test_non_priority_phase_no_protection():
-    """非優先相沒有這個保護 —— 排隊再滿也可被切。"""
+def test_non_priority_no_protection():
     d = _decide(green_q=500, red_q=700, elapsed=30,
                 g_priority=False, g_storage=600)
-    assert d.action == "SWITCH" and not d.blocked_by_priority
+    assert d.action == "SWITCH"
 
 
-# ---- 一般規則 SWITCH ⟺ pn1 > pn2 ----
+# ---- 延滯成本模型 ----
 
-def test_switch_when_red_demand_exceeds_green_residual():
-    """紅側排隊多、綠燈已放行久 → 綠側殘量被消化完 → 切。"""
-    d = _decide(green_q=14, red_q=70, elapsed=30)   # 綠側2輛,已放行15輛→殘0
-    assert d.action == "SWITCH" and d.pn1 > d.pn2
+def test_long_waiting_red_side_triggers_switch():
+    """紅側等越久,切換效益越高 —— 這是延滯模型的核心。"""
+    short = _decide(green_q=70, red_q=70, elapsed=20, red_wait=5)
+    long_ = _decide(green_q=70, red_q=70, elapsed=20, red_wait=300)
+    assert long_.switch_gain > short.switch_gain
+    assert long_.action == "SWITCH"
 
 
-def test_keep_when_green_still_has_backlog():
+def test_more_red_vehicles_higher_switch_gain():
+    """紅側車越多,切換效益越高。"""
+    few = _decide(green_q=0, red_q=7, elapsed=30, red_wait=60)
+    many = _decide(green_q=0, red_q=70, elapsed=30, red_wait=60)
+    assert many.switch_gain > few.switch_gain
+
+
+def test_green_backlog_keeps_green():
     """綠側還有大量未消化 → 續綠。"""
-    d = _decide(green_q=700, red_q=7, elapsed=20)   # 綠側100輛,放行10輛→殘90
-    assert d.action == "KEEP" and d.pn2 >= d.pn1
+    d = _decide(green_q=1400, red_q=7, elapsed=20, red_wait=20)
+    assert d.action == "KEEP" and d.keep_gain > d.switch_gain
 
 
-def test_tie_keeps():
-    """平手不切(與 OPAC 一致:pn1 ≤ pn2 才 KEEP)。"""
-    d = _decide(green_q=None, red_q=None, elapsed=30)
-    assert d.pn1 == d.pn2 == 0 and d.action == "KEEP"
+def test_keep_gain_follows_measured_queue_not_elapsed_time():
+    """★ keep_gain 由「當下實測排隊」決定,不隨綠燈時間自行衰減。
 
-
-def test_arrivals_counted_into_demand():
-    """到達車數要計入需求,不是只看排隊。"""
-    a = _decide(green_q=None, red_q=None, elapsed=30, red_arr=5)
-    assert a.pn1 == 5 and a.action == "SWITCH"
-
-
-def test_green_residual_decays_with_elapsed():
-    """同樣綠側需求,綠燈亮越久殘量越少(飽和流消化) —— pn2 的核心語意。"""
+    🛑 不可以用「需求 − 飽和流×綠燈秒」推剩餘:飽和流是車連續通過時的速率,
+       不能假設綠燈全程滿載放行。那樣推會讓長綠燈的 keep_gain 恆為 0 →
+       「明明還在排隊卻判該切」(2026-09-02 實測:下匝道 77m/11台排隊、
+       綠燈已亮 60 秒,被算成剩餘 0 而誤判 SWITCH)。
+    """
+    # 同樣排隊量,綠燈長短不影響 keep_gain —— 排隊沒少就是沒少
     short = _decide(green_q=140, red_q=0, elapsed=16)
-    long_ = _decide(green_q=140, red_q=0, elapsed=39)
-    assert short.pn2 > long_.pn2
+    long_ = _decide(green_q=140, red_q=0, elapsed=90)
+    assert short.keep_gain == long_.keep_gain
+
+    # 排隊真的變少了,keep_gain 才下降
+    less = _decide(green_q=70, red_q=0, elapsed=16)
+    assert less.keep_gain < short.keep_gain
 
 
-def test_none_queue_treated_as_zero_not_crash():
-    """排隊量測為 None(未量到)不可當機,以 0 計。"""
+def test_long_green_with_real_queue_keeps():
+    """現場情境:下匝道排隊 77m(11台)、綠燈已亮 60 秒 → 應續綠不是切走。"""
+    d = _decide(green_q=77, red_q=14, elapsed=60, red_wait=60)
+    assert d.action == "KEEP"
+
+
+def test_change_cost_prevents_marginal_switch():
+    """換相成本是防抖動:微小優勢不值得付換相代價。"""
+    d = _decide(green_q=0, red_q=1, elapsed=20, red_wait=1)
+    # 紅側只有 0.14 輛等 1 秒,遠不足以抵換相成本
+    assert d.action == "KEEP" and d.change_cost > 0
+
+
+def test_empty_both_sides_keeps():
+    """兩側都沒車 → 不切(切了也沒意義,只浪費換相損失)。"""
     d = _decide(green_q=None, red_q=None, elapsed=30)
     assert d.action == "KEEP"
 
 
-# ---- 比對 ----
+def test_none_queue_not_crash():
+    d = _decide(green_q=None, red_q=None, elapsed=30)
+    assert d.switch_gain == 0
 
-def test_compare_match_and_mismatch():
-    d = _decide(green_q=0, red_q=70, elapsed=30)
-    assert compare(d, "SWITCH")["match"] is True
-    assert compare(d, "KEEP")["match"] is False
+
+# ---- 成效評估(取代逐筆一致率) ----
+
+def test_evaluate_outcome_basic():
+    samples = [
+        {"queue_m_1": 70, "queue_m_2": 140, "storage_2": 600,
+         "interval_sec": 5, "switched": False},
+        {"queue_m_1": 0, "queue_m_2": 500, "storage_2": 600,
+         "interval_sec": 5, "switched": True},
+    ]
+    r = evaluate_outcome(samples)
+    assert r["samples"] == 2
+    assert r["switch_count"] == 1
+    assert r["max_queue_m_2"] == 500
+    assert r["spillback_events_2"] == 1      # 500/600 = 83% ≥ 80%
+    assert r["total_delay_veh_sec"] > 0
+
+
+def test_evaluate_outcome_empty():
+    assert evaluate_outcome([]) == {}
+
+
+def test_lower_delay_is_better():
+    """成效比較的核心:延滯低的那套比較好。"""
+    good = evaluate_outcome([{"queue_m_1": 10, "queue_m_2": 10,
+                              "interval_sec": 5, "switched": False}])
+    bad = evaluate_outcome([{"queue_m_1": 200, "queue_m_2": 200,
+                             "interval_sec": 5, "switched": False}])
+    assert good["total_delay_veh_sec"] < bad["total_delay_veh_sec"]
+
+
+def test_compare_still_works():
+    d = _decide(green_q=0, red_q=70, elapsed=30, red_wait=60)
+    assert compare(d, d.action)["match"] is True
     assert compare(d, None)["match"] is None
