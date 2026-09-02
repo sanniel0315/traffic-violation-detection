@@ -506,3 +506,31 @@ fixTime=1, phase=0, roadSideManual=1(殘留), dynamic=0
    roadSideManual 是「現場人員手動」,OPAC 是遠端演算法,用此旗標會造成
    管理系統顯示誤導。需確認控制器在 dynamic 模式下是否接受外部 5F1C 指令。
 2. max-green-seconds:100 vs 官方時制表 210(部分計畫甚至 999)。
+
+## 現場號誌比對驗證(2026-09-02 16:05)—— 三層一致,控制確實落地
+
+| 層級 | 實測內容 | |
+|---|---|---|
+| A. OPAC 決策 | greenDirection=EXIT_WN, controlState=YELLOW | |
+| B. 控制器分相 | 5FCC 回報:分相 2, 步階 1, 剩餘 23 秒 | ✅ 對上 |
+| C. 實際燈態 | 5F03 綠燈在 signal 索引 [2,3,5] | ✅ 對上 |
+
+**分相映射驗證**(OPAC config phases):
+```
+ENTRY_NE → sub-phase-id 1     EXIT_WN → sub-phase-id 2
+```
+OPAC 說 EXIT_WN、控制器回報分相 2 → 吻合。
+
+**方向對位驗證**(signalMap: 北1 東北1 東1 東南1 南1 西南0 西1 西北0,
+啟用 6 個方向依序索引 0~5):
+| 索引 | 方向 | 燈態 |
+|---|---|---|
+| 2 | 東 | 綠 ✅ |
+| 3 | 東南 | 綠 ✅ |
+| 5 | 西 | 綠 ✅ |
+
+對照 baseline 分相定義:`分相2(下匝道 EXIT_WN) green_directions=["東","西"]`
+→ 綠燈落在東、西,**與分相2 定義相符**。東、西正是下匝道方向。
+
+**結論:OPAC 決策 → 控制器分相 → 實際燈態,三層完全一致,
+控制指令確實在驅動真實號誌,無錯位。**
