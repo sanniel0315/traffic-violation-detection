@@ -173,7 +173,14 @@ def _loop():
                 "change_cost,forced,blocked,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (datetime.now().isoformat(timespec="seconds"), g_no,
                  round(green_elapsed, 1), q1, q2, d.action, actual,
-                 1 if d.action == actual else 0, d.switch_gain, d.keep_gain,
+                 # 🛑 切換剛發生的那一筆不列入一致率(agree=NULL)。
+                 #    偵測到分相變了才記 actual=SWITCH,但那一刻 green_elapsed
+                 #    已重設為 0,我方引擎因 min-green 未滿必然回 KEEP ——
+                 #    這是取樣時序造成的假不一致,不是真的決策分歧。
+                 #    (實測:18 筆裡 2 筆不一致全都是 green_elapsed=0 那筆)
+                 (None if actual == "SWITCH" and green_elapsed < 1.0
+                  else (1 if d.action == actual else 0)),
+                 d.switch_gain, d.keep_gain,
                  d.change_cost, 1 if d.forced_by_max_green else 0,
                  1 if d.blocked_by_priority else 0, d.reason))
             conn.commit()
