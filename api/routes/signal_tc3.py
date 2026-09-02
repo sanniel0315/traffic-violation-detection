@@ -693,6 +693,47 @@ def _strategy_text(v: int) -> str:
     return f"{v:02X}H " + ("+".join(on) if on else "(全部關閉)")
 
 
+# 控制策略位元(對照 STRATEGY_BITS 的 index)
+_BIT_FIXTIME = 1 << 0      # 定時控制
+_BIT_DYNAMIC = 1 << 1      # 動態控制
+_BIT_ROADSIDE = 1 << 2     # 路口手動(路側)
+_BIT_CENTER = 1 << 3       # 中央手動
+_BIT_PHASE = 1 << 4        # 時相控制
+
+
+def _control_mode(v) -> dict:
+    """判讀「現在是誰在控制」。回 {code, label, severity}。
+
+    🛑 不可以只看 roadSideManual 就說是手動 —— 2026-09-02 現場實測:
+       OPAC(中心端適應性控制)接管時,它的 takeover-strategy 會**同時**寫入
+       roadSideManual=1 + phase=1。所以 roadSideManual=1 期間路口其實是
+       被演算法動態控制,不是現場有人在操作控制箱。當時就是只看
+       roadSideManual 而誤判成「被切手動」。
+       判讀順序:先看 phase(時相控制=外部演算法逐步階接管),再看其他。
+
+    另:OPAC 交還(5F10 effectTime 到期)後 roadSideManual 位元不會被清掉,
+    會殘留為 1,所以「定時控制」的判定以 phase=0 且 fixTime=1 為準。
+    """
+    if not isinstance(v, int):
+        return {"code": "unknown", "label": "未知", "severity": "info"}
+    if v & _BIT_PHASE:
+        # 時相控制 = 外部(OPAC 或我方)逐步階下 5F1C 接管中
+        return {"code": "external_dynamic", "label": "動態控制中(外部接管)",
+                "severity": "active"}
+    if v & _BIT_DYNAMIC:
+        return {"code": "controller_dynamic", "label": "動態控制(控制器內建)",
+                "severity": "active"}
+    if v & _BIT_CENTER:
+        return {"code": "center_manual", "label": "中央手動", "severity": "warn"}
+    if v & _BIT_ROADSIDE and not (v & _BIT_FIXTIME):
+        # 只有路側手動、連定時都沒有 → 才是真的現場手動
+        return {"code": "roadside_manual", "label": "路側手動(現場操作)",
+                "severity": "warn"}
+    if v & _BIT_FIXTIME:
+        return {"code": "fixtime", "label": "定時控制", "severity": "normal"}
+    return {"code": "other", "label": _strategy_text(v), "severity": "info"}
+
+
 def _safety_db():
     global _safety_db_ready
     conn = _sqlite3.connect(_QDB_PATH, timeout=20)
@@ -825,6 +866,7 @@ async def safety_status(limit: int = 50, _user=Depends(get_current_user)):
         "strategy_text": _strategy_text(v) if isinstance(v, int) else None,
         "strategy_ts": _safety["strategy_ts"] or None,
         "manual": bool(v & STRATEGY_MANUAL_MASK) if isinstance(v, int) else False,
+        "control_mode": _control_mode(v),
         "abnormal_step": _safety["abnormal_step"],
         "abnormal_text": STEP_SPECIAL.get(_safety["abnormal_step"], "")
                          if _safety["abnormal_step"] is not None else "",
@@ -1197,6 +1239,8 @@ async def status(_user=Depends(get_current_user)):
             "step_total_sec": step_total,       # 這一步的總長
             "remain_sec": remain,               # 現算的剩餘(倒數)
             "stale": (r_age is None or r_age > SIGNAL_STALE_SEC),
+            # 誰在控制(見 _control_mode 的判讀說明)
+            "control_mode": _control_mode(_safety.get("strategy")),
         })
     return {
         **{k: s[k] for k in ("enabled", "host", "port", "connected",

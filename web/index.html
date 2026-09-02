@@ -3436,6 +3436,12 @@
         .xn-foot { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
         .xn-chip { display:flex; align-items:baseline; gap:5px; padding:4px 10px; border-radius:8px;
                    background:#f1f5f9; border:1px solid var(--gov-border); font-size:13px; }
+        /* 控制模式標籤:誰在控制這個路口。severity 由後端 _control_mode() 給 */
+        .xn-chip.xn-mode { font-weight: 700; }
+        .xn-chip.xn-mode.sev-active { background: #dcfce7; color: #15803d; border-color: #86efac; }
+        .xn-chip.xn-mode.sev-warn   { background: #ffedd5; color: #c2410c; border-color: #fdba74; }
+        .xn-chip.xn-mode.sev-normal { background: var(--gov-primary-soft); color: var(--gov-primary); }
+        .xn-chip.xn-mode.sev-info   { background: #f1f5f9; color: #64748b; }
         .xn-chip .k { font-size:11px; color:#94a3b8; }
         .xn-chip b { font-weight:700; color:var(--gov-text); font-variant-numeric:tabular-nums; }
         .xn-stale { color:#f59e0b; font-size:12px; }
@@ -6825,6 +6831,7 @@
                                         </div>
                                     </div>
                                     <div class="xn-foot" v-if="xn.phase">
+                                        <span v-if="xn.control_mode" class="xn-chip xn-mode" :class="'sev-'+xn.control_mode.severity" :title="'控制策略:誰在控制這個路口'"><b>{{ xn.control_mode.label }}</b></span>
                                         <span class="xn-chip"><span class="k">分相</span><b>{{ xn.phase.sub_phase_id }}</b></span>
                                         <span class="xn-chip"><span class="k">步階</span><b>{{ xn.phase.step_id }}</b></span>
                                         <span class="xn-chip"><span class="k">狀態</span><b>{{ xn.phase.step_desc }}</b></span>
