@@ -73,6 +73,12 @@ python scripts/lint_vue_template.py --all
 #   (b) [SELF-CLOSING] 不渲染 slot 的元件自閉合會吞掉後面的兄弟節點
 #       (el-input / el-input-number / el-switch / el-date-picker …)
 #       一律改成成對閉合 <el-input ...></el-input>
+#   (c) inline <script> 的 JS 語法(node --check) —— 需要現場有 node
+#       🛑 2026-09-03 教訓:新加的 loadSigControl 跟既有 TC3 命令下發的
+#       同名函式撞名,整份 JS 因 "Identifier has already been declared"
+#       完全不執行 —— 連登入表單都動不了。但 div 平衡是對的(1654/1654)、
+#       模板檢查也全過,兩道既有關卡都看不見它。
+#       **加新函式前先 grep 名字有沒有人用過。**
 #
 # 🛑 要批次修自閉合「不要用 regex」——惰性量詞會跨過標籤邊界，
 #    把 <el-option/> 關成 </el-select>，整份模板會被改壞（已實際踩過）。
