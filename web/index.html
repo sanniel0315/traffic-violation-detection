@@ -3443,12 +3443,18 @@
         .xn-arrow.right { border-top:7px solid transparent; border-bottom:7px solid transparent;
                           border-left:11px solid #22c55e; }
         /* 行人燈:小人圖示,綠/紅/綠閃三態 */
-        .xn-ped { display:flex; align-items:center; justify-content:center; width:15px; height:15px;
-                  border-radius:3px; animation:xnLampIn .35s cubic-bezier(.34,1.56,.64,1); }
+        /* 行人燈做成獨立小燈箱(與車燈桿分開,一眼看得出是行人號誌) */
+        .xn-ped { display:flex; align-items:center; justify-content:center; width:17px; height:17px;
+                  border-radius:4px; background:#0b1220; border:1px solid #334155; margin-top:2px;
+                  animation:xnLampIn .35s cubic-bezier(.34,1.56,.64,1); }
+        .xn-signal.horiz .xn-ped { margin-top:0; margin-left:2px; }
         .xn-ped svg { width:13px; height:13px; }
-        .xn-ped.green { color:#22c55e; filter:drop-shadow(0 0 5px rgba(34,197,94,.9)); }
-        .xn-ped.red   { color:#f87171; filter:drop-shadow(0 0 5px rgba(248,113,113,.85)); }
-        .xn-ped.flash { color:#22c55e; filter:drop-shadow(0 0 5px rgba(34,197,94,.9));
+        .xn-ped.green { color:#22c55e; border-color:#22c55e;
+                        box-shadow:0 0 8px 1px rgba(34,197,94,.75); }
+        .xn-ped.red   { color:#f87171; border-color:#f87171;
+                        box-shadow:0 0 8px 1px rgba(248,113,113,.7); }
+        .xn-ped.flash { color:#22c55e; border-color:#22c55e;
+                        box-shadow:0 0 8px 1px rgba(34,197,94,.75);
                         animation:xnPedFlash 1s steps(2,start) infinite; }
         @keyframes xnPedFlash { 0%,100%{opacity:1} 50%{opacity:.25} }
         @keyframes xnLampIn { from{opacity:0;transform:scale(.6)} to{opacity:1;transform:scale(1)} } 50%{opacity:.45} }
