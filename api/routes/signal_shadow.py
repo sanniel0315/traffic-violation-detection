@@ -304,16 +304,26 @@ def _loop():
         _stop.wait(SHADOW_INTERVAL_SEC)
 
 
-def summarize(minutes: int = 60) -> dict:
+def summarize(minutes: int = 60, since: Optional[str] = None,
+              until: Optional[str] = None) -> dict:
     """把最近 N 分鐘的影子結果壓成一份摘要。
 
     🛑 一致率一定要分「有車/無車」算。夜間兩側排隊都是 0，兩邊都 KEEP，
        一致率會漂到 98% —— 那個數字沒有資訊量，會蓋掉尖峰的真實表現。
        實測 13.5 小時:整體 87.4%，但只看有車樣本，08 時只有 54.7%。
     """
-    since = time.time() - minutes * 60
-    since_iso = datetime.fromtimestamp(since).isoformat(timespec="seconds")
-    out = {"minutes": minutes, "samples": 0, "judged_samples": 0,
+    # 🛑 「最近 N 分鐘」會隨查詢時間漂移 —— 要比對固定時段(例如尖峰
+    #    06:00~12:00)就必須能指定起訖,否則早一分鐘晚一分鐘查到的不是同一段,
+    #    兩次結果沒有可比性。
+    if since:
+        since_iso = since
+        until_iso = until or datetime.now().isoformat(timespec="seconds")
+    else:
+        since_iso = datetime.fromtimestamp(
+            time.time() - minutes * 60).isoformat(timespec="seconds")
+        until_iso = datetime.now().isoformat(timespec="seconds")
+    out = {"minutes": minutes, "since": since_iso, "until": until_iso,
+           "samples": 0, "judged_samples": 0,
            "active_samples": 0,
            "agree_rate": None, "active_agree_rate": None,
            "excluded_clearance": 0, "excluded_not_opac": 0,
@@ -325,9 +335,9 @@ def summarize(minutes: int = 60) -> dict:
         conn = _db()
         rows = conn.execute(
             "SELECT green_phase,green_elapsed,queue_m_1,queue_m_2,ours,actual,"
-            "agree,keep_gain,forced,blocked,clearance,control_mode "
-            "FROM signal_shadow_log WHERE ts>=?",
-            (since_iso,)).fetchall()
+            "agree,keep_gain,forced,blocked,clearance,control_mode,ts "
+            "FROM signal_shadow_log WHERE ts>=? AND ts<=?",
+            (since_iso, until_iso)).fetchall()
         conn.close()
     except Exception as e:
         out["error"] = str(e)
@@ -361,6 +371,25 @@ def summarize(minutes: int = 60) -> dict:
     out["forced"] = sum(1 for r in rows if r[8])
     out["blocked"] = sum(1 for r in rows if r[9])
     out["max_green_elapsed"] = round(max((r[1] or 0) for r in rows), 1)
+
+    # 逐時拆解。整段的平均會被無車時段稀釋 —— 尖峰哪一小時掉下來,
+    # 只有拆開才看得見(2026-09-03 實測:整體 87.4% 但 08 時只有 54.7%)。
+    buckets: dict = {}
+    for r in rows:
+        h = str(r[12])[11:13]
+        b = buckets.setdefault(h, {"hour": h, "samples": 0, "judged": 0,
+                                   "active": 0, "active_agree": 0})
+        b["samples"] += 1
+        if r[6] is None:
+            continue
+        b["judged"] += 1
+        if (r[2] or 0) > 0 or (r[3] or 0) > 0:
+            b["active"] += 1
+            b["active_agree"] += r[6]
+    for b in buckets.values():
+        b["active_agree_rate"] = (round(b["active_agree"] / b["active"], 3)
+                                  if b["active"] else None)
+    out["by_hour"] = [buckets[k] for k in sorted(buckets)]
     return out
 
 
@@ -483,10 +512,13 @@ async def shadow_stop(_user=Depends(get_current_user)):
     return {"stopped": True}
 
 
-@router.get("/summary", summary="影子結果摘要(有車/無車分開算一致率)")
+@router.get("/summary", summary="影子結果摘要(有車/無車分開算一致率,可指定時段)")
 async def shadow_summary(minutes: int = Query(60, ge=5, le=1440),
+                         since: str = Query("", description="起(ISO,例 2026-09-04T06:00:00)"),
+                         until: str = Query("", description="訖(ISO)"),
                          _user=Depends(get_current_user)):
-    return summarize(minutes)
+    """給 since/until 就比對那個固定時段;不給就看最近 minutes 分鐘。"""
+    return summarize(minutes, since or None, until or None)
 
 
 @router.get("/plan", summary="即時決策盤(輸入/算式/安全閘門逐項攤開)")

@@ -6932,6 +6932,7 @@
                                     <el-option :value="180" label="最近 3 小時"></el-option>
                                     <el-option :value="720" label="最近 12 小時"></el-option>
                                     <el-option :value="1440" label="最近 24 小時"></el-option>
+                                    <el-option :value="-1" label="今日尖峰 06-12"></el-option>
                                 </el-select>
                                 <el-button size="small" @click="loadSigShadow">重新載入</el-button>
                             </div>
@@ -6962,6 +6963,21 @@
                                 排除不計:清道 {{ sigShadow.excluded_clearance }}、
                                 非外部動態 {{ sigShadow.excluded_not_opac }}、
                                 切換瞬間 {{ sigShadow.excluded_switch_instant }}
+                            </div>
+                            <!-- 逐時拆解:整段平均會被無車時段稀釋,尖峰哪一小時掉下來只有拆開才看得見 -->
+                            <div v-if="sigShadowHours.length" class="sc-wrap" style="margin-top:10px">
+                                <table class="sc-table">
+                                    <thead><tr><th>時段</th><th>樣本</th><th>可比對</th><th>有車</th><th>有車一致率</th></tr></thead>
+                                    <tbody>
+                                        <tr v-for="b in sigShadowHours" :key="'h'+b.hour">
+                                            <td>{{ b.hour }} 時</td>
+                                            <td class="sc-num">{{ b.samples }}</td>
+                                            <td class="sc-num">{{ b.judged }}</td>
+                                            <td class="sc-num">{{ b.active }}</td>
+                                            <td class="sc-num" :style="sigHourStyle(b)">{{ sigHourPct(b) }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                             <p v-else style="font-size:13px;color:#64748b;margin-top:10px">
                                 這段時間沒有樣本。影子模式需要 SIGNAL_SHADOW_ENABLED=1 且抄錄器連線正常。</p>
@@ -21320,9 +21336,34 @@ const app=createApp({
             if(r.agree===null||r.agree===undefined) return '不計:'+(r.ours||'')+' / 實際 '+(r.actual||'');
             return (r.agree?'一致 ':'岐異 ')+(r.ours||'')+' / 實際 '+(r.actual||'');
         };
+        const sigShadowHours=computed(()=>(sigShadow.value&&sigShadow.value.by_hour)||[]);
+        const sigHourPct=(b)=>{
+            const v=b&&b.active_agree_rate;
+            return (v===null||v===undefined)?'—':(v*100).toFixed(1)+'%';
+        };
+        const sigHourStyle=(b)=>{
+            const v=b&&b.active_agree_rate;
+            if(v===null||v===undefined) return {};
+            if(0.9<=v) return {color:'#15803d'};
+            if(0.75<=v) return {color:'#b45309'};
+            return {color:'#b91c1c'};
+        };
+        // 起訖用本地時間組,不能用 toISOString() —— 那會轉成 UTC,
+        // 台灣時間 06:00 會變成前一天 22:00,整段比對就對到錯的資料。
+        const sigDayAt=(hh)=>{
+            const d=new Date();
+            const pad=(n)=>String(n).padStart(2,'0');
+            return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())
+                   +'T'+pad(hh)+':00:00';
+        };
         const loadSigShadow=async()=>{
+            // -1 = 今日尖峰固定時段。用固定起訖才有可比性,
+            // 「最近 N 分鐘」會隨查詢時間漂移。
+            const q=(sigShadowMins.value===-1)
+                ? ('since='+sigDayAt(6)+'&until='+sigDayAt(12))
+                : ('minutes='+sigShadowMins.value);
             try{
-                const r=await fetch('/api/signal/shadow/summary?minutes='+sigShadowMins.value,{credentials:'include'});
+                const r=await fetch('/api/signal/shadow/summary?'+q,{credentials:'include'});
                 if(r.ok) sigShadow.value=await r.json();
             }catch(e){}
             try{
@@ -22365,7 +22406,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigControl,startSigControlTimer,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigControl,startSigControlTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
