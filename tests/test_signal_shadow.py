@@ -138,3 +138,44 @@ def test_summarize_splits_active_and_idle_samples(tmp_path, monkeypatch):
     assert s["disagree_switch_early"] == 8  # 岐異全是我方提早切
     assert s["disagree_switch_late"] == 0
     assert s["keep_gain_zero"] == 8         # 綠側價值=0 是根因
+
+
+def test_summarize_reports_what_it_excluded(tmp_path, monkeypatch):
+    """一致率必須說清楚它是拿哪些樣本比出來的。
+
+    三種樣本前提不成立、不能列入:清道(黃燈/全紅,控制器已 committed)、
+    非外部動態控制(定時/手動時 actual 不是 OPAC 的決策)、切換瞬間。
+    只給一個裸的一致率而不攤開排除量,沒人能判斷那個數字可不可信。
+    """
+    from api.routes import signal_shadow as ss
+
+    db = tmp_path / "s2.db"
+    monkeypatch.setattr(ss, "_DB_PATH", str(db))
+    monkeypatch.setattr(ss, "_db_ready", False)
+    conn = ss._db()
+    ts = datetime.now().isoformat(timespec="seconds")
+
+    def row(agree, clearance, mode, q2=40.0, ours="KEEP"):
+        return (ts, 1, 30.0, 0.0, q2, ours, "KEEP", agree,
+                0.0, 0.0, 12.5, 0, 0, "", 1, clearance, mode)
+
+    rows = [row(1, 0, "external_dynamic") for _ in range(6)]
+    rows += [row(0, 0, "external_dynamic", ours="SWITCH") for _ in range(4)]
+    rows += [row(None, 1, "external_dynamic") for _ in range(3)]   # 清道
+    rows += [row(None, 0, "fixtime") for _ in range(5)]            # 定時,非 OPAC
+    rows += [row(None, 0, "external_dynamic")]                     # 切換瞬間
+    conn.executemany(
+        "INSERT INTO signal_shadow_log(ts,green_phase,green_elapsed,queue_m_1,"
+        "queue_m_2,ours,actual,agree,switch_gain,keep_gain,change_cost,forced,"
+        "blocked,reason,step_id,clearance,control_mode) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+    s = ss.summarize(minutes=60)
+    assert s["samples"] == 19
+    assert s["judged_samples"] == 10          # 只有前提成立的才算
+    assert s["active_agree_rate"] == 0.6      # 6/10
+    assert s["excluded_clearance"] == 3
+    assert s["excluded_not_opac"] == 5
+    assert s["excluded_switch_instant"] == 1

@@ -74,9 +74,17 @@ def _db():
             queue_m_1 REAL, queue_m_2 REAL,
             ours TEXT, actual TEXT, agree INTEGER,
             switch_gain REAL, keep_gain REAL, change_cost REAL,
-            forced INTEGER, blocked INTEGER, reason TEXT)""")
+            forced INTEGER, blocked INTEGER, reason TEXT,
+            step_id INTEGER, clearance INTEGER, control_mode TEXT)""")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_shadow_ts "
                      "ON signal_shadow_log(ts)")
+        # 既有 DB(9/2 起累積的那份)沒有這三欄,補上 —— 舊列留 NULL,
+        # summarize 會把 control_mode IS NULL 的樣本當「前提不明」排除。
+        have = {r[1] for r in conn.execute("PRAGMA table_info(signal_shadow_log)")}
+        for col, typ in (("step_id", "INTEGER"), ("clearance", "INTEGER"),
+                         ("control_mode", "TEXT")):
+            if col not in have:
+                conn.execute(f"ALTER TABLE signal_shadow_log ADD COLUMN {col} {typ}")
         conn.commit()
         _db_ready = True
     return conn
@@ -122,13 +130,20 @@ def _live_phase() -> Optional[dict]:
             data = _j.load(r)
         for xn in (data.get("intersections") or []):
             ph = xn.get("phase") or {}
-            if ph.get("sub_phase_id") is not None:
-                return {"sub_phase_id": int(ph["sub_phase_id"]),
-                        "ts": xn.get("age_sec")}
-        latest = data.get("latest") or {}
-        ph = latest.get("phase") or {}
-        if ph.get("sub_phase_id") is not None:
-            return {"sub_phase_id": int(ph["sub_phase_id"]), "ts": latest.get("ts")}
+            if ph.get("sub_phase_id") is None:
+                continue
+            lights = ph.get("lights") or []
+            # 清道判定不寫死步階編號 —— 直接看有沒有任何方向亮綠
+            # (協定 bit2 圓頭綠 / bit3 左 / bit4 直 / bit5 右)。
+            # 黃燈與全紅期間控制器已經committed,那時的 KEEP/SWITCH 判斷沒有意義。
+            any_green = any((int(l.get("value") or 0) & 0x3C) for l in lights)
+            cm = xn.get("control_mode") or {}
+            return {"sub_phase_id": int(ph["sub_phase_id"]),
+                    "step_id": ph.get("step_id"),
+                    "clearance": not any_green,
+                    "stale": bool(xn.get("stale")),
+                    "age_sec": xn.get("age_sec"),
+                    "control_mode": cm.get("code")}
     except Exception:
         pass
     return None
@@ -147,6 +162,15 @@ def _loop():
         try:
             live = _live_phase()
             if live is None:
+                _stop.wait(SHADOW_INTERVAL_SEC)
+                continue
+            # 🛑 抄錄斷線時 latest 會凍結在最後一幀,sub_phase_id 不再變,
+            #    green_elapsed 會無限累加,樣本卻照記 —— 一致率被污染而且看不出來。
+            #    (9/3 實測有 73 筆 green_elapsed>210s,若不排除無從分辨真假長綠。)
+            if live.get("stale"):
+                with _lock:
+                    _stats["skipped_stale"] = _stats.get("skipped_stale", 0) + 1
+                prev_phase = None       # 重連後不要拿斷線前的分相當基準
                 _stop.wait(SHADOW_INTERVAL_SEC)
                 continue
             cur_phase = live["sub_phase_id"]
@@ -194,7 +218,8 @@ def _loop():
             conn.execute(
                 "INSERT INTO signal_shadow_log(ts,green_phase,green_elapsed,"
                 "queue_m_1,queue_m_2,ours,actual,agree,switch_gain,keep_gain,"
-                "change_cost,forced,blocked,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "change_cost,forced,blocked,reason,step_id,clearance,control_mode)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (datetime.now().isoformat(timespec="seconds"), g_no,
                  round(green_elapsed, 1), q1, q2, d.action, actual,
                  # 🛑 切換剛發生的那一筆不列入一致率(agree=NULL)。
@@ -202,11 +227,24 @@ def _loop():
                  #    已重設為 0,我方引擎因 min-green 未滿必然回 KEEP ——
                  #    這是取樣時序造成的假不一致,不是真的決策分歧。
                  #    (實測:18 筆裡 2 筆不一致全都是 green_elapsed=0 那筆)
-                 (None if actual == "SWITCH" and green_elapsed < 1.0
-                  else (1 if d.action == actual else 0)),
+                 # 🛑 三種樣本不列入一致率(agree=NULL),因為前提根本不成立:
+                 #  (a) 切換剛發生那一筆:偵測到分相變了才記 actual=SWITCH,
+                 #      但那一刻 green_elapsed 已重設為 0,我方因 min-green
+                 #      未滿必然回 KEEP —— 取樣時序造成的假不一致。
+                 #  (b) 清道期間(黃燈/全紅):控制器已經committed要換相,
+                 #      這時候問「該不該切」沒有意義。
+                 #  (c) 不是外部動態控制:定時/手動時 actual 不是 OPAC 的決策,
+                 #      拿我方演算法去比一個根本沒在做決策的控制器毫無意義。
+                 (None if (
+                     (actual == "SWITCH" and green_elapsed < 1.0)
+                     or live.get("clearance")
+                     or live.get("control_mode") != "external_dynamic"
+                 ) else (1 if d.action == actual else 0)),
                  d.switch_gain, d.keep_gain,
                  d.change_cost, 1 if d.forced_by_max_green else 0,
-                 1 if d.blocked_by_priority else 0, d.reason))
+                 1 if d.blocked_by_priority else 0, d.reason,
+                 live.get("step_id"), 1 if live.get("clearance") else 0,
+                 live.get("control_mode")))
             conn.commit()
             conn.close()
             with _lock:
@@ -235,15 +273,20 @@ def summarize(minutes: int = 60) -> dict:
     """
     since = time.time() - minutes * 60
     since_iso = datetime.fromtimestamp(since).isoformat(timespec="seconds")
-    out = {"minutes": minutes, "samples": 0, "active_samples": 0,
+    out = {"minutes": minutes, "samples": 0, "judged_samples": 0,
+           "active_samples": 0,
            "agree_rate": None, "active_agree_rate": None,
+           "excluded_clearance": 0, "excluded_not_opac": 0,
+           "excluded_switch_instant": 0,
            "disagree_switch_early": 0, "disagree_switch_late": 0,
-           "keep_gain_zero": 0, "forced": 0, "blocked": 0, "max_green_elapsed": None}
+           "keep_gain_zero": 0, "forced": 0, "blocked": 0,
+           "max_green_elapsed": None}
     try:
         conn = _db()
         rows = conn.execute(
             "SELECT green_phase,green_elapsed,queue_m_1,queue_m_2,ours,actual,"
-            "agree,keep_gain,forced,blocked FROM signal_shadow_log WHERE ts>=?",
+            "agree,keep_gain,forced,blocked,clearance,control_mode "
+            "FROM signal_shadow_log WHERE ts>=?",
             (since_iso,)).fetchall()
         conn.close()
     except Exception as e:
@@ -252,7 +295,16 @@ def summarize(minutes: int = 60) -> dict:
     if not rows:
         return out
     out["samples"] = len(rows)
+    # 🛑 一致率只能在「前提成立」的樣本上算。把排除掉的量攤開,
+    #    否則看到一個裸數字沒人知道它是拿什麼比出來的。
+    out["excluded_clearance"] = sum(1 for r in rows if r[10])
+    out["excluded_not_opac"] = sum(
+        1 for r in rows if r[11] is not None and r[11] != "external_dynamic")
+    out["excluded_switch_instant"] = sum(
+        1 for r in rows if r[6] is None and not r[10]
+        and (r[11] == "external_dynamic" or r[11] is None))
     judged = [r for r in rows if r[6] is not None]
+    out["judged_samples"] = len(judged)
     # 有車 = 任一側量到排隊。只有這些樣本的一致率才有意義。
     active = [r for r in judged if (r[2] or 0) > 0 or (r[3] or 0) > 0]
     out["active_samples"] = len(active)
@@ -279,8 +331,11 @@ def _report() -> None:
         return
     ar = s["active_agree_rate"]
     pct = "—" if ar is None else f"{ar * 100:.1f}%"
-    detail = (f"樣本 {s['samples']}(有車 {s['active_samples']})、"
-              f"有車一致率 {pct}、"
+    detail = (f"樣本 {s['samples']} → 可比對 {s['judged_samples']}"
+              f"(排除:清道 {s['excluded_clearance']}、"
+              f"非外部動態 {s['excluded_not_opac']}、"
+              f"切換瞬間 {s['excluded_switch_instant']})、"
+              f"其中有車 {s['active_samples']}、有車一致率 {pct}、"
               f"我方提早切 {s['disagree_switch_early']} 次"
               f"(其中綠側價值=0 佔 {s['keep_gain_zero']})、"
               f"最大綠強制 {s['forced']}、最長綠 {s['max_green_elapsed']}s")
