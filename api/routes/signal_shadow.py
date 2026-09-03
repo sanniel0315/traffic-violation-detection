@@ -93,6 +93,17 @@ def _queue_m(camera_id: int) -> Optional[float]:
         return None
 
 
+def _flow_vpm(camera_id: int) -> Optional[float]:
+    """取該相機當下的到達流量(輛/分)。綠側價值要靠它,不能只看靜態排隊。"""
+    try:
+        from api.routes.congestion import congestion_results
+        r = congestion_results.get(camera_id) or {}
+        v = r.get("flow_vpm")
+        return float(v) if v is not None else None
+    except Exception:
+        return None
+
+
 def _live_phase() -> Optional[dict]:
     """取控制器當下的分相/步階（5F03）。
 
@@ -152,9 +163,12 @@ def _loop():
 
             q1 = _queue_m(PHASE_CAMERA.get(1, 3))
             q2 = _queue_m(PHASE_CAMERA.get(2, 4))
+            f1 = _flow_vpm(PHASE_CAMERA.get(1, 3))
+            f2 = _flow_vpm(PHASE_CAMERA.get(2, 4))
             # 綠燈側 = 當下分相；紅燈側 = 另一相
             g_no, r_no = (cur_phase, 2 if cur_phase == 1 else 1)
             q_map = {1: q1, 2: q2}
+            f_map = {1: f1, 2: f2}
             g_role = phase_role(g_no) or {}
             r_role = phase_role(r_no) or {}
             pp = plan_params(current_base_plan()) or {}
@@ -165,6 +179,7 @@ def _loop():
                 green_phase=g_no, green_elapsed_sec=green_elapsed,
                 green_side=ApproachState(
                     g_no, queue_m=q_map.get(g_no),
+                    flow_vpm=f_map.get(g_no),
                     storage_m=g_role.get("storage_m"),
                     priority=bool(g_role.get("priority"))),
                 red_side=ApproachState(

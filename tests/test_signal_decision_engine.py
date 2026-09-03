@@ -168,3 +168,38 @@ def test_compare_still_works():
     d = _decide(green_q=0, red_q=70, elapsed=30, red_wait=60)
     assert compare(d, d.action)["match"] is True
     assert compare(d, None)["match"] is None
+
+
+def test_green_side_flow_counts_even_when_queue_cleared():
+    """綠側排隊已清空但車流仍在到達時，不可判成「綠燈沒價值」。
+
+    2026-09-03 實測 13.5 小時：我方提早切的 1074 筆岐異中 67% 的 keep_gain=0,
+    reason 都是「綠側價值 0」—— 因為只看靜態排隊,車一放行就歸零。
+    但綠燈期間車流仍持續到達被消化,那才是綠燈的價值。
+    """
+    common = dict(green_phase=1, green_elapsed_sec=40.0,
+                  min_green_sec=10.0, max_green_sec=210.0)
+    # 紅側 10m(約 1.4 輛)等 40 秒 → 延滯 57 車·秒
+    red = ApproachState(2, queue_m=10.0, waiting_sec=40.0)
+
+    # 綠側排隊 0、也沒量到流量 → 舊行為:綠燈確實沒價值,該切
+    idle = decide(green_side=ApproachState(1, queue_m=0.0), red_side=red, **common)
+    assert idle.keep_gain == 0.0
+    assert idle.action == "SWITCH"
+
+    # 綠側排隊同樣是 0,但實測每分鐘 30 輛還在進來 → 綠燈有價值
+    busy = decide(green_side=ApproachState(1, queue_m=0.0, flow_vpm=30.0),
+                  red_side=red, **common)
+    assert busy.keep_gain > 0
+    assert busy.detail["stranded_arrivals"] > 0
+    # 30 輛/分 = 0.5 輛/秒,被切走要等 lost_time(5) + min_green(10) = 15 秒
+    # → 攔下 7.5 輛,keep_gain = 7.5 × 15 = 112.5 車·秒
+    assert busy.keep_gain == pytest.approx(112.5, rel=0.01)
+    # 57(紅側延滯) < 112.5(綠側價值) + 12.5(換相成本) → 續綠
+    assert busy.action == "KEEP"
+
+    # 但綠側流量不是免死金牌:紅側夠塞就仍該切
+    heavy_red = decide(green_side=ApproachState(1, queue_m=0.0, flow_vpm=30.0),
+                       red_side=ApproachState(2, queue_m=60.0, waiting_sec=60.0),
+                       **common)
+    assert heavy_red.action == "SWITCH"

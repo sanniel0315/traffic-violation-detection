@@ -63,12 +63,19 @@ class ApproachState:
     waiting_sec: float = 0.0         # 這一側已經紅燈等待幾秒(紅側才有意義)
     storage_m: Optional[int] = None  # 該匝道儲車上限(公尺)
     priority: bool = False           # 是否主線保護優先
+    flow_vpm: Optional[float] = None # 實測到達流量(輛/分),來自壅塞偵測
 
     def queue_vehicles(self, meters_per_vehicle: float) -> float:
         """排隊公尺換算成輛。queue_m 為 None(未量到)時以 0 計。"""
         if not self.queue_m or meters_per_vehicle <= 0:
             return 0.0
         return self.queue_m / meters_per_vehicle
+
+    def arrival_rate_per_sec(self) -> float:
+        """每秒到達輛數。優先用實測 flow_vpm,沒有才退回觀測窗車數。"""
+        if self.flow_vpm:
+            return max(0.0, self.flow_vpm) / 60.0
+        return max(0.0, self.arrivals) / 60.0
 
     def spillback_ratio(self) -> Optional[float]:
         """排隊佔儲車上限的比例。無資料回 None。"""
@@ -126,8 +133,15 @@ def decide(
     #   紅側必然壓過綠側,不管綠側多塞(2026-09-02 實測:綠側11台排隊 vs
     #   紅側2台等60秒 → 誤判 SWITCH)。
     #   綠側被切走的代價 = 這些車要多等「換相損失 + 對向一輪綠燈」才輪得到。
-    green_remain = green_side.queue_vehicles(mpv)
+    #   🛑 只用「當下靜態排隊」當綠側價值是不夠的 —— 2026-09-03 實測 13.5 小時,
+    #      我方提早切的 1074 筆岐異中有 67% 的 keep_gain=0:車一放行排隊就歸零,
+    #      模型立刻認為綠燈沒價值,但綠燈期間車流**仍在持續到達並被消化**,
+    #      那才是綠燈真正的價值。對照 OPAC 的 pn2 是隨綠燈遞減的狀態量,
+    #      不是瞬時排隊 —— 這正是我方缺的那一項。
+    #      補法:把「若現在切走,這段等待期間會到達而被擋下的車」也算進來。
     wait_if_switched = lost_time_sec + max(min_green_sec, 0.0)
+    stranded_arrivals = max(0.0, green_side.arrival_rate_per_sec()) * wait_if_switched
+    green_remain = green_side.queue_vehicles(mpv) + stranded_arrivals
     keep_gain = green_remain * wait_if_switched
     # 理論放行量僅供觀察(不參與決策),用來看綠燈是否給得過長
     discharged = sat_per_sec * max(0.0, green_elapsed_sec)
@@ -146,6 +160,7 @@ def decide(
                          "red_wait_sec": round(red_wait, 1),
                          "green_demand": round(green_demand, 2),
                          "green_remain": round(green_remain, 2),
+                         "stranded_arrivals": round(stranded_arrivals, 2),
                          "discharged": round(discharged, 2)})
 
     # ① min-green 未滿 → 一律不可切
