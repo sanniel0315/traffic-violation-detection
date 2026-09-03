@@ -451,6 +451,14 @@ app.include_router(auth.router)
 app.include_router(frigate.router)
 app.include_router(go2rtc_route.router)
 app.include_router(nport_route.router)
+# 🛑 影子模式的 /api/signal/shadow/* 由本 process 提供,必須註冊在下面那個
+#    /api/signal/{sub_path:path} 萬用代理**之前** —— Starlette 依註冊順序比對,
+#    晚註冊就會整組被代理吃掉、轉去 daemon 然後回 404。
+#    2026-09-03 就是這樣:網頁的影子卡一直顯示「未啟動/沒有樣本」,
+#    但後端資料明明在寫。從 localhost 測看到 401 還誤以為端點存在 ——
+#    那個 401 是 middleware 擋在路由之前,亂打的路徑也一樣回 401。
+app.include_router(signal_shadow.router)
+
 # 🛑 號誌 /api/signal/* 不再由本 process 提供,改反向代理到常駐 daemon
 #    traffic-signal(127.0.0.1:8012)。web 端仍要登入,daemon 內部不驗。
 #    全是 JSON 端點、無串流,單純轉發即可;daemon 不在時回 502 不拖垮 web。
@@ -463,6 +471,15 @@ async def signal_proxy(sub_path: str, request: Request,
                        _user=Depends(get_current_user)):
     import requests as _rq
     from fastapi.concurrency import run_in_threadpool
+    # 雙保險:萬一未來又有人把自家路由註冊到這行之後,至少回一個看得懂的錯,
+    # 而不是靜默轉去 daemon 然後回 404 讓人查半天。
+    if sub_path == "shadow" or sub_path.startswith("shadow/"):
+        return Response(
+            content=b'{"detail":"shadow \u8def\u7531\u8a3b\u518a\u9806\u5e8f\u932f'
+                    b'\u8aa4\uff1a\u88ab\u842c\u7528\u4ee3\u7406\u5403\u6389'
+                    b'\uff0c\u8acb\u628a include_router \u79fb\u5230\u4ee3\u7406'
+                    b'\u4e4b\u524d"}',
+            status_code=500, media_type="application/json")
     url = f"{SIGNAL_DAEMON_URL}/api/signal/{sub_path}"
     body = await request.body()
     ctype = request.headers.get("content-type", "")
@@ -483,7 +500,6 @@ async def signal_proxy(sub_path: str, request: Request,
 app.include_router(nx.router)
 app.include_router(hanwha.router)
 app.include_router(lpr.router)
-app.include_router(signal_shadow.router)
 app.include_router(lpr_stream.router)
 app.include_router(lpr_visual.router)
 app.include_router(congestion.router)
