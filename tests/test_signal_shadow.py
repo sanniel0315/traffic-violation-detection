@@ -6,6 +6,7 @@
 import os
 import sys
 from pathlib import Path
+from datetime import datetime
 
 os.environ.setdefault("AUTH_SECRET", "test-only-not-a-real-secret")
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,3 +94,47 @@ def test_stop_is_idempotent():
     import api.routes.signal_shadow as m
     m.stop_shadow()
     m.stop_shadow()   # 重複呼叫不可當機
+
+
+def test_summarize_splits_active_and_idle_samples(tmp_path, monkeypatch):
+    """一致率必須分「有車/無車」算。
+
+    夜間兩側排隊都 0、兩邊都 KEEP，一致率會漂到 100%，那個數字沒有資訊量。
+    實測 13.5 小時整體 87.4%，但只看有車樣本，尖峰只有 54.7% —— 若不分開算，
+    尖峰的真實表現會被夜間的假一致蓋掉。
+    """
+    import sqlite3
+    from api.routes import signal_shadow as ss
+
+    db = tmp_path / "s.db"
+    monkeypatch.setattr(ss, "_DB_PATH", str(db))
+    monkeypatch.setattr(ss, "_db_ready", False)
+
+    conn = ss._db()
+    now = datetime.now()
+    rows = []
+    # 90 筆無車、全都一致(夜間)
+    for i in range(90):
+        rows.append((now.isoformat(timespec="seconds"), 1, 30.0, 0.0, 0.0,
+                     "KEEP", "KEEP", 1, 0, 0, 12.5, 0, 0, ""))
+    # 10 筆有車，其中只有 2 筆一致 → 有車一致率應為 20%
+    for i in range(10):
+        agree = 1 if i < 2 else 0
+        ours = "KEEP" if agree else "SWITCH"
+        rows.append((now.isoformat(timespec="seconds"), 1, 30.0, 0.0, 40.0,
+                     ours, "KEEP", agree, 100.0, 0.0, 12.5, 0, 0, ""))
+    conn.executemany(
+        "INSERT INTO signal_shadow_log(ts,green_phase,green_elapsed,queue_m_1,"
+        "queue_m_2,ours,actual,agree,switch_gain,keep_gain,change_cost,forced,"
+        "blocked,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+    s = ss.summarize(minutes=60)
+    assert s["samples"] == 100
+    assert s["active_samples"] == 10
+    assert s["agree_rate"] == 0.92          # 整體被夜間拉高
+    assert s["active_agree_rate"] == 0.2    # 有車時的真實表現
+    assert s["disagree_switch_early"] == 8  # 岐異全是我方提早切
+    assert s["disagree_switch_late"] == 0
+    assert s["keep_gain_zero"] == 8         # 綠側價值=0 是根因
