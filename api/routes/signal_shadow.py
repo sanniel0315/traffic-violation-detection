@@ -479,3 +479,122 @@ async def shadow_stop(_user=Depends(get_current_user)):
 async def shadow_summary(minutes: int = Query(60, ge=5, le=1440),
                          _user=Depends(get_current_user)):
     return summarize(minutes)
+
+
+@router.get("/plan", summary="即時決策盤(輸入/算式/安全閘門逐項攤開)")
+async def shadow_plan(_user=Depends(get_current_user)):
+    """回傳「這一刻我方演算法在想什麼」的完整快照。
+
+    🛑 摘要頁只給一個一致率,看不出演算法憑什麼這樣判。要接管控制權之前,
+       每一筆判斷都必須可稽核 —— 輸入是什麼、算式每一項多少、
+       哪一道安全閘門先攔下來,都要攤在同一個畫面上。
+    """
+    from detection.signal_decision_engine import (
+        ApproachState, decide,
+        DEFAULT_SATURATION_VPH, DEFAULT_METERS_PER_VEHICLE,
+        DEFAULT_SPILLBACK_RATIO, DEFAULT_LOST_TIME_SEC,
+    )
+    from detection.signal_timing_lookup import (
+        phase_role, plan_params, current_base_plan,
+    )
+
+    live = _live_phase()
+    if not live:
+        return {"available": False, "reason": "抄錄器沒有燈態資料(traffic-signal 未連線?)"}
+    if live.get("stale"):
+        return {"available": False, "reason": "燈態資料已過期,不做決策(避免用凍結的分相判斷)"}
+
+    g_no = live["sub_phase_id"]
+    r_no = 2 if g_no == 1 else 1
+    # green_elapsed 影子迴圈才有(它從分相變化累積);這裡取近一筆做為近似值
+    green_elapsed = 0.0
+    try:
+        conn = _db()
+        row = conn.execute("SELECT green_elapsed FROM signal_shadow_log "
+                           "ORDER BY id DESC LIMIT 1").fetchone()
+        conn.close()
+        if row:
+            green_elapsed = float(row[0] or 0.0)
+    except Exception:
+        pass
+
+    q = {1: _queue_m(PHASE_CAMERA.get(1, 3)), 2: _queue_m(PHASE_CAMERA.get(2, 4))}
+    f = {1: _flow_vpm(PHASE_CAMERA.get(1, 3)), 2: _flow_vpm(PHASE_CAMERA.get(2, 4))}
+    roles = {1: phase_role(1) or {}, 2: phase_role(2) or {}}
+    plan_id = current_base_plan()
+    pp = plan_params(plan_id) or {}
+    mins = pp.get("min_green") or [15, 15]
+    min_green = float(mins[g_no - 1] if len(mins) >= g_no else 15)
+    max_green = float(pp.get("max_green") or 210)
+
+    green = ApproachState(g_no, queue_m=q.get(g_no), flow_vpm=f.get(g_no),
+                          storage_m=roles[g_no].get("storage_m"),
+                          priority=bool(roles[g_no].get("priority")))
+    red = ApproachState(r_no, queue_m=q.get(r_no), flow_vpm=f.get(r_no),
+                        storage_m=roles[r_no].get("storage_m"),
+                        waiting_sec=green_elapsed)
+    d = decide(green_phase=g_no, green_elapsed_sec=green_elapsed,
+               green_side=green, red_side=red,
+               min_green_sec=min_green, max_green_sec=max_green)
+
+    def side(a: ApproachState, role: dict) -> dict:
+        sr = a.spillback_ratio()
+        return {
+            "phase_no": a.phase_no,
+            "ramp": role.get("ramp"), "label": role.get("label"),
+            "camera": role.get("constraint_camera"),
+            "queue_m": a.queue_m,
+            "queue_vehicles": round(a.queue_vehicles(DEFAULT_METERS_PER_VEHICLE), 2),
+            "flow_vpm": a.flow_vpm,
+            "arrival_per_sec": round(a.arrival_rate_per_sec(), 3),
+            "storage_m": a.storage_m,
+            "spillback_ratio": None if sr is None else round(sr, 3),
+            "priority": a.priority,
+        }
+
+    # 安全閘門依引擎內的判定順序列出,並標出是哪一道實際生效
+    gates = [
+        {"order": 1, "name": "最小綠", "rule": f"已亮 {green_elapsed:.0f}s < {min_green:.0f}s 則強制 KEEP",
+         "hit": green_elapsed < min_green},
+        {"order": 2, "name": "最大綠", "rule": f"已亮 {green_elapsed:.0f}s ≥ {max_green:.0f}s 則強制 SWITCH",
+         "hit": bool(d.forced_by_max_green)},
+        {"order": 3, "name": "主線保護",
+         "rule": f"綠側為優先相且排隊達儲車上限 {DEFAULT_SPILLBACK_RATIO*100:.0f}% 則不可切走",
+         "hit": bool(d.blocked_by_priority)},
+        {"order": 4, "name": "延滯成本比較",
+         "rule": "紅側延滯 > 綠側價值 + 換相成本 才切", "hit": not any(
+             (green_elapsed < min_green, d.forced_by_max_green, d.blocked_by_priority))},
+    ]
+
+    return {
+        "available": True,
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "control_mode": live.get("control_mode"),
+        "clearance": bool(live.get("clearance")),
+        "step_id": live.get("step_id"),
+        "green_phase": g_no, "red_phase": r_no,
+        "green_elapsed_sec": round(green_elapsed, 1),
+        "plan": {"plan_id": plan_id, "min_green_sec": min_green,
+                 "max_green_sec": max_green,
+                 "cycle": pp.get("cycle"), "yellow": pp.get("yellow"),
+                 "all_red": pp.get("all_red")},
+        "green_side": side(green, roles[g_no]),
+        "red_side": side(red, roles[r_no]),
+        "terms": {
+            "switch_gain": d.switch_gain, "keep_gain": d.keep_gain,
+            "change_cost": d.change_cost,
+            "threshold": round(d.keep_gain + d.change_cost, 2),
+            "margin": round(d.switch_gain - d.keep_gain - d.change_cost, 2),
+            **d.detail,
+        },
+        "constants": {
+            "saturation_vph": DEFAULT_SATURATION_VPH,
+            "meters_per_vehicle": DEFAULT_METERS_PER_VEHICLE,
+            "spillback_ratio": DEFAULT_SPILLBACK_RATIO,
+            "lost_time_sec": DEFAULT_LOST_TIME_SEC,
+        },
+        "gates": gates,
+        "action": d.action, "reason": d.reason,
+        "would_send": False,
+        "note": "影子模式:本決策只記錄不下發,路口仍由現行控制方控制",
+    }
