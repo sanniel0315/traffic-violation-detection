@@ -76,3 +76,57 @@ def test_none_and_invalid():
 def test_zero_is_other_not_crash():
     r = _control_mode(0)
     assert r["code"] == "other"
+
+
+def test_opac_renew_transient_is_not_manual_intervention(monkeypatch):
+    """OPAC 每 60 秒續約的 1 秒過渡態不可以報成「手動介入」。
+
+    🛑 2026-09-03 現場實測的原始序列(整段只有 1 秒):
+         10H 時相控制 → 05H 定時控制+路口手動 → 01H 定時控制 → 10H 時相控制
+       舊判定只看 bit2/bit3 有沒有亮,把中間的 05H 當手動介入、01H 當手動解除,
+       每小時產生約 10 則 warn 級假警報,而且每則都推播。
+       同時段 5F08 現場操作回報一筆都沒有 —— 真有人動控制箱一定會有 5F08。
+    """
+    from api.routes import signal_tc3 as tc3
+
+    events = []
+    monkeypatch.setattr(tc3, "_safety_event",
+                        lambda *a, **k: events.append((a[1], a[2])))
+    tc3._safety.update({"strategy": None, "strategy_ts": 0.0})
+    tc3._safety.pop("manual_pending", None)
+    tc3._safety.pop("manual_confirmed", None)
+
+    t = 1000.0
+    for v, dt in ((0x10, 0), (0x05, 1), (0x01, 1), (0x10, 1)):
+        t += dt
+        tc3._safety_watch({"code": "5FC0", "addr": 65535, "ts": t, "strategy": v})
+
+    assert not [e for e in events if e[0] == "warn"], \
+        f"續約過渡態不該產生 warn 警報,實際: {events}"
+
+
+def test_sustained_manual_still_alarms(monkeypatch):
+    """真的切到路側手動並持續下去,還是要報 —— 防呆不能把真警報也吃掉。"""
+    from api.routes import signal_tc3 as tc3
+
+    events = []
+    monkeypatch.setattr(tc3, "_safety_event",
+                        lambda *a, **k: events.append((a[1], a[2])))
+    tc3._safety.update({"strategy": None, "strategy_ts": 0.0})
+    tc3._safety.pop("manual_pending", None)
+    tc3._safety.pop("manual_confirmed", None)
+
+    t = 2000.0
+    tc3._safety_watch({"code": "5FC0", "addr": 65535, "ts": t, "strategy": 0x01})
+    # 切到純路側手動(沒有定時、沒有時相)並撐住
+    tc3._safety_watch({"code": "5FC0", "addr": 65535, "ts": t + 1, "strategy": 0x04})
+    assert not [e for e in events if e[0] == "warn"]      # 還在確認期
+    tc3._safety_watch({"code": "5FC0", "addr": 65535,
+                       "ts": t + 1 + tc3.MANUAL_CONFIRM_SEC, "strategy": 0x04})
+    assert [e for e in events if e[0] == "warn" and e[1] == "號誌:手動介入"]
+
+    # 解除也要報
+    events.clear()
+    tc3._safety_watch({"code": "5FC0", "addr": 65535,
+                       "ts": t + 60, "strategy": 0x01})
+    assert [e for e in events if e[0] == "warn" and e[1] == "號誌:手動解除"]
