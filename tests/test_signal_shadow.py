@@ -296,8 +296,14 @@ def test_green_runs_rebuild_and_quality_flags():
     assert [r["green_sec"] for r in runs] == [15.0, 5.0, 8.0, 0.0]
     assert [r["samples"] for r in runs] == [3, 2, 2, 1]
     assert runs[2]["forced"] is True
-    # 最後一段只有一個取樣 → 呼叫端要排除
-    assert [r for r in runs if r["samples"] < 2] == [runs[3]]
+    # 🛑 排除條件要看「長度是不是 0」,不能看「取樣數<2」——
+    #    抄錄 stale 跳過時 prev_phase 會清掉,下一筆重新起算 elapsed=0,
+    #    連兩筆都落在 0 就會拼出取樣數 2 但長度 0 的假段(現場實測遇到)。
+    rows2 = rows + [("t9", 2, 0.0, 0, None, None, None, None)]
+    runs2 = _green_runs(rows2)
+    zero = [r for r in runs2 if r["green_sec"] <= 0]
+    assert zero and zero[-1]["samples"] == 2      # 兩筆取樣但長度仍是 0
+    assert [r for r in runs if r["green_sec"] <= 0] == [runs[3]]
 
     st = _stat([15.0, 5.0, 8.0])
     assert st["n"] == 3
