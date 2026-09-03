@@ -224,6 +224,29 @@ jobs:
 
           echo "=== restart traffic-api ==="
           sudo -n systemctl restart traffic-api.service
+
+          # 🛑 traffic-signal 與 traffic-io 是獨立行程,先前部署完全不碰它們 ——
+          #    2026-08-28 改的 signal_tc3.py 一路到 09-03 都還沒生效,
+          #    控制模式判讀因此空白了六天,是人工 ssh 進去重啟才發現的。
+          #    重啟會短暫中斷抄錄/Modbus,所以只在它們自己的檔案有變動時才做。
+          CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" || true)
+
+          if echo "$CHANGED" | grep -qE '^(services/signal_daemon\.py|api/routes/signal_tc3\.py|detection/signal_timing_lookup\.py|config/tc3/|config/system/ramp_timing_baseline\.json)'; then
+            echo "=== restart traffic-signal (號誌抄錄相關檔案有變動) ==="
+            sudo -n systemctl restart traffic-signal.service || \
+              echo "::warning::traffic-signal 重啟失敗,請人工確認"
+          else
+            echo "traffic-signal: 無相關變動,不重啟(避免中斷抄錄)"
+          fi
+
+          if echo "$CHANGED" | grep -qE '^(services/io_daemon\.py|api/routes/(lock|io)_?.*\.py|api/utils/door_state\.py)'; then
+            echo "=== restart traffic-io (IO/電子鎖相關檔案有變動) ==="
+            sudo -n systemctl restart traffic-io.service || \
+              echo "::warning::traffic-io 重啟失敗,請人工確認"
+          else
+            echo "traffic-io: 無相關變動,不重啟"
+          fi
+
           sleep 6
           echo "=== verify deployed version ==="
           for i in $(seq 1 20); do
