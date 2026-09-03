@@ -748,11 +748,12 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
         runs = runs[1:]
     out["runs"] = len(runs)
 
-    # 🛑 只有一個取樣的段等於「從沒看它長大過」,長度是 0 或近 0 —— 那是
-    #    取樣斷開造成的假段(實測 6 小時 531 段中有 1 段 0.0 秒,而分相2
-    #    的最小綠是 20 秒,物理上不可能)。排除,但把數量報出來。
-    dropped = [r for r in runs if r["samples"] < 2]
-    runs = [r for r in runs if r["samples"] >= 2]
+    # 🛑 長度量到 0 秒的段不是量測結果,是取樣斷開造成的假段:抄錄 stale
+    #    被跳過時 prev_phase 會清掉,下一筆重新起算 green_elapsed=0,
+    #    若連兩筆都落在 0 就會拼出一個「0 秒的綠燈」——分相2 最小綠 20 秒,
+    #    物理上不可能。用「長度<=0」判,不能用「取樣數<2」判(實測那段有 2 筆)。
+    dropped = [r for r in runs if r["green_sec"] <= 0]
+    runs = [r for r in runs if r["green_sec"] > 0]
     out["dropped_unobserved"] = len(dropped)
     out["runs_used"] = len(runs)
     # 切換次數 = 綠燈段數 - 1(段與段之間各一次換相)
