@@ -302,13 +302,62 @@ def lint_one(target):
         for name, line in ret_missing:
             print(f'       第 {line} 行 {name}() —— 請加進 setup 的 return')
         fails += len(ret_missing)
+    fails += check_inline_js(text, target)
     if fails:
-        print(f'[FAIL] {fails} HTML structure error(s) — Vue mount likely fails')
+        print(f'[FAIL] {fails} 個問題 — Vue 掛載或 JS 執行會失敗')
     elif sc:
         print(f'[WARN] {sc} 處自閉合可能吞掉後面的節點，請確認該段 UI 有正常顯示')
     else:
         print('[OK] HTML structure parses cleanly')
     return fails, sc
+
+
+def check_inline_js(text, label):
+    """把 inline <script> 丟給 node --check。
+
+    🛑 為什麼非加不可:2026-09-03 加「動態號誌控制」頁時,新函式跟既有的
+       TC3 命令下發 loadSigControl 撞名,整份 JS 因 "Identifier has already
+       been declared" 直接不執行 —— 連登入表單都動不了。
+       但 div 平衡是對的(1654/1654)、模板檢查也全過,兩道既有關卡都看不見它。
+       這種錯只有真的把 JS 交給解析器才抓得到。
+
+    node 不在就跳過(只提醒),不要讓沒裝 node 的機器卡住 commit。
+    """
+    import re as _re
+    import shutil
+    import subprocess
+    import tempfile
+    import os
+
+    if not shutil.which('node'):
+        print('[SKIP] 找不到 node,跳過 JS 語法檢查'
+              '(強烈建議裝上 —— 重複宣告這類錯只有它抓得到)')
+        return 0
+
+    blocks = _re.findall(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>', text, _re.S)
+    fails = 0
+    for i, b in enumerate(blocks):
+        if not b.strip():
+            continue
+        tmp = tempfile.NamedTemporaryFile('w', suffix='.js', delete=False,
+                                          encoding='utf-8')
+        tmp.write(b)
+        tmp.close()
+        try:
+            r = subprocess.run(['node', '--check', tmp.name],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                fails += 1
+                err = (r.stderr or '').strip().splitlines()
+                print(f'[FAIL] 第 {i + 1} 個 <script> 語法錯誤 —— '
+                      f'整份 JS 不會執行,全站白畫面/無法登入:')
+                for line in err[:8]:
+                    print('       ' + line)
+        finally:
+            os.unlink(tmp.name)
+    if not fails:
+        print('[OK] inline JS 語法通過')
+    return fails
 
 
 def main():
