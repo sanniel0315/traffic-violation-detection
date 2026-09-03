@@ -60,7 +60,7 @@ _thread: Optional[threading.Thread] = None
 _stop = threading.Event()
 _stats = {"started_at": None, "samples": 0, "last_error": "", "last_at": None}
 _db_ready = False
-_last_report = [time.time()]   # 上次自動回報的時刻(list 才好在 _loop 內改)
+_last_report = [0.0]   # 上次自動回報的時刻(list 才好在 _loop 內改;0=尚未從 DB 讀回)
 
 
 def _db():
@@ -78,6 +78,11 @@ def _db():
             step_id INTEGER, clearance INTEGER, control_mode TEXT)""")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_shadow_ts "
                      "ON signal_shadow_log(ts)")
+        # 🛑 上次回報時刻必須落地。放行程內變數的話,每次部署重啟都把一小時的
+        #    計時歸零 —— 2026-09-03 部署頻繁,14:04 與 14:56 兩次重啟就讓
+        #    14 點那個小時整個沒有回報,使用者以為影子壞了。
+        conn.execute("CREATE TABLE IF NOT EXISTS signal_shadow_meta ("
+                     "k TEXT PRIMARY KEY, v TEXT)")
         # 既有 DB(9/2 起累積的那份)沒有這三欄,補上 —— 舊列留 NULL,
         # summarize 會把 control_mode IS NULL 的樣本當「前提不明」排除。
         have = {r[1] for r in conn.execute("PRAGMA table_info(signal_shadow_log)")}
@@ -88,6 +93,29 @@ def _db():
         conn.commit()
         _db_ready = True
     return conn
+
+
+def _last_report_at() -> float:
+    """讀回上次回報時刻(跨重啟保留)。讀不到就當「從未回報」。"""
+    try:
+        conn = _db()
+        row = conn.execute("SELECT v FROM signal_shadow_meta WHERE k='last_report'"
+                           ).fetchone()
+        conn.close()
+        return float(row[0]) if row else 0.0
+    except Exception:
+        return 0.0
+
+
+def _mark_reported(ts: float) -> None:
+    try:
+        conn = _db()
+        conn.execute("INSERT INTO signal_shadow_meta(k,v) VALUES('last_report',?) "
+                     "ON CONFLICT(k) DO UPDATE SET v=excluded.v", (str(ts),))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 
 def _queue_m(camera_id: int) -> Optional[float]:
@@ -255,8 +283,12 @@ def _loop():
             with _lock:
                 _stats["last_error"] = str(e)
         # 到點就自己回報一次 —— 不必等人去撈 DB。
+        # 上次時刻從 DB 讀回,重啟不會把計時歸零。
+        if not _last_report[0]:
+            _last_report[0] = _last_report_at() or time.time()
         if time.time() - _last_report[0] >= SHADOW_REPORT_SEC:
             _last_report[0] = time.time()
+            _mark_reported(_last_report[0])
             try:
                 _report()
             except Exception:
