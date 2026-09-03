@@ -29,6 +29,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from api.routes.auth import get_current_user
+from api.routes.logs import add_log
+from api.routes.push import push_alert
 
 router = APIRouter(prefix="/api/signal/shadow", tags=["signal-shadow"])
 
@@ -45,6 +47,12 @@ PHASE_CAMERA = {
 
 # 抄錄器所在的獨立服務(traffic-signal.service)。燈態只有它有。
 SIGNAL_DAEMON_URL = os.getenv("SIGNAL_DAEMON_URL", "http://127.0.0.1:8012").rstrip("/")
+# 自動回報週期(秒)。影子跑再久，沒人去撈 DB 就等於沒回報 —— 這是實際踩到的問題。
+SHADOW_REPORT_SEC = float(os.getenv("SIGNAL_SHADOW_REPORT_SEC", "3600") or 3600)
+# 一致率低於此值就推播(只在「有車」的樣本上算，夜間無車不觸發)。
+SHADOW_ALERT_RATE = float(os.getenv("SIGNAL_SHADOW_ALERT_RATE", "0.75") or 0.75)
+# 一小時內「有車樣本」少於這個數就不評分(車太少，比率沒有意義)。
+SHADOW_MIN_ACTIVE = int(os.getenv("SIGNAL_SHADOW_MIN_ACTIVE", "60") or 60)
 _DB_PATH = os.getenv("SIGNAL_SHADOW_DB",
                      os.getenv("SIGNAL_TC3_QDB", "data/signal_shadow.db"))
 _lock = threading.Lock()
@@ -52,6 +60,7 @@ _thread: Optional[threading.Thread] = None
 _stop = threading.Event()
 _stats = {"started_at": None, "samples": 0, "last_error": "", "last_at": None}
 _db_ready = False
+_last_report = [time.time()]   # 上次自動回報的時刻(list 才好在 _loop 內改)
 
 
 def _db():
@@ -192,7 +201,88 @@ def _loop():
         except Exception as e:
             with _lock:
                 _stats["last_error"] = str(e)
+        # 到點就自己回報一次 —— 不必等人去撈 DB。
+        if time.time() - _last_report[0] >= SHADOW_REPORT_SEC:
+            _last_report[0] = time.time()
+            try:
+                _report()
+            except Exception:
+                pass
         _stop.wait(SHADOW_INTERVAL_SEC)
+
+
+def summarize(minutes: int = 60) -> dict:
+    """把最近 N 分鐘的影子結果壓成一份摘要。
+
+    🛑 一致率一定要分「有車/無車」算。夜間兩側排隊都是 0，兩邊都 KEEP，
+       一致率會漂到 98% —— 那個數字沒有資訊量，會蓋掉尖峰的真實表現。
+       實測 13.5 小時:整體 87.4%，但只看有車樣本，08 時只有 54.7%。
+    """
+    since = time.time() - minutes * 60
+    since_iso = datetime.fromtimestamp(since).isoformat(timespec="seconds")
+    out = {"minutes": minutes, "samples": 0, "active_samples": 0,
+           "agree_rate": None, "active_agree_rate": None,
+           "disagree_switch_early": 0, "disagree_switch_late": 0,
+           "keep_gain_zero": 0, "forced": 0, "blocked": 0, "max_green_elapsed": None}
+    try:
+        conn = _db()
+        rows = conn.execute(
+            "SELECT green_phase,green_elapsed,queue_m_1,queue_m_2,ours,actual,"
+            "agree,keep_gain,forced,blocked FROM signal_shadow_log WHERE ts>=?",
+            (since_iso,)).fetchall()
+        conn.close()
+    except Exception as e:
+        out["error"] = str(e)
+        return out
+    if not rows:
+        return out
+    out["samples"] = len(rows)
+    judged = [r for r in rows if r[6] is not None]
+    # 有車 = 任一側量到排隊。只有這些樣本的一致率才有意義。
+    active = [r for r in judged if (r[2] or 0) > 0 or (r[3] or 0) > 0]
+    out["active_samples"] = len(active)
+    if judged:
+        out["agree_rate"] = round(sum(r[6] for r in judged) / len(judged), 3)
+    if active:
+        out["active_agree_rate"] = round(sum(r[6] for r in active) / len(active), 3)
+    out["disagree_switch_early"] = sum(
+        1 for r in rows if r[4] == "SWITCH" and r[5] == "KEEP")
+    out["disagree_switch_late"] = sum(
+        1 for r in rows if r[4] == "KEEP" and r[5] == "SWITCH" and r[6] is not None)
+    out["keep_gain_zero"] = sum(
+        1 for r in rows if r[4] == "SWITCH" and r[5] == "KEEP" and not r[7])
+    out["forced"] = sum(1 for r in rows if r[8])
+    out["blocked"] = sum(1 for r in rows if r[9])
+    out["max_green_elapsed"] = round(max((r[1] or 0) for r in rows), 1)
+    return out
+
+
+def _report() -> None:
+    """把摘要寫進系統日誌;有車而一致率偏低就推播。"""
+    s = summarize(int(SHADOW_REPORT_SEC // 60) or 60)
+    if not s["samples"]:
+        return
+    ar = s["active_agree_rate"]
+    pct = "—" if ar is None else f"{ar * 100:.1f}%"
+    detail = (f"樣本 {s['samples']}(有車 {s['active_samples']})、"
+              f"有車一致率 {pct}、"
+              f"我方提早切 {s['disagree_switch_early']} 次"
+              f"(其中綠側價值=0 佔 {s['keep_gain_zero']})、"
+              f"最大綠強制 {s['forced']}、最長綠 {s['max_green_elapsed']}s")
+    try:
+        add_log("info", f"號誌影子決策回報 — {detail}", source="signal-shadow")
+    except Exception:
+        pass
+    # 車太少不評分:比率會被少數樣本帶著跳。
+    if ar is not None and s["active_samples"] >= SHADOW_MIN_ACTIVE and ar < SHADOW_ALERT_RATE:
+        try:
+            push_alert("號誌影子決策:與現行控制差異偏大",
+                       f"有車時一致率僅 {pct} — {detail}",
+                       {"active_agree_rate": ar,
+                        "active_samples": s["active_samples"]},
+                       category="signal")
+        except Exception:
+            pass
 
 
 def start_shadow() -> bool:
@@ -281,3 +371,9 @@ async def shadow_start(_user=Depends(get_current_user)):
 async def shadow_stop(_user=Depends(get_current_user)):
     stop_shadow()
     return {"stopped": True}
+
+
+@router.get("/summary", summary="影子結果摘要(有車/無車分開算一致率)")
+async def shadow_summary(minutes: int = Query(60, ge=5, le=1440),
+                         _user=Depends(get_current_user)):
+    return summarize(minutes)
