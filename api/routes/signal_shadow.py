@@ -61,6 +61,10 @@ _stop = threading.Event()
 _stats = {"started_at": None, "samples": 0, "last_error": "", "last_at": None}
 _db_ready = False
 _last_report = [0.0]   # 上次自動回報的時刻(list 才好在 _loop 內改;0=尚未從 DB 讀回)
+# 影子迴圈追蹤中的綠燈起始時刻與分相。/plan 直接讀這個算 green_elapsed ——
+# 先前是去撈「最後一筆樣本的 green_elapsed」,那個值最多差 5 秒,
+# 而且分相剛換的瞬間拿到的是「上一個分相」的秒數,控制盤會顯示錯的已亮秒數。
+_live_green = {"since": None, "phase": None}
 
 
 def _db():
@@ -212,6 +216,8 @@ def _loop():
                 green_since = now
             prev_phase = cur_phase
             green_elapsed = max(0.0, now - green_since)
+            _live_green["since"] = green_since
+            _live_green["phase"] = cur_phase
 
             q1 = _queue_m(PHASE_CAMERA.get(1, 3))
             q2 = _queue_m(PHASE_CAMERA.get(2, 4))
@@ -236,7 +242,9 @@ def _loop():
                     priority=bool(g_role.get("priority"))),
                 red_side=ApproachState(
                     r_no, queue_m=q_map.get(r_no),
+                    flow_vpm=f_map.get(r_no),
                     storage_m=r_role.get("storage_m"),
+                    priority=bool(r_role.get("priority")),
                     waiting_sec=green_elapsed),
                 min_green_sec=min_green,
                 max_green_sec=float(pp.get("max_green") or 210),
@@ -506,17 +514,22 @@ async def shadow_plan(_user=Depends(get_current_user)):
 
     g_no = live["sub_phase_id"]
     r_no = 2 if g_no == 1 else 1
-    # green_elapsed 影子迴圈才有(它從分相變化累積);這裡取近一筆做為近似值
+    # green_elapsed 以影子迴圈追蹤中的綠燈起始時刻為準(同一個行程,即時且準)。
+    # 只有在迴圈還沒起來、或它追的分相跟現在不同(剛換相的瞬間)時,
+    # 才退回撈最後一筆樣本 —— 那個值最多差一個取樣週期。
     green_elapsed = 0.0
-    try:
-        conn = _db()
-        row = conn.execute("SELECT green_elapsed FROM signal_shadow_log "
-                           "ORDER BY id DESC LIMIT 1").fetchone()
-        conn.close()
-        if row:
-            green_elapsed = float(row[0] or 0.0)
-    except Exception:
-        pass
+    if _live_green["since"] and _live_green["phase"] == g_no:
+        green_elapsed = max(0.0, time.time() - _live_green["since"])
+    else:
+        try:
+            conn = _db()
+            row = conn.execute("SELECT green_elapsed FROM signal_shadow_log "
+                               "ORDER BY id DESC LIMIT 1").fetchone()
+            conn.close()
+            if row:
+                green_elapsed = float(row[0] or 0.0)
+        except Exception:
+            pass
 
     q = {1: _queue_m(PHASE_CAMERA.get(1, 3)), 2: _queue_m(PHASE_CAMERA.get(2, 4))}
     f = {1: _flow_vpm(PHASE_CAMERA.get(1, 3)), 2: _flow_vpm(PHASE_CAMERA.get(2, 4))}
@@ -530,8 +543,11 @@ async def shadow_plan(_user=Depends(get_current_user)):
     green = ApproachState(g_no, queue_m=q.get(g_no), flow_vpm=f.get(g_no),
                           storage_m=roles[g_no].get("storage_m"),
                           priority=bool(roles[g_no].get("priority")))
+    # 🛑 紅側的 priority 一定要帶。主線保護閘門目前只看綠側,所以漏傳不影響
+    #    決策 —— 但控制盤把它顯示成「否」就是錯的,而這個畫面是要拿來稽核的。
     red = ApproachState(r_no, queue_m=q.get(r_no), flow_vpm=f.get(r_no),
                         storage_m=roles[r_no].get("storage_m"),
+                        priority=bool(roles[r_no].get("priority")),
                         waiting_sec=green_elapsed)
     d = decide(green_phase=g_no, green_elapsed_sec=green_elapsed,
                green_side=green, red_side=red,
