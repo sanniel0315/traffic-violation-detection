@@ -6940,6 +6940,61 @@
 
                     <div class="card">
                         <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-zap"/></svg>影子決策比對(我方演算法 vs 現行控制)</span>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <el-tag size="small" :type="sigShadow.running?'success':'info'">{{ sigShadow.running?'運轉中':'未啟動' }}</el-tag>
+                                <el-select v-model="sigShadowMins" size="small" style="width:110px" @change="loadSigShadow">
+                                    <el-option :value="60" label="最近 1 小時"></el-option>
+                                    <el-option :value="180" label="最近 3 小時"></el-option>
+                                    <el-option :value="720" label="最近 12 小時"></el-option>
+                                    <el-option :value="1440" label="最近 24 小時"></el-option>
+                                </el-select>
+                                <el-button size="small" @click="loadSigShadow">重新載入</el-button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">
+                                我方決策引擎與現行控制(OPAC)同步運轉,<b>只記錄不下發</b>。
+                                一致率只算前提成立的樣本 —— 清道(黃燈/全紅)、非外部動態控制、
+                                切換瞬間都排除,因為那些時候比對沒有意義。
+                            </div>
+                            <div v-if="sigShadow.samples" class="xn-foot" style="margin-top:10px">
+                                <span class="xn-chip"><span class="k">有車一致率</span>
+                                    <b :style="sigShadowRateStyle">{{ sigShadowPct }}</b></span>
+                                <span class="xn-chip"><span class="k">可比對</span>
+                                    <b>{{ sigShadow.judged_samples }}</b> / {{ sigShadow.samples }}</span>
+                                <span class="xn-chip"><span class="k">其中有車</span>
+                                    <b>{{ sigShadow.active_samples }}</b></span>
+                                <span class="xn-chip"><span class="k">我方提早切</span>
+                                    <b>{{ sigShadow.disagree_switch_early }}</b></span>
+                                <span class="xn-chip"><span class="k">我方較晚切</span>
+                                    <b>{{ sigShadow.disagree_switch_late }}</b></span>
+                                <span class="xn-chip"><span class="k">綠側價值=0</span>
+                                    <b>{{ sigShadow.keep_gain_zero }}</b></span>
+                                <span class="xn-chip"><span class="k">最長綠</span>
+                                    <b>{{ sigShadow.max_green_elapsed }}</b>s</span>
+                            </div>
+                            <div v-if="sigShadow.samples" style="margin-top:8px;font-size:12px;color:var(--gov-mute-2)">
+                                排除不計:清道 {{ sigShadow.excluded_clearance }}、
+                                非外部動態 {{ sigShadow.excluded_not_opac }}、
+                                切換瞬間 {{ sigShadow.excluded_switch_instant }}
+                            </div>
+                            <p v-else style="font-size:13px;color:#64748b;margin-top:10px">
+                                這段時間沒有樣本。影子模式需要 SIGNAL_SHADOW_ENABLED=1 且抄錄器連線正常。</p>
+                            <div v-if="sigShadowRecent.length" style="margin-top:10px;max-height:280px;overflow-y:auto;border:1px solid var(--gov-line,#e5e7eb);border-radius:6px">
+                                <div v-for="(r,ri) in sigShadowRecent" :key="'shr'+ri"
+                                     style="display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;padding:6px 10px;border-bottom:1px solid var(--gov-line,#f1f5f9);font-size:13px">
+                                    <span style="color:#64748b;font-variant-numeric:tabular-nums;white-space:nowrap">{{ r.ts }}</span>
+                                    <el-tag size="small" type="info">分相 {{ r.green_phase }}</el-tag>
+                                    <el-tag size="small" :type="sigShadowRowType(r)">{{ sigShadowRowText(r) }}</el-tag>
+                                    <span style="color:var(--gov-muted);min-width:0">{{ r.reason }}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-list"/></svg>命令覆蓋矩陣</span>
                             <div style="display:flex;gap:8px;align-items:center">
                                 <el-tag size="small" type="success">已抄到 {{ sigCovSummary.seen_total }} / {{ sigCovSummary.catalog_total }}</el-tag>
@@ -20988,6 +21043,44 @@ const app=createApp({
             }catch(e){ sigCenterRelay.value=!val; ElementPlus.ElMessage.error('設定失敗'); }
         };
         // 安全網(Phase 0):手動/故障/異動監看狀態與事件(唯讀)+推播開關
+        // ── 影子決策比對 ──────────────────────────────────────────────
+        // 影子跑了很久沒人知道結果,因為它只寫 DB、推播只進 App 告警面板,
+        // 網頁上完全沒有入口。這裡把它搬上號誌頁。
+        const sigShadow=ref({});
+        const sigShadowRecent=ref([]);
+        const sigShadowMins=ref(180);
+        // 一致率只看「有車」樣本。夜間兩側都 0 排隊、兩邊都 KEEP,
+        // 一致率會漂到 98%,那個數字沒有資訊量。
+        const sigShadowPct=computed(()=>{
+            const v=sigShadow.value&&sigShadow.value.active_agree_rate;
+            return (v===null||v===undefined)?'—':(v*100).toFixed(1)+'%';
+        });
+        const sigShadowRateStyle=computed(()=>{
+            const v=sigShadow.value&&sigShadow.value.active_agree_rate;
+            if(v===null||v===undefined) return {};
+            if(0.9<=v) return {color:'#15803d'};
+            if(0.75<=v) return {color:'#b45309'};
+            return {color:'#b91c1c'};
+        });
+        const sigShadowRowType=(r)=>{
+            if(r.agree===null||r.agree===undefined) return 'info';
+            return r.agree?'success':'danger';
+        };
+        const sigShadowRowText=(r)=>{
+            if(r.agree===null||r.agree===undefined) return '不計:'+(r.ours||'')+' / 實際 '+(r.actual||'');
+            return (r.agree?'一致 ':'岐異 ')+(r.ours||'')+' / 實際 '+(r.actual||'');
+        };
+        const loadSigShadow=async()=>{
+            try{
+                const r=await fetch('/api/signal/shadow/summary?minutes='+sigShadowMins.value,{credentials:'include'});
+                if(r.ok) sigShadow.value=await r.json();
+            }catch(e){}
+            try{
+                const r=await fetch('/api/signal/shadow?limit=40',{credentials:'include'});
+                if(r.ok){ const d=await r.json();
+                    sigShadow.value.running=d.running; sigShadowRecent.value=d.recent||[]; }
+            }catch(e){}
+        };
         const sigSafety=ref({manual:false,strategy_text:'',abnormal_text:'',push_enabled:true});
         const sigSafetyEvents=ref([]);
         const sigSafetyPush=ref(true);
@@ -21077,6 +21170,7 @@ const app=createApp({
             }catch(_){ ElementPlus.ElMessage.error('測試發送失敗'); }
         };
         const loadSignal=async()=>{
+            loadSigShadow();
             loadSigConn();
             loadSigSafety();
             try{
@@ -22022,7 +22116,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
