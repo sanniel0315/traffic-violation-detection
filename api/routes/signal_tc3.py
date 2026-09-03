@@ -1270,6 +1270,69 @@ async def frames(limit: int = 50, _user=Depends(get_current_user)):
     return {"count": len(items), "frames": list(reversed(items))}
 
 
+
+# 號誌設定各頁對應的「查詢碼 → 回報碼」。這些訊息 utc-tc3 都有 schema,
+# 所以解碼是免費的 —— 缺的只是把它們查回來並攤成表。
+# 🛑 一律唯讀:這裡只送查詢(cmd 0x40~0x4F 區段),不碰任何設定命令。
+CONFIG_SECTIONS = [
+    {"key": "strategy",   "title": "控制策略",       "query": "5F40", "reply": "5FC0", "page": "5-8"},
+    {"key": "timing",     "title": "目前時制計畫",   "query": "5F48", "reply": "5FC8", "page": "5-43"},
+    {"key": "phase_order", "title": "時相排列",      "query": "5F42", "reply": "5FC2", "page": "5-21"},
+    {"key": "day_type",   "title": "一般日時段型態", "query": "5F46", "reply": "5FC6", "page": "5-36"},
+    {"key": "special_day", "title": "特殊日時段型態", "query": "5F47", "reply": "5FC7", "page": "5-40"},
+    {"key": "actuated",   "title": "觸動控制組態",   "query": "5F49", "reply": "5FC9", "page": "5-47"},
+    {"key": "tx_period",  "title": "燈態步階傳輸週期", "query": "5F6F", "reply": "5FEF", "page": "5-86"},
+    {"key": "vip",        "title": "特勤路線控制(VIP)", "query": "5F4E", "reply": "5FCE", "page": "5-66"},
+    {"key": "hw_status",  "title": "設備硬體狀態",   "query": "0F41", "reply": "0FC1", "page": "4-21"},
+    {"key": "firmware",   "title": "韌體版本/燒錄日", "query": "0F43", "reply": "0FC3", "page": "4-30"},
+    {"key": "datetime",   "title": "設備日期時間",   "query": "0F52", "reply": "0FD2", "page": "4-24"},
+]
+
+
+def _latest_frame(reply_code: str) -> Optional[dict]:
+    """撈某回報碼最新的一筆(query-log 與側錄兩邊取最新),回 {ts, raw}。"""
+    rc = reply_code.upper()
+    best = None
+    for getter, sql in ((_query_db, "SELECT ts, raw FROM signal_query_log WHERE reply_code=?"),
+                        (_frames_db, "SELECT ts, raw FROM signal_frames WHERE code=? AND cks_ok=1")):
+        try:
+            conn = getter()
+            row = conn.execute(sql + " ORDER BY ts DESC LIMIT 1", (rc,)).fetchone()
+            conn.close()
+        except Exception:
+            continue
+        if row and (best is None or float(row[0]) > float(best[0])):
+            best = row
+    return {"ts": float(best[0]), "raw": best[1]} if best else None
+
+
+@router.get("/config", summary="號誌設定總覽(唯讀:各設定類別的最新回報與欄位)")
+async def signal_config(_user=Depends(get_current_user)):
+    """把控制器各項設定的最新回報攤成欄位表。
+
+    🛑 純唯讀。這裡不送任何查詢也不下設定 —— 只讀我方已經抄錄到的回報框。
+       要主動查回來請用 /control/self-probe(它有 QUERY_ONLY 把關)。
+
+    🛑 沒抄到就明講「尚未收到」並附上該用哪個查詢碼,**不要回空表假裝沒設定**。
+       控制器有設定但我們沒查過,跟控制器真的沒設定,是兩件完全不同的事。
+    """
+    out = []
+    for sec in CONFIG_SECTIONS:
+        item = {k: sec[k] for k in ("key", "title", "query", "reply", "page")}
+        fr = _latest_frame(sec["reply"])
+        if not fr:
+            item.update({"received": False, "ts": None, "fields": None,
+                         "hint": f"尚未抄到 {sec['reply']};可送查詢碼 {sec['query']} 取回"})
+        else:
+            item.update({"received": True, "ts": fr["ts"], "raw": fr["raw"],
+                         "fields": _decode_fields(sec["reply"], fr["raw"])})
+            if item["fields"] is None:
+                item["hint"] = "抄到了但 utc-tc3 沒有這則訊息的欄位定義,只能看原始框"
+        out.append(item)
+    return {"sections": out,
+            "note": "唯讀總覽。時間為我方最後一次收到該回報的時刻,不是控制器的當下值 —— "
+                    "要最新值請先送查詢。"}
+
 @router.get("/coverage", summary="TC3 命令覆蓋矩陣(規範 105 條 vs 實際抄到)")
 async def coverage(_user=Depends(get_current_user)):
     """規範全表 join 實際抄到的次數。
