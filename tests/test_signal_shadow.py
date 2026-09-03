@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 from datetime import datetime
+import pytest
 
 os.environ.setdefault("AUTH_SECRET", "test-only-not-a-real-secret")
 ROOT = Path(__file__).resolve().parents[1]
@@ -269,3 +270,36 @@ def test_shadow_routes_registered_before_signal_proxy():
     # 代理內也要留防呆,萬一順序又被改回去至少報得出原因
     assert re.search(r'sub_path\s*==\s*"shadow"', src), \
         "萬用代理應保留 shadow 防呆,避免靜默轉發成 404"
+
+
+def test_green_runs_rebuild_and_quality_flags():
+    """綠燈長度重建:靠 green_elapsed 變小判斷換相,單取樣段要能挑出來。
+
+    不能靠比對 sub_phase_id —— 分相在 1/2 之間來回,單看編號分不出
+    「同一個分相的第二輪」。而只有一個取樣的段等於從沒看它長大過,
+    長度是假的(實測 6 小時 531 段中有 1 段 0.0 秒,但分相2 最小綠是 20 秒)。
+    """
+    from api.routes.signal_shadow import _green_runs, _stat
+
+    rows = [
+        ("t1", 1, 5.0, 0, None, None, None, None),
+        ("t2", 1, 10.0, 0, None, None, None, None),
+        ("t3", 1, 15.0, 0, None, None, None, None),
+        ("t4", 2, 0.0, 0, None, None, None, None),   # 換相
+        ("t5", 2, 5.0, 0, None, None, None, None),
+        ("t6", 1, 0.0, 0, None, None, None, None),   # 又換回分相1(編號重複)
+        ("t7", 1, 8.0, 1, None, None, None, None),   # 這段有強制切換
+        ("t8", 2, 0.0, 0, None, None, None, None),   # 單取樣段:長度沒觀測到
+    ]
+    runs = _green_runs(rows)
+    assert [r["phase"] for r in runs] == [1, 2, 1, 2]
+    assert [r["green_sec"] for r in runs] == [15.0, 5.0, 8.0, 0.0]
+    assert [r["samples"] for r in runs] == [3, 2, 2, 1]
+    assert runs[2]["forced"] is True
+    # 最後一段只有一個取樣 → 呼叫端要排除
+    assert [r for r in runs if r["samples"] < 2] == [runs[3]]
+
+    st = _stat([15.0, 5.0, 8.0])
+    assert st["n"] == 3
+    assert st["avg"] == pytest.approx(9.3, abs=0.05)
+    assert _stat([])["avg"] is None      # 沒樣本不用 0 代表

@@ -720,8 +720,11 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
            "by_direction": [], "trend": [], "trend_total": 0,
            "exit_queue_m": None, "exit_queue_vehicles": None,
            "vehicles_per_green_sec": None,
+           "dropped_unobserved": 0, "runs_used": 0,
            "note": "綠燈長度由 5 秒取樣重建,最多低估一個取樣週期;"
-                   "抄錄過期(stale)被跳過的取樣會讓該段斷開"}
+                   "抄錄過期(stale)被跳過的取樣會讓該段斷開。"
+                   "below_min_green 不是雜訊過濾殘留 —— 低於最小綠的段刻意保留,"
+                   "那可能代表控制器沒守官方最小綠,或查表基準與實際運轉的計畫不符"}
     try:
         conn = _db()
         rows = conn.execute(
@@ -744,6 +747,14 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
     if len(runs) > 1:
         runs = runs[1:]
     out["runs"] = len(runs)
+
+    # 🛑 只有一個取樣的段等於「從沒看它長大過」,長度是 0 或近 0 —— 那是
+    #    取樣斷開造成的假段(實測 6 小時 531 段中有 1 段 0.0 秒,而分相2
+    #    的最小綠是 20 秒,物理上不可能)。排除,但把數量報出來。
+    dropped = [r for r in runs if r["samples"] < 2]
+    runs = [r for r in runs if r["samples"] >= 2]
+    out["dropped_unobserved"] = len(dropped)
+    out["runs_used"] = len(runs)
     # 切換次數 = 綠燈段數 - 1(段與段之間各一次換相)
     out["switch_count"] = max(0, len(runs) - 1)
     out["forced_count"] = sum(1 for r in runs if r["forced"])
@@ -764,6 +775,12 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
             **st,
             "min_observed": round(min(vals), 1) if vals else None,
             "max_observed": round(max(vals), 1) if vals else None,
+            # 🛑 低於最小綠的段「不濾掉」—— 那可能是真的發現(控制器沒守
+            #    官方最小綠,或我方查表的基準計畫對不上當下實際在跑的),
+            #    濾掉就永遠看不見。標出來讓人判斷。
+            "below_min_green": sum(
+                1 for v in vals
+                if len(mins) >= ph and v < float(mins[ph - 1])),
         })
 
     out["trend_total"] = len(runs)
