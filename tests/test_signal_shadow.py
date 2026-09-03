@@ -241,3 +241,31 @@ def test_summarize_fixed_window_and_hourly_breakdown(tmp_path, monkeypatch):
     assert set(by) == {"07", "08"}
     assert by["07"]["active_agree_rate"] == 1.0
     assert by["08"]["active_agree_rate"] == 0.2   # 尖峰掉下來,整段平均看不出來
+
+
+def test_shadow_routes_registered_before_signal_proxy():
+    """影子路由必須註冊在 /api/signal/{sub_path:path} 萬用代理之前。
+
+    🛑 2026-09-03 實際事故:api/main.py 把 signal_shadow.router 註冊在那個
+       代理之後,Starlette 依註冊順序比對 → /api/signal/shadow/* 整組被代理
+       吃掉、轉去 traffic-signal daemon(它沒有這些路由)→ 一律回 404。
+       網頁的影子卡因此一直顯示「未啟動/沒有樣本」,而後端資料明明在寫。
+       從 localhost 測看到 401 還誤判成「端點存在」—— 那個 401 是
+       middleware 擋在路由之前,亂打的路徑也一樣回 401。
+
+    這裡不啟動 app(會載模型),直接讀原始碼比對兩者的出現順序。
+    """
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "api" / "main.py").read_text(
+        encoding="utf-8")
+    inc = src.index("app.include_router(signal_shadow.router)")
+    proxy = src.index('@app.api_route("/api/signal/{sub_path:path}"')
+    assert inc < proxy, (
+        "signal_shadow.router 必須註冊在 /api/signal 萬用代理之前,"
+        "否則影子端點會被代理吃掉並回 404")
+
+    # 代理內也要留防呆,萬一順序又被改回去至少報得出原因
+    assert re.search(r'sub_path\s*==\s*"shadow"', src), \
+        "萬用代理應保留 shadow 防呆,避免靜默轉發成 404"
