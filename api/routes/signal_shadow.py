@@ -646,3 +646,139 @@ async def shadow_plan(_user=Depends(get_current_user)):
         "would_send": False,
         "note": "影子模式:本決策只記錄不下發,路口仍由現行控制方控制",
     }
+
+def _green_runs(rows: list) -> list:
+    """把 5 秒一筆的取樣重建成「一次一次的綠燈」。
+
+    rows 需為 (ts, green_phase, green_elapsed, forced, queue_m_1, queue_m_2,
+    flow_1, flow_2) 且依時間排序。
+
+    判定方式:同一分相內 green_elapsed 是遞增的,一旦變小就是換相了 ——
+    這比去比對 sub_phase_id 更穩,因為分相會在 1/2 之間來回,單看編號
+    分不出「同一個分相的第二輪」。
+
+    🛑 每一段取「最後一筆的 green_elapsed」當這次綠燈長度,所以會低估
+       最多一個取樣週期(5 秒),而且被 stale 跳過的取樣會讓該段直接斷開。
+       回傳裡帶 truncated 標記,呈現時要說清楚,不要假裝是精確值。
+    """
+    runs = []
+    cur = None
+    for (ts, ph, el, forced, q1, q2, f1, f2) in rows:
+        el = float(el or 0.0)
+        if cur is None or ph != cur["phase"] or el < cur["last_elapsed"]:
+            if cur is not None:
+                runs.append(cur)
+            cur = {"phase": ph, "start_ts": ts, "end_ts": ts,
+                   "green_sec": el, "last_elapsed": el, "forced": bool(forced),
+                   "samples": 1}
+        else:
+            cur["end_ts"] = ts
+            cur["green_sec"] = el
+            cur["last_elapsed"] = el
+            cur["samples"] += 1
+            if forced:
+                cur["forced"] = True
+    if cur is not None:
+        runs.append(cur)
+    return runs
+
+
+def _stat(vals: list) -> dict:
+    """樣本數/平均/變異數/標準差。空的回 None —— 不用 0 代表「沒量到」。"""
+    n = len(vals)
+    if not n:
+        return {"n": 0, "avg": None, "variance": None, "stddev": None}
+    avg = sum(vals) / n
+    var = sum((v - avg) ** 2 for v in vals) / n
+    return {"n": n, "avg": round(avg, 1), "variance": round(var, 1),
+            "stddev": round(var ** 0.5, 1)}
+
+
+@router.get("/stats", summary="運作統計(綠燈長度/切換次數/滯留,依方向)")
+async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
+                       since: str = Query("", description="起(ISO)"),
+                       until: str = Query("", description="訖(ISO)"),
+                       trend_limit: int = Query(120, ge=10, le=1000),
+                       _user=Depends(get_current_user)):
+    """所選區間的運作統計。
+
+    🛑 查無樣本時各指標回 None 並附 insufficient_data —— **不以 0 代表統計值**。
+       0 次切換和「沒有資料」是完全不同的兩件事,混在一起看會做出錯的判斷。
+    """
+    from detection.signal_timing_lookup import phase_role, plan_params, current_base_plan
+
+    if since:
+        since_iso, until_iso = since, (until or datetime.now().isoformat(timespec="seconds"))
+    else:
+        since_iso = datetime.fromtimestamp(
+            time.time() - minutes * 60).isoformat(timespec="seconds")
+        until_iso = datetime.now().isoformat(timespec="seconds")
+
+    out = {"since": since_iso, "until": until_iso, "insufficient_data": True,
+           "samples": 0, "runs": 0, "switch_count": None,
+           "forced_count": None, "forced_ratio": None,
+           "by_direction": [], "trend": [], "trend_total": 0,
+           "exit_queue_m": None, "exit_queue_vehicles": None,
+           "vehicles_per_green_sec": None,
+           "note": "綠燈長度由 5 秒取樣重建,最多低估一個取樣週期;"
+                   "抄錄過期(stale)被跳過的取樣會讓該段斷開"}
+    try:
+        conn = _db()
+        rows = conn.execute(
+            "SELECT ts,green_phase,green_elapsed,forced,queue_m_1,queue_m_2 "
+            "FROM signal_shadow_log WHERE ts>=? AND ts<=? "
+            "AND control_mode='external_dynamic' ORDER BY ts",
+            (since_iso, until_iso)).fetchall()
+        conn.close()
+    except Exception as e:
+        out["error"] = str(e)
+        return out
+    if not rows:
+        return out
+
+    out["samples"] = len(rows)
+    out["insufficient_data"] = False
+    runs = _green_runs([(r[0], r[1], r[2], r[3], r[4], r[5], None, None)
+                        for r in rows])
+    # 第一段的起點在區間之前就開始了,長度不完整,不列入統計
+    if len(runs) > 1:
+        runs = runs[1:]
+    out["runs"] = len(runs)
+    # 切換次數 = 綠燈段數 - 1(段與段之間各一次換相)
+    out["switch_count"] = max(0, len(runs) - 1)
+    out["forced_count"] = sum(1 for r in runs if r["forced"])
+    out["forced_ratio"] = (round(out["forced_count"] / len(runs), 3)
+                           if runs else None)
+
+    pp = plan_params(current_base_plan()) or {}
+    mins = pp.get("min_green") or [15, 15]
+    for ph in (1, 2):
+        role = phase_role(ph) or {}
+        vals = [r["green_sec"] for r in runs if r["phase"] == ph]
+        st = _stat(vals)
+        out["by_direction"].append({
+            "phase_no": ph,
+            "ramp": role.get("ramp"), "label": role.get("label"),
+            "min_green_sec": float(mins[ph - 1]) if len(mins) >= ph else None,
+            "max_green_sec": float(pp.get("max_green") or 210),
+            **st,
+            "min_observed": round(min(vals), 1) if vals else None,
+            "max_observed": round(max(vals), 1) if vals else None,
+        })
+
+    out["trend_total"] = len(runs)
+    out["trend"] = [{"ts": r["start_ts"], "phase_no": r["phase"],
+                     "green_sec": round(r["green_sec"], 1),
+                     "forced": r["forced"]}
+                    for r in runs[-trend_limit:]]
+
+    # 出口(下匝道 = 分相2)滯留:取區間內的平均與最大,這是主線回堵的前哨
+    q2 = [float(r[5]) for r in rows if r[5] is not None]
+    if q2:
+        from detection.signal_decision_engine import DEFAULT_METERS_PER_VEHICLE as MPV
+        out["exit_queue_m"] = {"avg": round(sum(q2) / len(q2), 1),
+                               "max": round(max(q2), 1)}
+        out["exit_queue_vehicles"] = {
+            "avg": round(sum(q2) / len(q2) / MPV, 1),
+            "max": round(max(q2) / MPV, 1)}
+    return out
