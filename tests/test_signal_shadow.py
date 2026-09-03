@@ -179,3 +179,24 @@ def test_summarize_reports_what_it_excluded(tmp_path, monkeypatch):
     assert s["excluded_clearance"] == 3
     assert s["excluded_not_opac"] == 5
     assert s["excluded_switch_instant"] == 1
+
+
+def test_report_schedule_survives_restart(tmp_path, monkeypatch):
+    """上次回報時刻要落地,重啟不能把一小時的計時歸零。
+
+    2026-09-03 部署頻繁,14:04 與 14:56 兩次重啟讓 14 點那個小時整個
+    沒有回報 —— 因為 _last_report 只存在行程記憶體裡。
+    """
+    from api.routes import signal_shadow as ss
+
+    db = tmp_path / "s3.db"
+    monkeypatch.setattr(ss, "_DB_PATH", str(db))
+    monkeypatch.setattr(ss, "_db_ready", False)
+
+    assert ss._last_report_at() == 0.0        # 全新 DB:從未回報
+    ss._mark_reported(1_000_000.0)
+    assert ss._last_report_at() == 1_000_000.0
+
+    # 模擬重啟:行程內變數歸零,但從 DB 讀得回來
+    monkeypatch.setattr(ss, "_db_ready", False)
+    assert ss._last_report_at() == 1_000_000.0
