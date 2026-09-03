@@ -689,6 +689,8 @@ STRATEGY_BITS = ["定時控制", "動態控制", "路口手動", "中央手動",
 STRATEGY_MANUAL_MASK = 0x04 | 0x08      # bit2 路口手動 + bit3 中央手動
 FIELD_OPERATE = {0x01: "手動", 0x02: "全紅", 0x40: "閃光", 0x80: "回復自動"}
 
+# 手動介入要「持續」這麼久才算數。OPAC 續約的過渡態只有 1 秒,撐不過去。
+MANUAL_CONFIRM_SEC = float(os.getenv("SIGNAL_MANUAL_CONFIRM_SEC", "8") or 8)
 _safety = {"strategy": None, "strategy_ts": 0.0, "abnormal_step": None}
 _safety_events: deque = deque(maxlen=100)   # 記憶體副本(DB 讀不到時的後路)
 _safety_dedup: dict = {}                    # 事件鍵 -> 上次記錄時間(擋重送框)
@@ -803,17 +805,55 @@ def _safety_watch(rec: dict) -> None:
             _safety["strategy"] = v
             _safety["strategy_ts"] = rec["ts"]
             if prev is not None and v != prev:
-                manual = bool(v & STRATEGY_MANUAL_MASK)
-                was_manual = bool(prev & STRATEGY_MANUAL_MASK)
-                if manual and not was_manual:
-                    title, sev = "號誌:手動介入", "warn"
-                elif was_manual and not manual:
-                    title, sev = "號誌:手動解除", "warn"
+                # 🛑 不可以用「bit2/bit3 有沒有亮」判手動 —— 2026-09-03 實測:
+                #    OPAC 每 60 秒送一次 5F10 續約,續約瞬間控制器會連著回報
+                #      10H 時相控制 → 05H 定時控制+路口手動 → 01H 定時控制
+                #      → 10H 時相控制   (整段只有 1 秒)
+                #    舊判定把中間那個 05H 當成「手動介入」、01H 當成「手動解除」,
+                #    每小時產生約 10 則 warn 級假警報而且每則都推播。
+                #    同時段 5F08 現場操作回報一筆都沒有 —— 真的有人動控制箱
+                #    一定會有 5F08。
+                #    改用 _control_mode() 的語意判斷(它已經知道 roadSideManual
+                #    會被 OPAC 一起寫入),而且要「持續一段時間」才算數。
+                mode = _control_mode(v).get("code")
+                prev_mode = _control_mode(prev).get("code")
+                MANUAL_MODES = ("roadside_manual", "center_manual")
+                now = rec["ts"]
+                if mode in MANUAL_MODES and prev_mode not in MANUAL_MODES:
+                    # 先掛起,等它撐過確認時間再報 —— 過渡態撐不過去
+                    _safety["manual_pending"] = {"since": now, "from": prev,
+                                                 "to": v, "code": code,
+                                                 "addr": addr}
+                    title = None
+                elif prev_mode in MANUAL_MODES and mode not in MANUAL_MODES:
+                    if _safety.get("manual_confirmed"):
+                        _safety["manual_confirmed"] = False
+                        title, sev = "號誌:手動解除", "warn"
+                    else:
+                        # 從沒確認過手動,就沒有「解除」可言(過渡態的回程)
+                        _safety.pop("manual_pending", None)
+                        title, sev = "號誌:控制策略異動", "info"
                 else:
                     title, sev = "號誌:控制策略異動", "info"
-                _safety_event("strategy", sev, title,
-                              f"{_strategy_text(prev)} → {_strategy_text(v)}",
-                              code, addr, v)
+                if title:
+                    _safety_event("strategy", sev, title,
+                                  f"{_strategy_text(prev)} → {_strategy_text(v)}",
+                                  code, addr, v)
+            # 掛起中的手動:撐過確認時間且現在仍是手動 → 才是真的
+            pend = _safety.get("manual_pending")
+            if pend:
+                still = _control_mode(v).get("code") in ("roadside_manual",
+                                                         "center_manual")
+                if not still:
+                    _safety.pop("manual_pending", None)
+                elif rec["ts"] - pend["since"] >= MANUAL_CONFIRM_SEC:
+                    _safety.pop("manual_pending", None)
+                    _safety["manual_confirmed"] = True
+                    _safety_event(
+                        "strategy", "warn", "號誌:手動介入",
+                        f"{_strategy_text(pend['from'])} → {_strategy_text(pend['to'])}"
+                        f"(持續逾 {MANUAL_CONFIRM_SEC:.0f}s 確認)",
+                        pend["code"], pend["addr"], pend["to"])
         # 現場面板操作(5F08):每一次都是真人動作,記;回復自動之外都是 warn
         v = rec.get("field_operate")
         if v is not None and _safety_dedup_ok(f"field:{v}"):
