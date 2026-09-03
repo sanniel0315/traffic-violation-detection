@@ -200,3 +200,44 @@ def test_report_schedule_survives_restart(tmp_path, monkeypatch):
     # 模擬重啟:行程內變數歸零,但從 DB 讀得回來
     monkeypatch.setattr(ss, "_db_ready", False)
     assert ss._last_report_at() == 1_000_000.0
+
+
+def test_summarize_fixed_window_and_hourly_breakdown(tmp_path, monkeypatch):
+    """比對固定時段(如尖峰 06-12)要能指定起訖,而且逐時要拆得開。
+
+    「最近 N 分鐘」會隨查詢時間漂移 —— 早一分鐘晚一分鐘查到的不是同一段,
+    兩次結果沒有可比性。而整段平均會被無車時段稀釋:2026-09-03 實測整體
+    87.4%,但拆開來 08 時只有 54.7%。
+    """
+    from api.routes import signal_shadow as ss
+
+    db = tmp_path / "s4.db"
+    monkeypatch.setattr(ss, "_DB_PATH", str(db))
+    monkeypatch.setattr(ss, "_db_ready", False)
+    conn = ss._db()
+
+    def row(ts, agree, q2):
+        ours = "KEEP" if agree else "SWITCH"
+        return (ts, 1, 30.0, 0.0, q2, ours, "KEEP", agree,
+                0.0, 0.0, 12.5, 0, 0, "", 1, 0, "external_dynamic")
+
+    rows = []
+    rows += [row("2026-09-04T07:%02d:00" % i, 1, 40.0) for i in range(10)]  # 07 全對
+    rows += [row("2026-09-04T08:%02d:00" % i, 0, 40.0) for i in range(8)]   # 08 全錯
+    rows += [row("2026-09-04T08:%02d:30" % i, 1, 40.0) for i in range(2)]   # 08 對 2
+    rows += [row("2026-09-04T13:%02d:00" % i, 1, 40.0) for i in range(20)]  # 視窗外
+    conn.executemany(
+        "INSERT INTO signal_shadow_log(ts,green_phase,green_elapsed,queue_m_1,"
+        "queue_m_2,ours,actual,agree,switch_gain,keep_gain,change_cost,forced,"
+        "blocked,reason,step_id,clearance,control_mode) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+    s = ss.summarize(since="2026-09-04T06:00:00", until="2026-09-04T12:00:00")
+    assert s["samples"] == 20                 # 13 時那 20 筆不在視窗內
+    assert s["active_agree_rate"] == 0.6      # 12/20
+    by = {b["hour"]: b for b in s["by_hour"]}
+    assert set(by) == {"07", "08"}
+    assert by["07"]["active_agree_rate"] == 1.0
+    assert by["08"]["active_agree_rate"] == 0.2   # 尖峰掉下來,整段平均看不出來

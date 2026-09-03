@@ -208,6 +208,10 @@ _state: dict = {
     "latest": None,          # 最近一筆解出來的燈態
     "bad_peer": 0,           # 連上但不是 TC3 來源(打到別台機器)的次數
     "stalls": 0,             # 連線還在、但來源靜默而主動重連的次數
+    # 持久化佇列滿而被丟掉的訊框數。丟棄本身是刻意的(監看不是關鍵資料,
+    # 不能回壓抄錄熱路徑),但先前是「靜默」丟 —— 真的塞爆會完全看不出來,
+    # 事後分析涵蓋率時還會誤判成「控制器沒送」。所以要計數。
+    "frames_dropped": 0,
     "peer_note": "",
 }
 # ── 號控(下傳)──────────────────────────────────────────────────────────
@@ -295,7 +299,10 @@ def _enqueue_frame(rec: dict) -> None:
             "user": rec.get("user", ""), "sent_hw": rec.get("sent_hw"),
         })
     except _queue.Full:
-        pass
+        # 只累加計數,不在這裡記 log —— 這是抄錄熱路徑,塞爆時每秒都會進來,
+        # 寫 log 只會讓情況更糟。要看就從 /api/signal/status 的
+        # frames_dropped 看,writer 那邊也會定期把累積量寫進系統日誌。
+        _state["frames_dropped"] += 1
 
 
 # 操作(下傳/號控/自我查詢)送出紀錄持久化:含結果/錯誤/操作者,daemon 重啟後還在。
@@ -1245,7 +1252,7 @@ async def status(_user=Depends(get_current_user)):
     return {
         **{k: s[k] for k in ("enabled", "host", "port", "connected",
                              "frames_total", "cks_bad", "reconnects", "last_error",
-                             "bad_peer", "stalls", "peer_note")},
+                             "bad_peer", "stalls", "peer_note", "frames_dropped")},
         "age_sec": round(age, 2) if age is not None else None,
         # 沒新訊框就標 stale —— 來源掉了要看得出來,不要顯示假的舊狀態。
         # 門檻見 SIGNAL_STALE_SEC(照現場實測間隔定,不是拍腦袋)
@@ -2031,6 +2038,7 @@ def _frame_writer_loop() -> None:
     print("📶 [signal-tc3] 訊框持久化 writer 啟動", flush=True)
     conn = None
     last_retain = 0.0
+    last_dropped_seen = 0
     while not shutdown_event.is_set():
         try:
             if conn is None:
@@ -2055,6 +2063,17 @@ def _frame_writer_loop() -> None:
             now = time.time()
             if now - last_retain > 300:
                 last_retain = now
+                # 順便回報丟棄量。只在數字有變動時才寫,平常完全安靜。
+                dropped = _state.get("frames_dropped", 0)
+                if dropped and dropped != last_dropped_seen:
+                    last_dropped_seen = dropped
+                    try:
+                        add_log("warning",
+                                f"號誌訊框持久化佇列滿,累計丟棄 {dropped} 幀 —— "
+                                f"訊框分析的涵蓋率會低估,不要當成控制器沒送",
+                                source="signal")
+                    except Exception:
+                        pass
                 cutoff = now - FRAME_RETAIN_DAYS * 86400
                 conn.execute("DELETE FROM signal_frames WHERE ts < ?", (cutoff,))
                 conn.commit()
