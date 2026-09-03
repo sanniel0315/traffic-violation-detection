@@ -647,6 +647,17 @@ async def shadow_plan(_user=Depends(get_current_user)):
         "note": "影子模式:本決策只記錄不下發,路口仍由現行控制方控制",
     }
 
+def _ts_gap(prev_iso: Optional[str], cur_iso: str) -> Optional[float]:
+    """兩筆取樣的間隔秒數。解不出來回 None。"""
+    if not prev_iso:
+        return None
+    try:
+        return (datetime.fromisoformat(cur_iso)
+                - datetime.fromisoformat(prev_iso)).total_seconds()
+    except Exception:
+        return None
+
+
 def _green_runs(rows: list) -> list:
     """把 5 秒一筆的取樣重建成「一次一次的綠燈」。
 
@@ -663,24 +674,38 @@ def _green_runs(rows: list) -> list:
     """
     runs = []
     cur = None
+    prev_ts = None
     for (ts, ph, el, forced, q1, q2, f1, f2) in rows:
         el = float(el or 0.0)
+        gap = _ts_gap(prev_ts, ts)
+        prev_ts = ts
         if cur is None or ph != cur["phase"] or el < cur["last_elapsed"]:
             if cur is not None:
                 runs.append(cur)
             cur = {"phase": ph, "start_ts": ts, "end_ts": ts,
                    "green_sec": el, "last_elapsed": el, "forced": bool(forced),
-                   "samples": 1}
+                   "samples": 1,
+                   # 段「之前」有斷點 → 這段可能是被截斷後的後半截
+                   "gap_before": gap}
         else:
             cur["end_ts"] = ts
             cur["green_sec"] = el
             cur["last_elapsed"] = el
             cur["samples"] += 1
+            # 段「之內」有斷點 → 這段的長度不可信
+            if gap and gap > cur.get("max_inner_gap", 0):
+                cur["max_inner_gap"] = gap
             if forced:
                 cur["forced"] = True
     if cur is not None:
         runs.append(cur)
     return runs
+
+
+def _run_after_gap(run: dict) -> bool:
+    """這一段是不是接在一個取樣斷點之後(可能是被截斷的後半截)。"""
+    g = run.get("gap_before")
+    return bool(g and g > SHADOW_INTERVAL_SEC * 1.6)
 
 
 def _stat(vals: list) -> dict:
@@ -723,8 +748,9 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
            "dropped_unobserved": 0, "runs_used": 0,
            "note": "綠燈長度由 5 秒取樣重建,最多低估一個取樣週期;"
                    "抄錄過期(stale)被跳過的取樣會讓該段斷開。"
-                   "below_min_green 不是雜訊過濾殘留 —— 低於最小綠的段刻意保留,"
-                   "那可能代表控制器沒守官方最小綠,或查表基準與實際運轉的計畫不符"}
+                   "綠燈長度是區間量測:真值落在 [green_sec, green_sec+取樣週期)。"
+                   "below_min_green 以上界判定,且排除接在斷點之後或段內有斷點的段,"
+                   "所以它只計入『確定低於最小綠』的次數;不確定的計入 uncertain_truncated"}
     try:
         conn = _db()
         rows = conn.execute(
@@ -776,18 +802,34 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
             **st,
             "min_observed": round(min(vals), 1) if vals else None,
             "max_observed": round(max(vals), 1) if vals else None,
-            # 🛑 低於最小綠的段「不濾掉」—— 那可能是真的發現(控制器沒守
-            #    官方最小綠,或我方查表的基準計畫對不上當下實際在跑的),
-            #    濾掉就永遠看不見。標出來讓人判斷。
+            # 平均的最佳估計:量到的值 + 半個取樣週期(真值均勻落在
+            # [量到, 量到+週期) 之間)
+            "avg_estimated": (round(st["avg"] + SHADOW_INTERVAL_SEC / 2, 1)
+                              if st["avg"] is not None else None),
+            # 🛑 判定「低於最小綠」必須用上界,不能用量到的值。
+            #    綠燈長度是區間量測:量到 15 秒的段,真值在 [15, 20) ——
+            #    一段真實 20 秒(= 最小綠)的綠燈,用 5 秒取樣量出來就是 15 秒。
+            #    2026-09-03 就是這樣誤判:分相2 出現 11 次「低於最小綠 20 秒」,
+            #    逐段查證後 5 段緊鄰取樣斷點(截斷假象)、6 段都恰好 15.x 秒且
+            #    各 4 個取樣 —— 全部都是量測下限,不是控制器違規。
             "below_min_green": sum(
-                1 for v in vals
-                if len(mins) >= ph and v < float(mins[ph - 1])),
+                1 for r in runs
+                if r["phase"] == ph and len(mins) >= ph
+                and r["green_sec"] + SHADOW_INTERVAL_SEC < float(mins[ph - 1])
+                and not r.get("max_inner_gap") and not _run_after_gap(r)),
+            "uncertain_truncated": sum(
+                1 for r in runs
+                if r["phase"] == ph
+                and (r.get("max_inner_gap") or _run_after_gap(r))),
         })
 
     out["trend_total"] = len(runs)
     out["trend"] = [{"ts": r["start_ts"], "phase_no": r["phase"],
                      "green_sec": round(r["green_sec"], 1),
-                     "forced": r["forced"]}
+                     # 真值落在 [green_sec, green_sec + 取樣週期)
+                     "green_sec_upper": round(r["green_sec"] + SHADOW_INTERVAL_SEC, 1),
+                     "forced": r["forced"],
+                     "truncated": bool(r.get("max_inner_gap") or _run_after_gap(r))}
                     for r in runs[-trend_limit:]]
 
     # 出口(下匝道 = 分相2)滯留:取區間內的平均與最大,這是主線回堵的前哨
