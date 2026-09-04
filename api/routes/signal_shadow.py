@@ -937,7 +937,8 @@ async def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
        控制會怎樣」—— 這時候給比較數字只會製造假結論。
     """
     from detection.signal_sim import (
-        SimConfig, calibrate, estimate_arrivals, replay_actual, simulate,
+        SimConfig, arrival_profile, calibrate, estimate_arrivals,
+        profile_rate_fn, replay_actual, simulate,
     )
     from detection.signal_decision_engine import ApproachState, decide
     from detection.signal_timing_lookup import (
@@ -970,14 +971,20 @@ async def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
                     min_green_sec={1: float(mins[0]), 2: float(mins[1])},
                     max_green_sec=float(pp.get("max_green") or 210))
 
-    arrivals = estimate_arrivals(rows)
-    base = replay_actual(rows, arrivals, cfg)
+    # 🛑 用時變到達率,不用單一中位數。首次校準用固定率時相關係數只有
+    #    -0.006 / -0.04(完全沒跟上動態)—— 固定率撐不起數小時的模擬。
+    overall = estimate_arrivals(rows)
+    profile = arrival_profile(rows)
+    rate_fn = profile_rate_fn(profile)
+    base = replay_actual(rows, rate_fn, cfg)
     cal = calibrate(rows, base)
 
     result = {
         "available": True, "since": since_iso, "until": until_iso,
         "samples": len(rows),
-        "arrivals": arrivals,
+        "arrivals_overall": overall,
+        "arrival_windows": len(profile.get("windows") or []),
+        "arrival_window_sec": profile.get("window_sec"),
         "calibration": cal,
         "baseline_sim": {k: v for k, v in base.items() if k != "trajectory"},
     }
@@ -1008,7 +1015,7 @@ async def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
                    max_green_sec=cfg.max_green_sec)
         return d.action == "SWITCH"
 
-    mine = simulate(arrivals, ours, base["duration_sec"], cfg,
+    mine = simulate(rate_fn, ours, base["duration_sec"], cfg,
                     start_phase=rows[0][1] or 1)
     keys = ("total_delay_veh_sec", "avg_queue_m_1", "avg_queue_m_2",
             "max_queue_m_1", "max_queue_m_2", "switch_per_min")

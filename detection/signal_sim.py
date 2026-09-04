@@ -92,7 +92,59 @@ def estimate_arrivals(rows: list, mpv: float = DEFAULT_METERS_PER_VEHICLE) -> di
     return out
 
 
-def simulate(arrivals: dict, switch_fn: Callable, duration_sec: float,
+def arrival_profile(rows: list, window_sec: float = 900.0,
+                    mpv: float = DEFAULT_METERS_PER_VEHICLE) -> dict:
+    """分段估到達率(預設 15 分鐘一段)。
+
+    🛑 為什麼一定要時變:用單一中位數代表數小時,配上實際換相序列只會產生
+       規律鋸齒波,跟真實排隊自然不相關 —— 2026-09-04 首次校準就是這樣,
+       相關係數 -0.006 / -0.04(等於完全沒跟上動態),MAE 反而看不出問題。
+       真實需求隨時段變化很大,固定到達率是站不住的假設。
+
+    這是「用更多真實資料」不是「調參數湊答案」:每一段的率仍然是從該段的
+    紅燈成長算出來的,沒有任何自由參數。
+    """
+    if not rows:
+        return {"windows": [], "window_sec": window_sec}
+    t0 = datetime.fromisoformat(rows[0][0]).timestamp()
+    tn = datetime.fromisoformat(rows[-1][0]).timestamp()
+    wins = []
+    start = t0
+    while start < tn:
+        end = min(start + window_sec, tn)
+        seg = [r for r in rows
+               if start <= datetime.fromisoformat(r[0]).timestamp() <= end]
+        if len(seg) >= 12:
+            a = estimate_arrivals(seg, mpv)
+            wins.append({"t_start": round(start - t0, 1),
+                         "t_end": round(end - t0, 1),
+                         "rates": {p: (a[p]["veh_per_sec"] or 0.0) for p in PHASES},
+                         "samples": {p: a[p]["samples"] for p in PHASES}})
+        start = end
+    # 某段估不到(該段沒有夠長的紅燈)就沿用前一段,不要當成 0
+    last = {p: 0.0 for p in PHASES}
+    for w in wins:
+        for p in PHASES:
+            if w["rates"][p] > 0:
+                last[p] = w["rates"][p]
+            else:
+                w["rates"][p] = last[p]
+    return {"windows": wins, "window_sec": window_sec}
+
+
+def profile_rate_fn(profile: dict) -> Callable:
+    """把分段到達率包成 rate(t, phase) 供 simulate 使用。"""
+    wins = profile.get("windows") or []
+
+    def rate(t: float, phase: int) -> float:
+        for w in wins:
+            if w["t_start"] <= t <= w["t_end"]:
+                return float(w["rates"].get(phase) or 0.0)
+        return float(wins[-1]["rates"].get(phase) or 0.0) if wins else 0.0
+    return rate
+
+
+def simulate(arrivals, switch_fn: Callable, duration_sec: float,
              cfg: Optional[SimConfig] = None,
              init_queue_veh: Optional[dict] = None,
              start_phase: int = 1) -> dict:
@@ -119,9 +171,13 @@ def simulate(arrivals: dict, switch_fn: Callable, duration_sec: float,
 
     while t < duration_sec:
         dt = cfg.dt_sec
-        # ① 到達
+        # ① 到達。arrivals 可以是固定率的 dict,也可以是 rate(t, phase) 函式
+        #    (時變到達率 —— 固定率撐不起數小時的模擬,見 arrival_profile)
         for p in PHASES:
-            rate = (arrivals.get(p) or {}).get("veh_per_sec") or 0.0
+            if callable(arrivals):
+                rate = float(arrivals(t, p) or 0.0)
+            else:
+                rate = (arrivals.get(p) or {}).get("veh_per_sec") or 0.0
             q[p] += rate * dt
         # ② 放行(只有綠燈側,且要先扣掉換相損失時間)
         eff = max(0.0, dt - lost_remaining)
@@ -173,7 +229,7 @@ def simulate(arrivals: dict, switch_fn: Callable, duration_sec: float,
     }
 
 
-def replay_actual(rows: list, arrivals: dict,
+def replay_actual(rows: list, arrivals,
                   cfg: Optional[SimConfig] = None) -> dict:
     """把「現場實際的換相序列」餵進模型 —— 這是校準用的。
 
