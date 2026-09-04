@@ -3496,6 +3496,9 @@
         .st-bar.p2 { background:var(--gov-primary-strong); }
         .st-bar.forced { background:var(--gov-warn); }
         .st-bar.trunc { background:var(--gov-border-strong); }
+        .st-axis { display:flex; justify-content:space-between; margin-top:6px;
+                   font-size:11px; color:var(--gov-mute-2);
+                   font-variant-numeric:tabular-nums; }
         .st-key { display:inline-block; width:10px; height:10px; border-radius:2px;
                   margin-right:4px; vertical-align:-1px; }
         .st-key.p1 { background:var(--gov-primary); }
@@ -3544,6 +3547,31 @@
                          color:var(--gov-text); margin-right:auto; }
         /* ── 動態號誌控制盤 ── */
         .sc-h { margin:14px 0 6px; font-size:13px; font-weight:700; color:var(--gov-text); }
+        /* ── 運作統計:查詢列 ── */
+        .st-query-card { margin-bottom:12px; }
+        .st-query { display:flex; flex-direction:column; gap:10px; }
+        .st-q-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        .st-q-label { flex:0 0 66px; font-size:12px; font-weight:700;
+                      color:var(--gov-muted); letter-spacing:.02em; }
+        .st-quick { display:flex; gap:6px; flex-wrap:wrap; }
+        .st-qbtn { padding:5px 12px; border:1px solid var(--gov-border);
+                   border-radius:var(--r-pill,999px); background:var(--gov-surface);
+                   color:var(--gov-text); font-size:12px; font-weight:600;
+                   cursor:pointer; font-family:inherit;
+                   transition:background .16s ease, color .16s ease, border-color .16s ease; }
+        .st-qbtn:hover { border-color:var(--gov-primary-line); background:var(--ui-hover-bg); }
+        .st-qbtn.active { background:var(--gov-primary); border-color:var(--gov-primary); color:#fff; }
+        .st-q-tilde { color:var(--gov-mute-2); font-size:12px; }
+        .st-q-hint { font-size:12px; color:var(--gov-muted);
+                     padding-top:8px; border-top:1px dashed var(--gov-border);
+                     font-variant-numeric:tabular-nums; }
+        .st-live { display:inline-flex; align-items:center; gap:5px; font-size:12px;
+                   font-weight:600; color:var(--gov-ok); }
+        .st-live--off { color:var(--gov-mute-2); }
+        .st-dot { width:7px; height:7px; border-radius:50%; background:currentColor; }
+        .st-live:not(.st-live--off) .st-dot { animation:stPulse 1.6s ease-in-out infinite; }
+        @keyframes stPulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+
         .sc-wrap { overflow-x:auto; }
         .sc-table { width:100%; border-collapse:collapse; font-size:13px; min-width:520px; }
         .sc-table th, .sc-table td { padding:6px 10px; text-align:left;
@@ -3552,6 +3580,21 @@
         .sc-table td.sc-num { text-align:right; font-variant-numeric:tabular-nums; font-weight:700; }
         .sc-table tr.sc-total td { background:var(--gov-surface-2); }
         .sc-sub { font-size:11px; color:var(--gov-mute-2); font-weight:400; }
+        /* 🛑 表頭與內容必須同一個對齊方式,否則欄名跟數字各站一邊 —— 看起來就是沒對齊。 */
+        .sc-table th.sc-num { text-align:right; }
+        .sc-table--stats th { padding:8px 12px; white-space:nowrap;
+                              border-bottom:2px solid var(--gov-border-strong); }
+        .sc-table--stats td { padding:10px 12px; vertical-align:top; }
+        .sc-table--stats td.sc-num { line-height:1.35; }
+        /* 副值(量到 39.1 / 另 8 段不確定)壓在主值下方,不另外開一欄 */
+        .sc-table--stats td.sc-num .sc-sub { display:block; margin-top:2px; }
+        .sc-table--stats td.sc-th-dir { text-align:left; font-weight:700; white-space:nowrap; }
+        .sc-table--stats td.sc-th-dir .sc-sub { display:block; margin-top:2px; font-weight:400; }
+        .sc-table--stats td.sc-th-dir .st-key { margin-right:6px; vertical-align:1px; }
+        .sc-th-unit { font-size:10px; font-weight:600; color:var(--gov-mute-2);
+                      margin-left:3px; }
+        .sc-table td.sc-bad { color:var(--gov-fault); }
+        .sc-table--stats tbody tr:hover td { background:var(--gov-surface-2); }
         .sc-code { margin:0; padding:10px 12px; border-radius:8px; background:var(--gov-text); color:var(--gov-surface);
                    font-size:12px; line-height:1.7; overflow-x:auto; }
         .sc-gate { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
@@ -7086,13 +7129,46 @@
                 <div v-if="page==='signal_hub'" v-show="signalTab==='stats'">
                     <div class="sig-tab-bar">
                         <span class="sig-tab-title">運作統計</span>
-                        <el-select v-model="sigStatMins" size="small" style="width:130px" @change="loadSigStats">
-                            <el-option :value="60" label="最近 1 小時"></el-option>
-                            <el-option :value="360" label="最近 6 小時"></el-option>
-                            <el-option :value="1440" label="最近 24 小時"></el-option>
-                            <el-option :value="-1" label="今日尖峰 06-12"></el-option>
-                        </el-select>
-                        <el-button size="small" plain @click="loadSigStats"><svg class="text-icon" style="margin-right:4px"><use href="#i-search"/></svg>查詢</el-button>
+                        <span class="st-live" v-if="sigStatLive"><i class="st-dot"></i>即時 · 每 30 秒更新</span>
+                        <span class="st-live st-live--off" v-else><i class="st-dot"></i>{{ sigStatFixed ? '固定區間' : '已暫停更新' }}</span>
+                        <el-button size="small" plain :loading="sigStatLoading" @click="loadSigStats"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>立即重查</el-button>
+                    </div>
+
+                    <!-- ══ 查詢列 ══
+                         🛑 即時與歷史是同一份統計、只差區間,所以放同一列:
+                            相對區間(最近 N)=即時,可自動更新;
+                            固定區間(尖峰/昨日/自訂)=歷史,自動更新沒有意義會直接關掉。 -->
+                    <div class="card st-query-card">
+                        <div class="card-body">
+                            <div class="st-query">
+                                <div class="st-q-row">
+                                    <span class="st-q-label">快捷區間</span>
+                                    <div class="st-quick">
+                                        <button v-for="qk in sigStatQuicks" :key="qk.key" type="button"
+                                                class="st-qbtn" :class="{active:sigStatRange===qk.key}"
+                                                @click="sigStatPick(qk.key)">{{ qk.label }}</button>
+                                    </div>
+                                </div>
+                                <div class="st-q-row">
+                                    <span class="st-q-label">自訂起訖</span>
+                                    <!-- 🛑 刻意用兩個獨立 datetime picker,不用 datetimerange:
+                                         range 型改一端另一端會被連動改掉,使用者反應過。 -->
+                                    <el-date-picker v-model="sigStatFrom" type="datetime" size="small"
+                                                    placeholder="開始時間" style="width:190px"
+                                                    value-format="YYYY-MM-DDTHH:mm:ss"></el-date-picker>
+                                    <span class="st-q-tilde">～</span>
+                                    <el-date-picker v-model="sigStatTo" type="datetime" size="small"
+                                                    placeholder="結束時間" style="width:190px"
+                                                    value-format="YYYY-MM-DDTHH:mm:ss"></el-date-picker>
+                                    <el-button size="small" type="primary" plain
+                                               :disabled="!sigStatCustomReady" @click="sigStatPick('custom')">
+                                        <svg class="text-icon" style="margin-right:4px"><use href="#i-search"/></svg>查詢此區間</el-button>
+                                    <el-switch v-model="sigStatLive" size="small" :disabled="sigStatFixed"
+                                               active-text="即時自動更新" style="margin-left:auto"></el-switch>
+                                </div>
+                                <div class="st-q-hint" v-if="sigStatRangeHint">{{ sigStatRangeHint }}</div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="card">
@@ -7148,24 +7224,43 @@
                         <div class="card-body">
                             <div class="analysis-setting-tip">
                                 🛑 綠燈長度是<b>區間量測</b>：真值落在 [量到值, 量到值+取樣週期)。
-                                「估計平均」已加回半個週期，「平均」是實際量到的（偏低）。
-                                「確定低於最小綠」以上界判定並排除被斷點截斷的段 —— 只計入不容爭議的次數。
+                                下面的<b>綠燈平均</b>是已加回半個週期的估計值，括號內為實際量到的（偏低）。
+                                「低於最小綠」以上界判定並排除被斷點截斷的段 —— 只計入不容爭議的次數。
                             </div>
+                            <!-- 🛑 表格重整:
+                                 (a) 數字欄的表頭也要右對齊 —— 原本 th 全部靠左、td 靠右,
+                                     欄名跟數字各站一邊,那才是「沒對齊」的真正原因。
+                                 (b) 拿掉「變異數」:它就是標準差的平方,同一件事佔兩欄。
+                                 (c) 平均/估計平均合併成一格(主值=估計、下方=量到),
+                                     觀測範圍與時制上下限同理 —— 10 欄縮成 7 欄才讀得完。 -->
                             <div class="sc-wrap">
-                                <table class="sc-table">
-                                    <thead><tr><th>方向</th><th>樣本數</th><th>平均</th><th>估計平均</th><th>標準差</th><th>變異數</th><th>觀測範圍</th><th>最小/最大綠</th><th>確定低於最小綠</th><th>不確定(斷點)</th></tr></thead>
+                                <table class="sc-table sc-table--stats">
+                                    <thead>
+                                        <tr>
+                                            <th class="sc-th-dir">方向</th>
+                                            <th class="sc-num">段數</th>
+                                            <th class="sc-num">綠燈平均<span class="sc-th-unit">秒</span></th>
+                                            <th class="sc-num">標準差<span class="sc-th-unit">秒</span></th>
+                                            <th class="sc-num">觀測範圍<span class="sc-th-unit">秒</span></th>
+                                            <th class="sc-num">時制上下限<span class="sc-th-unit">秒</span></th>
+                                            <th class="sc-num">低於最小綠</th>
+                                        </tr>
+                                    </thead>
                                     <tbody>
                                         <tr v-for="b in (sigStats.by_direction||[])" :key="'d'+b.phase_no">
-                                            <td>分相 {{ b.phase_no }} · {{ b.ramp }}</td>
+                                            <td class="sc-th-dir">
+                                                <span class="st-key" :class="b.phase_no===2?'p2':'p1'"></span>分相 {{ b.phase_no }}
+                                                <span class="sc-sub">{{ b.ramp }}</span>
+                                            </td>
                                             <td class="sc-num">{{ b.n }}</td>
-                                            <td class="sc-num">{{ sigStatNum(b.avg) }}</td>
-                                            <td class="sc-num">{{ sigStatNum(b.avg_estimated) }}</td>
+                                            <td class="sc-num">{{ sigStatNum(b.avg_estimated) }}
+                                                <span class="sc-sub">量到 {{ sigStatNum(b.avg) }}</span></td>
                                             <td class="sc-num">{{ sigStatNum(b.stddev) }}</td>
-                                            <td class="sc-num">{{ sigStatNum(b.variance) }}</td>
-                                            <td class="sc-num">{{ sigStatNum(b.min_observed) }} ~ {{ sigStatNum(b.max_observed) }}</td>
-                                            <td class="sc-num">{{ sigStatNum(b.min_green_sec) }} / {{ sigStatNum(b.max_green_sec) }}</td>
-                                            <td class="sc-num" :style="b.below_min_green?{color:'var(--gov-fault)'}:{}">{{ b.below_min_green }}</td>
-                                            <td class="sc-num sc-sub">{{ b.uncertain_truncated }}</td>
+                                            <td class="sc-num">{{ sigStatNum(b.min_observed) }} – {{ sigStatNum(b.max_observed) }}</td>
+                                            <td class="sc-num">{{ sigStatNum(b.min_green_sec) }} – {{ sigStatNum(b.max_green_sec) }}</td>
+                                            <td class="sc-num" :class="b.below_min_green?'sc-bad':''">
+                                                {{ b.below_min_green }}
+                                                <span class="sc-sub" v-if="b.uncertain_truncated">另 {{ b.uncertain_truncated }} 段不確定</span></td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -7184,6 +7279,11 @@
                                      class="st-bar" :class="{p2:t.phase_no===2, forced:t.forced, trunc:t.truncated}"
                                      :style="{height: sigStatBarH(t)}"
                                      :title="t.ts+' 分相'+t.phase_no+' '+t.green_sec+'~'+t.green_sec_upper+'s'+(t.forced?' 強制切換':'')+(t.truncated?' 被斷點截斷':'')"></div>
+                            </div>
+                            <!-- 時間軸:只標頭/中/尾三點。柱子寬度只有 6px,
+                                 每根標時間會擠成一團,三點足以定位「這段是幾點的事」。 -->
+                            <div class="st-axis" v-if="sigStatTrendAxis.length">
+                                <span v-for="(a,ai) in sigStatTrendAxis" :key="'ax'+ai">{{ a }}</span>
                             </div>
                             <div class="xn-foot" style="margin-top:8px">
                                 <span class="xn-chip"><span class="st-key p1"></span>分相1 上匝道</span>
@@ -21707,7 +21807,7 @@ const app=createApp({
             light:  () => { loadSignal(); startSignalTimer(); },
             plan:   () => { loadSigConsole(); startSigConsoleTimer(); },
             config: () => loadSigConfig(),
-            stats:  () => loadSigStats(),
+            stats:  () => { loadSigStats(); startSigStatTimer(); },
             device: () => loadSigDevice(),
             accept: () => loadSigAcceptance(),
         };
@@ -21812,6 +21912,56 @@ const app=createApp({
 
         const sigStats = ref({});
         const sigStatMins = ref(360);
+        // ── 區間查詢 ────────────────────────────────────────────────
+        // 🛑 兩類區間性質不同,不能混成一個下拉:
+        //    相對(最近 N 分鐘)→ 每次查都往前滑動,適合當「即時」看,可自動更新;
+        //    固定(尖峰/昨日/自訂)→ 起訖釘死,是「歷史」,自動更新只會重查同一段。
+        //    sigStatFixed 就是這個分界,即時開關會依它自動關掉並停用。
+        const sigStatQuicks = ref([
+            {key: 'm60',   label: '最近 1 小時',    mins: 60},
+            {key: 'm360',  label: '最近 6 小時',    mins: 360},
+            {key: 'm1440', label: '最近 24 小時',   mins: 1440},
+            {key: 'peak',  label: '今日尖峰 06-12', fixed: true},
+            {key: 'peaky', label: '昨日尖峰 06-12', fixed: true},
+            {key: 'yday',  label: '昨日全日',       fixed: true},
+        ]);
+        const sigStatRange = ref('m360');
+        const sigStatFrom = ref('');
+        const sigStatTo = ref('');
+        const sigStatLive = ref(true);
+        const sigStatLoading = ref(false);
+        const sigStatFixed = computed(() => {
+            if (sigStatRange.value === 'custom') return true;
+            const q = sigStatQuicks.value.find(x => x.key === sigStatRange.value);
+            return !!(q && q.fixed);
+        });
+        const sigStatCustomReady = computed(() => !!(sigStatFrom.value && sigStatTo.value
+                                                     && sigStatFrom.value < sigStatTo.value));
+        const sigStatRangeHint = computed(() => {
+            const d = sigStats.value || {};
+            if (!d.since) return '';
+            const span = (new Date(d.until) - new Date(d.since)) / 3600000;
+            return '本次查詢：' + d.since.replace('T', ' ') + '　～　' + d.until.replace('T', ' ')
+                   + '（' + (isFinite(span) ? span.toFixed(1) : '?') + ' 小時）'
+                   + (sigStatFixed.value ? '　·　固定區間，可重複比對'
+                                         : '　·　相對區間，每次查詢會往前滑動');
+        });
+        const sigDayOffsetAt = (dayOffset, hh) => {
+            const d = new Date();
+            d.setDate(d.getDate() + dayOffset);
+            const pad = (n) => String(n).padStart(2, '0');
+            return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+                   + 'T' + pad(hh) + ':00:00';
+        };
+        const sigStatPick = (key) => {
+            if (key === 'custom' && !sigStatCustomReady.value) return;
+            sigStatRange.value = key;
+            const q = sigStatQuicks.value.find(x => x.key === key);
+            if (q && q.mins) sigStatMins.value = q.mins;
+            // 固定區間開著自動更新沒有意義 —— 直接關掉,免得使用者以為數字會變
+            if (sigStatFixed.value) sigStatLive.value = false;
+            loadSigStats();
+        };
         // 🛑 沒樣本就是沒樣本 —— 版面一律留空,不用 0 冒充統計值
         const sigStatOk = computed(() => !!(sigStats.value && sigStats.value.runs_used));
         const sigStatNum = (v) => (v === null || v === undefined) ? '—' : v;
@@ -21830,6 +21980,14 @@ const app=createApp({
             const t = (sigStats.value && sigStats.value.trend) || [];
             return t.reduce((m, x) => Math.max(m, x.green_sec || 0), 1);
         });
+        // 頭/中/尾三個時間點。趨勢是「最近 N 段」,不是等距時間軸,
+        // 所以標的是該根柱子的實際時間,不是均分刻度。
+        const sigStatTrendAxis = computed(() => {
+            const t = (sigStats.value && sigStats.value.trend) || [];
+            if (t.length < 2) return [];
+            const hhmm = (x) => (x && x.ts) ? String(x.ts).slice(11, 16) : '';
+            return [hhmm(t[0]), hhmm(t[Math.floor(t.length / 2)]), hhmm(t[t.length - 1])];
+        });
         const sigStatBarH = (t) => {
             const pct = Math.max(4, 100 * (t.green_sec || 0) / sigStatMaxGreen.value);
             return pct.toFixed(1) + '%';
@@ -21840,15 +21998,35 @@ const app=createApp({
             const q = sigStats.value && sigStats.value.exit_queue_m;
             return !!(q && 480 <= q.max);
         });
+        const sigStatQuery = () => {
+            const k = sigStatRange.value;
+            if (k === 'peak') return 'since=' + sigDayAt(6) + '&until=' + sigDayAt(12);
+            if (k === 'peaky') return 'since=' + sigDayOffsetAt(-1, 6)
+                                      + '&until=' + sigDayOffsetAt(-1, 12);
+            if (k === 'yday') return 'since=' + sigDayOffsetAt(-1, 0)
+                                     + '&until=' + sigDayOffsetAt(0, 0);
+            if (k === 'custom') return 'since=' + encodeURIComponent(sigStatFrom.value)
+                                       + '&until=' + encodeURIComponent(sigStatTo.value);
+            return 'minutes=' + sigStatMins.value;
+        };
         const loadSigStats = async () => {
-            const q = (sigStatMins.value === -1)
-                ? ('since=' + sigDayAt(6) + '&until=' + sigDayAt(12))
-                : ('minutes=' + sigStatMins.value);
+            sigStatLoading.value = true;
             try {
-                const r = await fetch('/api/signal/shadow/stats?' + q + '&trend_limit=200',
-                                      {credentials: 'include'});
+                const r = await fetch('/api/signal/shadow/stats?' + sigStatQuery()
+                                      + '&trend_limit=200', {credentials: 'include'});
                 if (r.ok) sigStats.value = await r.json();
-            } catch (e) {}
+            } catch (e) {} finally { sigStatLoading.value = false; }
+        };
+        // 即時輪詢。只在「停在運作統計這一頁 + 分頁在前景 + 相對區間」時才打,
+        // 切走或切到別的 tab 就停 —— 背景頁每 30 秒打一次 API 是白費的。
+        let sigStatTimer = null;
+        const startSigStatTimer = () => {
+            if (sigStatTimer) return;
+            sigStatTimer = setInterval(() => {
+                if (page.value !== 'signal_hub' || signalTab.value !== 'stats'
+                    || !isPageVisible() || !sigStatLive.value || sigStatFixed.value) return;
+                loadSigStats();
+            }, 30000);
         };
         // ── 動態號誌控制盤 ────────────────────────────────────────────
         // 只給一個一致率沒辦法稽核。接管控制權之前,每一筆判斷的輸入、
@@ -23012,7 +23190,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStats,sigStatMins,sigStatOk,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
