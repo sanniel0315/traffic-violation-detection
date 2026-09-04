@@ -317,14 +317,15 @@ async def _poller() -> None:
             cam = getattr(v, "camera_id", None)
             cam_txt = f" · cam_{cam}" if cam is not None else ""
             category = _violation_category(getattr(v, "violation_type", "") or "")
-            tokens = _targets(category, int(cam) if cam is not None else None)
-            if not tokens:
-                continue
+            # 走 push_alert:它會先寫進事件檔再依訂閱推播。
+            # 原本直接呼叫 _send_expo 並在沒有訂閱裝置時 continue,
+            # 導致違規(最主要的告警來源)從來沒有進到 App 的告警歷史。
             await asyncio.to_thread(
-                _send_expo, tokens,
+                push_alert,
                 f"⚠ {title}{speed_txt}",
                 f"{plate}{cam_txt}",
                 {"violation_id": int(v.id), "type": category, "camera_id": cam},
+                category,
             )
 
 
