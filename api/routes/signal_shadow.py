@@ -79,7 +79,8 @@ def _db():
             ours TEXT, actual TEXT, agree INTEGER,
             switch_gain REAL, keep_gain REAL, change_cost REAL,
             forced INTEGER, blocked INTEGER, reason TEXT,
-            step_id INTEGER, clearance INTEGER, control_mode TEXT)""")
+            step_id INTEGER, clearance INTEGER, control_mode TEXT,
+            flow_vpm_1 REAL, flow_vpm_2 REAL)""")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_shadow_ts "
                      "ON signal_shadow_log(ts)")
         # 🛑 上次回報時刻必須落地。放行程內變數的話,每次部署重啟都把一小時的
@@ -90,8 +91,15 @@ def _db():
         # 既有 DB(9/2 起累積的那份)沒有這三欄,補上 —— 舊列留 NULL,
         # summarize 會把 control_mode IS NULL 的樣本當「前提不明」排除。
         have = {r[1] for r in conn.execute("PRAGMA table_info(signal_shadow_log)")}
+        # 🛑 flow_vpm 一定要存。2026-09-04 做模擬驗證時卡在這裡:
+        #    只有 queue_m 沒有流量計數,而 queue_m 不守恆 —— 從紅燈成長推的
+        #    「到達」與從綠燈消退推的「離開」對不起來(分相2 推出的到達率
+        #    0.106 > 有效容量 0.083,模型必然無限累積,但現實排隊是有界的)。
+        #    原因是 ROI 只看得到部分路段、而且它是停等長度估計不是車輛計數。
+        #    flow_vpm 是通過流量計數,守恆,才撐得起模擬。
         for col, typ in (("step_id", "INTEGER"), ("clearance", "INTEGER"),
-                         ("control_mode", "TEXT")):
+                         ("control_mode", "TEXT"),
+                         ("flow_vpm_1", "REAL"), ("flow_vpm_2", "REAL")):
             if col not in have:
                 conn.execute(f"ALTER TABLE signal_shadow_log ADD COLUMN {col} {typ}")
         conn.commit()
@@ -264,8 +272,9 @@ def _loop():
             conn.execute(
                 "INSERT INTO signal_shadow_log(ts,green_phase,green_elapsed,"
                 "queue_m_1,queue_m_2,ours,actual,agree,switch_gain,keep_gain,"
-                "change_cost,forced,blocked,reason,step_id,clearance,control_mode)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "change_cost,forced,blocked,reason,step_id,clearance,control_mode,"
+                "flow_vpm_1,flow_vpm_2)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (datetime.now().isoformat(timespec="seconds"), g_no,
                  round(green_elapsed, 1), q1, q2, d.action, actual,
                  # 🛑 切換剛發生的那一筆不列入一致率(agree=NULL)。
@@ -294,7 +303,7 @@ def _loop():
                  d.change_cost, 1 if d.forced_by_max_green else 0,
                  1 if d.blocked_by_priority else 0, d.reason,
                  live.get("step_id"), 1 if live.get("clearance") else 0,
-                 live.get("control_mode")))
+                 live.get("control_mode"), f1, f2))
             conn.commit()
             conn.close()
             with _lock:
