@@ -7123,13 +7123,18 @@
                                         <div class="xn-center">
                                             <div class="xn-count" :key="'c'+xn.addr+'-'+xnRemainLive(xn)"
                                                  :class="{warn:xnRemainLive(xn)!=null&&xnRemainLive(xn)<=10&&xnRemainLive(xn)>5, hot:xnRemainLive(xn)!=null&&xnRemainLive(xn)<=5, tick:xnRemainLive(xn)!=null&&xnRemainLive(xn)>5}">{{ xnRemainLive(xn)==null?'—':xnRemainLive(xn) }}</div>
-                                            <div class="xn-count-tot">/ {{ xn.step_total_sec }}s</div>
+                                            <!-- 🛑 分母是「這一步的完整長度」,由抄錄器追蹤而來。
+                                                 先前直接顯示 step_sec,但那是剩餘秒數 ——
+                                                 分子分母同一個數,顯示成「17 / 17s」等於沒有意義。 -->
+                                            <div class="xn-count-tot" v-if="xn.step_total_sec">/ {{ xn.step_total_sec }}s</div>
+                                            <div class="xn-count-tot" v-else>步階</div>
                                         </div>
                                     </div>
                                     <div class="xn-foot" v-if="xn.phase">
                                         <span v-if="xn.control_mode" class="xn-chip xn-mode" :class="'sev-'+xn.control_mode.severity" :title="'控制策略:誰在控制這個路口'"><b>{{ xn.control_mode.label }}</b></span>
                                         <span class="xn-chip"><span class="k">分相</span><b>{{ xn.phase.sub_phase_id }}</b></span>
                                         <span class="xn-chip"><span class="k">步階</span><b>{{ xn.phase.step_id }}</b></span>
+                                        <span v-if="xn.phase_elapsed_sec!=null" class="xn-chip" title="本分相已亮秒數(抄錄器逐框追蹤,精確到訊框)"><span class="k">已亮</span><b>{{ Math.round(xn.phase_elapsed_sec) }}</b><span class="k">s</span></span>
                                         <span v-if="xnStepSpecial(xn)" class="xn-chip xn-mode sev-warn"><span class="k">狀態</span><b>{{ xn.phase.step_desc }}</b></span>
                                         <span v-if="xn.stale" class="xn-stale">· 資料過期</span>
                                     </div>
