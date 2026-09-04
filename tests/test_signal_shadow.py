@@ -378,3 +378,79 @@ def test_measured_saturation_falls_back_when_implausible(monkeypatch):
     assert ss.SAT_MIN_VPH > 0 and ss.SAT_MAX_VPH > ss.SAT_MIN_VPH
     assert not (ss.SAT_MIN_VPH <= 50 <= ss.SAT_MAX_VPH), "50 vph 應被視為異常"
     assert not (ss.SAT_MIN_VPH <= 9000 <= ss.SAT_MAX_VPH), "9000 vph 應被視為異常"
+
+
+def _tl_rows(conn, specs):
+    """specs: [(ts_iso, green_phase, ours, actual, agree, reason), ...]"""
+    conn.executemany(
+        "INSERT INTO signal_shadow_log(ts,green_phase,green_elapsed,queue_m_1,"
+        "queue_m_2,ours,actual,agree,switch_gain,keep_gain,change_cost,forced,"
+        "blocked,reason,step_id,clearance,control_mode,flow_vpm_1,flow_vpm_2) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [(ts, gp, 10.0, 5.0, 8.0, ours, actual, agree, 1.0, 2.0, 3.0, 0, 0,
+          reason, 1, 0, "external_dynamic", 1.0, 2.0)
+         for (ts, gp, ours, actual, agree, reason) in specs])
+    conn.commit()
+
+
+def test_timeline_stride_keeps_switch_events(tmp_path, monkeypatch):
+    """🛑 抽樣不可以把換相事件抽掉 —— 換相正是時間軸要看的東西。
+
+    每 N 筆取一筆的做法會讓換相剛好落在被丟掉的位置時整個消失。
+    正解是分桶,桶內的 ours/actual 用 OR 保留。
+    """
+    from api.routes import signal_shadow as ss
+
+    db = tmp_path / "tl.db"
+    monkeypatch.setattr(ss, "_DB_PATH", str(db))
+    monkeypatch.setattr(ss, "_db_ready", False)
+    conn = ss._db()
+    # 30 筆,只有第 7 筆有換相 —— stride=10 時它會落在桶內非最後一筆
+    specs = []
+    for i in range(30):
+        ts = "2026-09-05T08:%02d:%02d" % (i // 12, (i % 12) * 5)
+        sw = (i == 7)
+        specs.append((ts, 1, "SWITCH" if sw else "KEEP",
+                      "SWITCH" if sw else "KEEP", None if sw else 1, None))
+    _tl_rows(conn, specs)
+    conn.close()
+
+    import asyncio
+    r = asyncio.new_event_loop().run_until_complete(
+        ss.shadow_timeline(minutes=1440, since="2026-09-05T00:00:00",
+                           until="2026-09-05T23:59:59", max_points=3,
+                           _user=None))
+    assert r["available"] and r["stride"] >= 10
+    assert sum(r["ours_switch"]) == 1, "抽樣把我方換相抽掉了"
+    assert sum(r["actual_switch"]) == 1, "抽樣把實際換相抽掉了"
+
+
+def test_timeline_marks_sampling_gaps(tmp_path, monkeypatch):
+    """🛑 取樣斷點要標出來,不可以讓前端當成等距。
+
+    抄錄 stale 時影子會跳過取樣;只給 interval_sec 的話,一個 40 秒的洞會被
+    畫成一格,換相與排隊的對應位置全部跑掉。
+    """
+    from api.routes import signal_shadow as ss
+
+    db = tmp_path / "tl2.db"
+    monkeypatch.setattr(ss, "_DB_PATH", str(db))
+    monkeypatch.setattr(ss, "_db_ready", False)
+    conn = ss._db()
+    specs = [("2026-09-05T08:00:%02d" % (i * 5), 1, "KEEP", "KEEP", 1, None)
+             for i in range(4)]
+    specs += [("2026-09-05T08:01:%02d" % (i * 5), 2, "KEEP", "KEEP", 1, None)
+              for i in range(4)]          # 中間空掉約 40 秒
+    _tl_rows(conn, specs)
+    conn.close()
+
+    import asyncio
+    r = asyncio.new_event_loop().run_until_complete(
+        ss.shadow_timeline(minutes=1440, since="2026-09-05T00:00:00",
+                           until="2026-09-05T23:59:59", max_points=900,
+                           _user=None))
+    assert r["gaps"], "取樣斷點沒有被標出來"
+    g = r["gaps"][0]
+    assert g[1] - g[0] >= 20, f"斷點區間看起來不對: {g}"
+    # t 必須是實際偏移,不是索引 × interval
+    assert r["t"][-1] >= 75, "t 應該是實際秒數偏移"
