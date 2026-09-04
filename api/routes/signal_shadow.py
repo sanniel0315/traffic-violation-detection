@@ -281,6 +281,7 @@ def _release_stats() -> dict:
     runs: dict = {}
     cur_ph = None
     t0 = t1 = None
+    last_ph = None          # 最後一段屬於哪一相(它可能還在進行中)
 
     def close_run():
         if cur_ph is None or t0 is None:
@@ -297,14 +298,22 @@ def _release_stats() -> dict:
             cur_ph, t0 = ph, t
         t1 = t
     close_run()
+    last_ph = cur_ph
+    # 🛑「前次」必須是上一段**已結束**的放行,不能拿還在跑的這一段。
+    #    最後一段若尾巴貼近現在(取樣週期 5 秒,放寬到 15 秒),它就還在進行中 ——
+    #    拿它當前次會跟畫面上的「已亮 N 秒」是同一個數,等於白佔一個欄位,
+    #    而且會讓人以為上一輪只放行了 5 秒。
+    running = (t1 is not None and time.time() - t1 <= 15)
     for ph, lens in runs.items():
         if ph is None:
             continue
+        done = lens[:-1] if (running and ph == last_ph) else lens
         out[str(int(ph))] = {
             "count": len(lens),
             "total_sec": int(round(sum(lens))),
-            "last_sec": int(round(lens[-1])) if lens else None,
-            "avg_sec": round(sum(lens) / len(lens), 1) if lens else None,
+            "last_sec": int(round(done[-1])) if done else None,
+            "avg_sec": round(sum(done) / len(done), 1) if done else None,
+            "running": bool(running and ph == last_ph),
         }
     _release_cache.update({"ts": now, "data": out})
     return out
