@@ -175,6 +175,10 @@ def _live_phase() -> Optional[dict]:
                     "clearance": not any_green,
                     "stale": bool(xn.get("stale")),
                     "age_sec": xn.get("age_sec"),
+                    # 🛑 已亮秒數以抄錄器逐框追蹤的值為準。它每秒都收到 5F03,
+                    #    精確到訊框;影子自己每 5 秒輪詢推算最多差一個週期,
+                    #    而 min/max green 的安全閘門就是拿這個數字去比。
+                    "phase_elapsed_sec": xn.get("phase_elapsed_sec"),
                     "control_mode": cm.get("code")}
     except Exception:
         pass
@@ -215,7 +219,13 @@ def _loop():
             elif prev_phase is None:
                 green_since = now
             prev_phase = cur_phase
-            green_elapsed = max(0.0, now - green_since)
+            # 優先用抄錄器逐框追蹤的精確值;取不到才退回自己推算(誤差 ≤ 取樣週期)
+            exact = live.get("phase_elapsed_sec")
+            if isinstance(exact, (int, float)):
+                green_elapsed = float(exact)
+                green_since = now - green_elapsed
+            else:
+                green_elapsed = max(0.0, now - green_since)
             _live_green["since"] = green_since
             _live_green["phase"] = cur_phase
 
@@ -550,7 +560,10 @@ async def shadow_plan(_user=Depends(get_current_user)):
     # 只有在迴圈還沒起來、或它追的分相跟現在不同(剛換相的瞬間)時,
     # 才退回撈最後一筆樣本 —— 那個值最多差一個取樣週期。
     green_elapsed = 0.0
-    if _live_green["since"] and _live_green["phase"] == g_no:
+    exact = live.get("phase_elapsed_sec")
+    if isinstance(exact, (int, float)):
+        green_elapsed = float(exact)
+    elif _live_green["since"] and _live_green["phase"] == g_no:
         green_elapsed = max(0.0, time.time() - _live_green["since"])
     else:
         try:

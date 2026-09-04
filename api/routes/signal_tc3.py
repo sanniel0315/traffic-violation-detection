@@ -638,6 +638,7 @@ def _recorder_loop() -> None:
                             # 現場現在只有 0xFFFF 一個,未來抄到多位址就自動多路口。
                             a = rec.get("addr")
                             if isinstance(a, int):
+                                _track_phase(a, rec)
                                 _by_addr[a] = rec
                     # 安全網監看(只吃 CKS 正確的框;上面 cks 壞的已 continue 掉)。
                     # 🛑 放在鎖外:事件要寫 DB/推播,不能卡住抄錄熱路徑。
@@ -791,6 +792,44 @@ def _safety_dedup_ok(key: str, window: float = 30.0) -> bool:
         return False
     _safety_dedup[key] = now
     return True
+
+
+
+# 逐框追蹤的分相/步階時間。抄錄器每秒都收到 5F03,在這裡算才會精確 ——
+# 靠外部每 5 秒輪詢去推,最多會有一個輪詢週期的誤差。
+_phase_track: dict = {}
+
+
+def _track_phase(addr: int, rec: dict) -> None:
+    """記錄分相起始時刻與本步階的完整長度。
+
+    🛑 StepSec 是「這一步還剩幾秒」,不是總長 —— 2026-09-04 連續取樣實證:
+       同一步階內它每秒遞減(26→24→21→…),換步階才跳回新值。
+       (舊註解寫成「總長」,導致路口卡的倒數顯示成「17 / 17s」,
+        分子分母是同一個數,分母等於沒有意義。)
+       所以步階的完整長度要取「進入該步階後看到的最大剩餘值」。
+    """
+    ph = rec.get("phase") or {}
+    sub = ph.get("sub_phase_id")
+    step = ph.get("step_id")
+    sec = ph.get("step_sec")
+    ts = rec.get("ts") or time.time()
+    st = _phase_track.get(addr)
+    if st is None or st.get("sub") != sub:
+        # 分相換了 → 重新起算。這是「已亮秒數」唯一的權威起點。
+        st = {"sub": sub, "phase_started_at": ts,
+              "step": step, "step_full": sec, "step_started_at": ts}
+        _phase_track[addr] = st
+        return
+    if st.get("step") != step:
+        st["step"] = step
+        st["step_full"] = sec
+        st["step_started_at"] = ts
+    elif isinstance(sec, int) and isinstance(st.get("step_full"), int):
+        # 同一步階內,剩餘值只會變小;若看到更大的值代表我們是中途才接上,
+        # 補正成較大的那個(它更接近真正的步階長度)。
+        if sec > st["step_full"]:
+            st["step_full"] = sec
 
 
 def _safety_watch(rec: dict) -> None:
@@ -1271,20 +1310,29 @@ async def status(_user=Depends(get_current_user)):
     for a, rec in sorted(by_addr.items()):
         r_age = (now - rec.get("ts", now)) if rec.get("ts") else None
         ph = rec.get("phase") or {}
-        # 🛑 StepSec 是「這一步的總長」,不是剩餘。控制器每次換步階才送一框,
-        #    所以要用「總長 − 資料齡」現算剩餘,否則畫面會凍在總長不倒數。
-        step_total = ph.get("step_sec")
+        # 🛑 StepSec 是「這一步還剩幾秒」,不是總長(2026-09-04 連續取樣實證:
+        #    同一步階內每秒遞減)。所以「現在的剩餘」= 收到時的剩餘 − 資料齡;
+        #    而這一步的完整長度要另外追蹤(進入該步階後看過的最大剩餘值)。
+        tr = _phase_track.get(a) or {}
+        step_remain_at_frame = ph.get("step_sec")
         remain = None
-        if isinstance(step_total, (int, float)) and r_age is not None:
-            remain = max(0, int(round(step_total - r_age)))
+        if isinstance(step_remain_at_frame, (int, float)) and r_age is not None:
+            remain = max(0, int(round(step_remain_at_frame - r_age)))
+        step_total = tr.get("step_full")
+        # 分相已亮秒數:由抄錄器逐框追蹤,精確到訊框(1 秒),
+        # 不是外部輪詢推算的近似值。
+        started = tr.get("phase_started_at")
+        phase_elapsed = round(now - started, 1) if started else None
         intersections.append({
             "addr": a,
             "addr_hex": f"0x{a:04X}",
             "name": _addr_name(a),
             "phase": rec.get("phase"),
             "age_sec": round(r_age, 2) if r_age is not None else None,
-            "step_total_sec": step_total,       # 這一步的總長
-            "remain_sec": remain,               # 現算的剩餘(倒數)
+            "step_total_sec": step_total,       # 這一步的完整長度(追蹤得來)
+            "step_remain_sec": remain,          # 現算的剩餘(倒數)
+            "remain_sec": remain,               # 舊欄位名,保留相容
+            "phase_elapsed_sec": phase_elapsed,  # 本分相已亮幾秒(逐框追蹤,精確)
             "stale": (r_age is None or r_age > SIGNAL_STALE_SEC),
             # 誰在控制(見 _control_mode 的判讀說明)
             "control_mode": _control_mode(_safety.get("strategy")),

@@ -130,3 +130,51 @@ def test_sustained_manual_still_alarms(monkeypatch):
     tc3._safety_watch({"code": "5FC0", "addr": 65535,
                        "ts": t + 60, "strategy": 0x01})
     assert [e for e in events if e[0] == "warn" and e[1] == "號誌:手動解除"]
+
+
+def test_step_sec_is_remaining_not_total():
+    """StepSec 是「這一步還剩幾秒」,不是總長 —— 步階長度要靠追蹤最大值。
+
+    🛑 2026-09-04 連續取樣實證:同一步階內 step_sec 每秒遞減
+       (26→24→21→…→19),換步階才跳回新值。舊註解寫成「總長」,
+       導致路口卡把倒數顯示成「17 / 17s」,分子分母同一個數。
+    """
+    from api.routes import signal_tc3 as tc3
+
+    tc3._phase_track.clear()
+    addr = 0xFFFF
+
+    def frame(sub, step, sec, ts):
+        return {"addr": addr, "ts": ts,
+                "phase": {"sub_phase_id": sub, "step_id": step, "step_sec": sec}}
+
+    tc3._track_phase(addr, frame(2, 1, 26, 1000.0))
+    for i, sec in enumerate((25, 24, 23), start=1):
+        tc3._track_phase(addr, frame(2, 1, sec, 1000.0 + i))
+    st = tc3._phase_track[addr]
+    assert st["step_full"] == 26          # 進入步階後看到的最大剩餘 = 步階長度
+    assert st["phase_started_at"] == 1000.0
+
+    # 換步階 → 重抓長度,但分相起點不動
+    tc3._track_phase(addr, frame(2, 2, 4, 1004.0))
+    st = tc3._phase_track[addr]
+    assert st["step_full"] == 4
+    assert st["phase_started_at"] == 1000.0
+
+    # 換分相 → 起點重設
+    tc3._track_phase(addr, frame(1, 1, 29, 1010.0))
+    assert tc3._phase_track[addr]["phase_started_at"] == 1010.0
+
+
+def test_track_phase_recovers_when_joining_mid_step():
+    """中途才接上時,後續看到更大的剩餘值要用來補正步階長度。"""
+    from api.routes import signal_tc3 as tc3
+
+    tc3._phase_track.clear()
+    addr = 1
+    f = lambda sub, step, sec, ts: {"addr": addr, "ts": ts,
+                                    "phase": {"sub_phase_id": sub, "step_id": step,
+                                              "step_sec": sec}}
+    tc3._track_phase(addr, f(1, 1, 10, 0.0))      # 中途接上,以為長度只有 10
+    tc3._track_phase(addr, f(1, 1, 12, 1.0))      # 實際更長
+    assert tc3._phase_track[addr]["step_full"] == 12
