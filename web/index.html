@@ -4984,12 +4984,7 @@
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='nport'}" @click="page='nport'"><svg class="nav-icon"><use href="#i-server"/></svg><span>MOXA NPort</span></div>
             <!-- 號誌控制群組:先前五個項目散在平的清單裡,看不出彼此是一組 -->
             <div v-if="isAdmin" class="menu-section-title">號誌控制</div>
-            <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal'}" @click="page='signal';loadSignal();startSignalTimer()"><svg class="nav-icon"><use href="#i-zap"/></svg><span>號誌燈態</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_hub'}" @click="page='signal_hub';openSigHub()"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>動態號誌控制</span></div>
-            <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_config'}" @click="page='signal_config';loadSigConfig()"><svg class="nav-icon"><use href="#i-list"/></svg><span>號誌設定</span></div>
-            <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_stats'}" @click="page='signal_stats';loadSigStats()"><svg class="nav-icon"><use href="#i-bar"/></svg><span>運作統計</span></div>
-            <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_device'}" @click="page='signal_device';loadSigDevice()"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>設備狀態</span></div>
-            <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_acceptance'}" @click="page='signal_acceptance';loadSigAcceptance()"><svg class="nav-icon"><use href="#i-check"/></svg><span>驗收清單</span></div>
             <div v-if="isAdmin" class="menu-section-title">系統</div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='push_settings'}" @click="page='push_settings';loadPushDevices()"><svg class="nav-icon"><use href="#i-alert"/></svg><span>告警通知</span></div>
             </div><!-- /sidebar-menu-area -->
@@ -6912,19 +6907,10 @@
                 <!-- ══ 驗收清單 ══
                      每一項都是打端點實際量出來的,不是宣稱。
                      量不到回 unknown,不當成通過 —— 缺資料和通過是兩件事。 -->
-                <div v-if="page==='signal_acceptance'">
-                    <div class="ds-page-hero">
-                        <div class="ds-page-hero-row">
-                            <div style="min-width:0;flex:1">
-                                <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use href="#i-check"/></svg></div>
-                                <h1 class="ds-section-title">號誌整合<b>驗收</b></h1>
-                                <p class="ds-page-hero-desc">每一項都由程式打端點<b>實際量測</b>，不是宣稱。量不到一律標「無法判定」，不當成通過。</p>
-                            </div>
-                            <div class="ds-page-hero-meta">
-                                <span v-if="sigAcc.ts">量測於 <b>{{ sigAcc.ts }}</b></span>
-                                <el-button size="small" plain @click="loadSigAcceptance"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>重新量測</el-button>
-                            </div>
-                        </div>
+                <div v-if="page==='signal_hub'" v-show="signalTab==='accept'">
+                    <div class="sig-tab-bar">
+                        <span class="sig-tab-title">驗收清單</span>
+                        <el-button size="small" plain @click="loadSigAcceptance"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>重新量測</el-button>
                     </div>
 
                     <div class="ds-kpi-grid">
@@ -6989,20 +6975,11 @@
                     </div>
                 </div>
 
-                <div v-if="page==='signal_device'">
-                    <div class="ds-page-hero">
-                        <div class="ds-page-hero-row">
-                            <div style="min-width:0;flex:1">
-                                <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use href="#i-cpu"/></svg></div>
-                                <h1 class="ds-section-title">設備<b>狀態</b></h1>
-                                <p class="ds-page-hero-desc">控制器主動回報的硬體狀態，逐位元解讀並分組。</p>
-                            </div>
-                            <div class="ds-page-hero-meta">
-                                <el-tag size="small" :type="sigDevFaults?'danger':'success'">{{ sigDevSummary }}</el-tag>
-                                <el-switch v-model="sigDevFaultsOnly" size="small" active-text="只看異常" inline-prompt></el-switch>
-                                <el-button size="small" plain @click="loadSigDevice"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
-                            </div>
-                        </div>
+                <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
+                    <div class="sig-tab-bar">
+                        <span class="sig-tab-title">設備狀態</span>
+                        <el-switch v-model="sigDevFaultsOnly" size="small" active-text="只看異常" inline-prompt></el-switch>
+                        <el-button size="small" plain @click="loadSigDevice"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
                     </div>
 
                     <div class="card">
@@ -7041,20 +7018,11 @@
                     </div>
                 </div>
 
-                <div v-if="page==='signal_config'">
-                    <div class="ds-page-hero">
-                        <div class="ds-page-hero-row">
-                            <div style="min-width:0;flex:1">
-                                <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use href="#i-list"/></svg></div>
-                                <h1 class="ds-section-title">號誌<b>設定</b></h1>
-                                <p class="ds-page-hero-desc">控制器各項設定的最新回報（<b>唯讀</b>）。時間是我方最後一次收到該回報的時刻，不是控制器的當下值。</p>
-                            </div>
-                            <div class="ds-page-hero-meta">
-                                <el-tag size="small" type="success">已收到 {{ sigCfgReceived }} / {{ sigCfgTotal }}</el-tag>
-                                <el-tag size="small" type="danger">不下發</el-tag>
-                                <el-button size="small" plain @click="loadSigConfig"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
-                            </div>
-                        </div>
+                <div v-if="page==='signal_hub'" v-show="signalTab==='config'">
+                    <div class="sig-tab-bar">
+                        <span class="sig-tab-title">號誌設定</span>
+                        <el-tag size="small" type="success">已收到 {{ sigCfgReceived }} / {{ sigCfgTotal }}</el-tag>
+                        <el-button size="small" plain @click="loadSigConfig"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
                     </div>
 
                     <div class="card">
@@ -7101,24 +7069,16 @@
                 <!-- ══ 運作統計 ══
                      從影子取樣重建每一次綠燈的實際長度再統計。所有指標查無樣本
                      一律留空,不以 0 代表統計值。 -->
-                <div v-if="page==='signal_stats'">
-                    <div class="ds-page-hero">
-                        <div class="ds-page-hero-row">
-                            <div style="min-width:0;flex:1">
-                                <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use href="#i-bar"/></svg></div>
-                                <h1 class="ds-section-title">運作<b>統計</b></h1>
-                                <p class="ds-page-hero-desc">綠燈長度、切換次數與出口滯留。由抄錄的燈態重建，<b>不是控制器直接給的統計值</b>。</p>
-                            </div>
-                            <div class="ds-page-hero-meta">
-                                <el-select v-model="sigStatMins" size="small" style="width:130px" @change="loadSigStats">
-                                    <el-option :value="60" label="最近 1 小時"></el-option>
-                                    <el-option :value="360" label="最近 6 小時"></el-option>
-                                    <el-option :value="1440" label="最近 24 小時"></el-option>
-                                    <el-option :value="-1" label="今日尖峰 06-12"></el-option>
-                                </el-select>
-                                <el-button size="small" plain @click="loadSigStats"><svg class="text-icon" style="margin-right:4px"><use href="#i-search"/></svg>查詢</el-button>
-                            </div>
-                        </div>
+                <div v-if="page==='signal_hub'" v-show="signalTab==='stats'">
+                    <div class="sig-tab-bar">
+                        <span class="sig-tab-title">運作統計</span>
+                        <el-select v-model="sigStatMins" size="small" style="width:130px" @change="loadSigStats">
+                            <el-option :value="60" label="最近 1 小時"></el-option>
+                            <el-option :value="360" label="最近 6 小時"></el-option>
+                            <el-option :value="1440" label="最近 24 小時"></el-option>
+                            <el-option :value="-1" label="今日尖峰 06-12"></el-option>
+                        </el-select>
+                        <el-button size="small" plain @click="loadSigStats"><svg class="text-icon" style="margin-right:4px"><use href="#i-search"/></svg>查詢</el-button>
                     </div>
 
                     <div class="card">
@@ -7440,7 +7400,7 @@
                     </div>
                 </div>
 
-                <div v-if="page==='signal'">
+                <div v-if="page==='signal_hub'" v-show="signalTab==='light'">
                     <div class="ds-page-hero">
                         <div class="ds-page-hero-row">
                             <div style="min-width:0;flex:1">
@@ -21718,13 +21678,24 @@ const app=createApp({
         // ── 動態號誌控制父頁(tab 切換)──────────────────────────────
         // 🛑 每個 tab 只在「第一次進入」時載入,之後靠各自既有的輪詢更新。
         //    否則每次切 tab 都會重打一輪 API,八個子頁切來切去會很吵。
-        const signalTab = ref('plan');
+        const signalTab = ref('light');
         const sigTabLoaded = reactive({});
+        // tab 順序 = 看現況 → 看為什麼 → 看設定 → 看歷史 → 看驗收
         const sigTabs = ref([
-            {key: 'plan', label: '決策盤', icon: 'i-cpu'},
+            {key: 'light',  label: '燈態',     icon: 'i-zap'},
+            {key: 'plan',   label: '決策盤',   icon: 'i-cpu'},
+            {key: 'config', label: '設定',     icon: 'i-list'},
+            {key: 'stats',  label: '運作統計', icon: 'i-bar'},
+            {key: 'device', label: '設備狀態', icon: 'i-cpu'},
+            {key: 'accept', label: '驗收',     icon: 'i-check'},
         ]);
         const sigTabLoaders = {
-            plan: () => { loadSigConsole(); startSigConsoleTimer(); },
+            light:  () => { loadSignal(); startSignalTimer(); },
+            plan:   () => { loadSigConsole(); startSigConsoleTimer(); },
+            config: () => loadSigConfig(),
+            stats:  () => loadSigStats(),
+            device: () => loadSigDevice(),
+            accept: () => loadSigAcceptance(),
         };
         const switchSigTab = (key) => {
             signalTab.value = key;
@@ -22094,7 +22065,10 @@ const app=createApp({
         const sigStartTick=()=>{
             if(sigTickTimer)return;
             sigTickTimer=setInterval(()=>{
-                if(page.value!=='signal'||!isPageVisible())return;
+                // 🛑 父子結構後 page 是 'signal_hub';留著舊名稱會讓倒數永遠不跳,
+                //    畫面看起來正常但秒數凍住。切到別的 tab 也不該繼續倒數。
+                if(page.value!=='signal_hub'||signalTab.value!=='light'
+                   ||!isPageVisible())return;
                 const m=sigRemain.value;
                 Object.keys(m).forEach(k=>{ if(m[k]>0)m[k]=m[k]-1; });
             },1000);
@@ -22396,7 +22370,8 @@ const app=createApp({
             // 號誌每 2 秒上傳一次,1 秒輪詢足夠,狀態 JSON 只有幾 KB
             let _sigTick=0;
             sigTimer=setInterval(()=>{
-                if(page.value!=='signal' || !isPageVisible())return;
+                if(page.value!=='signal_hub' || signalTab.value!=='light'
+                   || !isPageVisible())return;
                 loadSignal();
                 _sigTick++;
                 // 中央連線狀態 + 最近訊框每 3 秒刷新,讓中央通訊監看接近即時
