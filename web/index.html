@@ -3451,11 +3451,22 @@
         /* 燈態明細是橫排的小燈箱,行人燈與箭頭要跟著橫向排列 */
         .sd-signal .xn-ped { margin-top:0; margin-left:2px; }
         .sd-signal .xn-arrow { align-self:center; }
-        /* 🛑 行人圖示改用與全站一致的 stroke 線條式(其他圖示都是這樣畫的),
-           並在標籤上寫死 width/height —— 先前用 fill 實心 + 只靠 CSS 給尺寸,
-           使用者兩次回報「看不到行人燈」。v-if 有過、span 有渲染,
-           問題出在 SVG 本身沒畫出來,所以改成跟已知可用的圖示同一種畫法。 */
-        .xn-ped svg, .ped-icon { width:13px; height:13px; display:block; }
+        /* 🛑 行人小人改用純 CSS 畫,完全不依賴 SVG / sprite / <use>。
+           使用者三次回報「看不到行人燈」。已排除:v-if 有過(畫面顯示 0x44,
+           0x44&0x40 為真)、函式有匯出、CSS 有載入、symbol 在 <defs> 內、
+           沒有全域 svg{fill:none}。換過 fill 實心與 stroke 線條兩種畫法都沒出來,
+           表示問題在 <use> 這條參照鏈上,再猜下去只是浪費時間。
+           純 CSS 的 ::before(頭)+::after(身體)沒有任何外部相依,一定畫得出來。 */
+        .ped-fig { position:relative; display:block; width:9px; height:12px; }
+        .ped-fig::before { content:''; position:absolute; left:50%; top:0;
+                           width:4px; height:4px; margin-left:-2px;
+                           border-radius:50%; background:currentColor; }
+        .ped-fig::after { content:''; position:absolute; left:50%; top:5px;
+                          width:6px; height:7px; margin-left:-3px;
+                          background:currentColor;
+                          clip-path:polygon(50% 0,100% 25%,72% 45%,100% 100%,
+                                            62% 100%,50% 62%,38% 100%,0 100%,
+                                            28% 45%,0 25%); }
         .xn-ped.green { color:#22c55e; border-color:#22c55e;
                         box-shadow:0 0 8px 1px rgba(34,197,94,.75); }
         .xn-ped.red   { color:#f87171; border-color:#f87171;
@@ -7497,11 +7508,11 @@
                                             <span v-if="xnBit(L,0x20)" class="xn-arrow right" title="右轉綠"></span>
                                             <!-- 行人燈:行綠+行紅同亮=綠閃(號誌判讀慣例) -->
                                             <span v-if="xnPedFlash(L)" class="xn-ped flash" title="行人綠閃">
-                                                <svg class="ped-icon" width="13" height="13" viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                <i class="ped-fig"></i></span>
                                             <span v-else-if="xnBit(L,0x40)" class="xn-ped green" title="行人綠燈">
-                                                <svg class="ped-icon" width="13" height="13" viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                <i class="ped-fig"></i></span>
                                             <span v-else-if="xnBit(L,0x80)" class="xn-ped red" title="行人紅燈">
-                                                <svg class="ped-icon" width="13" height="13" viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                <i class="ped-fig"></i></span>
                                         </div>
                                         <div class="xn-center">
                                             <div class="xn-count" :key="'c'+xn.addr+'-'+xnRemainLive(xn)"
@@ -7550,11 +7561,11 @@
                                                 <span v-if="xnBit(L,0x10)" class="xn-arrow up" title="直行綠"></span>
                                                 <span v-if="xnBit(L,0x20)" class="xn-arrow right" title="右轉綠"></span>
                                                 <span v-if="xnPedFlash(L)" class="xn-ped flash" title="行人綠閃">
-                                                    <svg class="ped-icon" width="13" height="13" viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                    <i class="ped-fig"></i></span>
                                                 <span v-else-if="xnBit(L,0x40)" class="xn-ped green" title="行人綠燈">
-                                                    <svg class="ped-icon" width="13" height="13" viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                    <i class="ped-fig"></i></span>
                                                 <span v-else-if="xnBit(L,0x80)" class="xn-ped red" title="行人紅燈">
-                                                    <svg class="ped-icon" width="13" height="13" viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                    <i class="ped-fig"></i></span>
                                             </span>
                                             <span class="sig-text">{{ L.text }}</span>
                                         </div>
