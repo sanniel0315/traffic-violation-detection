@@ -14,14 +14,31 @@
 """
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Windows 主控台預設 cp950,init_db 印的 emoji 會 UnicodeEncodeError。
+# 其他測試也都有這一行,跟著慣例走。
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
 os.environ.setdefault("AUTH_SECRET", "test-only-secret-not-for-production-use-01234567")
 os.environ.setdefault("EXTERNAL_API_KEY", "unit-test-key-abcdef")
+# 🛑 用臨時 DB,不要碰 data/violations.db —— 這支測試會建表,
+#    在現場機上直接跑就等於對正式庫下 DDL。必須在 import api.models 之前設。
+_TMP_DB = os.path.join(tempfile.mkdtemp(prefix="apidocs_test_"), "t.db")
+os.environ["DATABASE_URL"] = "sqlite:///" + _TMP_DB.replace("\\", "/")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
 from api.main import app  # noqa: E402
+from api.models import init_db  # noqa: E402
+
+# 🛑 TestClient(app) 不走 lifespan,init_db() 不會被呼叫 → 查 api_keys 直接
+#    OperationalError: no such table。用 with TestClient(app) 會連帶把抄錄器、
+#    偵測執行緒等背景服務全起來,測試不需要也不該起,所以只補建表這一步。
+init_db()
 
 fails = []
 KEY = "unit-test-key-abcdef"

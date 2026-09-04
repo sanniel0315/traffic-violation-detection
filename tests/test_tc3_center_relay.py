@@ -32,7 +32,17 @@ def _connect_center(port: int, tries: int = 20):
 
 
 def test_center_relay_bidirectional_and_inject():
+    # 🛑 不能只靠 import 前設 env:整包 pytest 一起跑時,api.routes.signal_tc3
+    #    往往已經被前面的測試載過了,模組常數在那時就定死成預設的 0.0.0.0:1001,
+    #    這裡再設 env 也不會生效(單獨跑這一支才會過 —— 典型的測試隔離陷阱)。
+    #    直接覆寫模組常數,兩種跑法都成立。
     port = int(os.environ["SIGNAL_TC3_CENTER_LISTEN_PORT"])
+    S.CENTER_RELAY_ENABLED = True
+    S.CENTER_LISTEN_HOST = "127.0.0.1"
+    S.CENTER_LISTEN_PORT = port
+    # 中繼迴圈實際看的是 _conn["center_relay"](為了執行期能開關),
+    # 只改 CENTER_RELAY_ENABLED 常數的話迴圈會一直閒置、不 bind port。
+    S._conn["center_relay"] = True
     # 假控制器:socketpair,一端塞進 _sock_ref 當「控制器連線」,另一端我們檢查收到什麼
     ctrl_ours, ctrl_far = socket.socketpair()
     ctrl_far.settimeout(2)
