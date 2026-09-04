@@ -79,6 +79,13 @@ python scripts/lint_vue_template.py --all
 #       完全不執行 —— 連登入表單都動不了。但 div 平衡是對的(1654/1654)、
 #       模板檢查也全過,兩道既有關卡都看不見它。
 #       **加新函式前先 grep 名字有沒有人用過。**
+#   (d) watch 的暫時死區(TDZ) —— 2026-09-05 教訓
+#       🛑 watch(source) 會「立即求值」source 拿初始值。新加的
+#       watch(sigStrategyVal,...) 放在 setup 中段,而它讀的 sigSafety
+#       在兩百多行之後才 const 宣告 → ReferenceError → 整個 setup 中斷
+#       → 白畫面。computed 本身惰性沒事,是 watch 把它變成立即求值。
+#       div 平衡正常、node --check 也過,兩道舊關卡都看不見。
+#       **新增 watch 前先確認它(以及它讀的 computed)用到的 ref 都已宣告。**
 #
 # 🛑 要批次修自閉合「不要用 regex」——惰性量詞會跨過標籤邊界，
 #    把 <el-option/> 關成 </el-select>，整份模板會被改壞（已實際踩過）。
