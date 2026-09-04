@@ -1108,8 +1108,10 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
     storage2 = (phase_role(2) or {}).get("storage_m") or 600
     spill_m = storage2 * DEFAULT_SPILLBACK_RATIO_LOCAL
 
-    waste_n = waste_ours_switch = 0
+    waste_n = waste_ours_switch = 0        # 有代價的空放:綠側沒需求、紅側有人等
     waste_flow_known = 0
+    idle_both_n = 0                        # 兩側都沒需求 —— 這不算浪費
+    max_q2_observed = 0.0
     maxg_n = maxg_ours_switch = 0
     spill_n = spill_ours_keep = 0
     dt = SHADOW_INTERVAL_SEC
@@ -1119,18 +1121,23 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
             continue                      # 清道期間不算,那時本來就在換相
         gq = q1 if gp == 1 else q2
         gf = f1 if gp == 1 else f2
-        # ① 綠燈空放:綠燈側既沒有排隊也沒有流量
-        #    flow 是 2026-09-04 才開始記的,舊資料是 NULL —— 那時只能用
-        #    「排隊為 0」當較弱的代理,並把 flow 已知的筆數分開報,
-        #    不要讓兩種強度的證據混在同一個數字裡。
-        if (gq is not None) and float(gq) <= 0:
-            if gf is None:
-                waste_n += 1
-            elif float(gf) <= 0:
-                waste_n += 1
+        rq = q2 if gp == 1 else q1
+        if q2 is not None:
+            max_q2_observed = max(max_q2_observed, float(q2))
+        # ① 綠燈空放 —— 🛑 定義要加上「紅側有人在等」。
+        #    2026-09-04 第一版只看綠側沒車,結果 59.1% 的取樣都被算成空放,
+        #    但我方只有 3.1% 判定應換相 —— 因為那些時刻**兩側都沒車**(夜間
+        #    離峰)。兩邊都空的綠燈不是浪費,換相沒有任何好處,判 KEEP 是對的。
+        #    真正有代價的空放是「綠側沒需求、紅側有人等」,那才是我方該贏的地方。
+        green_idle = (gq is not None) and float(gq) <= 0 and (
+            gf is None or float(gf) <= 0)
+        red_waiting = (rq is not None) and float(rq) > 0
+        if green_idle and not red_waiting:
+            idle_both_n += 1
+        elif green_idle and red_waiting:
+            waste_n += 1
+            if gf is not None:
                 waste_flow_known += 1
-            else:
-                continue
             if ours == "SWITCH":
                 waste_ours_switch += 1
         # ② 最大綠撞頂:實際被迫換相
@@ -1158,7 +1165,10 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
             "ours_switch": waste_ours_switch,
             "ours_switch_pct": pct(waste_ours_switch, waste_n),
             "flow_known_samples": waste_flow_known,
-            "criteria": "綠燈側排隊為 0 且流量為 0(舊資料無流量時僅以排隊為 0 判定)",
+            "idle_both_sides": idle_both_n,
+            "idle_both_seconds": round(idle_both_n * dt, 1),
+            "criteria": "綠燈側無需求(排隊 0 且流量 0)**且紅燈側有人在等**"
+                        " —— 兩側都空不算浪費,換相沒有好處",
         },
         "max_green_hit": {
             "samples": maxg_n,
@@ -1172,6 +1182,10 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
             "threshold_m": round(spill_m, 1),
             "storage_m": storage2,
             "ours_protect": spill_ours_keep,
+            "max_observed_m": round(max_q2_observed, 1),
+            # 🛑 門檻可能超出量測範圍:ROI 看不到那麼長的隊伍,
+            #    這時「0 次回堵」只代表沒量到,不代表沒發生。
+            "threshold_reachable": max_q2_observed >= spill_m * 0.6,
             "criteria": f"下匝道排隊 ≥ 儲車上限 {storage2}m 的 "
                         f"{int(DEFAULT_SPILLBACK_RATIO_LOCAL*100)}% = {spill_m:.0f}m",
         },
