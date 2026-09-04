@@ -924,3 +924,116 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
             "avg": round(sum(q2) / len(q2) / MPV, 1),
             "max": round(max(q2) / MPV, 1)}
     return out
+
+@router.get("/simulate", summary="模擬驗證(先校準,校準過才給比較結果)")
+async def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
+                          since: str = Query(""), until: str = Query(""),
+                          _user=Depends(get_current_user)):
+    """用同一份到達流量餵兩套演算法,比較成效。
+
+    🛑 流程刻意是「先校準、再比較」,而且**校準沒過就不回傳比較結果**:
+       把現場實際的換相序列餵進模型,看模擬排隊能不能重現實際量到的排隊。
+       重現不了就代表模型無法在已知控制下描述現場,更不可能預測「換另一套
+       控制會怎樣」—— 這時候給比較數字只會製造假結論。
+    """
+    from detection.signal_sim import (
+        SimConfig, calibrate, estimate_arrivals, replay_actual, simulate,
+    )
+    from detection.signal_decision_engine import ApproachState, decide
+    from detection.signal_timing_lookup import (
+        current_base_plan, phase_role, plan_params,
+    )
+
+    if since:
+        since_iso = since
+        until_iso = until or datetime.now().isoformat(timespec="seconds")
+    else:
+        since_iso = datetime.fromtimestamp(
+            time.time() - int(minutes) * 60).isoformat(timespec="seconds")
+        until_iso = datetime.now().isoformat(timespec="seconds")
+    try:
+        conn = _db()
+        rows = conn.execute(
+            "SELECT ts,green_phase,queue_m_1,queue_m_2 FROM signal_shadow_log "
+            "WHERE ts>=? AND ts<=? AND control_mode='external_dynamic' "
+            "ORDER BY ts", (since_iso, until_iso)).fetchall()
+        conn.close()
+    except Exception as e:
+        return {"error": str(e)}
+    if len(rows) < 120:
+        return {"available": False, "since": since_iso, "until": until_iso,
+                "reason": f"樣本僅 {len(rows)} 筆,不足以校準(需 ≥120)"}
+
+    pp = plan_params(current_base_plan()) or {}
+    mins = pp.get("min_green") or [10, 20]
+    cfg = SimConfig(dt_sec=SHADOW_INTERVAL_SEC,
+                    min_green_sec={1: float(mins[0]), 2: float(mins[1])},
+                    max_green_sec=float(pp.get("max_green") or 210))
+
+    arrivals = estimate_arrivals(rows)
+    base = replay_actual(rows, arrivals, cfg)
+    cal = calibrate(rows, base)
+
+    result = {
+        "available": True, "since": since_iso, "until": until_iso,
+        "samples": len(rows),
+        "arrivals": arrivals,
+        "calibration": cal,
+        "baseline_sim": {k: v for k, v in base.items() if k != "trajectory"},
+    }
+    if not cal.get("usable"):
+        result["comparison"] = None
+        result["conclusion"] = ("校準未通過,不提供比較結果 —— "
+                                "模型無法在已知控制下重現現場排隊。")
+        return result
+
+    # 校準過了才跑我方演算法
+    roles = {p: (phase_role(p) or {}) for p in (1, 2)}
+    mpv = cfg.meters_per_vehicle
+
+    def ours(state):
+        g = state["green_phase"]
+        r = 2 if g == 1 else 1
+        qv = state["queue_veh"]
+        gs = ApproachState(g, queue_m=qv[g] * mpv,
+                           storage_m=roles[g].get("storage_m"),
+                           priority=bool(roles[g].get("priority")))
+        rs = ApproachState(r, queue_m=qv[r] * mpv,
+                           storage_m=roles[r].get("storage_m"),
+                           priority=bool(roles[r].get("priority")),
+                           waiting_sec=state["green_elapsed"])
+        d = decide(green_phase=g, green_elapsed_sec=state["green_elapsed"],
+                   green_side=gs, red_side=rs,
+                   min_green_sec=cfg.min_green_sec.get(g, 10.0),
+                   max_green_sec=cfg.max_green_sec)
+        return d.action == "SWITCH"
+
+    mine = simulate(arrivals, ours, base["duration_sec"], cfg,
+                    start_phase=rows[0][1] or 1)
+    keys = ("total_delay_veh_sec", "avg_queue_m_1", "avg_queue_m_2",
+            "max_queue_m_1", "max_queue_m_2", "switch_per_min")
+    delta = {}
+    for k in keys:
+        a, b = mine.get(k), base.get(k)
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            delta[k] = {"ours": a, "actual": b, "diff": round(a - b, 2),
+                        "pct": round((a - b) / b * 100, 1) if b else None}
+    d0 = delta.get("total_delay_veh_sec") or {}
+    pct = d0.get("pct")
+    result["comparison"] = {
+        "ours_sim": {k: v for k, v in mine.items() if k != "trajectory"},
+        "delta": delta,
+    }
+    if pct is None:
+        result["conclusion"] = "無法計算延滯差異"
+    elif pct < -5:
+        result["conclusion"] = f"模擬中我方總延滯較低 {abs(pct):.1f}%"
+    elif pct > 5:
+        result["conclusion"] = f"模擬中我方總延滯較高 {pct:.1f}%"
+    else:
+        result["conclusion"] = f"模擬中兩者差異在 5% 以內({pct:+.1f}%),視為無顯著差異"
+    result["caveat"] = ("這是模擬結論,不是現場實績。模型已通過校準"
+                        "(能在已知控制下重現現場排隊),但仍是確定性排隊模型,"
+                        "沒有納入車輛異質性、上游號誌連鎖與駕駛行為。"
+                        "要主張現場實績仍須做 A/B 交替時段。")
+    return result
