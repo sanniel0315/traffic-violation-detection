@@ -6852,12 +6852,12 @@
                             <el-tag size="small" :type="sigDevGroupBad(g)?'danger':'success'">{{ sigDevGroupBad(g)?(sigDevGroupBad(g)+' 項異常'):'正常' }}</el-tag>
                         </div>
                         <div class="card-body">
-                            <div v-for="it in sigDevItems(g)" :key="it.key" class="sc-gate" :class="{hit:it.abnormal}">
+                            <div v-for="it in sigDevItems(g)" :key="it.key" class="sc-gate" :class="{hit:it.abnormal===true}">
                                 <span class="sc-gate-no">{{ it.bit }}</span>
                                 <b>{{ it.label }}</b>
-                                <span class="sc-sub">{{ it.polarity==='error'?'Error 旗標(1=故障)':'狀態旗標(0=需注意)' }} · 現值 {{ it.raw }}</span>
-                                <el-tag size="small" :type="it.abnormal?'danger':'success'">{{ it.abnormal?'異常':'正常' }}</el-tag>
-                                <el-tag size="small" :type="it.verified?'info':'warning'">{{ it.verified?'已實證':'待證' }}</el-tag>
+                                <span class="sc-sub">{{ sigDevPolarity(it) }} · 現值 {{ it.raw }}</span>
+                                <el-tag size="small" :type="sigDevStateType(it)">{{ sigDevStateText(it) }}</el-tag>
+                                <el-tag size="small" :type="it.verified?'info':'warning'">{{ it.verified?'極性已實證':'極性待確認' }}</el-tag>
                             </div>
                             <p v-if="!sigDevItems(g).length" style="font-size:13px;color:#64748b;margin:0">此分組沒有異常項目。</p>
                         </div>
@@ -21506,13 +21506,28 @@ const app=createApp({
         const sigDevFaults=computed(()=>(sigDev.value&&sigDev.value.fault_count)||0);
         const sigDevSummary=computed(()=>{
             if(!sigDev.value||!sigDev.value.available) return '尚未收到';
-            return sigDevFaults.value?(sigDevFaults.value+' 項異常'):'全部正常';
+            const p=(sigDev.value.pending_count||0);
+            const base=sigDevFaults.value?(sigDevFaults.value+' 項異常')
+                                         :'已實證項目全部正常';
+            return p?(base+' · '+p+' 項極性待確認'):base;
         });
-        const sigDevGroupBad=(g)=>((g&&g.items)||[]).filter(x=>x.abnormal).length;
+        const sigDevGroupBad=(g)=>((g&&g.items)||[]).filter(x=>x.abnormal===true).length;
+        // 🛑 極性沒實證過的位元不判定正常/異常,只顯示位元值。
+        //    照抄來的表硬判會產生假警報(實測 bit8 會顯示「通訊連線 異常」,
+        //    但那一刻通訊明明是通的)。
+        const sigDevStateType=(it)=>(it.abnormal===null||it.abnormal===undefined)
+            ? 'info' : (it.abnormal?'danger':'success');
+        const sigDevStateText=(it)=>(it.abnormal===null||it.abnormal===undefined)
+            ? ('位元 '+it.raw) : (it.abnormal?'異常':'正常');
+        const sigDevPolarity=(it)=>{
+            if(it.polarity==='error') return 'Error 旗標(1=故障)';
+            if(it.polarity==='flag')  return '狀態旗標(0=需注意)';
+            return '極性未實證,不做判定';
+        };
         // 「只看異常」是過濾顯示,不是改變判定 —— 正常項還在,只是收起來
         const sigDevItems=(g)=>{
             const items=(g&&g.items)||[];
-            return sigDevFaultsOnly.value?items.filter(x=>x.abnormal):items;
+            return sigDevFaultsOnly.value?items.filter(x=>x.abnormal===true):items;
         };
         const loadSigDevice=async()=>{
             try{
@@ -22724,7 +22739,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStats,sigStatMins,sigStatOk,sigStatNum,sigStatForcedPct,sigStatExit,sigStatBarH,loadSigStats,sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStats,sigStatMins,sigStatOk,sigStatNum,sigStatForcedPct,sigStatExit,sigStatBarH,loadSigStats,sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }

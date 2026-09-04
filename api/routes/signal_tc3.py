@@ -1489,18 +1489,28 @@ async def device_status(_user=Depends(get_current_user)):
 
     grouped: dict = {}
     faults = 0
+    pending = 0
     for bit, key, label, group, is_error in HW_BITS:
         on = bool(v & (1 << bit))
-        # is_error=True → 1 代表故障;False → 是狀態旗標,0 才要注意
-        abnormal = on if is_error else (not on)
-        if abnormal:
-            faults += 1
+        verified = bit in HW_VERIFIED_BITS
+        # 🛑 沒實證過極性的位元「不做正常/異常判定」,只如實顯示位元值。
+        #    2026-09-04 實測:bit8 若照抄來的表判,會顯示「通訊連線 異常」——
+        #    但那一刻我方正在持續收訊框,通訊明明是通的。拿沒驗證過的極性
+        #    去判狀態,產生的是假警報,比沒有這個欄位更糟。
+        #    對方系統自己也標了 polarityPending「語意待確認」。
+        if verified:
+            abnormal = on if is_error else (not on)
+            if abnormal:
+                faults += 1
+        else:
+            abnormal = None
+            pending += 1
         grouped.setdefault(group, []).append({
             "bit": bit, "key": key, "label": label,
             "raw": 1 if on else 0,
-            "abnormal": abnormal,
-            "polarity": "error" if is_error else "flag",
-            "verified": bit in HW_VERIFIED_BITS,
+            "abnormal": abnormal,          # None = 極性未實證,不判定
+            "polarity": ("error" if is_error else "flag") if verified else "pending",
+            "verified": verified,
         })
     return {
         "available": True,
@@ -1508,11 +1518,13 @@ async def device_status(_user=Depends(get_current_user)):
         "value": v, "value_hex": f"0x{v:04X}",
         "value_bin": format(v, "016b"),
         "sent_to_center": hw.get("sent"), "sent_hex": hw.get("sent_hex"),
-        "fault_count": faults,
+        "fault_count": faults,              # 只計入極性已實證的位元
+        "pending_count": pending,           # 極性待確認、不做判定的位元數
         "groups": [{"key": g, "title": HW_GROUPS[g], "items": grouped.get(g, [])}
                    for g in HW_GROUPS if grouped.get(g)],
-        "note": "只有 bit14(控制器就緒)經我方現場實證;其餘位元名稱抄自 /sig 前端字串,"
-                "未經驗證,已逐項標示。極性:Error 類 1=故障,Flag 類 0=需注意。",
+        "note": "只有 bit14(控制器就緒)經我方現場實證,fault_count 只計入它。"
+                "其餘位元的名稱抄自對方前端字串、極性未經實證,一律只顯示位元值"
+                "不做正常/異常判定 —— 拿沒驗證過的極性去判狀態會產生假警報。",
     }
 
 @router.get("/coverage", summary="TC3 命令覆蓋矩陣(規範 105 條 vs 實際抄到)")
