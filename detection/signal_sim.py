@@ -45,6 +45,8 @@ class SimConfig:
     lost_time_sec: float = DEFAULT_LOST_TIME_SEC
     min_green_sec: dict = field(default_factory=lambda: {1: 10.0, 2: 20.0})
     max_green_sec: float = 210.0
+    # 各相現場量到的飽和流(輛/秒)。None = 用 saturation_vph 的假設值。
+    saturation_by_phase: Optional[dict] = None
 
 
 def estimate_arrivals(rows: list, mpv: float = DEFAULT_METERS_PER_VEHICLE) -> dict:
@@ -104,6 +106,56 @@ def estimate_arrivals(rows: list, mpv: float = DEFAULT_METERS_PER_VEHICLE) -> di
                    "red_sec": round(total_red, 1),
                    "growth_veh": round(total_growth, 2),
                    "p25": lo, "p75": hi}
+    return out
+
+
+def estimate_saturation(rows: list, arrivals: dict,
+                        mpv: float = DEFAULT_METERS_PER_VEHICLE) -> dict:
+    """從綠燈期間的排隊消退量測飽和流(輛/秒)。
+
+    🛑 飽和流是**物理量,本來就該現場量**,不是拿教科書的 1800 vph 套上去。
+       2026-09-04 實測:分相2 綠燈 60 秒內排隊從 20.7m 降到 4.7m
+       = 0.038 輛/秒,而假設值是 0.5 輛/秒 —— 差 13 倍。用假設值的模型
+       6 秒就把隊伍清空,之後整段綠燈都是 0,真實量測卻還留著幾公尺,
+       校準自然過不了(分相2 模擬平均 8.4m vs 實際 17.9m)。
+
+    綠燈期間量到的變化 = 到達 − 離開,所以
+        飽和流 = 到達率 + (排隊消退速率)
+    到達率用 estimate_arrivals 的結果(那是從紅燈期間量的,乾淨)。
+    """
+    out: dict = {}
+    for ph in PHASES:
+        idx = 2 if ph == 1 else 3
+        total_drop = 0.0
+        total_green = 0.0
+        run = None
+        for r in rows:
+            q = r[idx]
+            if q is None:
+                continue
+            t = datetime.fromisoformat(r[0]).timestamp()
+            if r[1] == ph:                      # 這一相是綠燈
+                if run is None:
+                    run = [t, q, t, q]
+                else:
+                    run[2], run[3] = t, q
+            else:
+                if run and (run[2] - run[0]) >= 15:
+                    dt = run[2] - run[0]
+                    drop = (run[1] - run[3]) / mpv     # 正值 = 有消退
+                    total_green += dt
+                    if drop > 0:
+                        total_drop += drop
+                run = None
+        arr = (arrivals.get(ph) or {}).get("veh_per_sec") or 0.0
+        if total_green > 0:
+            sat = arr + total_drop / total_green
+        else:
+            sat = None
+        out[ph] = {"veh_per_sec": sat,
+                   "green_sec": round(total_green, 1),
+                   "drop_veh": round(total_drop, 2),
+                   "vph": round(sat * 3600, 0) if sat else None}
     return out
 
 
@@ -173,7 +225,9 @@ def simulate(arrivals, switch_fn: Callable, duration_sec: float,
     回傳逐步的軌跡與成效指標。
     """
     cfg = cfg or SimConfig()
-    sat = cfg.saturation_vph / 3600.0
+    # 每相各自的飽和流(現場量的);沒給就退回設定值
+    sat_by_phase = {p: (cfg.saturation_by_phase or {}).get(p)
+                    or cfg.saturation_vph / 3600.0 for p in PHASES}
     q = dict(init_queue_veh or {p: 0.0 for p in PHASES})
     green = start_phase
     green_elapsed = 0.0
@@ -198,7 +252,7 @@ def simulate(arrivals, switch_fn: Callable, duration_sec: float,
         eff = max(0.0, dt - lost_remaining)
         lost_remaining = max(0.0, lost_remaining - dt)
         if eff > 0:
-            q[green] = max(0.0, q[green] - sat * eff)
+            q[green] = max(0.0, q[green] - sat_by_phase[green] * eff)
         # ③ 延滯 = 這段時間內排隊的車 × 時間
         total_delay += (q[1] + q[2]) * dt
         t += dt

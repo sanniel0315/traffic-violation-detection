@@ -938,7 +938,7 @@ async def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
     """
     from detection.signal_sim import (
         SimConfig, arrival_profile, calibrate, estimate_arrivals,
-        profile_rate_fn, replay_actual, simulate,
+        estimate_saturation, profile_rate_fn, replay_actual, simulate,
     )
     from detection.signal_decision_engine import ApproachState, decide
     from detection.signal_timing_lookup import (
@@ -974,6 +974,9 @@ async def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
     # 🛑 用時變到達率,不用單一中位數。首次校準用固定率時相關係數只有
     #    -0.006 / -0.04(完全沒跟上動態)—— 固定率撐不起數小時的模擬。
     overall = estimate_arrivals(rows)
+    # 飽和流現場量,不用教科書的 1800 vph —— 那是物理量,假設值差 13 倍
+    sat = estimate_saturation(rows, overall)
+    cfg.saturation_by_phase = {p: (sat[p]["veh_per_sec"] or None) for p in (1, 2)}
     profile = arrival_profile(rows)
     rate_fn = profile_rate_fn(profile)
     base = replay_actual(rows, rate_fn, cfg)
@@ -983,6 +986,7 @@ async def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
         "available": True, "since": since_iso, "until": until_iso,
         "samples": len(rows),
         "arrivals_overall": overall,
+        "saturation_measured": sat,
         "arrival_windows": len(profile.get("windows") or []),
         "arrival_window_sec": profile.get("window_sec"),
         "calibration": cal,
