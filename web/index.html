@@ -3448,6 +3448,9 @@
                   border-radius:4px; background:#0b1220; border:1px solid #334155; margin-top:2px;
                   animation:xnLampIn .35s cubic-bezier(.34,1.56,.64,1); }
         .xn-signal.horiz .xn-ped { margin-top:0; margin-left:2px; }
+        /* 燈態明細是橫排的小燈箱,行人燈與箭頭要跟著橫向排列 */
+        .sd-signal .xn-ped { margin-top:0; margin-left:2px; }
+        .sd-signal .xn-arrow { align-self:center; }
         .xn-ped svg { width:13px; height:13px; }
         .xn-ped.green { color:#22c55e; border-color:#22c55e;
                         box-shadow:0 0 8px 1px rgba(34,197,94,.75); }
@@ -7538,6 +7541,19 @@
                                                 <span class="xn-dot" :class="{red:sigLampClass(L)==='red'}"></span>
                                                 <span class="xn-dot" :class="{amber:sigLampClass(L)==='amber'}"></span>
                                                 <span class="xn-dot" :class="{green:sigLampClass(L)==='green'}"></span>
+                                                <!-- 🛑 燈態明細與路口燈桿要顯示同樣的資訊。
+                                                     先前只在燈桿(.xn-signal)加了轉向與行人燈,
+                                                     這裡的 .sd-signal 沒加 —— 同一筆 0x44 在燈桿
+                                                     看得到行人綠、在明細卻只有三顆燈,兩邊對不起來。 -->
+                                                <span v-if="xnBit(L,0x08)" class="xn-arrow left" title="左轉綠"></span>
+                                                <span v-if="xnBit(L,0x10)" class="xn-arrow up" title="直行綠"></span>
+                                                <span v-if="xnBit(L,0x20)" class="xn-arrow right" title="右轉綠"></span>
+                                                <span v-if="xnPedFlash(L)" class="xn-ped flash" title="行人綠閃">
+                                                    <svg viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                <span v-else-if="xnBit(L,0x40)" class="xn-ped green" title="行人綠燈">
+                                                    <svg viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                <span v-else-if="xnBit(L,0x80)" class="xn-ped red" title="行人紅燈">
+                                                    <svg viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
                                             </span>
                                             <span class="sig-text">{{ L.text }}</span>
                                         </div>
