@@ -18,13 +18,14 @@ App 端只負責 register/unregister(帶 token),細節規則在網頁設定。
 """
 import asyncio
 import json
+from sqlalchemy import func
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import requests
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from api.routes.auth import get_current_user
@@ -229,37 +230,113 @@ def _send_expo(tokens: List[str], title: str, body: str, data: Optional[dict] = 
 
 
 def _record_event(title: str, body: str, data: Optional[dict], category: str) -> None:
-    """把即時告警事件寫進 push_events.json(環形,最多 _EVENTS_MAX 筆),給 App 告警面板查歷史"""
+    """把告警事件寫進 alert_events 表,給 App 的告警列表查歷史與篩選。
+
+    2026-09 之前是寫 push_events.json(環形 200 筆),存不下真實流量也不能篩選,
+    已改存資料庫。寫入失敗一律吞掉 —— 記錄失敗不該讓推播或偵測流程中斷。
+    """
     try:
+        from api.models import SessionLocal, AlertEvent
+        d = data or {}
+        cam = d.get("camera_id")
+        vid = d.get("violation_id")
+        db = SessionLocal()
         try:
-            events = json.loads(_EVENTS_FILE.read_text(encoding="utf-8"))
-            if not isinstance(events, list):
-                events = []
-        except Exception:
-            events = []
-        events.append({
-            "id": int(time.time() * 1000),
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "title": title,
-            "body": body,
-            "data": data or {},
-            "category": category,
-        })
-        _EVENTS_FILE.write_text(json.dumps(events[-_EVENTS_MAX:], ensure_ascii=False), encoding="utf-8")
+            db.add(AlertEvent(
+                category=category or "other",
+                title=title,
+                body=body,
+                camera_id=int(cam) if isinstance(cam, int) else None,
+                violation_id=int(vid) if isinstance(vid, int) else None,
+                data=d,
+            ))
+            db.commit()
+        finally:
+            db.close()
     except Exception:
         pass
 
 
 @router.get("/events")
-def events(limit: int = 40) -> dict:
-    """最近的即時告警事件(球機追蹤等),新到舊;App 告警面板用"""
+def events(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    category: Optional[str] = None,      # 逗號分隔可多選
+    camera_id: Optional[int] = None,
+    q: Optional[str] = None,             # 關鍵字比對標題與內容
+    start: Optional[str] = None,         # ISO,台北時間
+    end: Optional[str] = None,
+) -> dict:
+    """告警事件查詢(新到舊)。App 告警列表用,支援分類/相機/關鍵字/日期篩選與分頁。"""
+    from sqlalchemy import or_, desc as _desc
+    from api.models import SessionLocal, AlertEvent
+
+    def _to_utc(v):
+        """台北時間字串 → UTC datetime(資料庫存 UTC)"""
+        if not v:
+            return None
+        txt = str(v).strip().replace("T", " ")[:19]
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(txt, fmt) - timedelta(hours=8)
+            except ValueError:
+                continue
+        return None
+
+    db = SessionLocal()
     try:
-        evs = json.loads(_EVENTS_FILE.read_text(encoding="utf-8"))
-        if not isinstance(evs, list):
-            evs = []
-    except Exception:
-        evs = []
-    return {"events": list(reversed(evs))[:max(1, min(limit, _EVENTS_MAX))]}
+        query = db.query(AlertEvent)
+        if category:
+            cats = [c.strip() for c in category.split(",") if c.strip()]
+            if cats:
+                query = query.filter(AlertEvent.category.in_(cats))
+        if camera_id is not None:
+            query = query.filter(AlertEvent.camera_id == int(camera_id))
+        if q:
+            like = f"%{str(q).strip()}%"
+            query = query.filter(or_(AlertEvent.title.ilike(like), AlertEvent.body.ilike(like)))
+        sdt = _to_utc(start)
+        edt = _to_utc(end)
+        if sdt is not None:
+            query = query.filter(AlertEvent.created_at >= sdt)
+        if edt is not None:
+            query = query.filter(AlertEvent.created_at <= edt)
+
+        total = query.count()
+        rows = query.order_by(_desc(AlertEvent.created_at), _desc(AlertEvent.id)).offset(offset).limit(limit).all()
+
+        def _out(r):
+            # 存 UTC,回傳台北時間(App 直接顯示,不用再換算)
+            local = (r.created_at + timedelta(hours=8)) if r.created_at else None
+            return {
+                "id": r.id,
+                "time": local.strftime("%Y-%m-%d %H:%M:%S") if local else "",
+                "time_iso": local.isoformat() if local else "",
+                "title": r.title or "",
+                "body": r.body or "",
+                "category": r.category or "other",
+                "camera_id": r.camera_id,
+                "violation_id": r.violation_id,
+                "data": r.data or {},
+            }
+
+        return {"total": total, "limit": limit, "offset": offset, "events": [_out(r) for r in rows]}
+    finally:
+        db.close()
+
+
+@router.get("/events/categories")
+def event_categories() -> dict:
+    """分類清單與各自筆數,給 App 畫篩選籤用(數量為 0 的也回,讓籤位固定)"""
+    from api.models import SessionLocal, AlertEvent
+    db = SessionLocal()
+    try:
+        counts = dict(
+            db.query(AlertEvent.category, func.count(AlertEvent.id)).group_by(AlertEvent.category).all()
+        )
+    finally:
+        db.close()
+    return {"categories": [{"key": k, "label": v, "count": int(counts.get(k, 0))} for k, v in CATEGORIES.items()]}
 
 
 def push_alert(title: str, body: str, data: Optional[dict] = None, category: str = "tracking") -> None:
