@@ -1092,7 +1092,7 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
         conn = _db()
         rows = conn.execute(
             "SELECT ts,green_phase,green_elapsed,queue_m_1,queue_m_2,"
-            "flow_vpm_1,flow_vpm_2,ours,actual,forced,clearance "
+            "flow_vpm_1,flow_vpm_2,ours,actual,forced,clearance,reason "
             "FROM signal_shadow_log WHERE ts>=? AND ts<=? "
             "AND control_mode='external_dynamic' ORDER BY ts",
             (since_iso, until_iso)).fetchall()
@@ -1116,7 +1116,9 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
     spill_n = spill_ours_keep = 0
     dt = SHADOW_INTERVAL_SEC
 
-    for (ts, gp, el, q1, q2, f1, f2, ours, actual, forced, clr) in rows:
+    keep_min_green = keep_not_worth = keep_other = 0
+    mins_cfg = pp.get("min_green") or [10, 20]
+    for (ts, gp, el, q1, q2, f1, f2, ours, actual, forced, clr, reason) in rows:
         if clr:
             continue                      # 清道期間不算,那時本來就在換相
         gq = q1 if gp == 1 else q2
@@ -1140,6 +1142,17 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
                 waste_flow_known += 1
             if ours == "SWITCH":
                 waste_ours_switch += 1
+            else:
+                # 我方也判 KEEP 的原因要拆開 —— 「未滿最小綠」是安全約束
+                # (我方遵守規則,不是判斷失準),「成本比較不值得切」才是
+                # 演算法的實質選擇,兩者混在一起看不出問題出在哪。
+                mg = float(mins_cfg[gp - 1]) if len(mins_cfg) >= gp else 10.0
+                if float(el or 0) < mg:
+                    keep_min_green += 1
+                elif "≤" in (reason or ""):
+                    keep_not_worth += 1
+                else:
+                    keep_other += 1
         # ② 最大綠撞頂:實際被迫換相
         if forced:
             maxg_n += 1
@@ -1165,6 +1178,9 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
             "ours_switch": waste_ours_switch,
             "ours_switch_pct": pct(waste_ours_switch, waste_n),
             "flow_known_samples": waste_flow_known,
+            "ours_keep_min_green": keep_min_green,
+            "ours_keep_not_worth": keep_not_worth,
+            "ours_keep_other": keep_other,
             "idle_both_sides": idle_both_n,
             "idle_both_seconds": round(idle_both_n * dt, 1),
             "criteria": "綠燈側無需求(排隊 0 且流量 0)**且紅燈側有人在等**"
