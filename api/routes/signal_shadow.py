@@ -274,15 +274,19 @@ def _loop():
                  #    這是取樣時序造成的假不一致,不是真的決策分歧。
                  #    (實測:18 筆裡 2 筆不一致全都是 green_elapsed=0 那筆)
                  # 🛑 三種樣本不列入一致率(agree=NULL),因為前提根本不成立:
-                 #  (a) 切換剛發生那一筆:偵測到分相變了才記 actual=SWITCH,
-                 #      但那一刻 green_elapsed 已重設為 0,我方因 min-green
-                 #      未滿必然回 KEEP —— 取樣時序造成的假不一致。
+                 #  (a) 偵測到換相的那一筆:actual=SWITCH 代表「分相已經變了」,
+                 #      那是**已經發生的過去事件**;我方引擎在這一刻評估的是
+                 #      「新分相要不要再切」,兩者問的不是同一件事,無從比對。
+                 #      🛑 舊條件寫 green_elapsed < 1.0 —— 那是自己推算秒數時
+                 #      「切換瞬間必為 0」的權宜寫法。2026-09-04 改用抄錄器的
+                 #      精確已亮秒數後,同一筆變成 1.8 秒,條件失效,每一次換相
+                 #      都被算成岐異(6 小時約 530 次)。改成只看 actual。
                  #  (b) 清道期間(黃燈/全紅):控制器已經committed要換相,
                  #      這時候問「該不該切」沒有意義。
                  #  (c) 不是外部動態控制:定時/手動時 actual 不是 OPAC 的決策,
                  #      拿我方演算法去比一個根本沒在做決策的控制器毫無意義。
                  (None if (
-                     (actual == "SWITCH" and green_elapsed < 1.0)
+                     actual == "SWITCH"
                      or live.get("clearance")
                      or live.get("control_mode") != "external_dynamic"
                  ) else (1 if d.action == actual else 0)),
