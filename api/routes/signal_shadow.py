@@ -44,6 +44,30 @@ from detection.signal_decision_engine import (  # noqa: E402
 SHADOW_ENABLED = os.getenv("SIGNAL_SHADOW_ENABLED", "0") != "0"
 # 分相 → 提供該分相排隊量測的相機 id（對照 ramp_timing_baseline.json 的
 # phases[].constraint_camera：分相1=ID3、分相2=ID4）
+# 每個分相對應的**所有**相機(不是只有一台)。
+# 🛑 2026-09-05 抓到的缺口:現場四台 NE-1(2)/NE-2(3)/WN-1(4)/WN-2(5),
+#    但先前只用 constraint_camera 各取一台 —— 分相1 只看 NE-2、分相2 只看
+#    WN-1,另外兩台的排隊完全沒有進到決策。決策用的 queue_m 因此系統性低估
+#    (少看一半的進場),而 switch_gain 直接由排隊車數算出來。
+#    基準表 phases[1].cameras 也漏登記 NE-1,一併補上。
+def _phase_cams(env_key: str, default: str) -> list:
+    raw = os.getenv(env_key, default) or default
+    out = []
+    for part in str(raw).split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.append(int(part))
+    return out or [int(default.split(",")[0])]
+
+
+PHASE_CAMERAS = {
+    1: _phase_cams("SIGNAL_SHADOW_CAMS_PHASE1", "2,3"),   # NE-1, NE-2 上匝道
+    2: _phase_cams("SIGNAL_SHADOW_CAMS_PHASE2", "4,5"),   # WN-1, WN-2 下匝道
+}
+# 🛑 PHASE_CAMERA 維持原意 = 官方時制表的 constraint_camera(該相的「基準測點」),
+#    不可以改成「清單第一台」—— 那是語意漂移,會讓依賴它的地方悄悄換了意思。
+#    (加聚合時差點就這樣改掉,既有測試 test_phase_camera_mapping_matches_baseline
+#     擋下來了。)聚合請用 PHASE_CAMERAS。
 PHASE_CAMERA = {
     1: int(os.getenv("SIGNAL_SHADOW_CAM_PHASE1", "3") or 3),
     2: int(os.getenv("SIGNAL_SHADOW_CAM_PHASE2", "4") or 4),
@@ -186,6 +210,42 @@ def _sat_for(phase: int) -> float:
     return float(_measured_sat["vph"].get(phase) or DEFAULT_SATURATION_VPH)
 
 
+def _phase_measure(phase: int) -> dict:
+    """把一個分相底下所有相機的量測聚合成一組。
+
+    🛑 兩種聚合方式各有各的用途,不能混用同一個數字:
+       queue_m  取**最大** —— 它拿去跟儲車上限比算回堵比例,
+                「最長的那條隊伍多長」才是回堵風險,加總會虛胖成假回堵。
+       車數/流量 取**總和** —— switch_gain 用的是「紅側有幾台車在等」,
+                兩個車道各三台就是六台的需求,取最大會少算一半。
+    先前只取一台相機時這個區別不存在,聚合之後就必須講清楚。
+    """
+    from api.routes.congestion import congestion_results
+    qmax = None
+    veh = 0.0
+    flow = 0.0
+    seen = 0
+    for cam in PHASE_CAMERAS.get(phase, []):
+        r = congestion_results.get(cam) or {}
+        if not r:
+            continue
+        seen += 1
+        q = r.get("estimated_queue_length_m")
+        if q is not None:
+            qv = float(q)
+            qmax = qv if qmax is None else max(qmax, qv)
+        f = r.get("flow_vpm")
+        if f is not None:
+            flow += float(f)
+        n = r.get("stopped_vehicle_count")
+        if n is None:
+            n = r.get("vehicle_count")
+        if n is not None:
+            veh += float(n)
+    return {"queue_m": qmax, "flow_vpm": (flow if seen else None),
+            "vehicles": veh, "cameras": seen}
+
+
 def _queue_m(camera_id: int) -> Optional[float]:
     """取該相機當下的排隊公尺（我方壅塞偵測的量測值）。"""
     try:
@@ -293,10 +353,10 @@ def _loop():
             _live_green["since"] = green_since
             _live_green["phase"] = cur_phase
 
-            q1 = _queue_m(PHASE_CAMERA.get(1, 3))
-            q2 = _queue_m(PHASE_CAMERA.get(2, 4))
-            f1 = _flow_vpm(PHASE_CAMERA.get(1, 3))
-            f2 = _flow_vpm(PHASE_CAMERA.get(2, 4))
+            m1 = _phase_measure(1)
+            m2 = _phase_measure(2)
+            q1, q2 = m1["queue_m"], m2["queue_m"]
+            f1, f2 = m1["flow_vpm"], m2["flow_vpm"]
             # 綠燈側 = 當下分相；紅燈側 = 另一相
             g_no, r_no = (cur_phase, 2 if cur_phase == 1 else 1)
             q_map = {1: q1, 2: q2}
@@ -720,8 +780,9 @@ async def shadow_plan(_user=Depends(get_current_user)):
         except Exception:
             pass
 
-    q = {1: _queue_m(PHASE_CAMERA.get(1, 3)), 2: _queue_m(PHASE_CAMERA.get(2, 4))}
-    f = {1: _flow_vpm(PHASE_CAMERA.get(1, 3)), 2: _flow_vpm(PHASE_CAMERA.get(2, 4))}
+    meas = {1: _phase_measure(1), 2: _phase_measure(2)}
+    q = {p: meas[p]["queue_m"] for p in (1, 2)}
+    f = {p: meas[p]["flow_vpm"] for p in (1, 2)}
     roles = {1: phase_role(1) or {}, 2: phase_role(2) or {}}
     plan_id = current_base_plan()
     pp = plan_params(plan_id) or {}
@@ -749,6 +810,9 @@ async def shadow_plan(_user=Depends(get_current_user)):
             "phase_no": a.phase_no,
             "ramp": role.get("ramp"), "label": role.get("label"),
             "camera": role.get("constraint_camera"),
+            "cameras_used": meas[a.phase_no]["cameras"],
+            "camera_ids": PHASE_CAMERAS.get(a.phase_no, []),
+            "vehicles_measured": round(meas[a.phase_no]["vehicles"], 1),
             "queue_m": a.queue_m,
             "queue_vehicles": round(a.queue_vehicles(DEFAULT_METERS_PER_VEHICLE), 2),
             "flow_vpm": a.flow_vpm,

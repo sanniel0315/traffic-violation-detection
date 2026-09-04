@@ -5,59 +5,263 @@
   "source": "中央官方時制表 新市交流道 0814",
   "note": "動態號誌決策引擎的基準/fallback 查表。純參考資料,非執行期可變設定。時制以中央官方 Excel 為準;控制器現場差異見 controller_deltas。",
   "lost_time_per_change_sec": 5,
-
   "phases": {
     "1": {
       "role": "on_ramp",
       "ramp": "上匝道",
       "label": "入口",
-      "green_directions": ["北", "南"],
+      "green_directions": [
+        "北",
+        "南"
+      ],
       "storage_m": 210,
       "spill_to": "平面路口",
       "priority": false,
-      "cameras": ["ID3"],
+      "cameras": [
+        "ID2",
+        "ID3"
+      ],
       "constraint_camera": "ID3"
     },
     "2": {
       "role": "off_ramp",
       "ramp": "下匝道",
       "label": "出口",
-      "green_directions": ["東", "西"],
+      "green_directions": [
+        "東",
+        "西"
+      ],
       "storage_m": 600,
       "spill_to": "國道主線",
       "priority": true,
-      "cameras": ["ID4", "ID5"],
+      "cameras": [
+        "ID4",
+        "ID5"
+      ],
       "constraint_camera": "ID4"
     }
   },
-
   "plans": {
-    "1":  {"cycle": 85,  "phase1_green": 35, "phase2_green": 40, "min_green": [10, 20], "max_green": 210, "yellow": 3, "all_red": 2, "use": "scheduled"},
-    "9":  {"cycle": 94,  "phase1_green": 50, "phase2_green": 30, "min_green": [10, 20], "max_green": 999, "yellow": 3, "all_red": 4, "use": "spare"},
-    "10": {"cycle": 90,  "phase1_green": 60, "phase2_green": 20, "min_green": [1, 2],   "max_green": 210, "yellow": 3, "all_red": 2, "use": "spare"},
-    "11": {"cycle": 95,  "phase1_green": 50, "phase2_green": 35, "min_green": [1, 2],   "max_green": 999, "yellow": 3, "all_red": 2, "use": "spare"},
-    "22": {"cycle": 110, "phase1_green": 60, "phase2_green": 40, "min_green": [1, 2],   "max_green": 210, "yellow": 3, "all_red": 2, "use": "spare"},
-    "23": {"cycle": 110, "phase1_green": 40, "phase2_green": 60, "min_green": [1, 2],   "max_green": 210, "yellow": 3, "all_red": 2, "use": "spare"},
-    "35": {"cycle": 80,  "phase1_green": 45, "phase2_green": 25, "min_green": [10, 20], "max_green": 210, "yellow": 3, "all_red": 2, "use": "scheduled"},
-    "36": {"cycle": 70,  "phase1_green": 35, "phase2_green": 25, "min_green": [10, 20], "max_green": 210, "yellow": 3, "all_red": 2, "use": "scheduled"},
-    "37": {"cycle": 75,  "phase1_green": 25, "phase2_green": 40, "min_green": [10, 20], "max_green": 210, "yellow": 3, "all_red": 2, "use": "scheduled"}
+    "1": {
+      "cycle": 85,
+      "phase1_green": 35,
+      "phase2_green": 40,
+      "min_green": [
+        10,
+        20
+      ],
+      "max_green": 210,
+      "yellow": 3,
+      "all_red": 2,
+      "use": "scheduled"
+    },
+    "9": {
+      "cycle": 94,
+      "phase1_green": 50,
+      "phase2_green": 30,
+      "min_green": [
+        10,
+        20
+      ],
+      "max_green": 999,
+      "yellow": 3,
+      "all_red": 4,
+      "use": "spare"
+    },
+    "10": {
+      "cycle": 90,
+      "phase1_green": 60,
+      "phase2_green": 20,
+      "min_green": [
+        1,
+        2
+      ],
+      "max_green": 210,
+      "yellow": 3,
+      "all_red": 2,
+      "use": "spare"
+    },
+    "11": {
+      "cycle": 95,
+      "phase1_green": 50,
+      "phase2_green": 35,
+      "min_green": [
+        1,
+        2
+      ],
+      "max_green": 999,
+      "yellow": 3,
+      "all_red": 2,
+      "use": "spare"
+    },
+    "22": {
+      "cycle": 110,
+      "phase1_green": 60,
+      "phase2_green": 40,
+      "min_green": [
+        1,
+        2
+      ],
+      "max_green": 210,
+      "yellow": 3,
+      "all_red": 2,
+      "use": "spare"
+    },
+    "23": {
+      "cycle": 110,
+      "phase1_green": 40,
+      "phase2_green": 60,
+      "min_green": [
+        1,
+        2
+      ],
+      "max_green": 210,
+      "yellow": 3,
+      "all_red": 2,
+      "use": "spare"
+    },
+    "35": {
+      "cycle": 80,
+      "phase1_green": 45,
+      "phase2_green": 25,
+      "min_green": [
+        10,
+        20
+      ],
+      "max_green": 210,
+      "yellow": 3,
+      "all_red": 2,
+      "use": "scheduled"
+    },
+    "36": {
+      "cycle": 70,
+      "phase1_green": 35,
+      "phase2_green": 25,
+      "min_green": [
+        10,
+        20
+      ],
+      "max_green": 210,
+      "yellow": 3,
+      "all_red": 2,
+      "use": "scheduled"
+    },
+    "37": {
+      "cycle": 75,
+      "phase1_green": 25,
+      "phase2_green": 40,
+      "min_green": [
+        10,
+        20
+      ],
+      "max_green": 210,
+      "yellow": 3,
+      "all_red": 2,
+      "use": "scheduled"
+    }
   },
-
   "schedule": {
-    "weekday":  [["00:00", 36], ["07:00", 35], ["08:30", 1], ["16:30", 37], ["19:00", 36]],
-    "saturday": [["00:00", 36], ["07:00", 35], ["08:30", 1], ["16:30", 37], ["18:30", 36]],
-    "sunday":   [["00:00", 36], ["07:00", 1],  ["19:00", 36]]
+    "weekday": [
+      [
+        "00:00",
+        36
+      ],
+      [
+        "07:00",
+        35
+      ],
+      [
+        "08:30",
+        1
+      ],
+      [
+        "16:30",
+        37
+      ],
+      [
+        "19:00",
+        36
+      ]
+    ],
+    "saturday": [
+      [
+        "00:00",
+        36
+      ],
+      [
+        "07:00",
+        35
+      ],
+      [
+        "08:30",
+        1
+      ],
+      [
+        "16:30",
+        37
+      ],
+      [
+        "18:30",
+        36
+      ]
+    ],
+    "sunday": [
+      [
+        "00:00",
+        36
+      ],
+      [
+        "07:00",
+        1
+      ],
+      [
+        "19:00",
+        36
+      ]
+    ]
   },
-
   "controller_deltas": {
     "probed_at": "2026-08-29",
     "note": "以官方 Excel 為準;下列為控制器現場自我查詢(5F44/5FC4)與官方的差異,供現場核對。",
-    "extra_in_controller": [2, 3, 4],
+    "extra_in_controller": [
+      2,
+      3,
+      4
+    ],
     "min_green_mismatch": {
-      "10": {"official": [1, 2], "controller": [5, 5]},
-      "11": {"official": [1, 2], "controller": [4, 4]},
-      "22": {"official": [1, 2], "controller": [5, 5]}
+      "10": {
+        "official": [
+          1,
+          2
+        ],
+        "controller": [
+          5,
+          5
+        ]
+      },
+      "11": {
+        "official": [
+          1,
+          2
+        ],
+        "controller": [
+          4,
+          4
+        ]
+      },
+      "22": {
+        "official": [
+          1,
+          2
+        ],
+        "controller": [
+          5,
+          5
+        ]
+      }
     },
-    "params_missing_in_controller": [23]
+    "params_missing_in_controller": [
+      23
+    ]
   }
 }

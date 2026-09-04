@@ -77,6 +77,17 @@ def test_phase_camera_mapping_matches_baseline():
     assert m.PHASE_CAMERA[1] == 3
     assert m.PHASE_CAMERA[2] == 4
 
+    # 🛑 決策的量測要涵蓋該相的**所有**相機,不是只有基準測點。
+    #    現場四台 NE-1(2)/NE-2(3)/WN-1(4)/WN-2(5);先前只用 constraint_camera
+    #    各取一台,等於少看一半的進場,而 switch_gain 直接由排隊車數算出來。
+    assert sorted(m.PHASE_CAMERAS[1]) == [2, 3], "分相1 要含 NE-1 與 NE-2"
+    assert sorted(m.PHASE_CAMERAS[2]) == [4, 5], "分相2 要含 WN-1 與 WN-2"
+    allcams = sorted(m.PHASE_CAMERAS[1] + m.PHASE_CAMERAS[2])
+    assert allcams == [2, 3, 4, 5], f"四台都要對應到,實際 {allcams}"
+    # constraint_camera 必須落在該相的相機清單裡,否則兩者對不起來
+    for ph in (1, 2):
+        assert m.PHASE_CAMERA[ph] in m.PHASE_CAMERAS[ph]
+
 
 def test_queue_m_returns_none_when_no_data():
     """壅塞沒資料時回 None 不當機(決策端會當 0 處理)。"""
