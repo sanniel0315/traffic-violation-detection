@@ -3509,6 +3509,24 @@
            資料來源與限制,補這條並沿用 tokens,不另外硬寫顏色字級。 */
         .ds-page-hero-desc { margin:6px 0 0; font-size:var(--fs-small,13px);
                              color:var(--ui-text-muted,#5b6778); line-height:var(--lh-relaxed,1.65); }
+        /* 父頁的 tab 列。沿用設計系統的色與間距,不另外造一套。 */
+        .sig-tabs { display:flex; gap:4px; flex-wrap:wrap; margin-top:14px; }
+        .sig-tab { display:inline-flex; align-items:center; gap:5px;
+                   padding:7px 14px; border:1px solid var(--gov-border);
+                   border-radius:var(--r-pill,999px); background:var(--gov-surface);
+                   color:var(--gov-muted); font-size:var(--fs-small,13px);
+                   font-weight:600; cursor:pointer; font-family:inherit;
+                   transition:background .18s ease, color .18s ease, border-color .18s ease; }
+        .sig-tab:hover { background:var(--ui-hover-bg); color:var(--ui-hover-text);
+                         border-color:var(--gov-primary-line); }
+        .sig-tab.active { background:var(--gov-primary); color:#fff;
+                          border-color:var(--gov-primary); }
+        .sig-tab .text-icon { width:14px; height:14px; }
+        /* 子頁自己的小標題列(父頁已有 hero,子頁不再各放一個大標) */
+        .sig-tab-bar { display:flex; align-items:center; gap:10px;
+                       margin:0 0 12px; }
+        .sig-tab-title { font-size:var(--fs-t1,17px); font-weight:700;
+                         color:var(--gov-text); margin-right:auto; }
         /* ── 動態號誌控制盤 ── */
         .sc-h { margin:14px 0 6px; font-size:13px; font-weight:700; color:var(--gov-text); }
         .sc-wrap { overflow-x:auto; }
@@ -4967,7 +4985,7 @@
             <!-- 號誌控制群組:先前五個項目散在平的清單裡,看不出彼此是一組 -->
             <div v-if="isAdmin" class="menu-section-title">號誌控制</div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal'}" @click="page='signal';loadSignal();startSignalTimer()"><svg class="nav-icon"><use href="#i-zap"/></svg><span>號誌燈態</span></div>
-            <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_control'}" @click="page='signal_control';loadSigConsole();startSigConsoleTimer()"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>動態號誌控制</span></div>
+            <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_hub'}" @click="page='signal_hub';openSigHub()"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>動態號誌控制</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_config'}" @click="page='signal_config';loadSigConfig()"><svg class="nav-icon"><use href="#i-list"/></svg><span>號誌設定</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_stats'}" @click="page='signal_stats';loadSigStats()"><svg class="nav-icon"><use href="#i-bar"/></svg><span>運作統計</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_device'}" @click="page='signal_device';loadSigDevice()"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>設備狀態</span></div>
@@ -6853,6 +6871,36 @@
                 </div>
 
                 <!-- MQTT 管理 -->
+                <!-- ══ 動態號誌控制(父頁)══
+                     🛑 子頁刻意用「v-if 綁父頁 + v-show 綁 tab」兩段式:
+                        v-if  → 不在父頁時整段不渲染,省掉 8 個子頁的 DOM
+                        v-show→ 在父頁時切 tab 只切 CSS,**不銷毀重建**
+                     為什麼不能只用 v-if 切 tab:既有子頁裡有輪詢計時器與展開
+                     狀態(例如 TC3 訊框的 sigFrameExpanded、決策盤的 5 秒輪詢),
+                     重建會把它們洗掉 —— 使用者切走再切回來,展開的列會收合、
+                     輪詢會斷一拍。 -->
+                <div v-if="page==='signal_hub'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use href="#i-cpu"/></svg></div>
+                                <h1 class="ds-section-title">動態號誌<b>控制</b></h1>
+                                <p class="ds-page-hero-desc">路口即時狀態、我方決策引擎、設定查閱與驗收，全部集中在這一頁。目前為<b>影子模式</b> —— 全速運算、只記錄不下發。</p>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <el-tag size="small" :type="sigPlan.available?'success':'info'">{{ sigPlan.available?'決策引擎運轉中':'尚無資料' }}</el-tag>
+                                <el-tag size="small" type="danger">不下發</el-tag>
+                            </div>
+                        </div>
+                        <div class="sig-tabs">
+                            <button v-for="tb in sigTabs" :key="tb.key" class="sig-tab"
+                                    :class="{active:signalTab===tb.key}" @click="switchSigTab(tb.key)">
+                                <svg class="text-icon"><use :href="'#'+tb.icon"/></svg>{{ tb.label }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- ══ 動態號誌控制:我方演算法的控制盤 ══
                      要接管控制權之前,每一筆判斷都必須可稽核 ——
                      輸入是什麼、算式每一項多少、哪一道安全閘門攔下來,
@@ -7173,20 +7221,10 @@
                     </div>
                 </div>
 
-                <div v-if="page==='signal_control'">
-                    <div class="ds-page-hero">
-                        <div class="ds-page-hero-row">
-                            <div style="min-width:0;flex:1">
-                                <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use href="#i-cpu"/></svg></div>
-                                <h1 class="ds-section-title">動態號誌<b>控制</b></h1>
-                                <p class="ds-page-hero-desc">我方決策引擎的即時控制盤。目前為<b>影子模式</b> —— 全速運算、只記錄不下發。</p>
-                            </div>
-                            <div class="ds-page-hero-meta">
-                                <el-tag size="small" :type="sigPlan.available?'success':'info'">{{ sigPlan.available?'決策引擎運轉中':'尚無資料' }}</el-tag>
-                                <el-tag size="small" type="danger">不下發</el-tag>
-                                <el-button size="small" plain @click="loadSigConsole"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
-                            </div>
-                        </div>
+                <div v-if="page==='signal_hub'" v-show="signalTab==='plan'">
+                    <div class="sig-tab-bar">
+                        <span class="sig-tab-title">即時決策盤</span>
+                        <el-button size="small" plain @click="loadSigConsole"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
                     </div>
 
                     <div class="card">
@@ -21677,6 +21715,26 @@ const app=createApp({
         // ── 影子決策比對 ──────────────────────────────────────────────
         // 影子跑了很久沒人知道結果,因為它只寫 DB、推播只進 App 告警面板,
         // 網頁上完全沒有入口。這裡把它搬上號誌頁。
+        // ── 動態號誌控制父頁(tab 切換)──────────────────────────────
+        // 🛑 每個 tab 只在「第一次進入」時載入,之後靠各自既有的輪詢更新。
+        //    否則每次切 tab 都會重打一輪 API,八個子頁切來切去會很吵。
+        const signalTab = ref('plan');
+        const sigTabLoaded = reactive({});
+        const sigTabs = ref([
+            {key: 'plan', label: '決策盤', icon: 'i-cpu'},
+        ]);
+        const sigTabLoaders = {
+            plan: () => { loadSigConsole(); startSigConsoleTimer(); },
+        };
+        const switchSigTab = (key) => {
+            signalTab.value = key;
+            if (!sigTabLoaded[key]) {
+                sigTabLoaded[key] = true;
+                const fn = sigTabLoaders[key];
+                if (fn) fn();
+            }
+        };
+        const openSigHub = () => switchSigTab(signalTab.value);
         // ── 驗收清單 ────────────────────────────────────────────────
         // 🛑 狀態由後端「實際打端點量」出來,前端只負責呈現。
         //    unknown 一律不當成 pass —— 量不到和通過是兩件事。
@@ -21859,7 +21917,12 @@ const app=createApp({
         const loadSigConsole=()=>{ loadSigPlan(); loadSigShadow(); };
         const startSigConsoleTimer=()=>{
             if(sigCtlTimer) clearInterval(sigCtlTimer);
-            sigCtlTimer=setInterval(()=>{ if(page.value==='signal_control') loadSigPlan(); }, 5000);
+            // 🛑 條件要同時比父頁與 tab:改成父子結構後 page 已是 'signal_hub',
+            //    留著舊的 'signal_control' 會讓計時器永遠不觸發(決策盤不再更新);
+            //    只比父頁又會讓使用者切到別的 tab 時仍在背景輪詢。
+            sigCtlTimer=setInterval(()=>{
+                if(page.value==='signal_hub'&&signalTab.value==='plan') loadSigPlan();
+            }, 5000);
         };
         const sigShadow=ref({});
         const sigShadowRecent=ref([]);
@@ -22960,7 +23023,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStats,sigStatMins,sigStatOk,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStats,sigStatMins,sigStatOk,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
