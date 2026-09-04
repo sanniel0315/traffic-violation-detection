@@ -213,17 +213,22 @@ def _sat_for(phase: int) -> float:
 def _phase_measure(phase: int) -> dict:
     """把一個分相底下所有相機的量測聚合成一組。
 
-    🛑 兩種聚合方式各有各的用途,不能混用同一個數字:
-       queue_m  取**最大** —— 它拿去跟儲車上限比算回堵比例,
-                「最長的那條隊伍多長」才是回堵風險,加總會虛胖成假回堵。
-       車數/流量 取**總和** —— switch_gain 用的是「紅側有幾台車在等」,
-                兩個車道各三台就是六台的需求,取最大會少算一半。
-    先前只取一台相機時這個區別不存在,聚合之後就必須講清楚。
+    🛑 全部取**最大**,不取總和 —— 這點 2026-09-05 用實際座標更正過:
+       原本以為同相的兩台是「相鄰車道」,所以車數該加總。但量了實際距離:
+         分相1  NE-1 ↔ NE-2  相距 52.7 m
+         分相2  WN-1 ↔ WN-2  相距 16.0 m
+       相鄰車道只會差 3~4 公尺。數十公尺代表它們是**同一個進場的不同位置**
+       (一台在停等區、一台在上游),看的是同一批車。
+       車流區設定也證實:cam3「上匝道前停等區」、cam2「上高速公路前平面道路」
+       —— 上下游關係,不是並排車道。
+       這種情況下加總會把同一批車算兩次,switch_gain 會膨脹一倍,
+       決策直接受影響。取最大才對:上游那台在隊伍長到超出停等區視野時
+       才會給出更大的值,正好補上單台看不到的部分。
     """
     from api.routes.congestion import congestion_results
     qmax = None
+    fmax = None
     veh = 0.0
-    flow = 0.0
     seen = 0
     for cam in PHASE_CAMERAS.get(phase, []):
         r = congestion_results.get(cam) or {}
@@ -234,15 +239,15 @@ def _phase_measure(phase: int) -> dict:
         if q is not None:
             qv = float(q)
             qmax = qv if qmax is None else max(qmax, qv)
-        f = r.get("flow_vpm")
-        if f is not None:
-            flow += float(f)
         n = r.get("stopped_vehicle_count")
         if n is None:
             n = r.get("vehicle_count")
         if n is not None:
-            veh += float(n)
-    return {"queue_m": qmax, "flow_vpm": (flow if seen else None),
+            veh = max(veh, float(n))
+        f2 = r.get("flow_vpm")
+        if f2 is not None:
+            fmax = f2 if fmax is None else max(fmax, float(f2))
+    return {"queue_m": qmax, "flow_vpm": fmax,
             "vehicles": veh, "cameras": seen}
 
 
