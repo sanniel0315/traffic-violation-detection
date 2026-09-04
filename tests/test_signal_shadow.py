@@ -309,3 +309,25 @@ def test_green_runs_rebuild_and_quality_flags():
     assert st["n"] == 3
     assert st["avg"] == pytest.approx(9.3, abs=0.05)
     assert _stat([])["avg"] is None      # 沒樣本不用 0 代表
+
+
+def test_switch_detection_sample_never_counted(tmp_path, monkeypatch):
+    """偵測到換相的那一筆一律不列入一致率,不能靠 green_elapsed 門檻判。
+
+    🛑 2026-09-04 回歸:原本用 green_elapsed < 1.0 當「切換瞬間」的代理條件,
+       那只在自己推算秒數(切換瞬間必為 0)時成立。改用抄錄器的精確已亮秒數
+       後,同一筆變成 1.8 秒,條件失效 —— 每一次換相都被算成岐異
+       (6 小時約 530 次),一致率會被整片拉垮。
+       actual=SWITCH 代表分相已經變了,是過去事件;我方在該刻評估的是
+       「新分相要不要再切」,問的不是同一件事。
+    """
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "api" / "routes"
+           / "signal_shadow.py").read_text(encoding="utf-8")
+    # 排除條件裡不可以再出現「用 green_elapsed 門檻判切換瞬間」
+    assert not re.search(r'actual\s*==\s*"SWITCH"\s*and\s*green_elapsed', src), \
+        "切換瞬間的排除不可以依賴 green_elapsed 門檻"
+    assert re.search(r'None if \(\s*\n\s*actual == "SWITCH"', src), \
+        "agree=NULL 的第一個條件應該是單看 actual == 'SWITCH'"
