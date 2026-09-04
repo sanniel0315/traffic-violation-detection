@@ -3525,14 +3525,14 @@
         .acc-detail { font-size:var(--fs-caption,11px); color:var(--gov-mute-2); margin-top:3px; }
         /* page hero 的一行說明。既有 hero 只有標題與 meta,新頁需要一句說明
            資料來源與限制,補這條並沿用 tokens,不另外硬寫顏色字級。 */
-        .ds-page-hero-desc { margin:6px 0 0; font-size:var(--fs-small,13px);
+        .ds-page-hero-desc { margin:6px 0 0; font-size:var(--fs-small);
                              color:var(--ui-text-muted,#5b6778); line-height:var(--lh-relaxed,1.65); }
         /* 父頁的 tab 列。沿用設計系統的色與間距,不另外造一套。 */
         .sig-tabs { display:flex; gap:4px; flex-wrap:wrap; margin-top:14px; }
         .sig-tab { display:inline-flex; align-items:center; gap:5px;
                    padding:7px 14px; border:1px solid var(--gov-border);
-                   border-radius:var(--r-pill,999px); background:var(--gov-surface);
-                   color:var(--gov-muted); font-size:var(--fs-small,13px);
+                   border-radius:var(--r-pill); background:var(--gov-surface);
+                   color:var(--gov-muted); font-size:var(--fs-small);
                    font-weight:600; cursor:pointer; font-family:inherit;
                    transition:background .18s ease, color .18s ease, border-color .18s ease; }
         .sig-tab:hover { background:var(--ui-hover-bg); color:var(--ui-hover-text);
@@ -3543,16 +3543,168 @@
         /* 子頁自己的小標題列(父頁已有 hero,子頁不再各放一個大標) */
         .sig-tab-bar { display:flex; align-items:center; gap:10px;
                        margin:0 0 12px; }
-        .sig-tab-title { font-size:var(--fs-t1,17px); font-weight:700;
+        .sig-tab-title { font-size:var(--fs-t1); font-weight:700;
                          color:var(--gov-text); margin-right:auto; }
         /* ── 動態號誌控制盤 ── */
         .sc-h { margin:14px 0 6px; font-size:13px; font-weight:700; color:var(--gov-text); }
+        /* ── 分相時間分配色帶 ── */
+        .pb-wrap { padding:4px 2px 10px; }
+        .pb-axis { position:relative; height:14px; margin-left:52px; margin-right:88px;
+                   border-bottom:1px solid var(--gov-border); }
+        .pb-tick { position:absolute; top:0; font-size:10px; color:var(--gov-mute-2);
+                   transform:translateX(-50%); font-variant-numeric:tabular-nums; }
+        .pb-tick::after { content:''; position:absolute; left:50%; top:12px; height:4px;
+                          width:1px; background:var(--gov-border); }
+        .pb-row { display:flex; align-items:center; gap:6px; margin-top:8px; }
+        .pb-name { flex:0 0 46px; font-size:12px; font-weight:700; color:var(--gov-text); }
+        .pb-lanes { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+        .pb-lane { display:flex; height:16px; border-radius:3px; overflow:hidden;
+                   background:var(--gov-surface-2);
+                   border:1px solid var(--gov-border); }
+        .pb-lane--ped { height:7px; }
+        .pb-seg { height:100%; cursor:help; transition:width .4s cubic-bezier(.4,0,.2,1); }
+        .pb-seg.g { background:var(--gov-ok); }
+        .pb-seg.y { background:var(--gov-warn); }
+        .pb-seg.r { background:var(--gov-fault); }
+        .pb-seg.idle { background:repeating-linear-gradient(90deg,
+                       var(--gov-surface-2) 0 5px, var(--gov-border) 5px 6px); }
+        .pb-seg.pg { background:var(--gov-ok); opacity:.62; }
+        .pb-seg.pf { background:repeating-linear-gradient(45deg,
+                     var(--gov-ok) 0 3px, var(--gov-surface) 3px 6px); }
+        .pb-seg.pr { background:var(--gov-fault); opacity:.28; }
+        /* 未回報:斜紋 + 灰。刻意跟「0 秒(根本不畫)」長得完全不同。 */
+        .pb-seg.na { background:repeating-linear-gradient(45deg,
+                     var(--gov-border-strong) 0 4px, var(--gov-surface-2) 4px 8px); }
+        .pb-sum { flex:0 0 82px; text-align:right; font-size:11px; color:var(--gov-muted);
+                  font-variant-numeric:tabular-nums; }
+        .pb-legend { display:flex; flex-wrap:wrap; gap:12px; margin:12px 0 2px 52px;
+                     font-size:11px; color:var(--gov-muted); align-items:center; }
+        .pb-legend i { display:inline-block; width:11px; height:9px; border-radius:2px;
+                       margin-right:4px; vertical-align:-1px;
+                       border:1px solid var(--gov-border); }
+        .pb-k.g { background:var(--gov-ok); }
+        .pb-k.y { background:var(--gov-warn); }
+        .pb-k.r { background:var(--gov-fault); }
+        .pb-k.idle { background:repeating-linear-gradient(90deg,
+                     var(--gov-surface-2) 0 3px, var(--gov-border) 3px 4px); }
+        .pb-k.pg { background:var(--gov-ok); opacity:.62; }
+        .pb-k.pf { background:repeating-linear-gradient(45deg,
+                   var(--gov-ok) 0 2px, var(--gov-surface) 2px 4px); }
+        .pb-k.na { background:repeating-linear-gradient(45deg,
+                   var(--gov-border-strong) 0 3px, var(--gov-surface-2) 3px 6px); }
+        .pb-legend-cyc { margin-left:auto; font-weight:700; color:var(--gov-text); }
+        .pb-note { margin:6px 0 0 52px; font-size:11px; color:var(--gov-warn); font-weight:600; }
+        .pb-none { font-size:12px; color:var(--gov-mute-2); padding:6px 2px 10px; }
+        @media (prefers-reduced-motion: reduce) { .pb-seg { transition:none; } }
+        /* ── 決策盤:判定天平 ── */
+        .dc-verdict { border:1px solid var(--gov-border); border-radius:var(--r-card);
+                      padding:14px 16px; margin-bottom:16px; background:var(--gov-surface-2); }
+        .dc-verdict.sw { border-color:var(--gov-warn); }
+        .dc-verdict.kp { border-color:var(--gov-ok); }
+        .dc-verdict-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+        .dc-verdict-k { font-size:12px; font-weight:700; color:var(--gov-muted); }
+        .dc-verdict-v { font-size:26px; line-height:1.1; letter-spacing:.02em; }
+        .dc-verdict.sw .dc-verdict-v { color:var(--gov-warn); }
+        .dc-verdict.kp .dc-verdict-v { color:var(--gov-ok); }
+        .dc-verdict-margin { margin-left:auto; font-size:12px; color:var(--gov-muted);
+                             font-variant-numeric:tabular-nums; }
+        .dc-verdict-margin b { font-size:15px; color:var(--gov-text); }
+        .dc-bars { display:flex; flex-direction:column; gap:7px; margin:12px 0 10px; }
+        .dc-bar-row { display:flex; align-items:center; gap:10px; }
+        .dc-bar-k { flex:0 0 48px; font-size:12px; font-weight:700; color:var(--gov-muted); }
+        .dc-bar-track { flex:1; height:14px; border-radius:7px; min-width:0;
+                        background:var(--gov-surface); border:1px solid var(--gov-border);
+                        overflow:hidden; }
+        .dc-bar-fill { height:100%; border-radius:7px;
+                       transition:width .5s cubic-bezier(.4,0,.2,1); }
+        .dc-bar-fill.sw { background:var(--gov-warn); }
+        .dc-bar-fill.kp { background:var(--gov-ok); }
+        .dc-bar-v { flex:0 0 56px; text-align:right; font-size:13px; font-weight:700;
+                    font-variant-numeric:tabular-nums; }
+        /* 佔優勢的那一側加脈動,一眼看出是誰贏 */
+        .dc-bar-row.lead .dc-bar-fill { animation:dcLead 2s ease-in-out infinite; }
+        @keyframes dcLead { 0%,100%{filter:none} 50%{filter:brightness(1.25)} }
+        .dc-verdict-why { font-size:13px; color:var(--gov-muted);
+                          padding-top:9px; border-top:1px dashed var(--gov-border); }
+
+        /* ── 決策盤:兩側對照卡 ── */
+        .dc-sides { display:grid; gap:12px; margin-bottom:6px;
+                    grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); }
+        .dc-side { border:1px solid var(--gov-border); border-radius:var(--r-card);
+                   padding:12px 14px 10px; background:var(--gov-surface);
+                   border-left-width:4px; }
+        /* 🛑 燈色只用在燈態相關元件(這裡的左緣),警示紅只用在狀態標籤,
+             兩者不共用同一個元件,否則「紅燈相位」跟「異常」會混在一起看。 */
+        .dc-side.green { border-left-color:var(--gov-ok); }
+        .dc-side.red { border-left-color:var(--gov-fault); }
+        .dc-side-head { display:flex; align-items:center; gap:7px; flex-wrap:wrap;
+                        font-size:13px; }
+        .dc-side-tag { font-size:11px; font-weight:700; padding:2px 7px;
+                       border-radius:var(--r-pill); color:#fff; }
+        .dc-side.green .dc-side-tag { background:var(--gov-ok); }
+        .dc-side.red .dc-side-tag { background:var(--gov-fault); }
+        .dc-side-ramp { color:var(--gov-muted); font-size:12px; }
+        .dc-side-pri { margin-left:auto; font-size:11px; font-weight:700;
+                       color:var(--gov-warn); border:1px solid var(--gov-warn);
+                       border-radius:var(--r-pill); padding:1px 7px; cursor:help; }
+        .dc-side-main { display:flex; align-items:baseline; gap:6px; margin:10px 0 8px; }
+        .dc-side-num { font-size:30px; font-weight:700; line-height:1;
+                       font-variant-numeric:tabular-nums; color:var(--gov-text); }
+        .dc-side-unit { font-size:12px; color:var(--gov-muted); font-weight:600; }
+        .dc-side-sub { margin-left:auto; font-size:12px; color:var(--gov-muted); }
+        .dc-side-occ { display:flex; align-items:center; gap:8px; cursor:help; }
+        .dc-occ-track { position:relative; flex:1; min-width:0; height:8px;
+                        border-radius:4px; background:var(--gov-surface-2);
+                        border:1px solid var(--gov-border); overflow:hidden; }
+        .dc-occ-fill { height:100%; background:var(--gov-primary);
+                       transition:width .5s cubic-bezier(.4,0,.2,1); }
+        .dc-occ-fill.warn { background:var(--gov-warn); }
+        /* 80% 回堵判定線 —— 主線保護閘門的門檻,畫出來才知道離多遠 */
+        .dc-occ-mark { position:absolute; top:0; bottom:0; left:80%; width:1px;
+                       background:var(--gov-fault); opacity:.55; }
+        .dc-occ-v { flex:0 0 auto; font-size:11px; color:var(--gov-muted);
+                    font-variant-numeric:tabular-nums; }
+        .dc-side-foot { display:flex; gap:14px; flex-wrap:wrap; margin-top:9px;
+                        padding-top:8px; border-top:1px dashed var(--gov-border);
+                        font-size:12px; color:var(--gov-text); }
+        .dc-side-foot i { font-style:normal; color:var(--gov-mute-2); margin-right:5px; }
+        .dc-cam-n { margin-left:5px; font-size:10px; padding:1px 5px; border-radius:var(--r-pill);
+                    background:var(--gov-surface-2); color:var(--gov-muted); }
+
+        /* ── 決策盤:安全閘門 stepper ── */
+        .dc-gates { display:grid; gap:8px;
+                    grid-template-columns:repeat(auto-fit, minmax(230px, 1fr)); }
+        .dc-gate { display:flex; align-items:flex-start; gap:9px; padding:10px 12px;
+                   border:1px solid var(--gov-border); border-radius:var(--r-base);
+                   background:var(--gov-surface); }
+        .dc-gate-no { flex:0 0 22px; height:22px; border-radius:50%;
+                      display:flex; align-items:center; justify-content:center;
+                      font-size:11px; font-weight:700;
+                      background:var(--gov-surface-2); color:var(--gov-muted); }
+        .dc-gate-body { min-width:0; font-size:13px; }
+        .dc-gate-rule { display:block; margin-top:3px; font-size:11px;
+                        color:var(--gov-mute-2); }
+        .dc-gate-state { margin-left:auto; flex:0 0 auto; font-size:11px;
+                         font-weight:700; padding:2px 8px;
+                         border-radius:var(--r-pill);
+                         background:var(--gov-surface-2); color:var(--gov-muted); }
+        .dc-gate.pass .dc-gate-no { background:var(--gov-ok); color:#fff; }
+        .dc-gate.pass .dc-gate-state { color:var(--gov-ok); }
+        .dc-gate.hit { border-color:var(--gov-warn); background:#fff7ed; }
+        .dc-gate.hit .dc-gate-no { background:var(--gov-warn); color:#fff; }
+        .dc-gate.hit .dc-gate-state { background:var(--gov-warn); color:#fff; }
+        /* 未評估:先中的先生效,後面的閘門根本沒跑到 —— 視覺上要弱化 */
+        .dc-gate.skip { opacity:.5; border-style:dashed; }
+        @media (prefers-reduced-motion: reduce) {
+            .dc-bar-row.lead .dc-bar-fill { animation:none; }
+            .dc-bar-fill, .dc-occ-fill { transition:none; }
+        }
         /* ── 控制策略 8 位元旗標 ── */
         .cs-block { margin-top:10px; }
         .cs-flags { display:grid; gap:6px;
                     grid-template-columns:repeat(auto-fill, minmax(132px, 1fr)); }
         .cs-flag { display:flex; align-items:center; gap:6px;
-                   padding:7px 10px; border-radius:var(--r-md,8px);
+                   padding:7px 10px; border-radius:var(--r-base);
                    border:1px solid var(--gov-border); background:var(--gov-surface-2);
                    color:var(--gov-mute-2); font-size:12px; font-weight:600;
                    cursor:help; position:relative; overflow:hidden;
@@ -3578,7 +3730,7 @@
         @keyframes csFlip { 0%{opacity:.55} 100%{opacity:0} }
         .cs-raw { display:flex; align-items:baseline; gap:8px; margin-top:8px;
                   font-size:12px; color:var(--gov-muted); }
-        .cs-raw b { font-family:var(--font-mono,ui-monospace,monospace);
+        .cs-raw b { font-family:var(--font-mono);
                     font-size:13px; color:var(--gov-text); }
         .cs-raw-k { font-weight:700; }
         .cs-raw-note { color:var(--gov-mute-2); }
@@ -3593,7 +3745,7 @@
                       color:var(--gov-muted); letter-spacing:.02em; }
         .st-quick { display:flex; gap:6px; flex-wrap:wrap; }
         .st-qbtn { padding:5px 12px; border:1px solid var(--gov-border);
-                   border-radius:var(--r-pill,999px); background:var(--gov-surface);
+                   border-radius:var(--r-pill); background:var(--gov-surface);
                    color:var(--gov-text); font-size:12px; font-weight:600;
                    cursor:pointer; font-family:inherit;
                    transition:background .16s ease, color .16s ease, border-color .16s ease; }
@@ -3637,7 +3789,7 @@
                    font-size:12px; line-height:1.7; overflow-x:auto; }
         .sc-gate { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
                    padding:8px 10px; border:1px solid var(--gov-border);
-                   border-radius:var(--r-base,8px); margin-top:6px; font-size:var(--fs-small,13px); }
+                   border-radius:var(--r-base,8px); margin-top:6px; font-size:var(--fs-small); }
         .sc-gate.hit { border-color:var(--gov-warn); background:var(--gov-primary-soft); }
         .sc-gate-no { display:inline-flex; align-items:center; justify-content:center;
                       width:20px; height:20px; border-radius:50%; background:var(--gov-surface-2);
@@ -3645,7 +3797,7 @@
         .sc-gate.hit .sc-gate-no { background:var(--gov-warn); color:#fff; }
         .sc-step { display:flex; gap:10px; align-items:center; padding:9px 10px;
                    border:1px solid var(--gov-border); border-radius:var(--r-base,8px);
-                   margin-top:6px; font-size:var(--fs-small,13px); }
+                   margin-top:6px; font-size:var(--fs-small); }
         .sc-step > div { flex:1; }
         .sc-step.done { border-left:3px solid var(--gov-ok); }
         .sc-step.doing { border-left:3px solid var(--gov-warn); background:var(--gov-primary-soft); }
@@ -7378,23 +7530,68 @@
                             <el-tag size="small" :type="sigPlan.action==='SWITCH'?'warning':'success'">判定:{{ sigPlan.action==='SWITCH'?'應換相':'續綠' }}</el-tag>
                         </div>
                         <div class="card-body">
-                            <div class="analysis-setting-tip">{{ sigPlan.reason }}</div>
+                            <!-- ══ 判定天平 ══
+                                 🛑 決策的本質是兩股力量在拉:紅側等太久了該換 vs
+                                    綠側還在放行別浪費。原本攤成兩欄數字,讀的人要
+                                    在腦裡做減法才知道差多少。改成同一把尺的兩條
+                                    對抗條 —— 差距是看出來的,不是算出來的。 -->
+                            <div class="dc-verdict" :class="sigPlan.action==='SWITCH'?'sw':'kp'">
+                                <div class="dc-verdict-head">
+                                    <span class="dc-verdict-k">判定</span>
+                                    <b class="dc-verdict-v">{{ sigPlan.action==='SWITCH'?'應換相':'續綠' }}</b>
+                                    <span class="dc-verdict-margin">
+                                        裕度 <b>{{ sigPlan.terms.margin }}</b> 車·秒
+                                    </span>
+                                </div>
+                                <div class="dc-bars">
+                                    <div class="dc-bar-row" :class="{lead:sigPlan.action==='SWITCH'}">
+                                        <span class="dc-bar-k">換相力</span>
+                                        <div class="dc-bar-track">
+                                            <div class="dc-bar-fill sw" :style="{width:sigBalW(sigPlan.terms.switch_gain)}"></div>
+                                        </div>
+                                        <span class="dc-bar-v">{{ sigPlan.terms.switch_gain }}</span>
+                                    </div>
+                                    <div class="dc-bar-row" :class="{lead:sigPlan.action!=='SWITCH'}">
+                                        <span class="dc-bar-k">續綠力</span>
+                                        <div class="dc-bar-track">
+                                            <div class="dc-bar-fill kp" :style="{width:sigBalW(sigPlan.terms.threshold)}"></div>
+                                        </div>
+                                        <span class="dc-bar-v">{{ sigPlan.terms.threshold }}</span>
+                                    </div>
+                                </div>
+                                <div class="dc-verdict-why">{{ sigPlan.reason }}</div>
+                            </div>
 
                             <h4 class="sc-h">兩側量測輸入</h4>
-                            <div class="sc-wrap">
-                            <table class="sc-table">
-                                <thead><tr><th>項目</th><th>綠燈側(分相 {{ sigPlan.green_phase }})</th><th>紅燈側(分相 {{ sigPlan.red_phase }})</th></tr></thead>
-                                <tbody>
-                                    <tr><td>匝道</td><td>{{ sigPlan.green_side.ramp }} {{ sigPlan.green_side.label }}</td><td>{{ sigPlan.red_side.ramp }} {{ sigPlan.red_side.label }}</td></tr>
-                                    <tr><td>量測相機</td><td>{{ sigPlan.green_side.camera }}</td><td>{{ sigPlan.red_side.camera }}</td></tr>
-                                    <tr><td>排隊長度</td><td>{{ sigFmtNum(sigPlan.green_side.queue_m) }} m</td><td>{{ sigFmtNum(sigPlan.red_side.queue_m) }} m</td></tr>
-                                    <tr><td>換算車輛</td><td>{{ sigPlan.green_side.queue_vehicles }} 輛</td><td>{{ sigPlan.red_side.queue_vehicles }} 輛</td></tr>
-                                    <tr><td>到達流量</td><td>{{ sigFmtNum(sigPlan.green_side.flow_vpm) }} 輛/分</td><td>{{ sigFmtNum(sigPlan.red_side.flow_vpm) }} 輛/分</td></tr>
-                                    <tr><td>儲車上限</td><td>{{ sigPlan.green_side.storage_m }} m</td><td>{{ sigPlan.red_side.storage_m }} m</td></tr>
-                                    <tr><td>佔用比</td><td>{{ sigFmtPct(sigPlan.green_side.spillback_ratio) }}</td><td>{{ sigFmtPct(sigPlan.red_side.spillback_ratio) }}</td></tr>
-                                    <tr><td>主線保護優先</td><td>{{ sigPlan.green_side.priority?'是':'否' }}</td><td>{{ sigPlan.red_side.priority?'是':'否' }}</td></tr>
-                                </tbody>
-                            </table>
+                            <div class="dc-sides">
+                                <div v-for="sd in sigPlanSides" :key="'sd'+sd.phase" class="dc-side" :class="sd.tone">
+                                    <div class="dc-side-head">
+                                        <span class="dc-side-tag">{{ sd.tone==='green'?'綠燈側':'紅燈側' }}</span>
+                                        <b>分相 {{ sd.phase }}</b>
+                                        <span class="dc-side-ramp">{{ sd.ramp }} {{ sd.label }}</span>
+                                        <span v-if="sd.priority" class="dc-side-pri" title="下匝道回堵會溢流到國道主線,這一側有主線保護優先">主線保護</span>
+                                    </div>
+                                    <div class="dc-side-main">
+                                        <span class="dc-side-num">{{ sigFmtNum(sd.queue_m) }}</span>
+                                        <span class="dc-side-unit">m 排隊</span>
+                                        <span class="dc-side-sub">≈ {{ sd.queue_vehicles }} 輛</span>
+                                    </div>
+                                    <div class="dc-side-occ" :title="'佔用 '+sigFmtPct(sd.spillback_ratio)+'，儲車上限 '+sd.storage_m+' m'">
+                                        <div class="dc-occ-track">
+                                            <div class="dc-occ-fill" :class="{warn:sd.nearSpill}" :style="{width:sigOccW(sd.spillback_ratio)}"></div>
+                                            <span class="dc-occ-mark" title="回堵判定線 80%"></span>
+                                        </div>
+                                        <span class="dc-occ-v">{{ sigFmtPct(sd.spillback_ratio) }} / {{ sd.storage_m }} m</span>
+                                    </div>
+                                    <div class="dc-side-foot">
+                                        <span><i>到達流量</i>{{ sigFmtNum(sd.flow_vpm) }} 輛/分</span>
+                                        <!-- 決策實際聚合該相「全部」相機取最大,只印基準測點會誤導 -->
+                                        <span :title="'基準測點 '+sd.camera+'，決策取這 '+sd.cameras_used+' 台的最大值'">
+                                            <i>量測相機</i>{{ (sd.camera_names||[]).join(' / ') || sd.camera }}
+                                            <b v-if="sd.cameras_used" class="dc-cam-n">{{ sd.cameras_used }} 台</b>
+                                        </span>
+                                    </div>
+                                </div>
                             </div>
 
                             <h4 class="sc-h">成本算式(單位:車·秒)</h4>
@@ -7420,11 +7617,19 @@
                             </div>
 
                             <h4 class="sc-h">安全閘門(依判定順序,先中的先生效)</h4>
-                            <div v-for="g in (sigPlan.gates||[])" :key="'g'+g.order" class="sc-gate" :class="{hit:g.hit}">
-                                <span class="sc-gate-no">{{ g.order }}</span>
-                                <b>{{ g.name }}</b>
-                                <span class="sc-sub">{{ g.rule }}</span>
-                                <el-tag size="small" :type="g.hit?'warning':'info'">{{ g.hit?'生效':'未觸發' }}</el-tag>
+                            <!-- 🛑 原本四關都印「未觸發」是錯的表達:先中的先生效,
+                                 生效那一關後面的閘門根本沒跑到,不能跟「跑過但沒中」
+                                 用同一個字。改成三種狀態:通過 / 生效 / 未評估。 -->
+                            <div class="dc-gates">
+                                <div v-for="g in sigPlanGates" :key="'g'+g.order"
+                                     class="dc-gate" :class="g.state">
+                                    <div class="dc-gate-no">{{ g.order }}</div>
+                                    <div class="dc-gate-body">
+                                        <b>{{ g.name }}</b>
+                                        <span class="dc-gate-rule">{{ g.rule }}</span>
+                                    </div>
+                                    <span class="dc-gate-state">{{ g.stateText }}</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -8054,6 +8259,49 @@
                                         <span style="font-weight:400;font-size:12px;color:#64748b">週期 {{ pv.f?sigCell(pv.f.cycle):'—' }}s / 時差 {{ pv.f?sigCell(pv.f.offset):'—' }}s / 基準方向 {{ pv.f?sigCell(pv.f.direct):'—' }} / 時相編號 {{ pv.f?sigCell(pv.f.phase_order):'—' }}</span>
                                     </div>
                                     <div v-show="isPlanOpen(pv)" style="padding:8px">
+                                        <!-- ══ 分相時間分配圖 ══
+                                             表格要心算「一輪 85 秒怎麼分」;色帶是比例關係,用看的。
+                                             🛑 缺項不補 0:控制器沒回報的段畫成斜紋並標「未回報」,
+                                                「沒查到」跟「真的是 0 秒」是兩件事。 -->
+                                        <!-- v-for over 單元素陣列 = Vue inline template 取區域變數的
+                                             慣用法。不這樣寫的話 sigPhaseBar(pv) 在同一段模板裡會被
+                                             呼叫五次,每次 render 重算五遍。 -->
+                                        <div v-for="bar in [sigPhaseBar(pv)]" :key="'pb'+pv.plan_id">
+                                        <div class="pb-wrap" v-if="bar.ok">
+                                            <div class="pb-axis">
+                                                <span v-for="tk in bar.ticks" :key="'tk'+tk.v"
+                                                      class="pb-tick" :style="{left:tk.pct}">{{ tk.v }}</span>
+                                            </div>
+                                            <div v-for="row in bar.rows" :key="'pbr'+row.idx" class="pb-row">
+                                                <span class="pb-name">分相{{ row.idx }}</span>
+                                                <div class="pb-lanes">
+                                                    <div class="pb-lane">
+                                                        <div v-for="(sg,si) in row.segs" :key="'sg'+si"
+                                                             class="pb-seg" :class="sg.cls"
+                                                             :style="{width:sg.pct}" :title="sg.tip"></div>
+                                                    </div>
+                                                    <div class="pb-lane pb-lane--ped">
+                                                        <div v-for="(sg,si) in row.ped" :key="'pd'+si"
+                                                             class="pb-seg" :class="sg.cls"
+                                                             :style="{width:sg.pct}" :title="sg.tip"></div>
+                                                    </div>
+                                                </div>
+                                                <span class="pb-sum">{{ row.summary }}</span>
+                                            </div>
+                                            <div class="pb-legend">
+                                                <span><i class="pb-k g"></i>綠燈</span>
+                                                <span><i class="pb-k y"></i>黃燈</span>
+                                                <span><i class="pb-k r"></i>全紅</span>
+                                                <span><i class="pb-k idle"></i>本相紅燈</span>
+                                                <span><i class="pb-k pg"></i>行人綠</span>
+                                                <span><i class="pb-k pf"></i>行人綠閃</span>
+                                                <span><i class="pb-k na"></i>未回報</span>
+                                                <span class="pb-legend-cyc">週期 {{ bar.cycle }} 秒</span>
+                                            </div>
+                                            <div v-if="bar.note" class="pb-note">🛑 {{ bar.note }}</div>
+                                        </div>
+                                        <div v-else class="pb-none">{{ bar.why }}</div>
+                                        </div>
                                         <table class="tp-tbl"><thead><tr><th>分相</th><th>綠燈</th><th>最短綠</th><th>最長綠</th><th>黃燈</th><th>全紅</th><th>人閃</th><th>人紅</th></tr></thead><tbody>
                                             <tr v-for="ph in pv.phases" :key="'f'+ph.idx">
                                                 <td>分相{{ ph.idx }}</td>
@@ -21648,6 +21896,95 @@ const app=createApp({
         const sigPlanExpanded=reactive({});
         const isPlanOpen=(pv)=>{ const v=sigPlanExpanded[pv.plan_id]; return v===undefined ? pv.plan_id===sigRunningPlanId.value : v; };
         const togglePlan=(pv)=>{ sigPlanExpanded[pv.plan_id]=!isPlanOpen(pv); };
+        // ── 分相時間分配色帶 ────────────────────────────────────────
+        // 一列一分相,段寬 = 秒數 ÷ 週期。行人另一條細軌。
+        // 🛑 沒回報的欄位不補 0 —— 畫成斜紋標「未回報」。這一頁到處都在守
+        //    「沒查到 ≠ 真的是 0」,色帶更容易讓人誤讀成「這段就是 0 秒」。
+        const sigPhaseBar = (pv) => {
+            const cyc = Number(pv && pv.f && pv.f.cycle);
+            if (!isFinite(cyc) || cyc <= 0) {
+                return {ok: false, why: '尚未收到週期(CycleTime),無法換算比例。'};
+            }
+            const num = (v) => (v === null || v === undefined || v === '') ? null : Number(v);
+            const phases = pv.phases || [];
+            const secs = (f) => (Number(f.green) || 0) + (Number(f.yellow) || 0)
+                                + (Number(f.all_red) || 0);
+            const total = phases.reduce((a, ph) => a + secs(ph.f || {}), 0);
+            // 🛑 尺規取「週期」與「各分相總和」的較大值。
+            //    現場真有總和 > 週期 的計畫(測試用計畫:週期 10 秒但綠燈 10+5=15 秒),
+            //    直接除以週期會畫到 150% 溢出容器。用較大值當分母就不會爆,
+            //    對不上的事實改用下方 note 明講,不靠畫面歪掉來暗示。
+            const denom = Math.max(cyc, total, 1);
+            // 未回報的段給一個名目寬度(佔尺規 4%),而且**要計入總長**,
+            // 否則它會疊加在已經滿版的列上面,一樣溢出。
+            const NA_SEC = denom * 0.04;
+            let cursor = 0;
+            const starts = phases.map((ph) => {
+                const at = cursor; cursor += secs(ph.f || {}); return at;
+            });
+            // 尾段補到滿版。燈態軌補「本相紅燈」,行人軌補「行人紅」——
+            // 兩條軌的空白意思不同,不能共用同一個填充色。
+            const fin = (list, fillCls, fillTip) => {
+                const used = list.reduce((a, x) => a + x.sec, 0);
+                if (denom - used > 0) {
+                    list.push({cls: fillCls, sec: denom - used,
+                               tip: fillTip + ' ' + (denom - used).toFixed(0) + ' 秒'});
+                }
+                const sum = list.reduce((a, x) => a + x.sec, 0) || 1;
+                return list.map((x) => ({cls: x.cls, tip: x.tip,
+                                         pct: (100 * x.sec / sum).toFixed(2) + '%'}));
+            };
+            const rows = phases.map((ph, pi) => {
+                const f = ph.f || {};
+                const g = num(f.green), y = num(f.yellow), r = num(f.all_red);
+                const at = starts[pi];
+                const segs = [];
+                if (at > 0) segs.push({cls: 'idle', sec: at,
+                                       tip: '本相紅燈 ' + at.toFixed(0) + ' 秒（前面的分相在放行）'});
+                const push = (v, cls, name) => {
+                    if (v === null || !isFinite(v)) {
+                        segs.push({cls: 'na', sec: NA_SEC, tip: name + '：未回報'});
+                    } else if (v > 0) {
+                        segs.push({cls: cls, sec: v, tip: name + ' ' + v + ' 秒'});
+                    }
+                };
+                push(g, 'g', '綠燈');
+                push(y, 'y', '黃燈');
+                push(r, 'r', '全紅');
+                // 行人軌跟著同一個起點:行人紅 → 行人綠(綠燈扣掉綠閃)→ 綠閃 → 行人紅
+                const pf = num(f.ped_flash);
+                const ped = [];
+                if (at > 0) ped.push({cls: 'pr', sec: at, tip: '行人紅'});
+                if (g !== null && isFinite(g)) {
+                    const pg = Math.max(0, g - (pf || 0));
+                    if (pg > 0) ped.push({cls: 'pg', sec: pg,
+                                          tip: '行人綠 ' + pg.toFixed(0) + ' 秒'});
+                }
+                if (pf === null) ped.push({cls: 'na', sec: NA_SEC, tip: '行人綠閃：未回報'});
+                else if (pf > 0) ped.push({cls: 'pf', sec: pf, tip: '行人綠閃 ' + pf + ' 秒'});
+                const parts = [];
+                if (g !== null) parts.push(g + ' 綠');
+                if (y !== null) parts.push(y + ' 黃');
+                if (r !== null) parts.push(r + ' 全紅');
+                return {idx: ph.idx,
+                        segs: fin(segs, 'idle', '本相紅燈（其他分相在放行）'),
+                        ped: fin(ped, 'pr', '行人紅'),
+                        summary: parts.length ? parts.join(' / ') : '未回報'};
+            });
+            let note = '';
+            if (rows.length && Math.abs(total - cyc) >= 1) {
+                note = '各分相總和 ' + total.toFixed(0) + ' 秒 ' + (cyc < total ? '超過' : '不足')
+                       + '週期 ' + cyc + ' 秒。色帶以 ' + denom.toFixed(0)
+                       + ' 秒為尺規依實際回報值畫，差額請查控制器設定。';
+            }
+            const ticks = [];
+            const step = denom <= 30 ? 5 : (denom <= 60 ? 10 : (denom <= 150 ? 20 : 30));
+            for (let t = 0; t < denom; t += step) {
+                ticks.push({v: t, pct: (100 * t / denom).toFixed(2) + '%'});
+            }
+            return {ok: rows.length > 0, why: '這套計畫沒有分相資料。',
+                    rows: rows, ticks: ticks, cycle: cyc, note: note};
+        };
         const sigPlansAllOpen=ref(false);
         const toggleAllPlans=()=>{ sigPlansAllOpen.value=!sigPlansAllOpen.value; (sigPlanView.value||[]).forEach(pv=>{ sigPlanExpanded[pv.plan_id]=sigPlansAllOpen.value; }); };
         // 欄位互動說明:選命令時每個欄位旁的 ℹ 點開,解釋這欄是什麼、怎麼填。
@@ -22101,6 +22438,53 @@ const app=createApp({
         // 只給一個一致率沒辦法稽核。接管控制權之前,每一筆判斷的輸入、
         // 算式每一項、哪道安全閘門先攔下來,都要看得到。
         const sigPlan=ref({available:false});
+        // ── 決策盤:天平與兩側卡 ──────────────────────────────────────
+        // 兩條對抗條共用同一把尺,否則「換相力 0 vs 續綠力 24」會各自撐滿,
+        // 看起來像勢均力敵。尺規取兩者較大值再留 15% 餘裕。
+        const sigBalMax = computed(() => {
+            const t = (sigPlan.value && sigPlan.value.terms) || {};
+            const a = Number(t.switch_gain) || 0;
+            const b = Number(t.threshold) || 0;
+            return Math.max(a, b, 1) * 1.15;
+        });
+        const sigBalW = (v) => {
+            const n = Number(v) || 0;
+            if (n <= 0) return '0%';
+            return Math.min(100, 100 * n / sigBalMax.value).toFixed(1) + '%';
+        };
+        const sigOccW = (r) => {
+            const n = Number(r);
+            if (!isFinite(n) || n <= 0) return '0%';
+            return Math.min(100, n * 100).toFixed(1) + '%';
+        };
+        // 兩側卡:把 green_side / red_side 攤成同一個形狀,模板才不用寫兩次。
+        const sigPlanSides = computed(() => {
+            const d = sigPlan.value || {};
+            if (!d.available || !d.green_side || !d.red_side) return [];
+            const mk = (side, phase, tone) => Object.assign({}, side, {
+                phase: phase, tone: tone,
+                // 回堵判定線 80%。到了就把佔用條轉琥珀 —— 那是主線保護閘門的門檻。
+                nearSpill: Number(side.spillback_ratio) >= 0.8,
+            });
+            return [mk(d.green_side, d.green_phase, 'green'),
+                    mk(d.red_side, d.red_phase, 'red')];
+        });
+        // 閘門三態。🛑 先中的先生效 —— 生效那一關「後面」的閘門根本沒跑到,
+        //    不能跟「跑過但沒中」都印「未觸發」,那是兩件不同的事。
+        const sigPlanGates = computed(() => {
+            const gs = (sigPlan.value && sigPlan.value.gates) || [];
+            let hitAt = -1;
+            gs.forEach((g, i) => { if (g.hit && hitAt === -1) hitAt = i; });
+            return gs.map((g, i) => {
+                let st = 'pass', tx = '通過';
+                if (hitAt !== -1) {
+                    if (i === hitAt) { st = 'hit'; tx = '生效'; }
+                    else if (hitAt < i) { st = 'skip'; tx = '未評估'; }
+                }
+                return Object.assign({}, g, {state: st, stateText: tx});
+            });
+        });
+
         let sigCtlTimer=null;
         const SIG_MODE_TEXT={external_dynamic:'動態控制中(外部接管)',
                              controller_dynamic:'控制器動態',
@@ -23308,7 +23692,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
