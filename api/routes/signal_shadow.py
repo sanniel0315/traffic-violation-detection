@@ -709,8 +709,11 @@ def _green_runs(rows: list) -> list:
             cur["green_sec"] = el
             cur["last_elapsed"] = el
             cur["samples"] += 1
-            # 段「之內」有斷點 → 這段的長度不可信
-            if gap and gap > cur.get("max_inner_gap", 0):
+            # 段「之內」有斷點 → 這段的長度不可信。
+            # 🛑 要比「異常大的間隔」,不是「有沒有間隔」—— 正常取樣本來就每
+            #    5 秒一筆,寫成 gap > 0 會把每一段都標成不可信(實測 417 段
+            #    全被標記,等於這個欄位完全失去意義)。
+            if gap and gap > SHADOW_INTERVAL_SEC * 1.6                     and gap > cur.get("max_inner_gap", 0):
                 cur["max_inner_gap"] = gap
             if forced:
                 cur["forced"] = True

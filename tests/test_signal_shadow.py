@@ -331,3 +331,27 @@ def test_switch_detection_sample_never_counted(tmp_path, monkeypatch):
         "切換瞬間的排除不可以依賴 green_elapsed 門檻"
     assert re.search(r'None if \(\s*\n\s*actual == "SWITCH"', src), \
         "agree=NULL 的第一個條件應該是單看 actual == 'SWITCH'"
+
+
+def test_normal_sampling_is_not_flagged_as_truncated():
+    """正常取樣間隔不可以被當成「斷點」。
+
+    🛑 2026-09-04 實測:max_inner_gap 原本寫成 gap > 0 才記,但正常取樣本來
+       就每 5 秒一筆 —— 結果 417 段全被標成「不確定(斷點)」,這個欄位等於
+       完全失去意義。要比的是「異常大的間隔」。
+    """
+    from api.routes.signal_shadow import _green_runs, _run_after_gap, SHADOW_INTERVAL_SEC
+
+    step = SHADOW_INTERVAL_SEC
+    rows = [("2026-09-04T08:00:%02d" % int(i * step), 1, i * step, 0,
+             None, None, None, None) for i in range(5)]
+    runs = _green_runs(rows)
+    assert len(runs) == 1
+    assert not runs[0].get("max_inner_gap"), "正常間隔不該被標成段內斷點"
+    assert not _run_after_gap(runs[0])
+
+    # 真的有斷點(中間少了好幾筆)才要標
+    rows_gap = rows[:2] + [("2026-09-04T08:00:40", 1, 40.0, 0,
+                            None, None, None, None)]
+    runs_gap = _green_runs(rows_gap)
+    assert runs_gap[0].get("max_inner_gap"), "異常大的間隔要標成段內斷點"
