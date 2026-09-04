@@ -60,6 +60,18 @@ def _phase_cams(env_key: str, default: str) -> list:
     return out or [int(default.split(",")[0])]
 
 
+# 基準表用 "ID2".."ID5" 當相機鍵,但現場設備牌與所有文件用的是
+# CCTV-N8-E-9-L-**-SIG 的中段代號。介面上要顯示看得懂的那個,
+# 不能丟 ID3 給操作的人自己心算是哪一台。
+CAMERA_LABELS = {"ID2": "NE-1", "ID3": "NE-2", "ID4": "WN-1", "ID5": "WN-2",
+                 2: "NE-1", 3: "NE-2", 4: "WN-1", 5: "WN-2"}
+
+
+def camera_label(key) -> str:
+    """把基準表的 IDn 或相機 id 轉成現場名稱;不認得就原樣回傳。"""
+    return CAMERA_LABELS.get(key, str(key) if key is not None else "—")
+
+
 PHASE_CAMERAS = {
     1: _phase_cams("SIGNAL_SHADOW_CAMS_PHASE1", "2,3"),   # NE-1, NE-2 上匝道
     2: _phase_cams("SIGNAL_SHADOW_CAMS_PHASE2", "4,5"),   # WN-1, WN-2 下匝道
@@ -814,9 +826,11 @@ async def shadow_plan(_user=Depends(get_current_user)):
         return {
             "phase_no": a.phase_no,
             "ramp": role.get("ramp"), "label": role.get("label"),
-            "camera": role.get("constraint_camera"),
+            "camera": camera_label(role.get("constraint_camera")),
+            "camera_key": role.get("constraint_camera"),
             "cameras_used": meas[a.phase_no]["cameras"],
             "camera_ids": PHASE_CAMERAS.get(a.phase_no, []),
+            "camera_names": [camera_label(c) for c in PHASE_CAMERAS.get(a.phase_no, [])],
             "vehicles_measured": round(meas[a.phase_no]["vehicles"], 1),
             "queue_m": a.queue_m,
             "queue_vehicles": round(a.queue_vehicles(DEFAULT_METERS_PER_VEHICLE), 2),
