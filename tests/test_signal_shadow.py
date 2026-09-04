@@ -355,3 +355,26 @@ def test_normal_sampling_is_not_flagged_as_truncated():
                             None, None, None, None)]
     runs_gap = _green_runs(rows_gap)
     assert runs_gap[0].get("max_inner_gap"), "異常大的間隔要標成段內斷點"
+
+
+def test_measured_saturation_falls_back_when_implausible(monkeypatch):
+    """量到的飽和流不合理時必須退回預設,不能讓一次異常量測帶偏控制邏輯。
+
+    🛑 change_cost = 損失時間 × 飽和流 × 損失時間 —— 飽和流直接決定
+       「值不值得換相」的門檻。若某次量測因為 ROI 遮蔽或車種異常而算出
+       離譜的值,照單全收會讓演算法整段時間亂切或完全不切。
+    """
+    from api.routes import signal_shadow as ss
+    from detection.signal_decision_engine import DEFAULT_SATURATION_VPH
+
+    ss._measured_sat.update({"vph": {}, "ts": None, "source": "default"})
+    assert ss._sat_for(1) == DEFAULT_SATURATION_VPH      # 沒量到 → 預設
+
+    ss._measured_sat["vph"] = {1: 700.0}
+    assert ss._sat_for(1) == 700.0                       # 量到就用量到的
+    assert ss._sat_for(2) == DEFAULT_SATURATION_VPH      # 沒量到的相仍用預設
+
+    # 界限:_refresh_saturation 只收 SAT_MIN_VPH ~ SAT_MAX_VPH 之間的值
+    assert ss.SAT_MIN_VPH > 0 and ss.SAT_MAX_VPH > ss.SAT_MIN_VPH
+    assert not (ss.SAT_MIN_VPH <= 50 <= ss.SAT_MAX_VPH), "50 vph 應被視為異常"
+    assert not (ss.SAT_MIN_VPH <= 9000 <= ss.SAT_MAX_VPH), "9000 vph 應被視為異常"
