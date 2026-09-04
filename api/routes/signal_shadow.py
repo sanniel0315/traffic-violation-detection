@@ -222,6 +222,94 @@ def _sat_for(phase: int) -> float:
     return float(_measured_sat["vph"].get(phase) or DEFAULT_SATURATION_VPH)
 
 
+# ── 戰情頁用:每台相機的即時量測、每相今日放行統計 ──────────────────
+def _camera_live() -> list:
+    """四台相機各自的即時量測。
+
+    決策用的是「同相取最大」的聚合值,但戰情牆要看的是**每一台各自**的狀況
+    —— 上游那台有車而停等線那台沒有,代表隊伍還沒排到停等區,聚合之後
+    這個訊息就沒了。所以這裡刻意不聚合。
+    """
+    from api.routes.congestion import congestion_results
+    out = []
+    for phase in sorted(PHASE_CAMERAS):
+        for cam in PHASE_CAMERAS[phase]:
+            r = congestion_results.get(cam) or {}
+            out.append({
+                "camera_id": cam,
+                "name": camera_label(cam),
+                "phase_no": phase,
+                "online": bool(r),
+                # 顯示用一律取平滑後的佔用率。原始瞬時值抖動大,
+                # 掛在牆上會一直跳,而且跟等級判定用的不是同一個數。
+                "occupancy": r.get("occupancy"),
+                "raw_occupancy": r.get("raw_occupancy"),
+                "vehicle_count": r.get("vehicle_count"),
+                "stopped_vehicle_count": r.get("stopped_vehicle_count"),
+                "flow_vpm": r.get("flow_vpm"),
+                "queue_m": r.get("estimated_queue_length_m"),
+                "level": r.get("congestion_level"),
+            })
+    return out
+
+
+_release_cache = {"ts": 0.0, "data": None}
+
+
+def _release_stats() -> dict:
+    """今日各分相的放行統計:累計綠燈秒數 / 放行次數 / 前一次多長。
+
+    🛑 加 30 秒快取。/plan 每 5 秒被打一次,而這裡要掃當日整份 log
+       (尖峰一天上萬筆),不快取等於把決策盤的輪詢變成資料庫壓力來源。
+    """
+    now = time.time()
+    if _release_cache["data"] is not None and now - _release_cache["ts"] < 30:
+        return _release_cache["data"]
+    out: dict = {}
+    try:
+        day = datetime.now().strftime("%Y-%m-%d")
+        conn = _db()
+        rows = conn.execute(
+            "SELECT ts,green_phase FROM signal_shadow_log "
+            "WHERE ts>=? AND control_mode='external_dynamic' ORDER BY ts",
+            (day + "T00:00:00",)).fetchall()
+        conn.close()
+    except Exception:
+        rows = []
+    # 逐筆掃出連續同相的區段。區段長度用「頭尾時間差」,不是筆數×取樣週期——
+    # 抄錄過期被跳過的取樣會讓筆數變少,乘出來會低估。
+    runs: dict = {}
+    cur_ph = None
+    t0 = t1 = None
+
+    def close_run():
+        if cur_ph is None or t0 is None:
+            return
+        runs.setdefault(cur_ph, []).append(max(0.0, t1 - t0))
+
+    for ts_s, ph in rows:
+        try:
+            t = datetime.fromisoformat(ts_s).timestamp()
+        except Exception:
+            continue
+        if ph != cur_ph:
+            close_run()
+            cur_ph, t0 = ph, t
+        t1 = t
+    close_run()
+    for ph, lens in runs.items():
+        if ph is None:
+            continue
+        out[str(int(ph))] = {
+            "count": len(lens),
+            "total_sec": int(round(sum(lens))),
+            "last_sec": int(round(lens[-1])) if lens else None,
+            "avg_sec": round(sum(lens) / len(lens), 1) if lens else None,
+        }
+    _release_cache.update({"ts": now, "data": out})
+    return out
+
+
 def _phase_measure(phase: int) -> dict:
     """把一個分相底下所有相機的量測聚合成一組。
 
@@ -855,7 +943,11 @@ async def shadow_plan(_user=Depends(get_current_user)):
              (green_elapsed < min_green, d.forced_by_max_green, d.blocked_by_priority))},
     ]
 
+    cams = _camera_live()
+    releases = _release_stats()
     return {
+        "cameras": cams,
+        "release_stats": releases,
         "available": True,
         "ts": datetime.now().isoformat(timespec="seconds"),
         "control_mode": live.get("control_mode"),
