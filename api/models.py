@@ -153,6 +153,26 @@ class TrafficEvent(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class AlertEvent(Base):
+    """統一告警事件 — 違規/號誌/球機追蹤/車牌等所有發報來源都寫這裡。
+
+    取代原本 push_events.json 的 200 筆環形緩衝:那個存不下真實流量
+    (違規一天數百筆),也沒辦法做分類/日期/相機篩選與分頁。
+
+    created_at 存 UTC(與本檔其他表一致);對外由端點轉成台北時間再回傳,
+    避免 App 直接吃到差 8 小時的時間。
+    """
+    __tablename__ = "alert_events"
+    id = Column(Integer, primary_key=True, index=True)
+    category = Column(String(32), index=True)      # speeding / red_line_stop / signal / tracking / lpr / other
+    title = Column(String(200))
+    body = Column(Text)
+    camera_id = Column(Integer, index=True)        # 有相機的事件才填,供依相機篩選
+    violation_id = Column(Integer, index=True)     # 違規類事件回連詳情用
+    data = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class LockEvent(Base):
     """E-1507 電子鎖刷卡/開鎖事件歷史 (動作暫存器 0x0023 邊沿偵測寫入)"""
     __tablename__ = "lock_events"
