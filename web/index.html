@@ -3547,6 +3547,44 @@
                          color:var(--gov-text); margin-right:auto; }
         /* ── 動態號誌控制盤 ── */
         .sc-h { margin:14px 0 6px; font-size:13px; font-weight:700; color:var(--gov-text); }
+        /* ── 控制策略 8 位元旗標 ── */
+        .cs-block { margin-top:10px; }
+        .cs-flags { display:grid; gap:6px;
+                    grid-template-columns:repeat(auto-fill, minmax(132px, 1fr)); }
+        .cs-flag { display:flex; align-items:center; gap:6px;
+                   padding:7px 10px; border-radius:var(--r-md,8px);
+                   border:1px solid var(--gov-border); background:var(--gov-surface-2);
+                   color:var(--gov-mute-2); font-size:12px; font-weight:600;
+                   cursor:help; position:relative; overflow:hidden;
+                   transition:background .25s ease, color .25s ease, border-color .25s ease; }
+        .cs-flag-dot { width:8px; height:8px; border-radius:50%; flex:0 0 8px;
+                       background:var(--gov-border-strong); transition:background .25s ease; }
+        .cs-flag-name { min-width:0; white-space:nowrap; }
+        .cs-flag-bit { margin-left:auto; font-size:10px; font-weight:600;
+                       color:var(--gov-mute-2); font-variant-numeric:tabular-nums; }
+        .cs-flag.on { background:var(--gov-primary); border-color:var(--gov-primary);
+                      color:#fff; }
+        .cs-flag.on .cs-flag-bit { color:rgba(255,255,255,.7); }
+        .cs-flag.on .cs-flag-dot { background:#fff; animation:csPulse 1.8s ease-in-out infinite; }
+        /* 判定外部接管靠 bit2+bit4,亮起時多一圈外框,讓「這兩個一起亮」看得出來 */
+        .cs-flag.key.on { box-shadow:0 0 0 2px var(--gov-primary-line) inset; }
+        .cs-flag.key:not(.on) { border-style:dashed; }
+        /* 剛翻轉:閃 1.2 秒。只標真的變的那幾位,整串閃就沒有資訊量 */
+        .cs-flag.flip::after { content:''; position:absolute; inset:0;
+                               background:var(--gov-warn); opacity:0;
+                               animation:csFlip 1.2s ease-out; pointer-events:none; }
+        @keyframes csPulse { 0%,100%{opacity:1; transform:scale(1)}
+                             50%{opacity:.35; transform:scale(.78)} }
+        @keyframes csFlip { 0%{opacity:.55} 100%{opacity:0} }
+        .cs-raw { display:flex; align-items:baseline; gap:8px; margin-top:8px;
+                  font-size:12px; color:var(--gov-muted); }
+        .cs-raw b { font-family:var(--font-mono,ui-monospace,monospace);
+                    font-size:13px; color:var(--gov-text); }
+        .cs-raw-k { font-weight:700; }
+        .cs-raw-note { color:var(--gov-mute-2); }
+        @media (prefers-reduced-motion: reduce) {
+            .cs-flag.on .cs-flag-dot, .cs-flag.flip::after { animation:none; }
+        }
         /* ── 運作統計:查詢列 ── */
         .st-query-card { margin-bottom:12px; }
         .st-query { display:flex; flex-direction:column; gap:10px; }
@@ -7314,6 +7352,22 @@
                                 <span class="xn-chip"><span class="k">步階</span><b>{{ sigPlan.step_id }}</b><span class="k">{{ sigPlan.clearance?'清道中':'放行中' }}</span></span>
                                 <span class="xn-chip"><span class="k">時制計畫</span><b>{{ sigCtlPlanId }}</b></span>
                             </div>
+                            <div class="cs-block">
+                                <div class="cs-flags">
+                                    <div v-for="f in sigStrategyFlags" :key="'csf'+f.bit"
+                                         class="cs-flag" :class="{on:f.on, flip:f.flip, key:f.keyBit}"
+                                         :title="f.desc">
+                                        <span class="cs-flag-dot"></span>
+                                        <span class="cs-flag-name">{{ f.name }}</span>
+                                        <span class="cs-flag-bit">bit{{ f.bit }}</span>
+                                    </div>
+                                </div>
+                                <div class="cs-raw">
+                                    <span class="cs-raw-k">原始值</span>
+                                    <b>{{ sigStrategyHex }}</b>
+                                    <span class="cs-raw-note">{{ sigStrategyNote }}</span>
+                                </div>
+                            </div>
                             <p v-if="!sigPlan.available" style="font-size:13px;color:#b45309;margin-top:10px">{{ sigPlan.reason||'尚未取得決策資料' }}</p>
                         </div>
                     </div>
@@ -7689,9 +7743,24 @@
                             <div class="analysis-setting-tip">
                                 唯讀監看號誌控制器回報:控制策略異動(5F00/5FC0)、現場面板操作(5F08)、現場資料異動(5F0A)、異常步階(故障全紅/各種閃光)。值改變才記事件,不對號誌下任何命令。
                             </div>
-                            <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:8px">
-                                <span style="font-size:13px;color:var(--gov-muted)">目前控制策略</span>
-                                <el-tag size="small" :type="sigSafety.manual?'danger':'info'">{{ sigSafety.strategy_text||'尚未收到' }}</el-tag>
+                            <h4 class="sc-h">目前控制策略（8 位元）</h4>
+                            <div class="cs-block">
+                                <div class="cs-flags">
+                                    <div v-for="f in sigStrategyFlags" :key="'csf'+f.bit"
+                                         class="cs-flag" :class="{on:f.on, flip:f.flip, key:f.keyBit}"
+                                         :title="f.desc">
+                                        <span class="cs-flag-dot"></span>
+                                        <span class="cs-flag-name">{{ f.name }}</span>
+                                        <span class="cs-flag-bit">bit{{ f.bit }}</span>
+                                    </div>
+                                </div>
+                                <div class="cs-raw">
+                                    <span class="cs-raw-k">原始值</span>
+                                    <b>{{ sigStrategyHex }}</b>
+                                    <span class="cs-raw-note">{{ sigStrategyNote }}</span>
+                                </div>
+                            </div>
+                            <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px">
                                 <span style="font-size:13px;color:var(--gov-muted)">事件推播</span>
                                 <el-switch v-model="sigSafetyPush" size="small" @change="sigSetSafetyPush" active-text="開" inactive-text="關" inline-prompt></el-switch>
                                 <span style="font-size:12px;color:var(--gov-mute-2)">關閉只停推播,事件照記;推播對象在「告警通知」頁訂閱「號誌事件」分類</span>
@@ -22150,6 +22219,55 @@ const app=createApp({
         const sigSafety=ref({manual:false,strategy_text:'',abnormal_text:'',push_enabled:true});
         const sigSafetyEvents=ref([]);
         const sigSafetyPush=ref(true);
+        // ── 控制策略 8 位元旗標 ──────────────────────────────────────
+        // 一行 "14H 路口手動+時相控制" 看不出哪些亮、哪些暗,更看不出剛剛翻了哪一位。
+        // 攤成八個 chip:亮的脈動、剛翻轉的閃 1.2 秒、hover 給位元的意思。
+        const SIG_STRATEGY_META = [
+            {name:'定時控制', desc:'依時段型態查表跑固定時制。要 phase 位元為 0 且本位元亮,才是真的在跑定時。'},
+            {name:'動態控制', desc:'控制器自己的動態控制(由車輛偵測器觸發),不是外部系統接管。'},
+            {name:'路口手動', desc:'路側面板手動。🛑 OPAC 外部接管時也會把這一位元寫成 1 —— 只看它會誤判成「被切手動」(2026-09-02 現場實測)。要跟 bit4 一起看。'},
+            {name:'中央手動', desc:'中央電腦手動控制路口。'},
+            {name:'時相控制', desc:'逐時相下命令(5F1C)。這是 OPAC 接管的實際手段 —— 與 bit2 路口手動同時亮,就是外部動態控制中。'},
+            {name:'即時控制', desc:'即時命令控制模式。'},
+            {name:'觸動控制', desc:'車輛/行人觸動控制。'},
+            {name:'特勤路線', desc:'VIP 特勤路線優先控制。'},
+        ];
+        const SIG_STRATEGY_KEY_BITS = [2, 4];   // 判定外部接管靠這兩位,視覺上要標出來
+        const sigStrategyFlipped = ref([]);
+        let sigStrategyFlipTimer = null;
+        const sigStrategyVal = computed(() => {
+            const v = sigSafety.value && sigSafety.value.strategy;
+            return (typeof v === 'number') ? v : null;
+        });
+        const sigStrategyFlags = computed(() => {
+            const v = sigStrategyVal.value;
+            const flipped = sigStrategyFlipped.value;
+            return SIG_STRATEGY_META.map((m, i) => ({
+                bit: i, name: m.name, desc: m.desc,
+                on: (v === null) ? false : !!(v & (1 << i)),
+                flip: flipped.indexOf(i) !== -1,
+                keyBit: SIG_STRATEGY_KEY_BITS.indexOf(i) !== -1,
+            }));
+        });
+        const sigStrategyHex = computed(() => {
+            const v = sigStrategyVal.value;
+            return (v === null) ? '尚未收到'
+                : ('0x' + v.toString(16).toUpperCase().padStart(2, '0'));
+        });
+        const sigStrategyNote = computed(() => {
+            const m = sigSafety.value && sigSafety.value.control_mode;
+            return (m && m.label) ? m.label : '';
+        });
+        // 只把「真的翻轉的那幾位」標成 flip。整串重畫會每次都閃,那就沒有資訊量了。
+        watch(sigStrategyVal, (nv, ov) => {
+            if (nv === null || ov === null || ov === undefined || nv === ov) return;
+            const diff = nv ^ ov;
+            const idx = [];
+            for (let i = 0; i < 8; i++) { if (diff & (1 << i)) idx.push(i); }
+            sigStrategyFlipped.value = idx;
+            if (sigStrategyFlipTimer) clearTimeout(sigStrategyFlipTimer);
+            sigStrategyFlipTimer = setTimeout(() => { sigStrategyFlipped.value = []; }, 1200);
+        });
         const sigFmtTs=(ts)=>{
             if(!ts)return '';
             const d=new Date(ts*1000), p=n=>String(n).padStart(2,'0');
@@ -23190,7 +23308,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }

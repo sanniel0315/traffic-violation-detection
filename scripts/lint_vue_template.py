@@ -277,6 +277,82 @@ def lint_setup_return(text):
     return missing
 
 
+# ── watch 的暫時死區(TDZ)檢查 ────────────────────────────────────────────
+# 🛑 2026-09-05 踩到:新加的 watch(sigStrategyVal, ...) 放在 setup 中段,
+#    而 sigStrategyVal 這個 computed 讀的 sigSafety 在兩百多行之後才宣告。
+#    watch 會**立即求值** source 拿初始值 → 讀到還在 TDZ 的 const →
+#    ReferenceError → 整個 setup 中斷 → 整頁白畫面(連登入都動不了)。
+#    node --check 只看語法,div 平衡也正常,兩道既有關卡都看不見它。
+#    computed 本身是惰性的沒問題,問題出在「watch 把它變成立即求值」。
+_DECL_RE = re.compile(r'^\s*(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=', re.M)
+_IDENT_RE = re.compile(r'\b([A-Za-z_$][\w$]*)\b')
+_WATCH_RE = re.compile(r'\bwatch\s*\(')
+
+
+def _first_arg(text, open_paren_idx):
+    """取 watch( 的第一個引數原文。遇到深度 0 的逗號才算分隔。"""
+    depth = 0
+    i = open_paren_idx
+    start = i + 1
+    while i < len(text):
+        c = text[i]
+        if c in '([{':
+            depth += 1
+        elif c in ')]}':
+            depth -= 1
+            if depth == 0:
+                return text[start:i]
+        elif c == ',' and depth == 1:
+            return text[start:i]
+        i += 1
+    return ''
+
+
+def lint_watch_tdz(text):
+    """回傳 [(watch 行號, 識別字, 宣告行號)]。"""
+    # 直接掃全檔:const/let 宣告本來就只出現在 inline <script> 裡,
+    # 而且用全檔 offset 算出來的行號可以直接對應到檔案,回報時不必再換算。
+    script = text
+    # 每個識別字第一次被 const/let 宣告的位置(字元 offset)
+    decl = {}
+    for m in _DECL_RE.finditer(script):
+        decl.setdefault(m.group(1), m.start())
+    # computed 的本體,供一層追進去用
+    bodies = {}
+    for name, off in decl.items():
+        line_end = script.find('\n', off)
+        head = script[off:line_end if line_end != -1 else len(script)]
+        if 'computed(' in head:
+            # 抓到該 computed 的結尾括號為止(夠用即可,不做完整 parse)
+            oi = script.index('(', script.index('computed(', off) + 7)
+            depth, j = 0, oi
+            while j < len(script):
+                if script[j] in '([{':
+                    depth += 1
+                elif script[j] in ')]}':
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            bodies[name] = script[oi:j]
+
+    hits = []
+    for wm in _WATCH_RE.finditer(script):
+        oi = script.index('(', wm.start())
+        arg = _first_arg(script, oi)
+        # 直接用到的識別字,加上「若它是 computed 就再看它的本體」一層
+        names = set(_IDENT_RE.findall(arg))
+        for n in list(names):
+            if n in bodies:
+                names |= set(_IDENT_RE.findall(bodies[n]))
+        for n in sorted(names):
+            off = decl.get(n)
+            if off is not None and off > wm.start():
+                hits.append((script[:wm.start()].count('\n') + 1, n,
+                             script[:off].count('\n') + 1))
+    return hits
+
+
 def lint_one(target):
     """回傳 (fails, warns)。"""
     if str(target).startswith(('http://', 'https://')):
@@ -295,6 +371,14 @@ def lint_one(target):
         for api, line in api_missing:
             print(f'       第 {line} 行用到 {api}() —— 請加進 const {{ ... }} = Vue')
         fails += len(api_missing)
+    tdz = lint_watch_tdz(text)
+    if tdz:
+        print(f'[FAIL] {len(tdz)} 處 watch 會讀到還沒宣告的 const '
+              f'(watch 立即求值 → TDZ ReferenceError → 整頁白畫面):')
+        for wline, name, dline in tdz:
+            print(f'       第 {wline} 行的 watch 讀到 {name}，'
+                  f'但它在第 {dline} 行才宣告 —— 把 watch 移到宣告之後')
+        fails += len(tdz)
     ret_missing = lint_setup_return(text)
     if ret_missing:
         print(f'[FAIL] {len(ret_missing)} 個函式模板有呼叫但 setup 沒回傳 '
