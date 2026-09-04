@@ -62,7 +62,25 @@ def estimate_arrivals(rows: list, mpv: float = DEFAULT_METERS_PER_VEHICLE) -> di
     for ph in PHASES:
         idx = 2 if ph == 1 else 3
         rates: list = []
-        run = None          # [t0, q0, t1, q1]
+        total_growth = 0.0      # 所有紅燈區間的排隊淨成長(輛)
+        total_red = 0.0         # 所有紅燈區間的總時間(秒)
+        run = None              # [t0, q0, t1, q1]
+
+        def close(run_):
+            nonlocal total_growth, total_red
+            if not run_ or (run_[2] - run_[0]) < 15:
+                return
+            dt = run_[2] - run_[0]
+            dq = (run_[3] - run_[1]) / mpv
+            # 🛑 分母要用**全部**紅燈時間,分子只取正成長。
+            #    先前寫成「只採計有成長的區間、取中位數」,等於把沒有車來的
+            #    紅燈整段丟掉 —— 那是系統性高估到達率。2026-09-04 現場實測:
+            #    偏高的到達率讓模擬排隊一路累積(尖峰時段模擬平均 66m vs
+            #    實際 17m),校準永遠過不了。
+            total_red += dt
+            if dq > 0:
+                total_growth += dq
+                rates.append(dq / dt)
         for r in rows:
             q = r[idx]
             if q is None:
@@ -74,21 +92,18 @@ def estimate_arrivals(rows: list, mpv: float = DEFAULT_METERS_PER_VEHICLE) -> di
                 else:
                     run[2], run[3] = t, q
             else:
-                if run and (run[2] - run[0]) >= 15:
-                    dt = run[2] - run[0]
-                    dq = (run[3] - run[1]) / mpv
-                    if dq > 0:
-                        rates.append(dq / dt)
+                close(run)
                 run = None
+        close(run)
+        rate = (total_growth / total_red) if total_red > 0 else None
         rates.sort()
         n = len(rates)
-        if n:
-            med = rates[n // 2]
-            lo = rates[max(0, int(n * 0.25))]
-            hi = rates[min(n - 1, int(n * 0.75))]
-        else:
-            med = lo = hi = None
-        out[ph] = {"veh_per_sec": med, "samples": n, "p25": lo, "p75": hi}
+        lo = rates[max(0, int(n * 0.25))] if n else None
+        hi = rates[min(n - 1, int(n * 0.75))] if n else None
+        out[ph] = {"veh_per_sec": rate, "samples": n,
+                   "red_sec": round(total_red, 1),
+                   "growth_veh": round(total_growth, 2),
+                   "p25": lo, "p75": hi}
     return out
 
 
