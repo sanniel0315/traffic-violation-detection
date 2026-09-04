@@ -2074,7 +2074,54 @@ class LPRStreamTask:
         if len(self.results) > self.max_results:
             self.results.pop()
         self._save_record_db(record)
+        self._check_watchlist(record)
         return record
+
+    # 同一台車連續入鏡會辨識很多次,冷卻避免同一張車牌洗版
+    _WATCH_COOLDOWN_SEC = 600
+    _watch_last_alert: dict = {}
+
+    def _check_watchlist(self, record: dict) -> None:
+        """辨識到黑名單車牌就發告警(category=lpr)。
+        出錯一律安靜跳過 —— 告警是附加功能,不該讓辨識主流程失敗。"""
+        try:
+            plate = str(record.get('plate_number') or '').strip()
+            if not plate or plate == 'UNKNOWN' or not record.get('valid'):
+                return
+            from api.routes.lpr import normalize_plate
+            norm = normalize_plate(plate)
+            if len(norm) < 3:
+                return
+            now = time.time()
+            if now - LPRStreamTask._watch_last_alert.get(norm, 0) < LPRStreamTask._WATCH_COOLDOWN_SEC:
+                return
+
+            from api.models import SessionLocal, PlateWatchlist
+            from datetime import datetime as _dt
+            db = SessionLocal()
+            try:
+                row = (db.query(PlateWatchlist)
+                       .filter(PlateWatchlist.plate == norm, PlateWatchlist.active.is_(True))
+                       .first())
+                if not row:
+                    return
+                row.hit_count = int(row.hit_count or 0) + 1
+                row.last_hit_at = _dt.utcnow()
+                note = row.note or ''
+                db.commit()
+            finally:
+                db.close()
+
+            LPRStreamTask._watch_last_alert[norm] = now
+            from api.routes.push import push_alert
+            push_alert(
+                f"\U0001F6A8 列管車輛出現 · {plate}",
+                (self.camera_name or f"cam_{self.camera_id}") + (f" · {note}" if note else ""),
+                {"type": "watchlist", "plate": plate, "camera_id": self.camera_id},
+                "lpr",
+            )
+        except Exception as e:
+            print(f"[LPR-Watchlist] 比對失敗: {e}", flush=True)
 
     def _update_vehicle_track_state(self, track_id: int, vehicle_type: str, bbox: List[int], frame) -> None:
         state = self.vehicle_track_states.get(track_id)
