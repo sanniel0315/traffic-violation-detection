@@ -78,7 +78,7 @@ def test_phase_camera_mapping_matches_baseline():
     assert m.PHASE_CAMERA[2] == 4
 
     # 🛑 決策的量測要涵蓋該相的**所有**相機,不是只有基準測點。
-    #    現場四台 NE-1(2)/NE-2(3)/WN-1(4)/WN-2(5);先前只用 constraint_camera
+    #    現場四台 NE-1 / NE-2 / WN-1 / WN-2(相機 id 2/3/4/5);先前只用 constraint_camera
     #    各取一台,等於少看一半的進場,而 switch_gain 直接由排隊車數算出來。
     assert sorted(m.PHASE_CAMERAS[1]) == [2, 3], "分相1 要含 NE-1 與 NE-2"
     assert sorted(m.PHASE_CAMERAS[2]) == [4, 5], "分相2 要含 WN-1 與 WN-2"
