@@ -36,6 +36,10 @@ router = APIRouter(prefix="/api/signal/shadow", tags=["signal-shadow"])
 
 # 取樣週期(秒)。OPAC 是 5 秒一次決策，對齊它才好比對。
 SHADOW_INTERVAL_SEC = float(os.getenv("SIGNAL_SHADOW_INTERVAL_SEC", "5") or 5)
+# 回堵判定比例(與決策引擎同一個值,不另外訂一套)
+from detection.signal_decision_engine import (  # noqa: E402
+    DEFAULT_SPILLBACK_RATIO as DEFAULT_SPILLBACK_RATIO_LOCAL,
+)
 # 影子模式開關。預設關 —— 要明確開啟才跑（雖然它不下發，仍是背景負載）。
 SHADOW_ENABLED = os.getenv("SIGNAL_SHADOW_ENABLED", "0") != "0"
 # 分相 → 提供該分相排隊量測的相機 id（對照 ramp_timing_baseline.json 的
@@ -1057,3 +1061,121 @@ async def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
                         "沒有納入車輛異質性、上游號誌連鎖與駕駛行為。"
                         "要主張現場實績仍須做 A/B 交替時段。")
     return result
+
+@router.get("/local-metrics", summary="局部可觀測指標(不需反事實模型)")
+async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
+                               since: str = Query(""), until: str = Query(""),
+                               _user=Depends(get_current_user)):
+    """三個「當下那一刻可直接觀測」的指標,以及我方引擎在同一刻的判定。
+
+    🛑 為什麼這條路成立而模擬不成立:
+       這裡的主張全部是**瞬時、局部**的 —— 例如「這一刻綠燈側沒有車也沒有
+       流量,綠燈正在空放,而我方判定應換相」。這個陳述只描述那一刻,
+       不需要推演「換相之後車流會如何」,所以不需要反事實模型。
+
+    🛑 它能證明什麼、不能證明什麼:
+       能 —— 我方在這些具體時刻的判斷方向較佳(有幾次、佔比多少,都可複核)。
+       不能 —— 全時段總延滯較低。那要靠 A/B 交替時段的實績。
+       報告裡要寫成「局部佐證」,不可以寫成「整體較優」。
+    """
+    from detection.signal_timing_lookup import (
+        current_base_plan, phase_role, plan_params,
+    )
+    if since:
+        since_iso = since
+        until_iso = until or datetime.now().isoformat(timespec="seconds")
+    else:
+        since_iso = datetime.fromtimestamp(
+            time.time() - int(minutes) * 60).isoformat(timespec="seconds")
+        until_iso = datetime.now().isoformat(timespec="seconds")
+    try:
+        conn = _db()
+        rows = conn.execute(
+            "SELECT ts,green_phase,green_elapsed,queue_m_1,queue_m_2,"
+            "flow_vpm_1,flow_vpm_2,ours,actual,forced,clearance "
+            "FROM signal_shadow_log WHERE ts>=? AND ts<=? "
+            "AND control_mode='external_dynamic' ORDER BY ts",
+            (since_iso, until_iso)).fetchall()
+        conn.close()
+    except Exception as e:
+        return {"error": str(e)}
+    if not rows:
+        return {"available": False, "since": since_iso, "until": until_iso,
+                "reason": "此區間無樣本"}
+
+    pp = plan_params(current_base_plan()) or {}
+    max_green = float(pp.get("max_green") or 210)
+    storage2 = (phase_role(2) or {}).get("storage_m") or 600
+    spill_m = storage2 * DEFAULT_SPILLBACK_RATIO_LOCAL
+
+    waste_n = waste_ours_switch = 0
+    waste_flow_known = 0
+    maxg_n = maxg_ours_switch = 0
+    spill_n = spill_ours_keep = 0
+    dt = SHADOW_INTERVAL_SEC
+
+    for (ts, gp, el, q1, q2, f1, f2, ours, actual, forced, clr) in rows:
+        if clr:
+            continue                      # 清道期間不算,那時本來就在換相
+        gq = q1 if gp == 1 else q2
+        gf = f1 if gp == 1 else f2
+        # ① 綠燈空放:綠燈側既沒有排隊也沒有流量
+        #    flow 是 2026-09-04 才開始記的,舊資料是 NULL —— 那時只能用
+        #    「排隊為 0」當較弱的代理,並把 flow 已知的筆數分開報,
+        #    不要讓兩種強度的證據混在同一個數字裡。
+        if (gq is not None) and float(gq) <= 0:
+            if gf is None:
+                waste_n += 1
+            elif float(gf) <= 0:
+                waste_n += 1
+                waste_flow_known += 1
+            else:
+                continue
+            if ours == "SWITCH":
+                waste_ours_switch += 1
+        # ② 最大綠撞頂:實際被迫換相
+        if forced:
+            maxg_n += 1
+            if ours == "SWITCH":
+                maxg_ours_switch += 1
+        # ③ 下匝道回堵:排隊達儲車上限比例
+        if q2 is not None and float(q2) >= spill_m:
+            spill_n += 1
+            # 主線保護的正解是「不要把綠燈從下匝道切走」
+            if gp == 2 and ours == "KEEP":
+                spill_ours_keep += 1
+
+    def pct(a, b):
+        return round(a / b * 100, 1) if b else None
+
+    return {
+        "available": True, "since": since_iso, "until": until_iso,
+        "samples": len(rows), "interval_sec": dt,
+        "green_waste": {
+            "samples": waste_n,
+            "seconds": round(waste_n * dt, 1),
+            "share_pct": pct(waste_n, len(rows)),
+            "ours_switch": waste_ours_switch,
+            "ours_switch_pct": pct(waste_ours_switch, waste_n),
+            "flow_known_samples": waste_flow_known,
+            "criteria": "綠燈側排隊為 0 且流量為 0(舊資料無流量時僅以排隊為 0 判定)",
+        },
+        "max_green_hit": {
+            "samples": maxg_n,
+            "max_green_sec": max_green,
+            "ours_switch": maxg_ours_switch,
+            "ours_switch_pct": pct(maxg_ours_switch, maxg_n),
+            "criteria": "實際達最大綠被迫換相;我方在同一刻是否也判定應換相",
+        },
+        "spillback": {
+            "samples": spill_n,
+            "threshold_m": round(spill_m, 1),
+            "storage_m": storage2,
+            "ours_protect": spill_ours_keep,
+            "criteria": f"下匝道排隊 ≥ 儲車上限 {storage2}m 的 "
+                        f"{int(DEFAULT_SPILLBACK_RATIO_LOCAL*100)}% = {spill_m:.0f}m",
+        },
+        "note": "🛑 這些是**局部佐證**:每一項都只描述那一刻可直接觀測的事實,"
+                "不需要推演換相後的車流,所以不需要反事實模型。"
+                "但它們證明不了全時段總延滯較低 —— 那要靠 A/B 交替時段的實績。",
+    }
