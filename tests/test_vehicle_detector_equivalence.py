@@ -90,6 +90,11 @@ def reference_parse(det, frame, results):
     ih, iw = frame.shape[:2]
     edge = int(os.getenv("MOTO_EDGE_MARGIN_PX", "6"))
     mc = float(os.getenv("MOTO_MIN_CONF", "0.30"))
+    # 🛑 對照組要跟著「刻意的」後續改動走,否則測到的是行為變更而不是重構。
+    #    ceca34d 之後多了低信心行人過濾(國道點位幾乎沒有真行人,靜態路標
+    #    常被判成 person)。這個測試要驗的是 2026-08-18 縮小 GPU 鎖範圍的
+    #    重構有沒有改變輸出,不是去反對後來那個刻意加的過濾 —— 所以補進來。
+    pmc = float(os.getenv("PERSON_MIN_CONF", "0.6"))
     out = []
     for d in detections:
         if d['class_name'] == 'motorcycle':
@@ -98,6 +103,9 @@ def reference_parse(det, frame, results):
                     or b['x2'] >= iw - edge or b['y2'] >= ih - edge):
                 continue
             if d['confidence'] < mc:
+                continue
+        elif d['class_name'] == 'person':
+            if pmc > 0 and d['confidence'] < pmc:
                 continue
         out.append(d)
     return out

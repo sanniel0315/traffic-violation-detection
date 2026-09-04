@@ -32,6 +32,15 @@ for name in ("api", "api.routes", "api.utils"):
 au = types.ModuleType("api.routes.auth")
 au.get_current_user = lambda: None
 sys.modules["api.routes.auth"] = au
+# 🛑 signal_tc3 後來多了 add_log / push_alert 兩個相依,這裡的 stub 沒跟上,
+#    整個測試從 aa182b9 起就 import 失敗 —— 而 `pytest tests/` 當時是壞的
+#    (腳本型測試的 SystemExit 讓 collection INTERNALERROR),所以沒人看到。
+lg = types.ModuleType("api.routes.logs")
+lg.add_log = lambda *a, **k: None
+sys.modules["api.routes.logs"] = lg
+pu = types.ModuleType("api.routes.push")
+pu.push_alert = lambda *a, **k: None
+sys.modules["api.routes.push"] = pu
 sd = types.ModuleType("api.utils.shutdown")
 
 
