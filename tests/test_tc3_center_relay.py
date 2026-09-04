@@ -105,7 +105,17 @@ def test_hardwarestatus_bit14_flip_to_center():
     out = S.decode_frame(got)
     assert out is not None and out.get("cks_ok"), "校正後的框 CKS 不合法"
     fields = S._decode_fields("0F04", got.hex(" ").upper())
-    hs = next((x["value"] for x in (fields or []) if x["name"] == "HardwareStatus"), None)
+    if fields is None:
+        # 🛑 utc-tc3 解碼庫只裝在現場(UTC_TC3_PATH 預設 /home/ubuntu/utc-tc3),
+        #    開發機沒有 → _decode_fields 回 None。這不是程式壞掉,是環境沒有庫。
+        #    先前這裡直接斷言,導致本機跑測試永遠紅一個,久了就會習慣性忽略 ——
+        #    真的壞掉時反而看不出來。改成明確 skip,並且退而驗原始位元組。
+        assert got[9:11] == bytes(2), (
+            f"bit14 沒被翻:HardwareStatus 位元組={got[9:11].hex()}")
+        import pytest as _pt
+        _pt.skip("utc-tc3 解碼庫不在本機(UTC_TC3_PATH=%s);已改驗原始位元組"
+                 % S.UTC_TC3_PATH)
+    hs = next((x["value"] for x in fields if x["name"] == "HardwareStatus"), None)
     assert hs == 0x0000, f"bit14 沒被翻:HardwareStatus={hs}"
     # seq/addr 不變
     assert out.get("seq") == 0x63 and out.get("addr") == 0xFFFF

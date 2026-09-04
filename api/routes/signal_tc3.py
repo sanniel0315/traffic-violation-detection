@@ -251,7 +251,9 @@ if _conn.get("center_relay") is None:
     _conn["center_relay"] = CENTER_RELAY_ENABLED
 CENTER_LISTEN_HOST = os.getenv("SIGNAL_TC3_CENTER_LISTEN_HOST", "0.0.0.0")
 CENTER_LISTEN_PORT = int(os.getenv("SIGNAL_TC3_CENTER_LISTEN_PORT", "1001") or 1001)
-# 🛑 廠商 HardwareStatus 說明「寫反」(極性顛倒):bit14 實際 1=信號驅動單元正常。
+# 🛑 bit14 的極性與其他位元不同:它是 controllerReady(控制器就緒),1=就緒=正常,
+#    而多數位元是 Error 旗標(1=故障)。先前註解說「廠商說明寫反」——
+#    2026-09-04 對照 /sig 的位元表後確認:不是寫反,是語意本來就不同類。
 #    中央照寫反的說明會把 0x4000(正常)誤顯示「故障」。我們在轉給中央前翻 bit14,
 #    補償中央的反向解讀,讓中央顯示正確。預設開,可用 env 關(=純通透)。
 HW_STATUS_FIX = os.getenv("SIGNAL_TC3_FIX_HWSTATUS", "1") != "0"
@@ -1420,6 +1422,98 @@ async def signal_config(_user=Depends(get_current_user)):
     return {"sections": out,
             "note": "唯讀總覽。時間為我方最後一次收到該回報的時刻,不是控制器的當下值 —— "
                     "要最新值請先送查詢。"}
+
+
+# HardwareStatus(0F04/0FC1)16 位元對照。
+# 🛑 來源分兩級,呈現時要分清楚:
+#    bit14 是我方現場實證的(見 HW_STATUS_FIX 的說明);其餘 15 個位元的名稱
+#    來自 /sig 前端的 i18n 字串,**未經我方現場實證**,所以每一項都帶
+#    verified 標記。/sig 自己也標了 polarityPending「語意待確認」。
+#    不要把「抄來的名稱」當成「驗證過的事實」。
+# 極性:多數位元是 Error(1=故障),bit8/bit14 是狀態旗標(1=好)。
+#    先前程式註解說 bit14 是「廠商寫反」,其實是語意本來就不同類 ——
+#    controllerReady 本來就是 1=就緒。
+HW_BITS = [
+    (0,  "cpuModuleError",        "CPU 模組錯誤",              "processor", True),
+    (1,  "memoryError",           "記憶體錯誤",                "processor", True),
+    (2,  "timerError",            "計時器錯誤",                "processor", True),
+    (3,  "watchdogTimerError",    "看門狗計時器錯誤",          "processor", True),
+    (4,  "powerError",            "電源異常(AC 80~130V 之外)", "power",     True),
+    (5,  "ioUnitError",           "I/O 單元錯誤(行人觸動/子機連鎖)", "ioCabinet", True),
+    (6,  "signalDriverUnitError", "號誌驅動單元錯誤",          "signalLight", True),
+    (7,  "signalHeadError",       "號誌燈面故障",              "signalLight", True),
+    (8,  "communicationConnect",  "通訊連線",                  "communication", False),
+    (9,  "cabinetOpened",         "機箱門開啟",                "ioCabinet", True),
+    (10, "timingPlanError",       "時制計畫錯誤",              "timingPlan", True),
+    (11, "signalConflictError",   "號誌衝突",                  "signalLight", True),
+    (12, "signalPowerError",      "號誌電源異常",              "power",     True),
+    (13, "timingPlanOnTransition", "時制計畫轉換中",           "timingPlan", False),
+    (14, "controllerReady",       "控制器就緒",                "processor", False),
+    (15, "commLineBad",           "通訊線路不良",              "communication", True),
+]
+HW_GROUPS = {
+    "processor": "處理器 / 記憶體",
+    "power": "電源",
+    "signalLight": "號誌燈",
+    "communication": "通訊 / 連線",
+    "timingPlan": "時制計畫",
+    "ioCabinet": "I/O / 機箱",
+}
+# 只有 bit14 是我方現場實證過的
+HW_VERIFIED_BITS = {14}
+
+
+@router.get("/device-status", summary="設備狀態(HardwareStatus 16 位元逐項)")
+async def device_status(_user=Depends(get_current_user)):
+    """把最新的 HardwareStatus 解成逐項的正常/異常。
+
+    🛑 位元名稱的來源要標清楚:只有 bit14 經我方現場實證,其餘來自 /sig 前端
+       字串,未經驗證。抄來的名稱不等於驗證過的事實,所以每一項都帶 verified。
+    """
+    hw = _latest_hwstatus()
+    if not hw:
+        return {"available": False,
+                "reason": "尚未收到 0F04/0FC1 —— 控制器還沒回報硬體狀態",
+                "groups": []}
+    v = int(hw.get("received") or 0)
+    ts = None
+    try:
+        conn = _frames_db()
+        row = conn.execute(
+            "SELECT ts FROM signal_frames WHERE code IN ('0F04','0FC1') "
+            "AND src='controller' AND cks_ok=1 ORDER BY id DESC LIMIT 1").fetchone()
+        conn.close()
+        ts = float(row[0]) if row else None
+    except Exception:
+        pass
+
+    grouped: dict = {}
+    faults = 0
+    for bit, key, label, group, is_error in HW_BITS:
+        on = bool(v & (1 << bit))
+        # is_error=True → 1 代表故障;False → 是狀態旗標,0 才要注意
+        abnormal = on if is_error else (not on)
+        if abnormal:
+            faults += 1
+        grouped.setdefault(group, []).append({
+            "bit": bit, "key": key, "label": label,
+            "raw": 1 if on else 0,
+            "abnormal": abnormal,
+            "polarity": "error" if is_error else "flag",
+            "verified": bit in HW_VERIFIED_BITS,
+        })
+    return {
+        "available": True,
+        "ts": ts,
+        "value": v, "value_hex": f"0x{v:04X}",
+        "value_bin": format(v, "016b"),
+        "sent_to_center": hw.get("sent"), "sent_hex": hw.get("sent_hex"),
+        "fault_count": faults,
+        "groups": [{"key": g, "title": HW_GROUPS[g], "items": grouped.get(g, [])}
+                   for g in HW_GROUPS if grouped.get(g)],
+        "note": "只有 bit14(控制器就緒)經我方現場實證;其餘位元名稱抄自 /sig 前端字串,"
+                "未經驗證,已逐項標示。極性:Error 類 1=故障,Flag 類 0=需注意。",
+    }
 
 @router.get("/coverage", summary="TC3 命令覆蓋矩陣(規範 105 條 vs 實際抄到)")
 async def coverage(_user=Depends(get_current_user)):
