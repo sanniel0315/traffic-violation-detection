@@ -335,6 +335,7 @@ class ViolationReview(BaseModel):
 async def get_violations(
     status: Optional[str] = None,
     violation_type: Optional[str] = None,
+    vehicle_type: Optional[str] = None,
     license_plate: Optional[str] = None,
     camera_id: Optional[int] = None,
     start_date: Optional[datetime] = None,
@@ -350,6 +351,11 @@ async def get_violations(
         query = query.filter(Violation.status == status)
     if violation_type:
         query = query.filter(Violation.violation_type == violation_type)
+    # 車種篩選(car / heavy_truck / light_truck / bus);逗號分隔可多選
+    if vehicle_type:
+        types = [t.strip() for t in vehicle_type.split(',') if t.strip()]
+        if types:
+            query = query.filter(Violation.vehicle_type.in_(types))
     if license_plate:
         query = query.filter(Violation.license_plate.ilike(f"%{license_plate}%"))
     if camera_id:
