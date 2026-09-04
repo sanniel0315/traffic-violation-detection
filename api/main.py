@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 from api.models import init_db
 from api.routes import auth, frigate, hanwha, lpr, lpr_stream, lpr_visual, violations, cameras, stream, traffic, nx
 from api.routes import signal_shadow
+from api.routes import acceptance as acceptance_route
 from api.routes import go2rtc as go2rtc_route
 from api.routes import nport as nport_route
 from api.routes.auth import get_admin_user, get_current_user
@@ -458,6 +459,9 @@ app.include_router(nport_route.router)
 #    但後端資料明明在寫。從 localhost 測看到 401 還誤以為端點存在 ——
 #    那個 401 是 middleware 擋在路由之前,亂打的路徑也一樣回 401。
 app.include_router(signal_shadow.router)
+# 驗收清單。prefix 是 /api/acceptance,刻意不放在 /api/signal 底下 ——
+# 那條路徑有萬用代理會整個吃掉(見上面的說明)。
+app.include_router(acceptance_route.router)
 
 # 🛑 號誌 /api/signal/* 不再由本 process 提供,改反向代理到常駐 daemon
 #    traffic-signal(127.0.0.1:8012)。web 端仍要登入,daemon 內部不驗。

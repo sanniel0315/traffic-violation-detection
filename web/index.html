@@ -3484,6 +3484,24 @@
         .st-key.p2 { background:var(--gov-primary-strong); }
         .st-key.forced { background:var(--gov-warn); }
         .st-key.trunc { background:var(--gov-border-strong); }
+        /* 驗收清單的一列。左側色條直接對應狀態,掃過去就知道哪些要處理。 */
+        .acc-row { display:flex; gap:12px; align-items:flex-start; padding:10px 12px;
+                   border:1px solid var(--gov-border); border-left-width:3px;
+                   border-radius:var(--r-base,8px); margin-top:8px; }
+        .acc-row.st-pass    { border-left-color:var(--gov-ok); }
+        .acc-row.st-fail    { border-left-color:var(--gov-fault); background:var(--gov-surface-2); }
+        .acc-row.st-warn    { border-left-color:var(--gov-warn); }
+        .acc-row.st-unknown { border-left-color:var(--gov-border-strong); }
+        .acc-dot { width:8px; height:8px; border-radius:50%; margin-top:6px; flex:0 0 8px;
+                   background:var(--gov-border-strong); }
+        .acc-row.st-pass .acc-dot { background:var(--gov-ok); }
+        .acc-row.st-fail .acc-dot { background:var(--gov-fault); }
+        .acc-row.st-warn .acc-dot { background:var(--gov-warn); }
+        .acc-title { font-size:var(--fs-body,14px); font-weight:700; color:var(--gov-text); }
+        .acc-criteria { font-size:var(--fs-micro,12px); color:var(--gov-muted); margin-top:2px; }
+        .acc-evidence { font-size:var(--fs-micro,12px); color:var(--gov-text-2);
+                        font-family:var(--font-mono); margin-top:3px; word-break:break-all; }
+        .acc-detail { font-size:var(--fs-caption,11px); color:var(--gov-mute-2); margin-top:3px; }
         /* page hero 的一行說明。既有 hero 只有標題與 meta,新頁需要一句說明
            資料來源與限制,補這條並沿用 tokens,不另外硬寫顏色字級。 */
         .ds-page-hero-desc { margin:6px 0 0; font-size:var(--fs-small,13px);
@@ -4398,6 +4416,18 @@
         }
         .sidebar .sidebar-header,
         .sidebar .sidebar-brand-text,
+        /* 側邊欄分組標題。原本只定了顏色沒有排版 —— 補上規範的 label 樣式
+           (--ls-label 就是給這種 mono 小標用的),讓分組真的看得出是分組。 */
+        .menu-section-title {
+            margin: 14px 0 4px;
+            padding: 0 14px;
+            font-size: var(--fs-caption, 11px);
+            font-weight: 700;
+            letter-spacing: var(--ls-label, 0.18em);
+            text-transform: uppercase;
+            opacity: .75;
+            user-select: none;
+        }
         .sidebar .menu-section-title {
             color: var(--ui-sidebar-muted);
         }
@@ -4931,11 +4961,15 @@
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='io_panel'}" @click="page='io_panel'"><svg class="nav-icon"><use href="#i-zap"/></svg><span>{{ $t('nav_io') }}</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='lock'}" @click="page='lock'"><svg class="nav-icon"><use href="#i-lock"/></svg><span>{{ $t('nav_lock') }}</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='nport'}" @click="page='nport'"><svg class="nav-icon"><use href="#i-server"/></svg><span>MOXA NPort</span></div>
+            <!-- 號誌控制群組:先前五個項目散在平的清單裡,看不出彼此是一組 -->
+            <div v-if="isAdmin" class="menu-section-title">號誌控制</div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal'}" @click="page='signal';loadSignal();startSignalTimer()"><svg class="nav-icon"><use href="#i-zap"/></svg><span>號誌燈態</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_control'}" @click="page='signal_control';loadSigConsole();startSigConsoleTimer()"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>動態號誌控制</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_config'}" @click="page='signal_config';loadSigConfig()"><svg class="nav-icon"><use href="#i-list"/></svg><span>號誌設定</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_stats'}" @click="page='signal_stats';loadSigStats()"><svg class="nav-icon"><use href="#i-bar"/></svg><span>運作統計</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_device'}" @click="page='signal_device';loadSigDevice()"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>設備狀態</span></div>
+            <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_acceptance'}" @click="page='signal_acceptance';loadSigAcceptance()"><svg class="nav-icon"><use href="#i-check"/></svg><span>驗收清單</span></div>
+            <div v-if="isAdmin" class="menu-section-title">系統</div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='push_settings'}" @click="page='push_settings';loadPushDevices()"><svg class="nav-icon"><use href="#i-alert"/></svg><span>告警通知</span></div>
             </div><!-- /sidebar-menu-area -->
 
@@ -6819,6 +6853,86 @@
                      控制器各項設定的最新回報。純唯讀:只讀已抄錄到的回報框,
                      不送查詢也不下設定。要主動取回請用「號控下傳」的自我抄錄。 -->
                 <!-- ══ 設備狀態(0F04/0FC1 HardwareStatus 逐位元)══ -->
+                <!-- ══ 驗收清單 ══
+                     每一項都是打端點實際量出來的,不是宣稱。
+                     量不到回 unknown,不當成通過 —— 缺資料和通過是兩件事。 -->
+                <div v-if="page==='signal_acceptance'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use href="#i-check"/></svg></div>
+                                <h1 class="ds-section-title">號誌整合<b>驗收</b></h1>
+                                <p class="ds-page-hero-desc">每一項都由程式打端點<b>實際量測</b>，不是宣稱。量不到一律標「無法判定」，不當成通過。</p>
+                            </div>
+                            <div class="ds-page-hero-meta">
+                                <span v-if="sigAcc.ts">量測於 <b>{{ sigAcc.ts }}</b></span>
+                                <el-button size="small" plain @click="loadSigAcceptance"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>重新量測</el-button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="ds-kpi-grid">
+                        <div class="ds-kpi-card ok">
+                            <div class="ds-kpi-label">通過</div>
+                            <div class="ds-kpi-value">{{ sigAccCount('pass') }}</div>
+                            <div class="ds-kpi-hint">共 {{ sigAcc.total||0 }} 項 · {{ sigAccPct }}</div>
+                        </div>
+                        <div class="ds-kpi-card" :class="sigAccCount('fail')?'warn':''">
+                            <div class="ds-kpi-label">未通過</div>
+                            <div class="ds-kpi-value">{{ sigAccCount('fail') }}</div>
+                            <div class="ds-kpi-hint">必須修好才能上線</div>
+                        </div>
+                        <div class="ds-kpi-card" :class="sigAccCount('warn')?'warn':''">
+                            <div class="ds-kpi-label">待改善</div>
+                            <div class="ds-kpi-value">{{ sigAccCount('warn') }}</div>
+                            <div class="ds-kpi-hint">不擋上線，但要有結論</div>
+                        </div>
+                        <div class="ds-kpi-card">
+                            <div class="ds-kpi-label">無法判定</div>
+                            <div class="ds-kpi-value">{{ sigAccCount('unknown') }}</div>
+                            <div class="ds-kpi-hint">量不到 ≠ 通過</div>
+                        </div>
+                        <div class="ds-kpi-card" :class="sigAcc.ready_for_l5?'ok':'warn'">
+                            <div class="ds-kpi-label">可否接管控制權（L5）</div>
+                            <div class="ds-kpi-value ds-kpi-value--text">{{ sigAcc.ready_for_l5?'條件齊備':'尚未齊備' }}</div>
+                            <div class="ds-kpi-hint">需零未通過、零無法判定，且一致率與下發封鎖均通過</div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">
+                                🛑 <b>安全項不因「還沒要用」而略過</b>：TC3 下發封鎖若未通過即為未通過。
+                                送錯一則 <code>5F10</code>／<code>5F15</code> 會直接改變路口實際運轉。
+                            </div>
+                            <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+                                <el-switch v-model="sigAccIssuesOnly" size="small" active-text="只看待處理" inline-prompt></el-switch>
+                                <span style="font-size:12px;color:var(--gov-muted)">{{ sigAcc.note }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card" v-for="g in sigAccGroups" :key="g.title">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>{{ g.title }}</span>
+                            <el-tag size="small" :type="sigAccGroupType(g)">{{ sigAccGroupText(g) }}</el-tag>
+                        </div>
+                        <div class="card-body">
+                            <div v-for="it in sigAccItems(g)" :key="it.key" class="acc-row" :class="'st-'+it.state">
+                                <span class="acc-dot"></span>
+                                <div style="min-width:0;flex:1">
+                                    <div class="acc-title">{{ it.title }}</div>
+                                    <div class="acc-criteria">驗收條件：{{ it.criteria }}</div>
+                                    <div class="acc-evidence">實測：{{ it.evidence }}</div>
+                                    <div v-if="it.detail" class="acc-detail">{{ it.detail }}</div>
+                                </div>
+                                <el-tag size="small" :type="sigAccStateType(it.state)">{{ sigAccStateText(it.state) }}</el-tag>
+                            </div>
+                            <p v-if="!sigAccItems(g).length" style="font-size:13px;color:var(--gov-muted);margin:0">此分組沒有待處理項目。</p>
+                        </div>
+                    </div>
+                </div>
+
                 <div v-if="page==='signal_device'">
                     <div class="ds-page-hero">
                         <div class="ds-page-hero-row">
@@ -21542,6 +21656,44 @@ const app=createApp({
         // ── 影子決策比對 ──────────────────────────────────────────────
         // 影子跑了很久沒人知道結果,因為它只寫 DB、推播只進 App 告警面板,
         // 網頁上完全沒有入口。這裡把它搬上號誌頁。
+        // ── 驗收清單 ────────────────────────────────────────────────
+        // 🛑 狀態由後端「實際打端點量」出來,前端只負責呈現。
+        //    unknown 一律不當成 pass —— 量不到和通過是兩件事。
+        const sigAcc=ref({});
+        const sigAccIssuesOnly=ref(false);
+        const sigAccCount=(k)=>((sigAcc.value&&sigAcc.value.counts)||{})[k]||0;
+        const sigAccPct=computed(()=>{
+            const r=sigAcc.value&&sigAcc.value.pass_rate;
+            return (r===null||r===undefined)?'—':(r*100).toFixed(0)+'% 通過';
+        });
+        const ACC_TEXT={pass:'通過',fail:'未通過',warn:'待改善',unknown:'無法判定'};
+        const ACC_TYPE={pass:'success',fail:'danger',warn:'warning',unknown:'info'};
+        const sigAccStateText=(st)=>ACC_TEXT[st]||st;
+        const sigAccStateType=(st)=>ACC_TYPE[st]||'info';
+        const sigAccGroups=computed(()=>(sigAcc.value&&sigAcc.value.groups)||[]);
+        // 「只看待處理」= 非 pass 的項目(fail/warn/unknown 都要處理)
+        const sigAccItems=(g)=>{
+            const items=(g&&g.items)||[];
+            return sigAccIssuesOnly.value?items.filter(x=>x.state!=='pass'):items;
+        };
+        const sigAccGroupBad=(g)=>((g&&g.items)||[]).filter(x=>x.state!=='pass').length;
+        const sigAccGroupType=(g)=>{
+            const items=(g&&g.items)||[];
+            if(items.some(x=>x.state==='fail')) return 'danger';
+            if(items.some(x=>x.state==='unknown')) return 'info';
+            if(items.some(x=>x.state==='warn')) return 'warning';
+            return 'success';
+        };
+        const sigAccGroupText=(g)=>{
+            const n=sigAccGroupBad(g);
+            return n?(n+' 項待處理'):'全部通過';
+        };
+        const loadSigAcceptance=async()=>{
+            try{
+                const r=await fetch('/api/acceptance',{credentials:'include'});
+                if(r.ok) sigAcc.value=await r.json();
+            }catch(e){}
+        };
         // ── 設備狀態(HardwareStatus 逐位元)──────────────────────────
         const sigDev=ref({available:false,groups:[]});
         const sigDevFaultsOnly=ref(false);
@@ -22787,7 +22939,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStats,sigStatMins,sigStatOk,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStats,sigStatMins,sigStatOk,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
