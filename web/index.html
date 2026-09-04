@@ -4931,6 +4931,7 @@
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_control'}" @click="page='signal_control';loadSigConsole();startSigConsoleTimer()"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>動態號誌控制</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_config'}" @click="page='signal_config';loadSigConfig()"><svg class="nav-icon"><use href="#i-list"/></svg><span>號誌設定</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_stats'}" @click="page='signal_stats';loadSigStats()"><svg class="nav-icon"><use href="#i-bar"/></svg><span>運作統計</span></div>
+            <div v-if="isAdmin" class="menu-item" :class="{active:page==='signal_device'}" @click="page='signal_device';loadSigDevice()"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>設備狀態</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='push_settings'}" @click="page='push_settings';loadPushDevices()"><svg class="nav-icon"><use href="#i-alert"/></svg><span>告警通知</span></div>
             </div><!-- /sidebar-menu-area -->
 
@@ -6813,6 +6814,56 @@
                 <!-- ══ 號誌設定(唯讀查閱)══
                      控制器各項設定的最新回報。純唯讀:只讀已抄錄到的回報框,
                      不送查詢也不下設定。要主動取回請用「號控下傳」的自我抄錄。 -->
+                <!-- ══ 設備狀態(0F04/0FC1 HardwareStatus 逐位元)══ -->
+                <div v-if="page==='signal_device'">
+                    <div class="page-hero">
+                        <div>
+                            <h2>設備狀態</h2>
+                            <p>控制器主動回報的硬體狀態，逐位元解讀並分組。</p>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                            <el-tag size="small" :type="sigDevFaults?'danger':'success'">{{ sigDevSummary }}</el-tag>
+                            <el-switch v-model="sigDevFaultsOnly" size="small" active-text="只看異常" inline-prompt></el-switch>
+                            <el-button size="small" @click="loadSigDevice">重新載入</el-button>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">
+                                🛑 <b>位元名稱的來源分兩級</b>：<code>bit14 控制器就緒</code> 經我方現場實證；
+                                其餘 15 個位元的名稱抄自對方系統的前端字串，<b>未經我方現場實證</b>，
+                                每一項都標了「待證」。抄來的名稱不等於驗證過的事實。
+                                <br>極性：Error 類 <b>1 = 故障</b>；Flag 類（通訊連線／時制轉換中／控制器就緒）<b>0 = 需注意</b>。
+                            </div>
+                            <div v-if="sigDev.available" class="xn-foot" style="margin-top:10px">
+                                <span class="xn-chip"><span class="k">原始值</span><b style="font-family:monospace">{{ sigDev.value_hex }}</b></span>
+                                <span class="xn-chip"><span class="k">二進位</span><b style="font-family:monospace;font-size:12px">{{ sigDev.value_bin }}</b></span>
+                                <span class="xn-chip"><span class="k">送中央</span><b style="font-family:monospace">{{ sigDev.sent_hex }}</b></span>
+                                <span class="xn-chip" v-if="sigDev.ts"><span class="k">最後回報</span><b>{{ sigFrameTime(sigDev.ts) }}</b></span>
+                            </div>
+                            <p v-else style="font-size:13px;color:#b45309;margin-top:10px">{{ sigDev.reason||'尚未取得設備狀態' }}</p>
+                        </div>
+                    </div>
+
+                    <div class="card" v-for="g in (sigDev.groups||[])" :key="g.key">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-cpu"/></svg>{{ g.title }}</span>
+                            <el-tag size="small" :type="sigDevGroupBad(g)?'danger':'success'">{{ sigDevGroupBad(g)?(sigDevGroupBad(g)+' 項異常'):'正常' }}</el-tag>
+                        </div>
+                        <div class="card-body">
+                            <div v-for="it in sigDevItems(g)" :key="it.key" class="sc-gate" :class="{hit:it.abnormal}">
+                                <span class="sc-gate-no">{{ it.bit }}</span>
+                                <b>{{ it.label }}</b>
+                                <span class="sc-sub">{{ it.polarity==='error'?'Error 旗標(1=故障)':'狀態旗標(0=需注意)' }} · 現值 {{ it.raw }}</span>
+                                <el-tag size="small" :type="it.abnormal?'danger':'success'">{{ it.abnormal?'異常':'正常' }}</el-tag>
+                                <el-tag size="small" :type="it.verified?'info':'warning'">{{ it.verified?'已實證':'待證' }}</el-tag>
+                            </div>
+                            <p v-if="!sigDevItems(g).length" style="font-size:13px;color:#64748b;margin:0">此分組沒有異常項目。</p>
+                        </div>
+                    </div>
+                </div>
+
                 <div v-if="page==='signal_config'">
                     <div class="page-hero">
                         <div>
@@ -21449,6 +21500,26 @@ const app=createApp({
         // ── 影子決策比對 ──────────────────────────────────────────────
         // 影子跑了很久沒人知道結果,因為它只寫 DB、推播只進 App 告警面板,
         // 網頁上完全沒有入口。這裡把它搬上號誌頁。
+        // ── 設備狀態(HardwareStatus 逐位元)──────────────────────────
+        const sigDev=ref({available:false,groups:[]});
+        const sigDevFaultsOnly=ref(false);
+        const sigDevFaults=computed(()=>(sigDev.value&&sigDev.value.fault_count)||0);
+        const sigDevSummary=computed(()=>{
+            if(!sigDev.value||!sigDev.value.available) return '尚未收到';
+            return sigDevFaults.value?(sigDevFaults.value+' 項異常'):'全部正常';
+        });
+        const sigDevGroupBad=(g)=>((g&&g.items)||[]).filter(x=>x.abnormal).length;
+        // 「只看異常」是過濾顯示,不是改變判定 —— 正常項還在,只是收起來
+        const sigDevItems=(g)=>{
+            const items=(g&&g.items)||[];
+            return sigDevFaultsOnly.value?items.filter(x=>x.abnormal):items;
+        };
+        const loadSigDevice=async()=>{
+            try{
+                const r=await fetch('/api/signal/device-status',{credentials:'include'});
+                if(r.ok) sigDev.value=await r.json();
+            }catch(e){}
+        };
         // ── 號誌設定(唯讀)與運作統計 ──────────────────────────────────
         const sigCfg = ref({sections: []});
         const sigCfgSections = computed(() => (sigCfg.value && sigCfg.value.sections) || []);
@@ -22653,7 +22724,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStats,sigStatMins,sigStatOk,sigStatNum,sigStatForcedPct,sigStatExit,sigStatBarH,loadSigStats,sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStats,sigStatMins,sigStatOk,sigStatNum,sigStatForcedPct,sigStatExit,sigStatBarH,loadSigStats,sigPlan,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
