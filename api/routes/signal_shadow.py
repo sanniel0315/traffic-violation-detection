@@ -486,22 +486,25 @@ async def shadow_status(limit: int = Query(50, ge=1, le=500),
     }
 
 
-@router.get("/outcome", summary="成效比較(總延滯/排隊/回堵次數)")
-async def shadow_outcome(minutes: int = Query(60, ge=1, le=1440),
-                         _user=Depends(get_current_user)):
-    """用 evaluate_outcome 算這段時間的成效指標。
+def _outcome_window(since_iso: str, until_iso: str) -> dict:
+    """算一個時段的實際成效指標(現場真的發生了什麼)。
 
-    這是比較兩套控制的正確方式 —— 比結果好壞，不是比逐筆一致。
+    🛑 這是「現況基準」,量的是控制器實際運轉下的結果。
+       它**不是**我方演算法的成效 —— 我方沒有真的控制過,那是反事實,量不到。
     """
     from detection.signal_decision_engine import evaluate_outcome
     from detection.signal_timing_lookup import phase_role
     samples = []
     try:
         conn = _db()
+        # 🛑 一定要用 ISO(T 分隔)字串比,不能用 datetime('now',...) ——
+        #    那個回空格分隔,而 ts 是 T 分隔;字串比較下 'T'(0x54) > ' '(0x20),
+        #    條件永遠成立,時間過濾等於沒作用(舊版 minutes 參數完全被忽略,
+        #    不論填多少都回傳當天全部樣本)。
         cur = conn.execute(
             "SELECT queue_m_1,queue_m_2,actual FROM signal_shadow_log "
-            "WHERE ts >= datetime('now','localtime',?) ORDER BY id",
-            (f"-{int(minutes)} minutes",))
+            "WHERE ts>=? AND ts<=? AND control_mode='external_dynamic' ORDER BY id",
+            (since_iso, until_iso))
         st2 = (phase_role(2) or {}).get("storage_m")
         for q1, q2, actual in cur.fetchall():
             samples.append({"queue_m_1": q1 or 0, "queue_m_2": q2 or 0,
@@ -509,7 +512,66 @@ async def shadow_outcome(minutes: int = Query(60, ge=1, le=1440),
                             "switched": (actual == "SWITCH")})
         conn.close()
     except Exception as e:
-        return {"error": str(e), "minutes": minutes}
+        return {"error": str(e), "since": since_iso, "until": until_iso}
+    out = evaluate_outcome(samples) or {}
+    out.update({"since": since_iso, "until": until_iso})
+    if not samples:
+        out["insufficient_data"] = True
+    return out
+
+
+@router.get("/outcome/compare", summary="兩時段成效對比(A/B)")
+async def shadow_outcome_compare(
+        a_since: str = Query(..., description="A 段起(ISO)"),
+        a_until: str = Query(..., description="A 段訖(ISO)"),
+        b_since: str = Query(..., description="B 段起(ISO)"),
+        b_until: str = Query(..., description="B 段訖(ISO)"),
+        _user=Depends(get_current_user)):
+    """比較兩個時段的實際成效。
+
+    🛑 這個端點是為了 L5 分階段接管後的 A/B 對照而做的:
+       例如 A = 我方控制的時段、B = OPAC 控制的同性質時段。
+       **在我方真的接管之前,兩段都是 OPAC 的成效**,只能拿來看不同時段的
+       基準差異(例如尖峰 vs 離峰),不能拿來宣稱我方比較好。
+       想證明「優於現今」只有三條路,見 docs/上線報告_骨架.md。
+    """
+    a = _outcome_window(a_since, a_until)
+    b = _outcome_window(b_since, b_until)
+    keys = ("total_delay_veh_sec", "avg_queue_m_1", "avg_queue_m_2",
+            "max_queue_m_1", "max_queue_m_2", "spillback_events_2",
+            "switch_per_min")
+    delta = {}
+    for k in keys:
+        va, vb = a.get(k), b.get(k)
+        if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
+            delta[k] = {"a": va, "b": vb, "diff": round(va - vb, 2),
+                        "pct": (round((va - vb) / vb * 100, 1) if vb else None)}
+    return {"a": a, "b": b, "delta": delta,
+            "note": "越小越好(switch_per_min 除外,太頻繁代表浪費在換相損失)。"
+                    "在我方真的接管控制權之前,兩段量到的都是現行控制方的成效。"}
+
+
+@router.get("/outcome", summary="成效基準(總延滯/排隊/回堵次數)")
+async def shadow_outcome(minutes: int = Query(60, ge=1, le=1440),
+                         since: str = Query("", description="起(ISO),給了就用固定時段"),
+                         until: str = Query("", description="訖(ISO)"),
+                         _user=Depends(get_current_user)):
+    """量這段時間**實際發生**的成效指標。
+
+    🛑 名稱從「成效比較」改成「成效基準」—— 它量的是現行控制方的實際結果,
+       不是我方演算法的成效。我方沒有真的控制過,那是反事實,量不到。
+    """
+    if since:
+        since_iso = since
+        until_iso = until or datetime.now().isoformat(timespec="seconds")
+    else:
+        since_iso = datetime.fromtimestamp(
+            time.time() - int(minutes) * 60).isoformat(timespec="seconds")
+        until_iso = datetime.now().isoformat(timespec="seconds")
+    res = _outcome_window(since_iso, until_iso)
+    res["minutes"] = minutes
+    return res
+
     return {"minutes": minutes, "outcome": evaluate_outcome(samples)}
 
 

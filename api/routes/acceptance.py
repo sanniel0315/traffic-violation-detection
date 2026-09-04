@@ -185,10 +185,33 @@ def _check_shadow() -> list:
     else:
         st, ev = WARN, f"有車一致率 {rate*100:.1f}%,未達 95% 門檻"
     out.append(_item(
-        "agree_rate", "決策引擎", "與現行控制一致率",
-        "有車樣本一致率 ≥ 95%(L5 接管前置)",
+        "agree_rate", "決策引擎", "安全性:與現行控制一致率",
+        "有車樣本一致率 ≥ 95%(接管前置的**安全門檻**)",
         st, ev,
-        "只算有車樣本 —— 夜間兩側都沒車時兩邊都 KEEP,一致率會漂到 98% 沒有意義"))
+        "🛑 這是安全門檻不是優越門檻:一致率高只代表我方接手不會亂來,"
+        "100% 一致等於一點也沒有比較好。要證明「優於現今」必須做 A/B 交替時段,"
+        "影子資料無法證明(反事實量不到)—— 見 docs/上線報告_骨架.md"))
+
+    # 成效基準:現行控制下的實際表現。這是日後 A/B 比較的基準線,
+    # 本身不能拿來宣稱我方比較好。
+    try:
+        from api.routes.signal_shadow import _outcome_window
+        since = (datetime.now() - timedelta(hours=6)).isoformat(timespec="seconds")
+        until = datetime.now().isoformat(timespec="seconds")
+        ow = _outcome_window(since, until)
+        has = bool(ow.get("samples"))
+        out.append(_item(
+            "outcome_baseline", "決策引擎", "成效基準可量測",
+            "能算出現行控制下的總延滯/排隊/回堵/切換頻率",
+            PASS if has else FAIL,
+            (f"近6h 總延滯={ow.get('total_delay_veh_sec')} 車·秒、"
+             f"回堵事件={ow.get('spillback_events_2')}、"
+             f"切換={ow.get('switch_per_min')} 次/分") if has else "無樣本",
+            "這是基準線,不是我方演算法的成效 —— 我方沒真的控制過,反事實量不到"))
+    except Exception as e:
+        out.append(_item("outcome_baseline", "決策引擎", "成效基準可量測",
+                         "能算出現行控制下的總延滯/排隊/回堵/切換頻率",
+                         UNKNOWN, f"計算失敗:{e}"))
 
     st2 = None
     try:
