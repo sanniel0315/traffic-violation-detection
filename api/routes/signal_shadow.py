@@ -23,7 +23,7 @@ import os
 import sqlite3 as _sqlite3
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -69,6 +69,17 @@ _last_report = [0.0]   # 上次自動回報的時刻(list 才好在 _loop 內改
 # 先前是去撈「最後一筆樣本的 green_elapsed」,那個值最多差 5 秒,
 # 而且分相剛換的瞬間拿到的是「上一個分相」的秒數,控制盤會顯示錯的已亮秒數。
 _live_green = {"since": None, "phase": None}
+# 現場量測的飽和流(輛/小時),每相一個。None = 還沒量到,用預設值。
+# 🛑 為什麼要量:change_cost = 損失時間 × 飽和流 × 損失時間,用教科書的
+#    1800 vph 算出來是 12.5;但 2026-09-04 現場實測只有 598~777 vph,
+#    用實測值算約 4.75 —— 換相門檻差了 2.6 倍,直接影響「值不值得切」。
+#    飽和流是物理量,本來就該量,不是套一個假設。
+_measured_sat = {"vph": {}, "ts": None, "source": "default"}
+# 量出來的值超出這個範圍就不採信(視為量測異常),退回預設值。
+SAT_MIN_VPH = float(os.getenv("SIGNAL_SAT_MIN_VPH", "200") or 200)
+SAT_MAX_VPH = float(os.getenv("SIGNAL_SAT_MAX_VPH", "2200") or 2200)
+SAT_REFRESH_SEC = float(os.getenv("SIGNAL_SAT_REFRESH_SEC", "3600") or 3600)
+_last_sat_refresh = [0.0]
 
 
 def _db():
@@ -132,6 +143,47 @@ def _mark_reported(ts: float) -> None:
         conn.close()
     except Exception:
         pass
+
+
+def _refresh_saturation(hours: float = 6.0) -> None:
+    """從最近 N 小時的紀錄量飽和流,寫進 _measured_sat。
+
+    🛑 量出來不合理就不採信 —— 退回預設值並把 source 標成 default,
+       不要讓一次異常量測把控制邏輯帶偏。
+    """
+    from detection.signal_sim import estimate_arrivals, estimate_saturation
+    since = (datetime.now() - timedelta(hours=hours)).isoformat(timespec="seconds")
+    until = datetime.now().isoformat(timespec="seconds")
+    try:
+        conn = _db()
+        rows = conn.execute(
+            "SELECT ts,green_phase,queue_m_1,queue_m_2 FROM signal_shadow_log "
+            "WHERE ts>=? AND ts<=? AND control_mode='external_dynamic' ORDER BY ts",
+            (since, until)).fetchall()
+        conn.close()
+    except Exception:
+        return
+    if len(rows) < 200:
+        return
+    arr = estimate_arrivals(rows)
+    sat = estimate_saturation(rows, arr)
+    good = {}
+    for ph in (1, 2):
+        v = (sat.get(ph) or {}).get("vph")
+        if v and SAT_MIN_VPH <= v <= SAT_MAX_VPH:
+            good[ph] = float(v)
+    if good:
+        _measured_sat["vph"] = good
+        _measured_sat["ts"] = datetime.now().isoformat(timespec="seconds")
+        _measured_sat["source"] = "measured"
+        _measured_sat["window_hours"] = hours
+        _measured_sat["samples"] = len(rows)
+
+
+def _sat_for(phase: int) -> float:
+    """該相要用的飽和流(輛/小時)。量到就用量到的,否則用引擎預設。"""
+    from detection.signal_decision_engine import DEFAULT_SATURATION_VPH
+    return float(_measured_sat["vph"].get(phase) or DEFAULT_SATURATION_VPH)
 
 
 def _queue_m(camera_id: int) -> Optional[float]:
@@ -270,6 +322,8 @@ def _loop():
                     waiting_sec=green_elapsed),
                 min_green_sec=min_green,
                 max_green_sec=float(pp.get("max_green") or 210),
+                # 飽和流用現場量到的(見 _measured_sat 的說明)
+                saturation_vph=_sat_for(g_no),
             )
 
             conn = _db()
@@ -317,6 +371,13 @@ def _loop():
         except Exception as e:
             with _lock:
                 _stats["last_error"] = str(e)
+        # 定期重量飽和流。它會隨車種組成與天候變動,不是固定不變的。
+        if time.time() - _last_sat_refresh[0] >= SAT_REFRESH_SEC:
+            _last_sat_refresh[0] = time.time()
+            try:
+                _refresh_saturation()
+            except Exception:
+                pass
         # 到點就自己回報一次 —— 不必等人去撈 DB。
         # 上次時刻從 DB 讀回,重啟不會把計時歸零。
         if not _last_report[0]:
@@ -459,6 +520,10 @@ def start_shadow() -> bool:
             return False
         _stop.clear()
         _stats["started_at"] = datetime.now().isoformat(timespec="seconds")
+        try:
+            _refresh_saturation()
+        except Exception:
+            pass
         _thread = threading.Thread(target=_loop, name="signal-shadow", daemon=True)
         _thread.start()
         return True
@@ -675,7 +740,8 @@ async def shadow_plan(_user=Depends(get_current_user)):
                         waiting_sec=green_elapsed)
     d = decide(green_phase=g_no, green_elapsed_sec=green_elapsed,
                green_side=green, red_side=red,
-               min_green_sec=min_green, max_green_sec=max_green)
+               min_green_sec=min_green, max_green_sec=max_green,
+               saturation_vph=_sat_for(g_no))
 
     def side(a: ApproachState, role: dict) -> dict:
         sr = a.spillback_ratio()
@@ -728,7 +794,12 @@ async def shadow_plan(_user=Depends(get_current_user)):
             **d.detail,
         },
         "constants": {
-            "saturation_vph": DEFAULT_SATURATION_VPH,
+            # 🛑 標出這個值是量到的還是預設的 —— 它直接決定換相門檻,
+            #    看報表的人必須知道自己在看哪一種。
+            "saturation_vph": _sat_for(g_no),
+            "saturation_source": _measured_sat.get("source", "default"),
+            "saturation_measured_at": _measured_sat.get("ts"),
+            "saturation_default_vph": DEFAULT_SATURATION_VPH,
             "meters_per_vehicle": DEFAULT_METERS_PER_VEHICLE,
             "spillback_ratio": DEFAULT_SPILLBACK_RATIO,
             "lost_time_sec": DEFAULT_LOST_TIME_SEC,
