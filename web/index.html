@@ -3451,7 +3451,11 @@
         /* 燈態明細是橫排的小燈箱,行人燈與箭頭要跟著橫向排列 */
         .sd-signal .xn-ped { margin-top:0; margin-left:2px; }
         .sd-signal .xn-arrow { align-self:center; }
-        .xn-ped svg { width:13px; height:13px; }
+        /* 🛑 行人圖示改用與全站一致的 stroke 線條式(其他圖示都是這樣畫的),
+           並在標籤上寫死 width/height —— 先前用 fill 實心 + 只靠 CSS 給尺寸,
+           使用者兩次回報「看不到行人燈」。v-if 有過、span 有渲染,
+           問題出在 SVG 本身沒畫出來,所以改成跟已知可用的圖示同一種畫法。 */
+        .xn-ped svg, .ped-icon { width:13px; height:13px; display:block; }
         .xn-ped.green { color:#22c55e; border-color:#22c55e;
                         box-shadow:0 0 8px 1px rgba(34,197,94,.75); }
         .xn-ped.red   { color:#f87171; border-color:#f87171;
@@ -4636,7 +4640,7 @@
     <symbol id="i-bar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="13" width="4" height="8" rx="1"/><rect x="10" y="8" width="4" height="13" rx="1"/><rect x="17" y="4" width="4" height="17" rx="1"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6"/><path d="M21 21l-6.5-6.5"/></symbol>
     <symbol id="i-pie" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12A9 9 0 1 1 12 3v9z"/><path d="M21 12A9 9 0 0 0 12 3v9z" fill="currentColor" opacity="0.25" stroke="none"/></symbol>
-    <symbol id="i-ped" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="4" r="2.2"/><path d="M12 7c-1 0-1.8.6-2.1 1.5L8.2 13h1.9l.6-1.7V21h1.6v-4.6h1.4V21h1.6V11.3l.6 1.7h1.9l-1.7-4.5C15.8 7.6 15 7 14 7h-2z"/></symbol>
+    <symbol id="i-ped" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4" r="2"/><path d="M12 6v7M12 13l-3 8M12 13l3 8M8 9l4-1 4 1"/></symbol>
     <symbol id="i-road" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3 4 21M18 3l2 18M12 3v3M12 11v3M12 19v2"/></symbol>
     <symbol id="i-filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8v6l-4 2v-8L3 5z"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
@@ -7493,11 +7497,11 @@
                                             <span v-if="xnBit(L,0x20)" class="xn-arrow right" title="右轉綠"></span>
                                             <!-- 行人燈:行綠+行紅同亮=綠閃(號誌判讀慣例) -->
                                             <span v-if="xnPedFlash(L)" class="xn-ped flash" title="行人綠閃">
-                                                <svg viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                <svg class="ped-icon" width="13" height="13" viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
                                             <span v-else-if="xnBit(L,0x40)" class="xn-ped green" title="行人綠燈">
-                                                <svg viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                <svg class="ped-icon" width="13" height="13" viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
                                             <span v-else-if="xnBit(L,0x80)" class="xn-ped red" title="行人紅燈">
-                                                <svg viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                <svg class="ped-icon" width="13" height="13" viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
                                         </div>
                                         <div class="xn-center">
                                             <div class="xn-count" :key="'c'+xn.addr+'-'+xnRemainLive(xn)"
@@ -7546,11 +7550,11 @@
                                                 <span v-if="xnBit(L,0x10)" class="xn-arrow up" title="直行綠"></span>
                                                 <span v-if="xnBit(L,0x20)" class="xn-arrow right" title="右轉綠"></span>
                                                 <span v-if="xnPedFlash(L)" class="xn-ped flash" title="行人綠閃">
-                                                    <svg viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                    <svg class="ped-icon" width="13" height="13" viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
                                                 <span v-else-if="xnBit(L,0x40)" class="xn-ped green" title="行人綠燈">
-                                                    <svg viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                    <svg class="ped-icon" width="13" height="13" viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
                                                 <span v-else-if="xnBit(L,0x80)" class="xn-ped red" title="行人紅燈">
-                                                    <svg viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
+                                                    <svg class="ped-icon" width="13" height="13" viewBox="0 0 24 24"><use href="#i-ped"/></svg></span>
                                             </span>
                                             <span class="sig-text">{{ L.text }}</span>
                                         </div>
