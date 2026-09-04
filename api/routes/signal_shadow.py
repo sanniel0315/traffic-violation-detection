@@ -1280,3 +1280,107 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
                 "不需要推演換相後的車流,所以不需要反事實模型。"
                 "但它們證明不了全時段總延滯較低 —— 那要靠 A/B 交替時段的實績。",
     }
+
+@router.get("/timeline", summary="時間軸(壓縮平行陣列,給即時總覽畫圖用)")
+async def shadow_timeline(minutes: int = Query(15, ge=1, le=1440),
+                          since: str = Query(""), until: str = Query(""),
+                          max_points: int = Query(900, ge=100, le=5000),
+                          _user=Depends(get_current_user)):
+    """回傳一段時間的分相、排隊、流量與決策,給前端畫同步時間軸。
+
+    🛑 回**平行陣列**不回物件陣列:15 分鐘 180 筆 × 11 欄,物件陣列會把欄位名
+       重複 180 次,體積差三倍以上。這個端點會被前端每幾秒重打一次。
+
+    🛑 帶 `t`(距 t0 的秒數)而**不是**只給 interval_sec 就假設等距:
+       抄錄 stale 時影子會跳過取樣,樣本之間會有洞。只給 interval_sec 的話,
+       一個 40 秒的洞會被畫成一格 —— 時間軸會被壓扁,換相與排隊的對應位置
+       全部跑掉。`gaps` 另外標出洞的區間,前端要畫成斷線不要內插。
+       (這個坑先前踩過:凍結的抄錄資料曾讓 green_elapsed 累積出假的長綠。)
+    """
+    if since:
+        since_iso = since
+        until_iso = until or datetime.now().isoformat(timespec="seconds")
+    else:
+        since_iso = datetime.fromtimestamp(
+            time.time() - int(minutes) * 60).isoformat(timespec="seconds")
+        until_iso = datetime.now().isoformat(timespec="seconds")
+    try:
+        conn = _db()
+        rows = conn.execute(
+            "SELECT ts,green_phase,green_elapsed,queue_m_1,queue_m_2,"
+            "flow_vpm_1,flow_vpm_2,ours,actual,agree,switch_gain,keep_gain,"
+            "change_cost,reason,clearance,step_id "
+            "FROM signal_shadow_log WHERE ts>=? AND ts<=? "
+            "AND control_mode='external_dynamic' ORDER BY ts",
+            (since_iso, until_iso)).fetchall()
+        conn.close()
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+    if not rows:
+        return {"available": False, "since": since_iso, "until": until_iso,
+                "reason": "此區間無樣本"}
+
+    # 抽樣:視窗拉長時筆數會爆(24 小時約 17000 筆)。
+    # 🛑 抽樣不能只是每 N 筆取一筆 —— 那會把換相事件抽掉,而換相正是要看的東西。
+    #    改成分桶,桶內的換相(ours/actual)用 OR 保留,其餘取桶內最後一筆。
+    stride = max(1, (len(rows) + max_points - 1) // max_points)
+    t0_dt = datetime.fromisoformat(rows[0][0])
+    t0_ts = t0_dt.timestamp()
+
+    T, GP, Q1, Q2, F1, F2, OU, AC, AG, SG, KG, CC, RS, CL = (
+        [], [], [], [], [], [], [], [], [], [], [], [], [], [])
+    bucket: list = []
+
+    def flush(b):
+        if not b:
+            return
+        last = b[-1]
+        T.append(round(datetime.fromisoformat(last[0]).timestamp() - t0_ts, 1))
+        GP.append(last[1])
+        Q1.append(last[3])
+        Q2.append(last[4])
+        F1.append(last[5])
+        F2.append(last[6])
+        # 換相事件用 OR —— 抽樣不可以把它抽掉
+        OU.append(1 if any(x[7] == "SWITCH" for x in b) else 0)
+        AC.append(1 if any(x[8] == "SWITCH" for x in b) else 0)
+        AG.append(last[9])
+        SG.append(last[10])
+        KG.append(last[11])
+        CC.append(last[12])
+        CL.append(1 if last[14] else 0)
+        # reason 只在歧異點帶字串 —— 一致的點不需要理由,全帶會讓回應肥三倍
+        dis = next((x for x in b if x[9] == 0), None)
+        RS.append(dis[13] if dis else None)
+
+    for r in rows:
+        bucket.append(r)
+        if len(bucket) >= stride:
+            flush(bucket)
+            bucket = []
+    flush(bucket)
+
+    # 取樣斷點:間隔超過名目週期 1.6 倍就是洞,前端要畫成斷線不要內插
+    gaps = []
+    nominal = SHADOW_INTERVAL_SEC * stride
+    for i in range(len(T) - 1):
+        if T[i + 1] - T[i] > nominal * 1.6:
+            gaps.append([T[i], T[i + 1]])
+
+    return {
+        "available": True,
+        "t0": rows[0][0], "since": since_iso, "until": until_iso,
+        "interval_sec": nominal, "stride": stride,
+        "samples_raw": len(rows), "points": len(T),
+        "t": T,
+        "green_phase": GP,
+        "queue_m_1": Q1, "queue_m_2": Q2,
+        "flow_vpm_1": F1, "flow_vpm_2": F2,
+        "ours_switch": OU, "actual_switch": AC, "agree": AG,
+        "switch_gain": SG, "keep_gain": KG, "change_cost": CC,
+        "clearance": CL,
+        "reason": RS,
+        "gaps": gaps,
+        "note": "t 是距 t0 的秒數,不要假設等距;gaps 標出取樣斷點,"
+                "那些區間要畫成斷線不要內插 —— 抄錄過期時影子會跳過取樣。",
+    }
