@@ -248,3 +248,97 @@ def recognize_from_camera(camera_id: int):
         }
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------- 車牌黑名單
+# 辨識到名單上的車牌就發告警(category=lpr)。全部車牌都發會一天上千筆沒人看,
+# 只有列管車輛值得吵人 —— 這是 lpr 分類唯一的發報來源。
+from datetime import timedelta as _timedelta
+
+
+def normalize_plate(v: str) -> str:
+    """去掉連字號空白、轉大寫;比對時兩邊都跑這個,避免 BER-8282 對不上 BER8282"""
+    return re.sub(r"[^A-Z0-9]+", "", str(v or "").upper())
+
+
+class WatchlistIn(BaseModel):
+    plate: str = ""
+    note: Optional[str] = None
+    active: bool = True
+
+
+@router.get("/watchlist")
+def list_watchlist(include_inactive: bool = True) -> dict:
+    from api.models import SessionLocal, PlateWatchlist
+    db = SessionLocal()
+    try:
+        q = db.query(PlateWatchlist)
+        if not include_inactive:
+            q = q.filter(PlateWatchlist.active.is_(True))
+        rows = q.order_by(PlateWatchlist.created_at.desc()).all()
+        return {"items": [{
+            "id": r.id,
+            "plate": r.display or r.plate,
+            "normalized": r.plate,
+            "note": r.note or "",
+            "active": bool(r.active),
+            "hit_count": int(r.hit_count or 0),
+            "last_hit_at": (r.last_hit_at + _timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S") if r.last_hit_at else "",
+        } for r in rows]}
+    finally:
+        db.close()
+
+
+@router.post("/watchlist")
+def add_watchlist(data: WatchlistIn) -> dict:
+    from api.models import SessionLocal, PlateWatchlist
+    norm = normalize_plate(data.plate)
+    if len(norm) < 3:
+        raise HTTPException(status_code=400, detail="車牌至少 3 碼")
+    db = SessionLocal()
+    try:
+        row = db.query(PlateWatchlist).filter(PlateWatchlist.plate == norm).first()
+        if row:
+            row.display = data.plate.strip()
+            row.note = data.note
+            row.active = bool(data.active)
+        else:
+            row = PlateWatchlist(plate=norm, display=data.plate.strip(), note=data.note, active=bool(data.active))
+            db.add(row)
+        db.commit()
+        db.refresh(row)
+        return {"id": row.id, "plate": row.display, "normalized": row.plate, "active": bool(row.active)}
+    finally:
+        db.close()
+
+
+@router.patch("/watchlist/{item_id}")
+def toggle_watchlist(item_id: int, data: WatchlistIn) -> dict:
+    from api.models import SessionLocal, PlateWatchlist
+    db = SessionLocal()
+    try:
+        row = db.query(PlateWatchlist).filter(PlateWatchlist.id == item_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="不存在")
+        row.active = bool(data.active)
+        if data.note is not None:
+            row.note = data.note
+        db.commit()
+        return {"id": row.id, "active": bool(row.active)}
+    finally:
+        db.close()
+
+
+@router.delete("/watchlist/{item_id}")
+def del_watchlist(item_id: int) -> dict:
+    from api.models import SessionLocal, PlateWatchlist
+    db = SessionLocal()
+    try:
+        row = db.query(PlateWatchlist).filter(PlateWatchlist.id == item_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="不存在")
+        db.delete(row)
+        db.commit()
+        return {"deleted": item_id}
+    finally:
+        db.close()

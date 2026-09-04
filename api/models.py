@@ -173,6 +173,26 @@ class AlertEvent(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class PlateWatchlist(Base):
+    """車牌黑名單 —— 辨識到名單上的車牌就發告警(category=lpr)。
+
+    這是「車牌辨識該不該發報」的答案:全部發一天上千筆會被無視,
+    只有列管車輛出現才值得吵人。
+
+    plate 存正規化後的大寫英數(去連字號),比對時兩邊都正規化,
+    避免 "BER-8282" 與 "BER8282" 對不上。
+    """
+    __tablename__ = "plate_watchlist"
+    id = Column(Integer, primary_key=True, index=True)
+    plate = Column(String(20), unique=True, index=True)
+    display = Column(String(20))
+    note = Column(String(200))
+    active = Column(Boolean, default=True, index=True)
+    hit_count = Column(Integer, default=0)
+    last_hit_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class LockEvent(Base):
     """E-1507 電子鎖刷卡/開鎖事件歷史 (動作暫存器 0x0023 邊沿偵測寫入)"""
     __tablename__ = "lock_events"
