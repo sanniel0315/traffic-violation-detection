@@ -3547,6 +3547,122 @@
                          color:var(--gov-text); margin-right:auto; }
         /* ── 動態號誌控制盤 ── */
         .sc-h { margin:14px 0 6px; font-size:13px; font-weight:700; color:var(--gov-text); }
+        /* ── 即時戰情(深色戰情牆)── */
+        /* 🛑 這一頁刻意脫離全站淺色系,而且只作用在 .wr 裡面。
+             理由是使用情境不同:戰情牆掛在遠處螢幕,深底反白 + 等寬數字
+             在幾公尺外才讀得到。其餘頁面維持政府淺色系不受影響。 */
+        .wr { --wr-bg:#0b1220; --wr-panel:#111b2e; --wr-line:#22304a;
+              --wr-fg:#e2e8f0; --wr-dim:#8fa3c0;
+              background:var(--wr-bg); color:var(--wr-fg);
+              border:1px solid var(--wr-line); border-radius:var(--r-card);
+              padding:14px; display:flex; flex-direction:column; gap:14px;
+              font-variant-numeric:tabular-nums; }
+        .wr-hd { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+                 padding-bottom:12px; border-bottom:1px solid var(--wr-line); }
+        .wr-hd b { font-size:16px; letter-spacing:.02em; }
+        .wr-hd-sub { font-size:11px; color:var(--gov-warn); font-weight:700;
+                     border:1px solid var(--gov-warn); border-radius:var(--r-pill);
+                     padding:2px 9px; }
+        .wr-hd-dot { width:9px; height:9px; border-radius:50%;
+                     background:var(--gov-ok); box-shadow:0 0 0 3px rgba(22,163,74,.25);
+                     animation:wrBeat 1.8s ease-in-out infinite; }
+        .wr-hd-dot.off { background:var(--gov-fault); box-shadow:none; animation:none; }
+        @keyframes wrBeat { 0%,100%{opacity:1} 50%{opacity:.3} }
+        .wr-hd-act { margin-left:auto; display:flex; align-items:center; gap:10px; }
+        .wr-btn { background:var(--wr-panel); color:var(--wr-fg);
+                  border:1px solid var(--wr-line); border-radius:var(--r-base);
+                  padding:5px 12px; font-size:12px; font-weight:600;
+                  cursor:pointer; font-family:inherit; }
+        .wr-btn:hover { border-color:var(--gov-primary); }
+
+        .wr-cols { display:grid; gap:12px; grid-template-columns:repeat(2, 1fr); }
+        @media (max-width: 1000px) { .wr-cols { grid-template-columns:1fr; } }
+        .wr-col { background:var(--wr-panel); border:1px solid var(--wr-line);
+                  border-radius:var(--r-base); padding:12px; }
+        .wr-col-hd { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        .wr-col-hd b { font-size:15px; }
+        .wr-col-sub { font-size:11px; color:var(--wr-dim); }
+        .wr-rel { display:flex; gap:14px; flex-wrap:wrap; margin:8px 0 10px;
+                  font-size:11px; color:var(--wr-dim); }
+        .wr-rel b { font-size:17px; color:var(--wr-fg); margin:0 2px; }
+        .wr-rel-k { font-weight:700; color:var(--gov-warn); }
+
+        .wr-cams { display:grid; gap:9px; grid-template-columns:repeat(2, 1fr); }
+        @media (max-width: 560px) { .wr-cams { grid-template-columns:1fr; } }
+        .wr-cam { margin:0; position:relative; border-radius:var(--r-base);
+                  overflow:hidden; background:#000;
+                  border:2px solid var(--wr-line); }
+        .wr-cam.green { border-color:var(--gov-ok);
+                        box-shadow:0 0 0 3px rgba(22,163,74,.18); }
+        .wr-cam.off { opacity:.55; }
+        .wr-cam img { display:block; width:100%; aspect-ratio:16/9;
+                      object-fit:cover; background:#000; }
+        /* 量測疊在影像上方,不是放旁邊 —— 數字要跟它描述的那個畫面貼在一起 */
+        .wr-cam-meta { position:absolute; top:0; left:0; right:0; z-index:2;
+                       display:flex; gap:9px; flex-wrap:wrap; align-items:baseline;
+                       padding:5px 8px; font-size:11px; color:#cbd5e1;
+                       background:linear-gradient(180deg, rgba(2,6,23,.88), rgba(2,6,23,0)); }
+        .wr-cam-meta b { font-size:12px; color:#7dd3fc; letter-spacing:.04em; }
+        .wr-cam-meta i { font-style:normal; font-weight:700; color:#fff; }
+        .wr-cam-err { position:absolute; inset:0; display:flex;
+                      align-items:center; justify-content:center;
+                      color:#94a3b8; font-size:12px; background:#000; }
+        .wr-cam figcaption { padding:4px 8px; font-size:11px; color:var(--wr-dim);
+                             background:rgba(2,6,23,.55); }
+
+        /* 巨型狀態列:這一相現在到底在做什麼 */
+        .wr-state { display:flex; align-items:center; gap:10px; margin-top:10px;
+                    padding:12px 14px; border-radius:var(--r-base);
+                    border:2px solid; font-size:17px; font-weight:700; }
+        .wr-state-sec { margin-left:auto; font-size:24px; letter-spacing:.04em; }
+        .wr-state.green { border-color:var(--gov-ok); background:rgba(22,163,74,.14);
+                          color:#86efac; }
+        .wr-state.amber { border-color:var(--gov-warn); background:rgba(217,119,6,.16);
+                          color:#fcd34d; }
+        .wr-state.red { border-color:var(--gov-fault); background:rgba(220,38,38,.13);
+                        color:#fca5a5; }
+
+        /* 燈色圓點:整頁共用同一個燈語意 */
+        .lv-lamp { width:11px; height:11px; border-radius:50%; display:inline-block;
+                   flex:0 0 11px; }
+        .lv-lamp.g { background:var(--gov-ok); box-shadow:0 0 0 3px rgba(22,163,74,.28); }
+        .lv-lamp.a { background:var(--gov-warn); box-shadow:0 0 0 3px rgba(217,119,6,.28); }
+        .lv-lamp.r { background:var(--gov-fault); box-shadow:0 0 0 3px rgba(220,38,38,.22); }
+
+        /* 路口圖區:xn-* 元件本身是淺底的,給它一塊白底容器,不要硬改元件 */
+        .wr-int { background:var(--wr-panel); border:1px solid var(--wr-line);
+                  border-radius:var(--r-base); padding:12px; }
+        .wr-int .xn-grid { background:var(--gov-surface); border-radius:var(--r-base);
+                           padding:10px; }
+        .wr-sec-hd { display:flex; align-items:baseline; gap:10px; margin-bottom:10px;
+                     font-size:13px; font-weight:700; }
+        .wr-sec-hd span { font-size:11px; color:var(--wr-dim); font-weight:400; }
+        .wr-empty { font-size:12px; color:var(--wr-dim); margin:6px 0; }
+        .wr-ctl { display:grid; gap:8px; margin-top:12px;
+                  grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); }
+        .wr-ctl-item { background:var(--wr-bg); border:1px solid var(--wr-line);
+                       border-radius:var(--r-base); padding:9px 11px;
+                       display:flex; flex-direction:column; gap:3px; }
+        .wr-ctl-item span { font-size:11px; color:var(--wr-dim); font-weight:700; }
+        .wr-ctl-item b { font-size:16px; }
+        .wr-ctl-item.sw { border-color:var(--gov-warn); }
+        .wr-ctl-item.sw b { color:#fcd34d; }
+        .wr-ctl-item.kp { border-color:var(--gov-ok); }
+        .wr-ctl-item.kp b { color:#86efac; }
+        .wr-why { margin-top:9px; font-size:12px; color:var(--wr-dim); }
+
+        /* 原始訊框:等寬終端風。存在的意義是「畫面上每個數字都查得到來源」 */
+        .wr-log { background:var(--wr-panel); border:1px solid var(--wr-line);
+                  border-radius:var(--r-base); padding:12px; }
+        .wr-log-body { background:#050a14; border:1px solid var(--wr-line);
+                       border-radius:var(--r-base); padding:8px 10px;
+                       max-height:190px; overflow:auto;
+                       font-family:var(--font-mono); font-size:11px; line-height:1.7; }
+        .wr-log-row { display:flex; gap:10px; white-space:nowrap; }
+        .wr-log-ts { color:var(--wr-dim); }
+        .wr-log-code { color:#7dd3fc; font-weight:700; }
+        .wr-log-raw { color:#86efac; overflow:hidden; text-overflow:ellipsis; }
+        @media (prefers-reduced-motion: reduce) { .wr-hd-dot { animation:none; } }
         /* ── 分相時間分配色帶 ── */
         .pb-wrap { padding:4px 2px 10px; }
         .pb-axis { position:relative; height:14px; margin-left:52px; margin-right:88px;
@@ -7480,6 +7596,143 @@
                                 <span class="xn-chip"><span class="st-key p2"></span>分相2 下匝道</span>
                                 <span class="xn-chip"><span class="st-key forced"></span>強制切換</span>
                                 <span class="xn-chip"><span class="st-key trunc"></span>被斷點截斷(長度不可信)</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ══ 即時戰情 ══
+                     給現場與來賓看的一頁,深色是刻意的:戰情牆常掛在遠處螢幕,
+                     深底反白 + 等寬數字在幾公尺外才讀得到。
+                     版面按分相分成左右兩欄 —— 上匝道(分相1/NE)、下匝道(分相2/WN),
+                     每一欄各自帶自己那兩台相機、自己的放行統計、自己的狀態列。
+                     中間放路口圖,兩欄的燈色跟路口圖是同一份 5F03 資料。
+                     🛑 影子模式的字樣一定要留著。畫面做得像在控制,更要講清楚
+                        我方只算不下發,否則來賓會誤以為路口已經由我們接管。 -->
+                <div v-if="page==='signal_hub'" v-show="signalTab==='live'">
+                    <div class="wr">
+                        <div class="wr-hd">
+                            <span class="wr-hd-dot" :class="{off:sigStatus.stale}"></span>
+                            <b>號誌機（{{ sigStatus.host }}:{{ sigStatus.port }}）× 即時戰情</b>
+                            <span class="wr-hd-sub">影子模式 · 全速運算、只記錄不下發</span>
+                            <span class="wr-hd-act">
+                                <el-switch v-model="sigLiveOn" size="small" active-text="即時影像" inline-prompt></el-switch>
+                                <button class="wr-btn" @click="loadSignal();loadSigConsole()">重新整理</button>
+                            </span>
+                        </div>
+
+                        <div class="wr-cols">
+                            <!-- 左右各一相 -->
+                            <div v-for="col in sigWarCols" :key="'wc'+col.phase" class="wr-col">
+                                <div class="wr-col-hd">
+                                    <span class="lv-lamp" :class="col.lampCls"></span>
+                                    <b>{{ col.ramp }}</b>
+                                    <span class="wr-col-sub">分相 {{ col.phase }} · {{ col.zone }} 區段</span>
+                                </div>
+                                <div class="wr-rel">
+                                    <span class="wr-rel-k">今日放行</span>
+                                    <span>累計 <b>{{ col.rel.total_sec==null?'—':col.rel.total_sec }}</b> 秒</span>
+                                    <span>次數 <b>{{ col.rel.count==null?'—':col.rel.count }}</b> 次</span>
+                                    <span>前次 <b>{{ col.rel.last_sec==null?'—':col.rel.last_sec }}</b> 秒</span>
+                                </div>
+                                <div class="wr-cams">
+                                    <figure v-for="cam in col.cams" :key="'wcam'+cam.camera_id"
+                                            class="wr-cam" :class="{green:col.isGreen, off:!cam.online}">
+                                        <div class="wr-cam-meta">
+                                            <b>{{ cam.name }}</b>
+                                            <span>流量 <i>{{ sigWarNum(cam.flow_vpm) }}</i> 輛/分</span>
+                                            <span>佔有率 <i>{{ sigWarPct(cam.occupancy) }}</i></span>
+                                            <span v-if="cam.queue_m!=null">排隊 <i>{{ sigWarNum(cam.queue_m) }}</i> m</span>
+                                        </div>
+                                        <img :src="sigLiveSrc(cam.camera_id)" :alt="cam.name"
+                                             @error="sigLiveErr[cam.camera_id]=true"
+                                             @load="sigLiveErr[cam.camera_id]=false">
+                                        <span v-if="sigLiveErr[cam.camera_id]" class="wr-cam-err">影像取得失敗</span>
+                                        <figcaption>{{ cam.site }}</figcaption>
+                                    </figure>
+                                </div>
+                                <!-- 巨型狀態列:這一相現在到底在做什麼 -->
+                                <div class="wr-state" :class="col.stateCls">
+                                    <span class="lv-lamp" :class="col.lampCls"></span>
+                                    <b>{{ col.ramp }} {{ col.stateText }}</b>
+                                    <span class="wr-state-sec">{{ col.secText }}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 路口圖:兩欄之間的共同事實來源(同一份 5F03) -->
+                        <div class="wr-int">
+                            <div class="wr-sec-hd">路口燈態圖<span>直接由 5F03 燈態回報繪製</span></div>
+                            <div v-if="sigIntersections.length" class="xn-grid">
+                                <div class="xn-card" v-for="xn in sigIntersections" :key="'lv'+xn.addr">
+                                    <div class="xn-head">
+                                        <span class="xn-name"><span class="xn-live" :class="{off:xn.stale}"></span>{{ xn.name }}</span>
+                                        <span class="xn-addr">{{ xn.addr_hex }}</span>
+                                    </div>
+                                    <div class="xn-stage">
+                                        <div class="xn-road-h"></div>
+                                        <div class="xn-road-v"></div>
+                                        <div class="xn-signal" v-for="(L, li) in (xn.phase&&xn.phase.lights||[])" :key="'lvp'+xn.addr+li"
+                                             :class="{horiz:xnPoleHoriz(L.dir)}" :style="xnPoleStyle(L.dir)" :title="L.dir+' '+L.text">
+                                            <span class="xn-dot" :class="{red:xnLampOn(L,'red')}"></span>
+                                            <span class="xn-dot" :class="{amber:xnLampOn(L,'amber')}"></span>
+                                            <span class="xn-dot" :class="{green:xnLampOn(L,'green')}"></span>
+                                            <span v-if="xnBit(L,0x08)" class="xn-arrow left" title="左轉綠"></span>
+                                            <span v-if="xnBit(L,0x10)" class="xn-arrow up" title="直行綠"></span>
+                                            <span v-if="xnBit(L,0x20)" class="xn-arrow right" title="右轉綠"></span>
+                                            <span v-if="xnPedFlash(L)" class="xn-ped flash" title="行人綠閃">
+                                                <i class="ped-fig"></i></span>
+                                            <span v-else-if="xnBit(L,0x40)" class="xn-ped green" title="行人綠燈">
+                                                <i class="ped-fig"></i></span>
+                                            <span v-else-if="xnBit(L,0x80)" class="xn-ped red" title="行人紅燈">
+                                                <i class="ped-fig"></i></span>
+                                        </div>
+                                        <div class="xn-center">
+                                            <div class="xn-count" :key="'lvc'+xn.addr+'-'+xnRemainLive(xn)"
+                                                 :class="{warn:xnRemainLive(xn)!=null&&xnRemainLive(xn)<=10&&xnRemainLive(xn)>5, hot:xnRemainLive(xn)!=null&&xnRemainLive(xn)<=5, tick:xnRemainLive(xn)!=null&&xnRemainLive(xn)>5}">{{ xnRemainLive(xn)==null?'—':xnRemainLive(xn) }}</div>
+                                            <div class="xn-count-tot" v-if="xn.step_total_sec">/ {{ xn.step_total_sec }}s</div>
+                                            <div class="xn-count-tot" v-else>步階</div>
+                                        </div>
+                                    </div>
+                                    <div class="xn-foot" v-if="xn.phase">
+                                        <span v-if="xn.control_mode" class="xn-chip xn-mode" :class="'sev-'+xn.control_mode.severity"><b>{{ xn.control_mode.label }}</b></span>
+                                        <span class="xn-chip"><span class="k">分相</span><b>{{ xn.phase.sub_phase_id }}</b></span>
+                                        <span class="xn-chip"><span class="k">步階</span><b>{{ xn.phase.step_id }}</b></span>
+                                        <span v-if="xnStepSpecial(xn)" class="xn-chip xn-mode sev-warn"><span class="k">狀態</span><b>{{ xn.phase.step_desc }}</b></span>
+                                    </div>
+                                </div>
+                            </div>
+                            <p v-else class="wr-empty">尚未收到燈態回報(5F03)。</p>
+
+                            <!-- 控制方 + 我方判定,靠著路口圖放,看圖的同時知道誰在控制 -->
+                            <div class="wr-ctl">
+                                <div class="wr-ctl-item">
+                                    <span>控制方</span><b>{{ sigCtlModeText }}</b>
+                                </div>
+                                <div class="wr-ctl-item">
+                                    <span>時制計畫</span><b>{{ sigCtlPlanId }}</b>
+                                </div>
+                                <div class="wr-ctl-item">
+                                    <span>控制策略</span><b>{{ sigStrategyHex }}</b>
+                                </div>
+                                <div class="wr-ctl-item" :class="sigPlan.action==='SWITCH'?'sw':'kp'">
+                                    <span>我方影子判定</span>
+                                    <b>{{ !sigPlan.available?'—':(sigPlan.action==='SWITCH'?'應換相':'續綠') }}</b>
+                                </div>
+                            </div>
+                            <div class="wr-why" v-if="sigPlan.available">{{ sigPlan.reason }}</div>
+                        </div>
+
+                        <!-- 原始訊框:證明畫面上每個數字都有來源 -->
+                        <div class="wr-log">
+                            <div class="wr-sec-hd">TC3 原始訊框<span>畫面上的每個數字都來自這裡</span></div>
+                            <div class="wr-log-body">
+                                <div v-for="(f,fi) in sigWarFrames" :key="'wf'+fi" class="wr-log-row">
+                                    <span class="wr-log-ts">{{ sigFrameTimeFull(f.ts) }}</span>
+                                    <span class="wr-log-code">{{ f.code }}</span>
+                                    <span class="wr-log-raw">{{ f.raw }}</span>
+                                </div>
+                                <p v-if="!sigWarFrames.length" class="wr-empty">尚無訊框。</p>
                             </div>
                         </div>
                     </div>
@@ -22198,10 +22451,11 @@ const app=createApp({
         // ── 動態號誌控制父頁(tab 切換)──────────────────────────────
         // 🛑 每個 tab 只在「第一次進入」時載入,之後靠各自既有的輪詢更新。
         //    否則每次切 tab 都會重打一輪 API,八個子頁切來切去會很吵。
-        const signalTab = ref('light');
+        const signalTab = ref('live');
         const sigTabLoaded = reactive({});
         // tab 順序 = 看現況 → 看為什麼 → 看設定 → 看歷史 → 看驗收
         const sigTabs = ref([
+            {key: 'live',   label: '即時戰情', icon: 'i-activity'},
             {key: 'light',  label: '燈態',     icon: 'i-zap'},
             {key: 'plan',   label: '決策盤',   icon: 'i-cpu'},
             {key: 'config', label: '設定',     icon: 'i-list'},
@@ -22210,6 +22464,10 @@ const app=createApp({
             {key: 'accept', label: '驗收',     icon: 'i-check'},
         ]);
         const sigTabLoaders = {
+            // 即時戰情同時要燈態(秒數/路口圖)與決策盤(判定/排隊),兩邊都帶起來
+            live:   () => { loadSignal(); startSignalTimer(); sigStartTick();
+                            loadSigConsole(); startSigConsoleTimer(); startSigLiveTimer();
+                            loadSignalFrames(); },
             light:  () => { loadSignal(); startSignalTimer(); },
             plan:   () => { loadSigConsole(); startSigConsoleTimer(); },
             config: () => loadSigConfig(),
@@ -22603,6 +22861,77 @@ const app=createApp({
         const sigSafety=ref({manual:false,strategy_text:'',abnormal_text:'',push_enabled:true});
         const sigSafetyEvents=ref([]);
         const sigSafetyPush=ref(true);
+        // ── 即時戰情:四路影像 ────────────────────────────────────────
+        // 🛑 用 /api/stream/{id}/snapshot 每秒輪詢,不開 MJPEG 串流。
+        //    /api/congestion/{id}/stream 每條會自己 open_capture 一路 RTSP 再跑一遍
+        //    偵測,四條同時開等於在正式分析之外再加四份負載。snapshot 端點有 1.5 秒
+        //    快取與 per-camera 鎖,而且直接吃偵測執行緒已經產出的 frame —— 四台每秒
+        //    輪詢幾乎都是快取命中,不會多開任何一路 RTSP。
+        //    overlay=1 會帶上 ROI 與偵測框,現場看得到「量到哪一段」。
+        const sigLiveOn = ref(true);
+        const sigLiveErr = reactive({});
+        const sigLiveTick = ref(0);
+        let sigLiveTimer = null;
+        // w=720:原尺寸每張約 400KB,四台每秒就是 1.6 MB/s —— 遠端連線扛不住。
+        // 縮到 720 寬約剩 1/5,牆上看仍然清楚。
+        const sigLiveSrc = (id) => '/api/stream/' + id
+                                   + '/snapshot?overlay=1&w=720&t=' + sigLiveTick.value;
+        const sigWarNum = (v) => (v === null || v === undefined || !isFinite(v))
+                                 ? '—' : (Math.round(Number(v) * 10) / 10);
+        const sigWarPct = (v) => (v === null || v === undefined || !isFinite(v))
+                                 ? '—' : ((Number(v) * 100).toFixed(1) + ' %');
+        // 分相 → 匝道/區段的靜態標示。分相歸屬本身一律取後端回來的資料
+        // (那邊吃 env 可覆寫),前端只補「人看得懂的名字」。
+        const SIG_PHASE_META = {
+            1: {ramp: '上匝道', zone: 'NE'},
+            2: {ramp: '下匝道', zone: 'WN'},
+        };
+        const SIG_CAM_SITE = {2: '上游 · 平面道路', 3: '停等區 · 基準測點',
+                              4: '上游 · 高速下匝道', 5: '停等區'};
+        // 一欄 = 一個分相:自己的兩台相機、自己的放行統計、自己的狀態列。
+        const sigWarCols = computed(() => {
+            const d = sigPlan.value || {};
+            const cams = d.cameras || [];
+            const rel = d.release_stats || {};
+            const phases = [];
+            cams.forEach((c) => { if (phases.indexOf(c.phase_no) === -1) phases.push(c.phase_no); });
+            phases.sort((a, b) => a - b);
+            return phases.map((ph) => {
+                const meta = SIG_PHASE_META[ph] || {ramp: '分相 ' + ph, zone: ''};
+                const isGreen = (d.green_phase === ph);
+                // 🛑 三種狀態要分開,不能把清道也算成綠燈:
+                //    清道(黃燈/全紅)期間車流已經在停,顯示成「放行中」會誤導,
+                //    而且影子比對也刻意把清道排除在一致率之外。
+                const clearing = isGreen && !!d.clearance;
+                let stateText = '紅燈等待', stateCls = 'red', lampCls = 'r';
+                if (clearing) { stateText = '清道過渡'; stateCls = 'amber'; lampCls = 'a'; }
+                else if (isGreen) { stateText = '綠燈放行中'; stateCls = 'green'; lampCls = 'g'; }
+                const sec = isGreen ? d.green_elapsed_sec : null;
+                return {
+                    phase: ph, ramp: meta.ramp, zone: meta.zone,
+                    isGreen: isGreen, stateText: stateText,
+                    stateCls: stateCls, lampCls: lampCls,
+                    secText: (sec == null) ? '– –' : (sec + ' s'),
+                    rel: rel[String(ph)] || {},
+                    cams: cams.filter((c) => c.phase_no === ph)
+                              .map((c) => Object.assign({}, c,
+                                    {site: SIG_CAM_SITE[c.camera_id] || ''})),
+                };
+            });
+        });
+        // 底部原始訊框:只留燈態回報(5F03),那才是畫面上秒數與燈色的來源。
+        // 全部訊框混在一起會被查詢回報洗版,看不出跟畫面的對應。
+        const sigWarFrames = computed(() =>
+            (sigFrames.value || []).filter((f) => String(f.code || '').toUpperCase() === '5F03')
+                                   .slice(0, 12));
+        const startSigLiveTimer = () => {
+            if (sigLiveTimer) return;
+            sigLiveTimer = setInterval(() => {
+                if (page.value !== 'signal_hub' || signalTab.value !== 'live'
+                    || !isPageVisible() || !sigLiveOn.value) return;
+                sigLiveTick.value = Date.now();
+            }, 1000);
+        };
         // ── 控制策略 8 位元旗標 ──────────────────────────────────────
         // 一行 "14H 路口手動+時相控制" 看不出哪些亮、哪些暗,更看不出剛剛翻了哪一位。
         // 攤成八個 chip:亮的脈動、剛翻轉的閃 1.2 秒、hover 給位元的意思。
@@ -22761,7 +23090,8 @@ const app=createApp({
             sigTickTimer=setInterval(()=>{
                 // 🛑 父子結構後 page 是 'signal_hub';留著舊名稱會讓倒數永遠不跳,
                 //    畫面看起來正常但秒數凍住。切到別的 tab 也不該繼續倒數。
-                if(page.value!=='signal_hub'||signalTab.value!=='light'
+                if(page.value!=='signal_hub'
+                   ||(signalTab.value!=='light'&&signalTab.value!=='live')
                    ||!isPageVisible())return;
                 const m=sigRemain.value;
                 Object.keys(m).forEach(k=>{ if(m[k]>0)m[k]=m[k]-1; });
@@ -23064,7 +23394,8 @@ const app=createApp({
             // 號誌每 2 秒上傳一次,1 秒輪詢足夠,狀態 JSON 只有幾 KB
             let _sigTick=0;
             sigTimer=setInterval(()=>{
-                if(page.value!=='signal_hub' || signalTab.value!=='light'
+                if(page.value!=='signal_hub'
+                   || (signalTab.value!=='light'&&signalTab.value!=='live')
                    || !isPageVisible())return;
                 loadSignal();
                 _sigTick++;
@@ -23692,7 +24023,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }

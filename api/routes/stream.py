@@ -1948,13 +1948,37 @@ async def live_stream_overlay(camera_id: int, q: str = "low", roi: str = "0",
 
 
 @router.get("/{camera_id}/snapshot")
-async def snapshot(camera_id: int, overlay: int = 0, db: Session = Depends(get_db)):
+async def snapshot(camera_id: int, overlay: int = 0, w: int = 0,
+                   db: Session = Depends(get_db)):
     """取得單張截圖。overlay=1 疊加 ROI + detection bbox（cam tile 縮圖也能看到偵測）"""
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:
         raise HTTPException(status_code=404, detail="攝影機不存在")
     if not bool(camera.enabled):
         raise HTTPException(status_code=409, detail="攝影機已關閉")
+
+    def respond(img: bytes) -> StreamingResponse:
+        """統一出口。w>0 時把 JPEG 縮到指定寬度再回。
+
+        🛑 快取刻意維持「原尺寸」一份,縮圖只在輸出時做:
+           把 w 放進 cache key 會讓每種寬度各自去抓一次影像,等於同一台相機
+           開好幾條擷取路徑 —— 那正是快取要避免的事。
+           縮圖成本是 decode+resize+encode,1080p 在 Orin 上約 10ms,
+           戰情頁四台每秒各一張只佔單核個位數百分比。
+        """
+        if w and 0 < int(w):
+            try:
+                arr = cv2.imdecode(np.frombuffer(img, np.uint8), cv2.IMREAD_COLOR)
+                if arr is not None and int(w) < arr.shape[1]:
+                    h = max(1, int(arr.shape[0] * int(w) / arr.shape[1]))
+                    small = cv2.resize(arr, (int(w), h), interpolation=cv2.INTER_AREA)
+                    ok, buf = cv2.imencode('.jpg', small,
+                                           [int(cv2.IMWRITE_JPEG_QUALITY), 72])
+                    if ok:
+                        img = buf.tobytes()
+            except Exception:
+                pass        # 縮不了就回原圖,不要因為縮圖失敗讓畫面整個沒東西
+        return StreamingResponse(iter([img]), media_type="image/jpeg")
 
     overlay_zones = (camera.zones or []) if overlay else None
     # cache 區分原始/疊加版本（同 cam 兩種預先 generate）
@@ -1964,7 +1988,7 @@ async def snapshot(camera_id: int, overlay: int = 0, db: Session = Depends(get_d
     # 的 cam，前端每秒 polling 都能拿到新 frame，影像不再卡 1-2 秒
     cached = snapshot_cache.get(cache_key)
     if cached and (time.time() - cached.get("ts", 0) <= 1.5):
-        return StreamingResponse(iter([cached.get("image")]), media_type="image/jpeg")
+        return respond(cached.get("image"))
 
     lock = snapshot_locks.setdefault(cache_key, asyncio.Lock())
     image = None
@@ -1972,17 +1996,17 @@ async def snapshot(camera_id: int, overlay: int = 0, db: Session = Depends(get_d
     # 同一攝影機已有擷取進行中時，先嘗試回傳快取；若沒有快取，短暫等待前一個請求完成
     if lock.locked():
         if cached and (time.time() - cached.get("ts", 0) <= 600):
-            return StreamingResponse(iter([cached.get("image")]), media_type="image/jpeg")
+            return respond(cached.get("image"))
         try:
             await _wait_lock_release(lock, timeout=3.0)
         except asyncio.TimeoutError:
             ph = _placeholder_jpeg("影像來源忙碌中")
             if ph:
-                return StreamingResponse(iter([ph]), media_type="image/jpeg")
+                return respond(ph)
             raise HTTPException(status_code=503, detail="影像來源忙碌中")
         cached_after_wait = snapshot_cache.get(cache_key)
         if cached_after_wait and (time.time() - cached_after_wait.get("ts", 0) <= 600):
-            return StreamingResponse(iter([cached_after_wait.get("image")]), media_type="image/jpeg")
+            return respond(cached_after_wait.get("image"))
 
     async with lock:
         # Keep snapshot latency very short for UI usage; slow sources should fallback fast
@@ -2027,13 +2051,10 @@ async def snapshot(camera_id: int, overlay: int = 0, db: Session = Depends(get_d
     if not image:
         ph = _placeholder_jpeg("無法取得影像")
         if ph:
-            return StreamingResponse(iter([ph]), media_type="image/jpeg")
+            return respond(ph)
         raise HTTPException(status_code=503, detail="無法取得影像")
 
-    return StreamingResponse(
-        iter([image]),
-        media_type="image/jpeg"
-    )
+    return respond(image)
 
 
 _DETECTION_MODE_LABEL = {"traffic": "車流偵測", "speed": "車速偵測", "all": "車流/車速偵測"}
