@@ -3790,18 +3790,32 @@ async def get_stream_results(camera_id: int, limit: int = Query(100, ge=1, le=50
 
 
 def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    """把查詢用的時間字串轉成 UTC naive datetime(DB 的 created_at 存 UTC)。
+
+    沒帶時區的字串一律當「台北時間」解讀 —— 使用者在畫面上看到的 time 是台北時間,
+    輸入 "2026-09-04 12:00" 卻被當成 UTC 的話,篩出來會多出傍晚 8 小時的資料。
+    帶時區的字串照原本的規則換算。
+    """
     if not value:
         return None
-    s = str(value).strip()
+    s = str(value).strip().replace("T", " ")
     if not s:
         return None
     try:
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
     except Exception:
-        return None
+        # 允許只給日期或 "YYYY-MM-DD HH:MM"
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                dt = datetime.strptime(s[:19], fmt)
+                break
+            except ValueError:
+                continue
+        else:
+            return None
     if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-    return dt
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt - timedelta(hours=8)     # 視為台北時間 → UTC
 
 
 @router.get("/history")
