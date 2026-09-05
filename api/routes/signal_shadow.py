@@ -1724,15 +1724,28 @@ async def shadow_tdx(since: str = Query(""), until: str = Query(""),
     return out
 
 
-@router.get("/tdx/discover", summary="列出交流道里程附近的 eTag 配對(挑 TDX_ETAG_PAIRS 用)")
-async def shadow_tdx_discover(km: float = Query(..., description="交流道里程(公里)"),
-                              road_id: str = Query(""), span_km: float = Query(6.0),
+# 站點座標:使用者在地圖頁定的(國道 8 號新市交流道路口),跟前端 MAP_SITE_CENTER 同值。
+SITE_LAT = float(os.getenv("SIGNAL_SITE_LAT", "23.063772") or 23.063772)
+SITE_LON = float(os.getenv("SIGNAL_SITE_LON", "120.279169") or 120.279169)
+
+
+@router.get("/tdx/discover", summary="用站點座標找最近的 eTag 配對(挑 TDX_ETAG_PAIRS 用)")
+async def shadow_tdx_discover(lat: float = Query(None), lng: float = Query(None),
+                              km: float = Query(None, description="(選用)交流道里程,只當交叉驗證"),
+                              road_id: str = Query(""), radius_km: float = Query(8.0),
                               _user=Depends(get_current_user)):
+    """🛑 以座標為準,不靠里程猜。里程(維基:新市交流道 9.7K)只拿來交叉驗證。"""
     from services import tdx_travel as T
     if not T.enabled():
         return {"enabled": False, "error": "未設定 TDX_CLIENT_ID / TDX_CLIENT_SECRET"}
+    lat = SITE_LAT if lat is None else lat
+    lng = SITE_LON if lng is None else lng
     try:
-        return {"enabled": True, "km": km, "pairs": T.discover(km, road_id or None, span_km)}
+        out = {"enabled": True, "site": {"lat": lat, "lng": lng},
+               "pairs": T.discover_by_coord(lat, lng, road_id or None, radius_km)}
+        if km is not None:
+            out["by_km"] = T.discover(km, road_id or None)
+        return out
     except Exception as e:
         return {"enabled": True, "error": f"{type(e).__name__}: {e}"}
 

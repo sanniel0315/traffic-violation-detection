@@ -110,10 +110,59 @@ def list_pairs(road_id: str = None) -> list:
             "road": r.get("RoadName") or road_id,
             "direction": r.get("Direction"),
             "start_id": s.get("ETagGantryID"), "start_km": _km(s.get("LocationMile")),
+            "start_lat": _f(s.get("PositionLat")), "start_lon": _f(s.get("PositionLon")),
             "end_id": e.get("ETagGantryID"), "end_km": _km(e.get("LocationMile")),
+            "end_lat": _f(e.get("PositionLat")), "end_lon": _f(e.get("PositionLon")),
             "length_km": r.get("Distance"),
         })
     return out
+
+
+def _f(v) -> Optional[float]:
+    try:
+        return None if v is None else float(v)
+    except Exception:
+        return None
+
+
+def _dist_km(lat1, lon1, lat2, lon2) -> Optional[float]:
+    """兩點距離(公里),等距近似 —— 站點附近幾公里內夠用。"""
+    if None in (lat1, lon1, lat2, lon2):
+        return None
+    dy = (lat2 - lat1) * 110.9
+    dx = (lon2 - lon1) * 102.5
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def discover_by_coord(lat: float, lon: float, road_id: str = None, radius_km: float = 8.0) -> list:
+    """用站點座標(使用者在地圖頁定的)找門架配對 —— 不靠里程猜。
+
+    每個配對算:兩端門架到站點的距離、站點是否落在兩門架之間(沿門架連線投影
+    0~1 之間)。「跨過站點」的配對排最前,其次依最近門架距離。
+    """
+    out = []
+    for p in list_pairs(road_id):
+        d1 = _dist_km(lat, lon, p["start_lat"], p["start_lon"])
+        d2 = _dist_km(lat, lon, p["end_lat"], p["end_lon"])
+        if d1 is None or d2 is None:
+            continue
+        ax, ay = (p["start_lon"] - lon) * 102.5, (p["start_lat"] - lat) * 110.9
+        bx, by = (p["end_lon"] - lon) * 102.5, (p["end_lat"] - lat) * 110.9
+        vx, vy = bx - ax, by - ay
+        L2 = vx * vx + vy * vy
+        t = (-(ax * vx + ay * vy) / L2) if L2 > 0 else None     # 站點在門架連線上的投影參數
+        spans = (t is not None and 0.0 <= t <= 1.0)
+        # 站點到門架連線的垂直距離(跨過時才有意義)
+        perp = None
+        if spans:
+            px, py = ax + t * vx, ay + t * vy
+            perp = (px * px + py * py) ** 0.5
+        p.update({"dist_start_km": round(d1, 2), "dist_end_km": round(d2, 2),
+                  "spans_site": spans, "offset_km": None if perp is None else round(perp, 2)})
+        if min(d1, d2) <= radius_km:
+            out.append(p)
+    return sorted(out, key=lambda x: (not x["spans_site"], x["offset_km"] if x["offset_km"] is not None else 99,
+                                      min(x["dist_start_km"], x["dist_end_km"])))
 
 
 def discover(center_km: float, road_id: str = None, span_km: float = 6.0) -> list:
