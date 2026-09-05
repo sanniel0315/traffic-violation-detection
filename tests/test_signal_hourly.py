@@ -69,7 +69,10 @@ def test_hourly_current_hour_is_partial(tmp_path, monkeypatch):
     out = S.hourly_rows(datetime.now().strftime("%Y-%m-%d"), compute_missing=True, max_sync=2)
     # 同步算的是最近兩個小時(當前小時在內);之後背景執行緒才接著算其餘的,
     # 所以只能看前兩個,不能看 calls[-1](那可能已經是回填的第一個)。
-    assert now in calls[:2] and len(calls) >= 2
+    # 🛑 不可寫死「至少 2 個」:當下是當日 00 時的話,整天只有這一個小時要算,
+    #    calls 只會有 1 筆(2026-09-06 00:xx 實際踩到)。
+    expect = min(2, int(now[11:13]) + 1)
+    assert now in calls[:2] and len(calls) >= expect
     assert "backfilling" in out and "rows" in out
 
 

@@ -3622,6 +3622,15 @@
         .wr-cam-meta b { width:100%; color:var(--gov-primary); font-weight:700; }
         .wr-cam-meta i { font-style:normal; font:600 var(--fs-mono-num) var(--font-mono); color:var(--gov-text); }
         .wr-cam-meta i.hot { color:var(--gov-warn); }
+        /* 原始影像 + 向量疊加層(線不燒進影像,縮放不糊,可獨立關掉) */
+        .wr-cam-stack { position:relative; line-height:0; }
+        .wr-cam-stack img { display:block; width:100%; height:auto; }
+        .wr-cam-ov { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+        .wr-cam-ov .ovz { fill:rgba(47,111,181,.13); stroke:#2f6fb5; stroke-width:3; }
+        .wr-cam-ov .ovz-line, .wr-cam-ov .ovl { fill:none; stroke:#e5a94a; stroke-width:4; }
+        .wr-cam-ov .ovz-stopline, .wr-cam-ov .ovl-stopline { stroke:#b3261e; }
+        .wr-cam-ov .ovt { fill:#fff; font-size:20px; font-weight:700;
+                          paint-order:stroke; stroke:rgba(0,0,0,.65); stroke-width:5px; }
         .wr-cam-err { position:absolute; left:0; right:0; bottom:0; aspect-ratio:16/9; display:flex;
                       align-items:center; justify-content:center; color:#cbd5e1; font-size:var(--fs-micro); background:#26303c; }
 
@@ -7732,9 +7741,23 @@
                                             <span>佔有率: <i :class="{hot:sigWarHot(cam.occupancy)}">{{ sigWarPct(cam.occupancy) }}</i></span>
                                             <template v-if="cam.queue_m!=null"><em class="wr-sep">|</em><span>排隊: <i>{{ sigWarNum(cam.queue_m) }}</i> m</span></template>
                                         </div>
-                                        <img :src="sigLiveSrc(cam.camera_id)" :alt="cam.name"
-                                             @error="sigLiveErr[cam.camera_id]=true"
-                                             @load="sigLiveErr[cam.camera_id]=false">
+                                        <!-- 🛑 影像是**原始畫面**(overlay=0),ROI 線由前端另外疊。
+                                             使用者 2026-09-06:「戰情儀錶板看的是原始影像,線再轉出疊加的」。
+                                             好處:線是向量、縮放不糊,可以獨立開關,而且伺服器不必為了畫線
+                                             重新編碼一次影像。座標系用該張快照的原始像素(與 ROI 編輯器同一套)。 -->
+                                        <div class="wr-cam-stack">
+                                            <img :src="sigLiveSrc(cam.camera_id)" :alt="cam.name"
+                                                 @error="sigLiveErr[cam.camera_id]=true"
+                                                 @load="onWarCamLoad($event, cam.camera_id)">
+                                            <svg v-if="sigCamOverlayOn && sigCamBox[cam.camera_id]" class="wr-cam-ov"
+                                                 :viewBox="sigCamBox[cam.camera_id]" preserveAspectRatio="none">
+                                                <g v-for="(z, zi) in sigCamZones[cam.camera_id] || []" :key="'z'+zi">
+                                                    <polygon v-if="z.poly" :points="z.poly" :class="'ovz ovz-'+z.kind"></polygon>
+                                                    <polyline v-else :points="z.line" :class="'ovl ovl-'+z.kind"></polyline>
+                                                    <text v-if="z.lx!=null" :x="z.lx" :y="z.ly" class="ovt">{{ z.name }}</text>
+                                                </g>
+                                            </svg>
+                                        </div>
                                         <span v-if="sigLiveErr[cam.camera_id]" class="wr-cam-err">影像取得失敗</span>
 
                                     </figure>
@@ -13001,7 +13024,9 @@ const app=createApp({
             if(_deepLinkPage) return _deepLinkPage;
             // 號誌操作員只有這一頁,直接落地;不然會掉進 firstAllowedPage 的
             // 通用清單找不到能開的頁,卡在空白的 monitor。
-            if(userRole.value==='signal' && hasPerm('signal')) return 'signal_hub';
+            // 使用者 2026-09-06:「登入就是動態號誌頁面」。有權限就一律落地在這裡,
+            // 不再先進統計分析頁 —— 這個系統現在的主戰場是動態號誌。
+            if(hasPerm('signal')) return 'signal_hub';
             if(hasPerm('statistics')) return 'statistics';
             if(canViewDashboard.value) return 'dashboard';
             return firstAllowedPage();
@@ -22695,6 +22720,7 @@ const app=createApp({
             live:   () => { loadSignal(); startSignalTimer(); sigStartTick();
                             loadSigConsole(); startSigConsoleTimer(); startSigLiveTimer();
                             loadSignalFrames(); if (!cameras.value.length) loadCameras();
+                            loadWarCamZones(Object.keys(SIG_CAM_SITE).map(Number));
                             setTimeout(initWarMap, 50); },
             light:  () => { loadSignal(); startSignalTimer(); },
             plan:   () => { loadSigConsole(); startSigConsoleTimer(); },
@@ -23303,8 +23329,48 @@ const app=createApp({
         let sigLiveTimer = null;
         // w=720:原尺寸每張約 400KB,四台每秒就是 1.6 MB/s —— 遠端連線扛不住。
         // 縮到 720 寬約剩 1/5,牆上看仍然清楚。
+        // 🛑 overlay=0:戰情看的是**原始影像**,ROI 線由前端 SVG 另外疊(見 wr-cam-stack)。
+        //    伺服器端疊加(overlay=1)會把線燒進 JPEG,縮放後糊掉、也無法單獨關掉。
         const sigLiveSrc = (id) => '/api/stream/' + id
-                                   + '/snapshot?overlay=1&w=720&t=' + sigLiveTick.value;
+                                   + '/snapshot?overlay=0&w=720&t=' + sigLiveTick.value;
+        // 每台相機的 ROI 幾何(前端疊加用)。座標系 = 快照原始像素,與 ROI 編輯器一致。
+        const sigCamZones = ref({});
+        const sigCamBox = ref({});          // {camId: "0 0 W H"} —— 影像載入後才知道
+        const sigCamOverlayOn = ref(true);
+        const onWarCamLoad = (ev, id) => {
+            sigLiveErr.value[id] = false;
+            const im = ev && ev.target;
+            if (im && im.naturalWidth && im.naturalHeight) {
+                sigCamBox.value[id] = '0 0 ' + im.naturalWidth + ' ' + im.naturalHeight;
+            }
+        };
+        // ROI 幾何只抓一次:zones 很少變,而且每秒重抓會白白打 API。
+        const loadWarCamZones = async (ids) => {
+            for (const id of ids) {
+                if (sigCamZones.value[id]) continue;
+                try {
+                    const r = await fetch('/api/cameras/' + id, {credentials: 'include'});
+                    if (!r.ok) continue;
+                    const d = await r.json();
+                    const out = [];
+                    for (const z of (d.zones || [])) {
+                        const pts = (z.points || []).filter((pt) => Array.isArray(pt) && pt.length === 2);
+                        if (pts.length < 2) continue;
+                        const txt = pts.map((pt) => pt[0] + ',' + pt[1]).join(' ');
+                        const isLine = pts.length === 2;
+                        const kind = String(z.type || z.zone_type || 'roi').toLowerCase().replace(/[^a-z]/g, '') || 'roi';
+                        out.push({
+                            name: String(z.name || ''),
+                            kind: kind,
+                            poly: isLine ? null : txt,
+                            line: isLine ? txt : null,
+                            lx: pts[0][0], ly: Math.max(14, pts[0][1] - 6),
+                        });
+                    }
+                    sigCamZones.value[id] = out;
+                } catch (e) { /* 抓不到就不疊,不影響影像 */ }
+            }
+        };
         // 佔有率 ≥ 45% 標琥珀(中等以上)。比較式不放模板,守 CLAUDE.md 的 HTML parser 規則。
         const sigWarHot = (v) => (v != null && isFinite(v) && Number(v) >= 0.45);
         const sigWarNum = (v) => (v === null || v === undefined || !isFinite(v))
@@ -24603,7 +24669,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigCamZones,sigCamBox,sigCamOverlayOn,onWarCamLoad,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
