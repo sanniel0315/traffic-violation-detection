@@ -764,6 +764,12 @@ def start_shadow() -> bool:
             pass
         _thread = threading.Thread(target=_loop, name="signal-shadow", daemon=True)
         _thread.start()
+        # 逐時表的缺漏(重啟期間、部署前的小時)丟背景回填,不擋啟動
+        try:
+            for d in (datetime.now() - timedelta(days=1), datetime.now()):
+                hourly_rows(d.strftime("%Y-%m-%d"), compute_missing=True, max_sync=0)
+        except Exception:
+            pass
         return True
 
 
@@ -1842,28 +1848,58 @@ HOURLY_COLS = ["hour", "computed_at", "partial", "samples", "agree_rate", "queue
                "delay_per_veh", "throughput_vph", "queue_eval_m", "cycles"]
 
 
-def hourly_rows(day: str, compute_missing: bool = True) -> list:
-    """一天 24 小時的列。存過的直接讀;沒存的(或 partial 的)即時算並回存。"""
+_backfill = {"thread": None, "pending": 0}
+
+
+def _hourly_backfill(keys: list) -> None:
+    """背景回填:一小時要解 3,600 框,十幾個小時同步算會讓端點卡幾十秒。"""
+    for k in keys:
+        try:
+            _hourly_store(_hourly_compute(k))
+        except Exception as e:
+            _stats["last_error"] = f"hourly backfill {k}: {e}"
+        finally:
+            _backfill["pending"] = max(0, _backfill["pending"] - 1)
+
+
+def _start_backfill(keys: list) -> None:
+    if not keys:
+        return
+    t = _backfill["thread"]
+    if t is not None and t.is_alive():
+        return          # 已經在回填,下次呼叫再補
+    _backfill["pending"] = len(keys)
+    _backfill["thread"] = threading.Thread(target=_hourly_backfill, args=(keys,), name="signal-hourly-backfill", daemon=True)
+    _backfill["thread"].start()
+
+
+def hourly_rows(day: str, compute_missing: bool = True, max_sync: int = 2) -> dict:
+    """一天 24 小時的列。存過的直接讀;沒存的(或 partial 的)最多同步算 max_sync 個
+    (最近的優先),其餘丟背景回填 —— 回應裡帶 backfilling,前端隔幾秒再拉一次。"""
     conn = _db()
     conn.execute(HOURLY_TABLE_SQL)
     got = {r[0]: dict(zip(HOURLY_COLS, r)) for r in
            conn.execute("SELECT %s FROM signal_hourly_eval WHERE hour LIKE ?" % ",".join(HOURLY_COLS), (day + "T%",))}
     conn.close()
     now = datetime.now()
-    out = []
+    keys = []
     for hh in range(24):
         key = f"{day}T{hh:02d}"
-        h = datetime.fromisoformat(key + ":00:00")
-        if h > now:
+        if datetime.fromisoformat(key + ":00:00") > now:
             break
-        row = got.get(key)
-        if row is None or row.get("partial"):
-            if not compute_missing:
-                continue
-            row = _hourly_compute(key)
+        keys.append(key)
+    missing = [k for k in keys if got.get(k) is None or got[k].get("partial")]
+    if compute_missing and missing:
+        sync = missing[-max_sync:]          # 最近的先算(當前 partial 那小時一定在裡面)
+        for k in sync:
+            row = _hourly_compute(k)
             _hourly_store(row)
-        out.append(row)
-    return out
+            got[k] = row
+        rest = [k for k in missing if k not in sync]
+        _start_backfill(rest)
+    out = [got[k] for k in keys if got.get(k) is not None]
+    return {"rows": out, "backfilling": bool(_backfill["thread"] and _backfill["thread"].is_alive()),
+            "pending": _backfill["pending"]}
 
 
 _last_hourly = [0.0]
@@ -1888,7 +1924,9 @@ def _hourly_tick() -> None:
 async def shadow_hourly(date: str = Query("", description="YYYY-MM-DD,空 = 今天"),
                         _user=Depends(get_current_user)):
     day = date or datetime.now().strftime("%Y-%m-%d")
-    return {"date": day, "rows": hourly_rows(day)}
+    out = hourly_rows(day)
+    out["date"] = day
+    return out
 
 
 @router.get("/paired", summary="逐次綠燈配對(精確比對:我方會早幾秒切)")

@@ -46,11 +46,11 @@ def test_hourly_compute_store_and_rows(tmp_path, monkeypatch):
     assert r["runs"] == 30 and r["earlier"] == 15 and r["earlier_meaningful"] == 15 and r["later"] == 0
     assert r["hold"] == 15 and r["agree_rate"] is not None and r["partial"] is False
     S._hourly_store(r)
-    got = S.hourly_rows("2026-09-04", compute_missing=False)
+    got = S.hourly_rows("2026-09-04", compute_missing=False)["rows"]
     assert len(got) == 1 and got[0]["hour"] == "2026-09-04T09" and got[0]["earlier"] == 15
     # 存過的不重算:把 compute 換成會炸的,還是拿得到那一列
     monkeypatch.setattr(S, "_hourly_compute", lambda h: (_ for _ in ()).throw(RuntimeError("不該重算")))
-    got2 = S.hourly_rows("2026-09-04", compute_missing=False)
+    got2 = S.hourly_rows("2026-09-04", compute_missing=False)["rows"]
     assert got2[0]["runs"] == 30
 
 
@@ -63,6 +63,14 @@ def test_hourly_current_hour_is_partial(tmp_path, monkeypatch):
     now = datetime.now().strftime("%Y-%m-%dT%H")
     r = S._hourly_compute(now)
     assert r["partial"] is True and r["samples"] == 0 and r["runs"] == 0
+    # 一天缺很多小時:同步只算最近 2 個,其餘丟背景(pending 會 >0 或已算完)
+    calls = []
+    monkeypatch.setattr(S, "_hourly_compute", lambda k: (calls.append(k) or {"hour": k, "partial": False, "runs": 0}))
+    out = S.hourly_rows(datetime.now().strftime("%Y-%m-%d"), compute_missing=True, max_sync=2)
+    # 同步算的是最近兩個小時(當前小時在內);之後背景執行緒才接著算其餘的,
+    # 所以只能看前兩個,不能看 calls[-1](那可能已經是回填的第一個)。
+    assert now in calls[:2] and len(calls) >= 2
+    assert "backfilling" in out and "rows" in out
 
 
 def test_report_md_hourly_section():
