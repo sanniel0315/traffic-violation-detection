@@ -5367,8 +5367,8 @@
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='mqtt'}" @click="page='mqtt';loadMqttStatus()"><svg class="nav-icon"><use href="#i-radio"/></svg><span>MQTT</span></div>
             <div v-if="hasPerm('hwmonitor')" class="menu-item" :class="{active:page==='hwmonitor'}" @click="page='hwmonitor';loadHwStatus()"><svg class="nav-icon"><use href="#i-activity"/></svg><span>{{ $t('nav_hwmonitor') }}</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='permission_admin'}" @click="page='permission_admin'"><svg class="nav-icon"><use href="#i-lock"/></svg><span>{{ $t('nav_permission') }}</span></div>
-            <div v-if="isAdmin" class="menu-item" :class="{active:page==='io_panel'}" @click="page='io_panel'"><svg class="nav-icon"><use href="#i-zap"/></svg><span>{{ $t('nav_io') }}</span></div>
-            <div v-if="isAdmin" class="menu-item" :class="{active:page==='lock'}" @click="page='lock'"><svg class="nav-icon"><use href="#i-lock"/></svg><span>{{ $t('nav_lock') }}</span></div>
+            <div v-if="hasPerm('io')" class="menu-item" :class="{active:page==='io_panel'}" @click="page='io_panel'"><svg class="nav-icon"><use href="#i-zap"/></svg><span>{{ $t('nav_io') }}</span></div>
+            <div v-if="hasPerm('lock')" class="menu-item" :class="{active:page==='lock'}" @click="page='lock'"><svg class="nav-icon"><use href="#i-lock"/></svg><span>{{ $t('nav_lock') }}</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='nport'}" @click="page='nport'"><svg class="nav-icon"><use href="#i-server"/></svg><span>MOXA NPort</span></div>
             <!-- 號誌控制群組:先前五個項目散在平的清單裡,看不出彼此是一組 -->
             <div v-if="isAdmin" class="menu-section-title">號誌控制</div>
@@ -12770,6 +12770,8 @@ const app=createApp({
             {key:'logs',label:'系統監控日誌'},
             {key:'hwmonitor',label:'硬體效能監測'},
             {key:'signal',label:'動態號誌控制'},
+            {key:'lock',label:'電子鎖（卡機）'},
+            {key:'io',label:'燈號 I/O 控制'},
             {key:'permission_admin',label:'權限管理'}
         ];
         const defaultPermissionMatrix={
@@ -12777,10 +12779,10 @@ const app=createApp({
             ops:[
                 'map','statistics','violations','reports','repeat','monitor',
                 'analysis_traffic','analysis_speed','analysis_congestion','analysis_parking','analysis_parking_detection','analysis_insights','parking_edit',
-                'cameras','frigate','lpr','logs','hwmonitor','signal'
+                'cameras','frigate','lpr','logs','hwmonitor','signal','lock','io'
             ],
-            // 號誌操作員:只有動態號誌控制。登入後其他選單全部不出現。
-            signal:['signal'],
+            // 號誌操作員:動態號誌 + 即時監控 + 電子鎖(卡機) + 燈號 I/O。其餘選單不出現。
+            signal:['signal','monitor','lock','io'],
             viewer:[
                 'map','statistics','violations','reports','repeat','monitor',
                 'analysis_traffic','analysis_speed','analysis_congestion','analysis_parking','analysis_parking_detection','analysis_insights',
@@ -12821,7 +12823,7 @@ const app=createApp({
         const canManageNvr=computed(()=>hasPerm('frigate'));
         const canOpenAnalysisMenu=computed(()=>hasPerm('analysis_traffic')||hasPerm('analysis_speed')||hasPerm('analysis_congestion')||hasPerm('analysis_parking')||hasPerm('analysis_parking_detection')||hasPerm('analysis_insights'));
         const firstAllowedPage=()=>{
-            const order=['monitor','map','statistics','violations','lpr','logs','hwmonitor','signal_hub'];
+            const order=['monitor','map','statistics','violations','lpr','logs','hwmonitor','signal_hub','lock','io_panel'];
             for(const p of order){
                 const key=pagePermMap[p];
                 if(!key || hasPerm(key))return p;
@@ -13144,6 +13146,8 @@ const app=createApp({
             hwmonitor:'hwmonitor',
             permission_admin:'permission_admin',
             signal_hub:'signal',
+            lock:'lock',
+            io_panel:'io',
         };
         const isPageAllowed=(p)=>{
             const key=pagePermMap[String(p||'')];
