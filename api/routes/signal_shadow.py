@@ -158,6 +158,19 @@ def _load_saturation() -> bool:
     _measured_sat["samples"] = d.get("samples")
     return True
 # 量出來的值超出這個範圍就不採信(視為量測異常),退回預設值。
+# 最大綠:使用者指示固定 100 秒(2026-09-05)。官方時制表寫 210,但那是控制器的
+# 硬上限,不是我方要用的操作上限 —— 綠燈放到 100 秒還沒切,紅側已經等太久。
+# 設 0 = 退回時制表的值。/plan 的 constants 會標明現在用哪一個。
+MAX_GREEN_SEC = float(os.getenv("SIGNAL_MAX_GREEN_SEC", "100") or 0)
+
+
+def _max_green(pp: dict) -> float:
+    """該相的最大綠:有固定設定就用固定值,否則用時制表(再沒有就 210)。"""
+    if MAX_GREEN_SEC > 0:
+        return MAX_GREEN_SEC
+    return float((pp or {}).get("max_green") or 210)
+
+
 SAT_MIN_VPH = float(os.getenv("SIGNAL_SAT_MIN_VPH", "200") or 200)
 SAT_MAX_VPH = float(os.getenv("SIGNAL_SAT_MAX_VPH", "2200") or 2200)
 SAT_REFRESH_SEC = float(os.getenv("SIGNAL_SAT_REFRESH_SEC", "3600") or 3600)
@@ -552,7 +565,7 @@ def _loop():
                     priority=bool(r_role.get("priority")),
                     waiting_sec=green_elapsed),
                 min_green_sec=min_green,
-                max_green_sec=float(pp.get("max_green") or 210),
+                max_green_sec=_max_green(pp),
                 # 飽和流用現場量到的(見 _measured_sat 的說明)
                 saturation_vph=_sat_for(g_no),
             )
@@ -972,7 +985,7 @@ async def shadow_plan(_user=Depends(get_current_user)):
     pp = plan_params(plan_id) or {}
     mins = pp.get("min_green") or [15, 15]
     min_green = float(mins[g_no - 1] if len(mins) >= g_no else 15)
-    max_green = float(pp.get("max_green") or 210)
+    max_green = _max_green(pp)
 
     green = ApproachState(g_no, queue_m=q.get(g_no), flow_vpm=f.get(g_no),
                           storage_m=roles[g_no].get("storage_m"),
@@ -1051,6 +1064,8 @@ async def shadow_plan(_user=Depends(get_current_user)):
             # 🛑 標出這個值是量到的還是預設的 —— 它直接決定換相門檻,
             #    看報表的人必須知道自己在看哪一種。
             "saturation_vph": _sat_for(g_no),
+            "max_green_sec": max_green,
+            "max_green_source": ("固定 %g 秒(使用者設定)" % MAX_GREEN_SEC) if MAX_GREEN_SEC > 0 else "時制計畫",
             "saturation_source": _measured_sat.get("source", "default"),
             "saturation_measured_at": _measured_sat.get("ts"),
             "saturation_default_vph": DEFAULT_SATURATION_VPH,
@@ -1218,7 +1233,7 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
             "phase_no": ph,
             "ramp": role.get("ramp"), "label": role.get("label"),
             "min_green_sec": float(mins[ph - 1]) if len(mins) >= ph else None,
-            "max_green_sec": float(pp.get("max_green") or 210),
+            "max_green_sec": _max_green(pp),
             **st,
             "min_observed": round(min(vals), 1) if vals else None,
             "max_observed": round(max(vals), 1) if vals else None,
@@ -1307,7 +1322,7 @@ async def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
     mins = pp.get("min_green") or [10, 20]
     cfg = SimConfig(dt_sec=SHADOW_INTERVAL_SEC,
                     min_green_sec={1: float(mins[0]), 2: float(mins[1])},
-                    max_green_sec=float(pp.get("max_green") or 210))
+                    max_green_sec=_max_green(pp))
 
     # 🛑 用時變到達率,不用單一中位數。首次校準用固定率時相關係數只有
     #    -0.006 / -0.04(完全沒跟上動態)—— 固定率撐不起數小時的模擬。
@@ -2004,7 +2019,7 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
                 "reason": "此區間無樣本"}
 
     pp = plan_params(current_base_plan()) or {}
-    max_green = float(pp.get("max_green") or 210)
+    max_green = _max_green(pp)
     storage2 = (phase_role(2) or {}).get("storage_m") or 600
     spill_m = storage2 * DEFAULT_SPILLBACK_RATIO_LOCAL
 
