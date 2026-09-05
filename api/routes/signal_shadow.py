@@ -333,23 +333,62 @@ def _median(v: list):
     return s_[n // 2] if n % 2 else (s_[n // 2 - 1] + s_[n // 2]) / 2.0
 
 
+def _frames_spacing(since_iso: str, until_iso: str) -> Optional[float]:
+    """該時段 5F03 框的中位間隔(秒)。1.0 = 每秒一框;>1.5 代表控制器回報變慢,
+    用框算出來的秒數精度就只有一個框距,量損失時間會被灌水。"""
+    try:
+        from api.routes.signal_tc3 import _QDB_PATH
+        import sqlite3 as _sq
+        a = datetime.fromisoformat(since_iso).timestamp()
+        b = datetime.fromisoformat(until_iso).timestamp()
+        conn = _sq.connect(f"file:{_QDB_PATH}?mode=ro", uri=True, timeout=10)
+        ts = [r[0] for r in conn.execute("SELECT ts FROM signal_frames WHERE code='5F03' AND cks_ok=1 "
+                                         "AND ts>=? AND ts<? ORDER BY ts", (a, b)).fetchall()]
+        conn.close()
+    except Exception:
+        return None
+    if len(ts) < 30:
+        return None
+    gaps = sorted(ts[i + 1] - ts[i] for i in range(len(ts) - 1))
+    return round(gaps[len(gaps) // 2], 2)
+
+
 def _refresh_params(hours: float = 24.0) -> None:
     """量損失時間與每車長度;量到合理值才更新(逐項合併),量不到保留上一次。"""
     since = (datetime.now() - timedelta(hours=hours)).isoformat(timespec="seconds")
     until = datetime.now().isoformat(timespec="seconds")
     changed = False
-    # 損失時間:清道 = 綠燈結束 → 該相結束(下一相開始)
+    # 損失時間:清道 = 綠燈結束 → 該相結束(下一相開始)。
+    # 🛑 只有 5F03 每秒一框時才能這樣量。2026-09-05 實測:回報變成每 6~7 秒一框後,
+    #    量出 8.5 秒(真值 3+2=5),差的就是一個框距 —— 那是取樣假象不是物理量,
+    #    而且會把 change_cost 從 3.5 灌到 10.6。框距 >1.5 秒 → 改用控制器回報的
+    #    時制設定(5FC4 的黃燈+全紅),那也是控制器自己說的數字,不是假設。
+    spacing = _frames_spacing(since, until)
+    _measured_params["samples"]["frame_interval_sec"] = spacing
     try:
-        segs = _actual_runs_from_frames(since, until) or []
-        for ph in (1, 2):
-            vals = [sg["end"] - sg["green_end"] for sg in segs
-                    if sg["phase"] == ph and sg["end"] > sg["green_end"]]
-            vals = [v for v in vals if LOST_TIME_MIN <= v <= LOST_TIME_MAX]
-            m = _median(vals)
-            if m is not None and len(vals) >= 20:
-                _measured_params["lost_time_sec"][ph] = round(m, 1)
-                _measured_params["samples"]["lost_time_%d" % ph] = len(vals)
-                changed = True
+        if spacing is not None and spacing <= 1.5:
+            segs = _actual_runs_from_frames(since, until) or []
+            for ph in (1, 2):
+                vals = [sg["end"] - sg["green_end"] for sg in segs
+                        if sg["phase"] == ph and sg["end"] > sg["green_end"]]
+                vals = [v for v in vals if LOST_TIME_MIN <= v <= LOST_TIME_MAX]
+                m = _median(vals)
+                if m is not None and len(vals) >= 20:
+                    _measured_params["lost_time_sec"][ph] = round(m, 1)
+                    _measured_params["samples"]["lost_time_%d" % ph] = len(vals)
+                    _measured_params["samples"]["lost_time_source"] = "frames_1hz"
+                    changed = True
+        else:
+            from detection.signal_timing_lookup import plan_params, current_base_plan
+            pp = plan_params(current_base_plan()) or {}
+            y, r = pp.get("yellow"), pp.get("all_red")
+            if y is not None and r is not None:
+                lt = float(y) + float(r)
+                if LOST_TIME_MIN <= lt <= LOST_TIME_MAX:
+                    for ph in (1, 2):
+                        _measured_params["lost_time_sec"][ph] = lt
+                    _measured_params["samples"]["lost_time_source"] = "timing_plan_5FC4"
+                    changed = True
     except Exception as e:
         _stats["last_error"] = f"lost_time measure failed: {e}"
     # 每車佔用長度:停止線相機,停等 ≥ 2 台
@@ -1183,8 +1222,12 @@ async def shadow_plan(_user=Depends(get_current_user)):
                                           if _measured_params.get("meters_per_vehicle") else "預設 %g m(未量到)" % DEFAULT_METERS_PER_VEHICLE,
             "spillback_ratio": DEFAULT_SPILLBACK_RATIO,
             "lost_time_sec": _lost_time_for(g_no),
-            "lost_time_source": ("實測(控制器 5F03 黃燈+全紅,%s 段)" % _measured_params["samples"].get("lost_time_%d" % g_no))
-                                 if _measured_params["lost_time_sec"].get(g_no) else "預設 %g s(未量到)" % DEFAULT_LOST_TIME_SEC,
+            "lost_time_source": (
+                ("實測(控制器 5F03 每秒回報的黃燈+全紅,%s 段)" % _measured_params["samples"].get("lost_time_%d" % g_no))
+                if (_measured_params["samples"].get("lost_time_source") == "frames_1hz" and _measured_params["lost_time_sec"].get(g_no))
+                else ("控制器時制設定 5FC4(黃燈+全紅;5F03 框距 %s 秒不足以逐秒量)" % _measured_params["samples"].get("frame_interval_sec"))
+                if _measured_params["lost_time_sec"].get(g_no) else "預設 %g s(未量到)" % DEFAULT_LOST_TIME_SEC),
+            "frame_interval_sec": _measured_params["samples"].get("frame_interval_sec"),
             "lost_time_by_phase": {str(k): v for k, v in _measured_params["lost_time_sec"].items()},
             "spillback_ratio_source": "設定值(政策門檻,非物理量)",
             "params_measured_at": _measured_params.get("ts"),
@@ -2084,6 +2127,10 @@ async def shadow_paired(minutes: int = Query(180, ge=5, le=10080),
     actual = _actual_runs_from_frames(since_iso, until_iso)
     if actual:
         out = _paired_precise(rows, actual)
+        sp = _frames_spacing(since_iso, until_iso)
+        out["frame_interval_sec"] = sp
+        out["precision_note"] = ("控制器 5F03 每秒回報,秒數精度 ±1 秒" if (sp is not None and sp <= 1.5)
+                                 else "控制器 5F03 每 %s 秒回報一框,秒數精度只有一個框距" % sp)
     else:
         out = _paired_runs([r[:9] for r in rows])
         out["source"] = "shadow_sampling_fallback"
