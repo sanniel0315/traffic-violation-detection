@@ -3839,6 +3839,33 @@
             .dc-bar-row.lead .dc-bar-fill { animation:none; }
             .dc-bar-fill, .dc-occ-fill { transition:none; }
         }
+        /* ── 影子演算控制可視化 ── */
+        .vz-wrap { position:relative; width:100%; }
+        .vz-svg { width:100%; height:300px; display:block; border:1px solid var(--gov-border);
+                  border-radius:var(--r-base); background:var(--gov-surface); }
+        .vz-lane { fill:var(--gov-surface); } .vz-lane.alt { fill:var(--gov-surface-2); }
+        .vz-band.p1 { fill:var(--gov-ok); opacity:.55; } .vz-band.p2 { fill:var(--gov-primary); opacity:.45; }
+        .vz-band.none { fill:var(--gov-border); opacity:.5; } .vz-band.clr { fill:var(--gov-warn); opacity:.75; }
+        .vz-q1 { fill:none; stroke:#7c3aed; stroke-width:1.6; vector-effect:non-scaling-stroke; }
+        .vz-q2 { fill:none; stroke:#0e7490; stroke-width:1.6; vector-effect:non-scaling-stroke; }
+        .vz-zero { stroke:var(--gov-border-strong); stroke-width:1; stroke-dasharray:3 3; vector-effect:non-scaling-stroke; }
+        .vz-margin { fill:none; stroke:var(--gov-fault); stroke-width:1.5; vector-effect:non-scaling-stroke; }
+        .vz-actual { stroke:var(--gov-text); stroke-width:1.2; opacity:.7; vector-effect:non-scaling-stroke; }
+        .vz-ours { fill:var(--gov-warn); stroke:#fff; stroke-width:.5; vector-effect:non-scaling-stroke; }
+        .vz-ours.idle { fill:var(--gov-mute-2); }
+        .vz-gap { fill:repeating-linear-gradient(45deg, transparent 0 4px, rgba(0,0,0,.08) 4px 8px); fill:rgba(0,0,0,.06); }
+        .vz-cursor { stroke:var(--gov-primary); stroke-width:1; vector-effect:non-scaling-stroke; }
+        .vz-tick { font:500 10px var(--font-mono); fill:var(--gov-mute-2); }
+        .vz-labels { position:absolute; left:6px; top:0; bottom:0; pointer-events:none; }
+        .vz-labels span { position:absolute; font:600 11px var(--font-sans); color:var(--gov-muted);
+                          background:rgba(255,255,255,.75); padding:0 5px; border-radius:4px; }
+        .vz-tip { position:absolute; top:8px; z-index:3; pointer-events:none; display:flex; flex-direction:column; gap:2px;
+                  background:var(--gov-surface); border:1px solid var(--gov-border); border-radius:var(--r-base);
+                  box-shadow:var(--shadow-md); padding:8px 10px; font-size:12px; color:var(--gov-text-2);
+                  font-variant-numeric:tabular-nums; max-width:320px; }
+        .vz-tip b { font-family:var(--font-mono); color:var(--gov-text); }
+        .vz-tip-sw { color:var(--gov-warn); font-weight:700; }
+        .vz-tip-why { color:var(--gov-mute-2); white-space:normal; }
         /* ── 控制策略 8 位元旗標 ── */
         .cs-block { margin-top:10px; }
         .cs-flags { display:grid; gap:6px;
@@ -7781,6 +7808,88 @@
                                     <span class="wr-log-raw">RAW: {{ f.raw }}</span>
                                 </div>
                                 <p v-if="!sigWarFrames.length" class="wr-empty">尚無訊框。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ══ 影子演算控制可視化 ══
+                     同一條時間軸疊四層:實際燈態(控制器)、我方判切點、兩側排隊、裕度。
+                     看的是「我方在哪些時刻會做出跟現行控制不同的決定,當時路口長什麼樣」。
+                     純 SVG,不拉圖表庫;所有座標都在 computed 算好,模板不做比較運算。 -->
+                <div v-if="page==='signal_hub'" v-show="signalTab==='viz'">
+                    <div class="sig-tab-bar">
+                        <span class="sig-tab-title">影子演算控制可視化</span>
+                        <el-select v-model="vzMins" size="small" style="width:130px" @change="loadViz">
+                            <el-option :value="15" label="最近 15 分鐘"></el-option>
+                            <el-option :value="60" label="最近 1 小時"></el-option>
+                            <el-option :value="180" label="最近 3 小時"></el-option>
+                            <el-option :value="-1" label="今日早尖峰 09-12"></el-option>
+                            <el-option :value="-2" label="今日晚尖峰 17-20"></el-option>
+                        </el-select>
+                        <el-switch v-model="vzLive" size="small" active-text="即時" inline-prompt></el-switch>
+                        <el-button size="small" plain :loading="vzLoading" @click="loadViz"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
+                    </div>
+
+                    <div class="ds-kpi-grid" v-if="vzPaired.runs_usable" style="margin-bottom:14px">
+                        <div class="ds-kpi-card"><div class="ds-kpi-label">綠燈段</div><div class="ds-kpi-value">{{ vzPaired.runs_usable }}</div><div class="ds-kpi-hint">{{ vzPaired.source==='controller_5F03'?'控制器 5F03 秒數':'影子取樣(退回)' }}</div></div>
+                        <div class="ds-kpi-card warn"><div class="ds-kpi-label">我方會早切</div><div class="ds-kpi-value">{{ vzPaired.earlier }}</div><div class="ds-kpi-hint">其中紅側有車 {{ vzPaired.earlier_meaningful }} · 平均早 {{ vzNum(vzPaired.delta_meaningful&&vzPaired.delta_meaningful.avg) }} 秒</div></div>
+                        <div class="ds-kpi-card"><div class="ds-kpi-label">同時 / 續綠 / 晚切</div><div class="ds-kpi-value ds-kpi-value--text">{{ vzPaired.same }} / {{ vzPaired.hold }} / {{ vzPaired.later }}</div><div class="ds-kpi-hint">同時 = ±5 秒容忍;晚切必須 0</div></div>
+                        <div class="ds-kpi-card ok"><div class="ds-kpi-label">有代價空放</div><div class="ds-kpi-value">{{ vzNum(vzPaired.waste_sec_total,0) }}<span style="font-size:14px;margin-left:4px">秒</span></div><div class="ds-kpi-hint">紅側有車時,我方判切到實際換相之間</div></div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-activity"/></svg>控制時間軸</span>
+                            <span style="font-size:12px;color:var(--gov-muted)">{{ vzRangeText }}</span>
+                        </div>
+                        <div class="card-body">
+                            <div v-if="!vzData.available" class="analysis-setting-tip">{{ vzData.error||'這段時間沒有影子資料。' }}</div>
+                            <div v-else class="vz-wrap" @mousemove="vzHover" @mouseleave="vzCursor=null" ref="vzWrapEl">
+                                <svg class="vz-svg" :viewBox="'0 0 '+vzW+' '+vzH" preserveAspectRatio="none">
+                                    <!-- 列標籤底 -->
+                                    <g v-for="(lane,li) in vzLanes" :key="'ln'+li">
+                                        <rect :x="0" :y="lane.y" :width="vzW" :height="lane.h" class="vz-lane" :class="{alt:li%2===1}"></rect>
+                                    </g>
+                                    <!-- 燈態帶:分相 1 綠 / 分相 2 綠 / 清道 -->
+                                    <rect v-for="(b,bi) in vzBands" :key="'bd'+bi" :x="b.x" :y="b.y" :width="b.w" :height="b.h" :class="'vz-band '+b.cls"><title>{{ b.tip }}</title></rect>
+                                    <!-- 排隊曲線 -->
+                                    <path :d="vzQ1Path" class="vz-q1"></path>
+                                    <path :d="vzQ2Path" class="vz-q2"></path>
+                                    <!-- 裕度:0 線 + 曲線,正值 = 我方要切 -->
+                                    <line :x1="0" :x2="vzW" :y1="vzMarginZero" :y2="vzMarginZero" class="vz-zero"></line>
+                                    <path :d="vzMarginPath" class="vz-margin"></path>
+                                    <!-- 判切點:我方(琥珀三角)與實際(黑色細線) -->
+                                    <line v-for="(x,ai) in vzActualX" :key="'ac'+ai" :x1="x" :x2="x" :y1="vzLanes[0].y" :y2="vzLanes[1].y+vzLanes[1].h" class="vz-actual"></line>
+                                    <polygon v-for="(m,mi) in vzOurs" :key="'ou'+mi" :points="m.pts" :class="'vz-ours '+m.cls"><title>{{ m.tip }}</title></polygon>
+                                    <!-- 斷點 -->
+                                    <rect v-for="(g,gi) in vzGaps" :key="'gp'+gi" :x="g.x" :y="0" :width="g.w" :height="vzH" class="vz-gap"></rect>
+                                    <!-- 游標 -->
+                                    <line v-if="vzCursor" :x1="vzCursor.x" :x2="vzCursor.x" :y1="0" :y2="vzH" class="vz-cursor"></line>
+                                    <!-- 時間刻度 -->
+                                    <text v-for="(tk,ti) in vzTicks" :key="'tk'+ti" :x="tk.x" :y="vzH-4" class="vz-tick">{{ tk.label }}</text>
+                                </svg>
+                                <div class="vz-labels">
+                                    <span v-for="(lane,li) in vzLanes" :key="'lb'+li" :style="{top:(100*lane.y/vzH)+'%',height:(100*lane.h/vzH)+'%'}">{{ lane.label }}</span>
+                                </div>
+                                <div v-if="vzCursor" class="vz-tip" :style="vzTipStyle">
+                                    <b>{{ vzCursor.time }}</b>
+                                    <span>綠燈 分相 {{ vzCursor.gp }}{{ vzCursor.clr?'(清道)':'' }}</span>
+                                    <span>排隊 分相1 {{ vzNum(vzCursor.q1) }} m · 分相2 {{ vzNum(vzCursor.q2) }} m</span>
+                                    <span>紅側延滯 {{ vzNum(vzCursor.sg) }} · 門檻 {{ vzNum(vzCursor.thr) }} · 裕度 {{ vzNum(vzCursor.margin) }}</span>
+                                    <span :class="vzCursor.ours?'vz-tip-sw':''">我方 {{ vzCursor.ours?'應換相':'續綠' }}{{ vzCursor.actual?' · 實際此刻換相':'' }}</span>
+                                    <span v-if="vzCursor.reason" class="vz-tip-why">{{ vzCursor.reason }}</span>
+                                </div>
+                            </div>
+                            <div class="xn-foot" style="margin-top:8px">
+                                <span class="xn-chip"><span class="st-key" style="background:var(--gov-ok)"></span>分相 1 綠燈</span>
+                                <span class="xn-chip"><span class="st-key" style="background:var(--gov-primary)"></span>分相 2 綠燈</span>
+                                <span class="xn-chip"><span class="st-key" style="background:var(--gov-warn)"></span>清道</span>
+                                <span class="xn-chip"><span class="st-key" style="background:#7c3aed"></span>排隊 分相 1</span>
+                                <span class="xn-chip"><span class="st-key" style="background:#0e7490"></span>排隊 分相 2</span>
+                                <span class="xn-chip"><span class="st-key" style="background:var(--gov-warn);clip-path:polygon(50% 0,100% 100%,0 100%)"></span>我方判切</span>
+                                <span class="xn-chip"><span class="st-key" style="background:var(--gov-text);width:2px"></span>實際換相</span>
+                                <span class="xn-chip"><span class="st-key" style="background:var(--gov-fault)"></span>裕度(正 = 我方要切)</span>
                             </div>
                         </div>
                     </div>
@@ -22526,6 +22635,7 @@ const app=createApp({
             {key: 'live',   label: '即時戰情', icon: 'i-activity'},
             {key: 'light',  label: '燈態',     icon: 'i-zap'},
             {key: 'plan',   label: '決策盤',   icon: 'i-cpu'},
+            {key: 'viz',    label: '影子可視化', icon: 'i-activity'},
             {key: 'config', label: '設定',     icon: 'i-list'},
             {key: 'stats',  label: '運作統計', icon: 'i-bar'},
             {key: 'device', label: '設備狀態', icon: 'i-cpu'},
@@ -22539,6 +22649,7 @@ const app=createApp({
                             setTimeout(initWarMap, 50); },
             light:  () => { loadSignal(); startSignalTimer(); },
             plan:   () => { loadSigConsole(); startSigConsoleTimer(); },
+            viz:    () => { loadViz(); startVizTimer(); },
             config: () => loadSigConfig(),
             stats:  () => { loadSigStats(); startSigStatTimer(); },
             device: () => loadSigDevice(),
@@ -22645,6 +22756,186 @@ const app=createApp({
             } catch (e) {}
         };
 
+        // ── 影子演算控制可視化 ────────────────────────────────────────
+        const vzMins = ref(60);
+        const vzLive = ref(true);
+        const vzLoading = ref(false);
+        const vzData = ref({available: false});
+        const vzPaired = ref({});
+        const vzCursor = ref(null);
+        const vzWrapEl = ref(null);
+        const vzW = 1000, vzH = 300;
+        // 四條泳道:燈態 / 判切 / 排隊 / 裕度(上到下),各佔固定高度,座標全在這裡算
+        const vzLanes = [
+            {label: '實際燈態', y: 6, h: 40},
+            {label: '判切點', y: 50, h: 36},
+            {label: '排隊 m', y: 92, h: 96},
+            {label: '裕度', y: 194, h: 86},
+        ];
+        const vzNum = (v, nd) => (v === null || v === undefined || !isFinite(v)) ? '—' : Number(v).toFixed(nd == null ? 1 : nd);
+        const vzQuery = () => {
+            if (vzMins.value === -1) return 'since=' + sigDayAt(9) + '&until=' + sigDayAt(12);
+            if (vzMins.value === -2) return 'since=' + sigDayAt(17) + '&until=' + sigDayAt(20);
+            return 'minutes=' + vzMins.value;
+        };
+        const loadViz = async () => {
+            vzLoading.value = true;
+            try {
+                const r = await fetch('/api/signal/shadow/timeline?' + vzQuery() + '&max_points=1200', {credentials: 'include'});
+                if (r.ok) vzData.value = await r.json();
+                const p = await fetch('/api/signal/shadow/paired?' + vzQuery(), {credentials: 'include'});
+                if (p.ok) vzPaired.value = await p.json();
+            } catch (e) {} finally { vzLoading.value = false; }
+        };
+        let vzTimer = null;
+        const startVizTimer = () => {
+            if (vzTimer) return;
+            vzTimer = setInterval(() => {
+                if (page.value !== 'signal_hub' || signalTab.value !== 'viz' || !isPageVisible()
+                    || !vzLive.value || vzMins.value < 0) return;
+                loadViz();
+            }, 15000);
+        };
+        const vzSpan = computed(() => {
+            const t = vzData.value.t || [];
+            return t.length ? Math.max(1, t[t.length - 1]) : 1;
+        });
+        const vzX = (sec) => vzW * sec / vzSpan.value;
+        const vzRangeText = computed(() => {
+            const d = vzData.value;
+            if (!d.available) return '';
+            return String(d.since).replace('T', ' ') + ' ～ ' + String(d.until).replace('T', ' ')
+                   + ' · ' + d.points + ' 點(原始 ' + d.samples_raw + ' 筆,每 ' + d.interval_sec + ' 秒)';
+        });
+        // 燈態帶:連續同一 green_phase 合併成一段;清道另外疊一層琥珀
+        const vzBands = computed(() => {
+            const d = vzData.value; if (!d.available) return [];
+            const t = d.t, gp = d.green_phase, cl = d.clearance || [];
+            const lane = vzLanes[0]; const out = [];
+            let i = 0;
+            while (i < t.length) {
+                let j = i;
+                while (j + 1 < t.length && gp[j + 1] === gp[i]) j++;
+                const x0 = vzX(t[i]), x1 = vzX(j + 1 < t.length ? t[j + 1] : t[j] + (d.interval_sec || 5));
+                out.push({x: x0, w: Math.max(1, x1 - x0), y: lane.y, h: lane.h,
+                          cls: gp[i] === 1 ? 'p1' : (gp[i] === 2 ? 'p2' : 'none'),
+                          tip: '分相 ' + gp[i] + ' 綠燈 ' + Math.round(t[j] - t[i] + (d.interval_sec || 5)) + ' 秒'});
+                i = j + 1;
+            }
+            // 清道
+            for (let k = 0; k < t.length; k++) {
+                if (cl[k]) {
+                    const x0 = vzX(t[k]), x1 = vzX(k + 1 < t.length ? t[k + 1] : t[k] + (d.interval_sec || 5));
+                    out.push({x: x0, w: Math.max(1, x1 - x0), y: lane.y + lane.h * 0.55, h: lane.h * 0.45, cls: 'clr', tip: '清道'});
+                }
+            }
+            return out;
+        });
+        const vzActualX = computed(() => {
+            const d = vzData.value; if (!d.available) return [];
+            return d.t.map((s, k) => d.actual_switch[k] ? vzX(s) : null).filter((x) => x !== null);
+        });
+        const vzOurs = computed(() => {
+            const d = vzData.value; if (!d.available) return [];
+            const lane = vzLanes[1]; const out = [];
+            const th = d.threshold || d.t.map((_, k) => (Number(d.keep_gain[k]) || 0) + (Number(d.change_cost[k]) || 0));
+            for (let k = 0; k < d.t.length; k++) {
+                if (!d.ours_switch[k]) continue;
+                const x = vzX(d.t[k]);
+                const redQ = d.green_phase[k] === 1 ? d.queue_m_2[k] : d.queue_m_1[k];
+                const meaningful = Number(redQ) > 0;
+                out.push({pts: (x - 5) + ',' + (lane.y + lane.h - 6) + ' ' + (x + 5) + ',' + (lane.y + lane.h - 6) + ' ' + x + ',' + (lane.y + 6),
+                          cls: meaningful ? 'meaningful' : 'idle',
+                          tip: '我方判切 · 紅側延滯 ' + vzNum(d.switch_gain[k]) + ' vs 門檻 ' + vzNum(th[k]) + (meaningful ? '' : ' · 紅側無車')});
+            }
+            return out;
+        });
+        const vzScaleQ = computed(() => {
+            const d = vzData.value; if (!d.available) return 1;
+            let m = 10;
+            d.queue_m_1.forEach((v) => { if (v != null && v > m) m = v; });
+            d.queue_m_2.forEach((v) => { if (v != null && v > m) m = v; });
+            return m * 1.1;
+        });
+        const vzPath = (arr, lane, scale, center) => {
+            const d = vzData.value; if (!d.available) return '';
+            let p = ''; let pen = false;
+            const gaps = d.gaps || [];
+            for (let k = 0; k < d.t.length; k++) {
+                const v = arr[k];
+                // 斷點處抬筆:不要把洞內插成一條假線
+                const inGap = gaps.some((g) => d.t[k] > g[0] && d.t[k] < g[1]);
+                if (v == null || inGap) { pen = false; continue; }
+                let y;
+                if (center) {
+                    const half = lane.h / 2;
+                    y = lane.y + half - Math.max(-half, Math.min(half, v / scale * half));
+                } else {
+                    y = lane.y + lane.h - Math.min(lane.h, v / scale * lane.h);
+                }
+                p += (pen ? 'L' : 'M') + vzX(d.t[k]).toFixed(1) + ',' + y.toFixed(1) + ' ';
+                pen = true;
+            }
+            return p;
+        };
+        const vzQ1Path = computed(() => vzPath(vzData.value.queue_m_1 || [], vzLanes[2], vzScaleQ.value, false));
+        const vzQ2Path = computed(() => vzPath(vzData.value.queue_m_2 || [], vzLanes[2], vzScaleQ.value, false));
+        // 裕度 = 紅側延滯 − (綠側價值 + 換相成本);正 = 我方要切。以 0 為中線,對稱縮放。
+        const vzMarginArr = computed(() => {
+            const d = vzData.value; if (!d.available) return [];
+            return d.t.map((_, k) => {
+                const sg = Number(d.switch_gain[k]), kg = Number(d.keep_gain[k]), cc = Number(d.change_cost[k]);
+                return (isFinite(sg) && isFinite(kg) && isFinite(cc)) ? sg - kg - cc : null;
+            });
+        });
+        const vzScaleM = computed(() => {
+            let m = 10; vzMarginArr.value.forEach((v) => { if (v != null && Math.abs(v) > m) m = Math.abs(v); });
+            return m * 1.1;
+        });
+        const vzMarginPath = computed(() => vzPath(vzMarginArr.value, vzLanes[3], vzScaleM.value, true));
+        const vzMarginZero = vzLanes[3].y + vzLanes[3].h / 2;
+        const vzGaps = computed(() => {
+            const d = vzData.value; if (!d.available) return [];
+            return (d.gaps || []).map((g) => ({x: vzX(g[0]), w: Math.max(2, vzX(g[1]) - vzX(g[0]))}));
+        });
+        const vzTicks = computed(() => {
+            const d = vzData.value; if (!d.available) return [];
+            const t0 = new Date(d.t0).getTime();
+            const span = vzSpan.value;
+            const step = span <= 1200 ? 120 : (span <= 4000 ? 600 : 1800);
+            const out = [];
+            for (let s = 0; s < span; s += step) {
+                const dt = new Date(t0 + s * 1000);
+                out.push({x: vzX(s) + 3, label: String(dt.getHours()).padStart(2, '0') + ':' + String(dt.getMinutes()).padStart(2, '0')});
+            }
+            return out;
+        });
+        const vzHover = (ev) => {
+            const d = vzData.value; if (!d.available || !vzWrapEl.value) return;
+            const rect = vzWrapEl.value.getBoundingClientRect();
+            const fx = (ev.clientX - rect.left) / rect.width;
+            const sec = fx * vzSpan.value;
+            // 找最近的點
+            let best = 0, bd = Infinity;
+            for (let k = 0; k < d.t.length; k++) { const dd = Math.abs(d.t[k] - sec); if (dd < bd) { bd = dd; best = k; } }
+            const k = best;
+            const kg = Number(d.keep_gain[k]), cc = Number(d.change_cost[k]), sg = Number(d.switch_gain[k]);
+            const dt = new Date(new Date(d.t0).getTime() + d.t[k] * 1000);
+            vzCursor.value = {
+                x: vzX(d.t[k]), fx: fx,
+                time: dt.toLocaleTimeString('zh-TW', {hour12: false}),
+                gp: d.green_phase[k], clr: !!(d.clearance || [])[k],
+                q1: d.queue_m_1[k], q2: d.queue_m_2[k],
+                sg: sg, thr: kg + cc, margin: sg - kg - cc,
+                ours: !!d.ours_switch[k], actual: !!d.actual_switch[k],
+                reason: (d.reason || [])[k] || '',
+            };
+        };
+        const vzTipStyle = computed(() => {
+            const c = vzCursor.value; if (!c) return {};
+            // 游標在右半邊時提示框放左邊,免得被切掉
+            return c.fx < 0.6 ? {left: 'calc(' + (c.fx * 100).toFixed(2) + '% + 12px)'} : {right: 'calc(' + ((1 - c.fx) * 100).toFixed(2) + '% + 12px)'};
+        });
         const sigStats = ref({});
         const sigStatMins = ref(360);
         // ── 區間查詢 ────────────────────────────────────────────────
@@ -24249,7 +24540,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
