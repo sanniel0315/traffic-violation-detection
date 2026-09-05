@@ -3866,6 +3866,7 @@
         .vz-tip b { font-family:var(--font-mono); color:var(--gov-text); }
         .vz-tip-sw { color:var(--gov-warn); font-weight:700; }
         .vz-tip-why { color:var(--gov-mute-2); white-space:normal; }
+        .vz-partial td { color:var(--gov-mute-2); font-style:italic; }
         /* ── 控制策略 8 位元旗標 ── */
         .cs-block { margin-top:10px; }
         .cs-flags { display:grid; gap:6px;
@@ -7890,6 +7891,54 @@
                                 <span class="xn-chip"><span class="st-key" style="background:var(--gov-warn);clip-path:polygon(50% 0,100% 100%,0 100%)"></span>我方判切</span>
                                 <span class="xn-chip"><span class="st-key" style="background:var(--gov-text);width:2px"></span>實際換相</span>
                                 <span class="xn-chip"><span class="st-key" style="background:var(--gov-fault)"></span>裕度(正 = 我方要切)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 逐時評估:每整點自動算前一小時,存表。使用者:「每小時都要有」。 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-bar"/></svg>逐時評估</span>
+                            <span style="display:flex;gap:8px;align-items:center">
+                                <el-date-picker v-model="vzDay" type="date" size="small" style="width:150px"
+                                                value-format="YYYY-MM-DD" placeholder="日期" @change="loadVizHourly"></el-date-picker>
+                                <el-button size="small" plain :loading="vzHourlyLoading" @click="loadVizHourly">更新</el-button>
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">
+                                每整點過 2 分自動算前一小時;當前這一小時標「進行中」。配對法用控制器 5F03 秒數;
+                                延滯為近似(停等延滯),排隊與通過為實測。change_cost 12.5 = 舊參數(假設飽和流 1800)。
+                            </div>
+                            <div class="sc-wrap">
+                                <table class="sc-table sc-table--stats">
+                                    <thead><tr>
+                                        <th>時</th><th class="sc-num">樣本</th><th class="sc-num">一致率</th>
+                                        <th class="sc-num">綠燈段</th><th class="sc-num">早切</th><th class="sc-num">同時</th><th class="sc-num">續綠</th><th class="sc-num">晚切</th>
+                                        <th class="sc-num">早切Δ<span class="sc-th-unit">秒</span></th><th class="sc-num">代價<span class="sc-th-unit">秒</span></th>
+                                        <th class="sc-num">延滯<span class="sc-th-unit">秒/車</span></th><th class="sc-num">排隊<span class="sc-th-unit">m</span></th><th class="sc-num">通過<span class="sc-th-unit">輛/h</span></th>
+                                        <th class="sc-num">cc</th>
+                                    </tr></thead>
+                                    <tbody>
+                                        <tr v-for="r in vzHourly" :key="'hr'+r.hour" :class="{'vz-partial':r.partial}">
+                                            <td class="sc-th-dir">{{ r.hour.slice(11) }}:00 <span v-if="r.partial" class="sc-sub">進行中</span><span v-else-if="r.source!=='controller_5F03'" class="sc-sub">取樣法</span></td>
+                                            <td class="sc-num">{{ r.samples }}</td>
+                                            <td class="sc-num" :class="{'sc-bad':vzLowAgree(r.agree_rate)}">{{ vzNum(r.agree_rate) }}%</td>
+                                            <td class="sc-num">{{ r.runs }}</td>
+                                            <td class="sc-num">{{ r.earlier }}<span class="sc-sub" v-if="r.earlier">有車 {{ r.earlier_meaningful }}</span></td>
+                                            <td class="sc-num">{{ r.same }}</td>
+                                            <td class="sc-num">{{ r.hold }}</td>
+                                            <td class="sc-num" :class="{'sc-bad':r.later}">{{ r.later }}</td>
+                                            <td class="sc-num">{{ vzNum(r.delta_avg) }}</td>
+                                            <td class="sc-num">{{ vzNum(r.waste_sec,0) }}</td>
+                                            <td class="sc-num">{{ vzNum(r.delay_per_veh,2) }}</td>
+                                            <td class="sc-num">{{ vzNum(r.queue_eval_m,2) }}</td>
+                                            <td class="sc-num">{{ vzNum(r.throughput_vph,0) }}</td>
+                                            <td class="sc-num" :class="{'sc-bad':vzOldParam(r.change_cost_avg)}">{{ vzNum(r.change_cost_avg,2) }}</td>
+                                        </tr>
+                                        <tr v-if="!vzHourly.length"><td colspan="14" class="sc-sub">這一天沒有資料。</td></tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -22649,7 +22698,7 @@ const app=createApp({
                             setTimeout(initWarMap, 50); },
             light:  () => { loadSignal(); startSignalTimer(); },
             plan:   () => { loadSigConsole(); startSigConsoleTimer(); },
-            viz:    () => { loadViz(); startVizTimer(); },
+            viz:    () => { loadViz(); startVizTimer(); loadVizHourly(); },
             config: () => loadSigConfig(),
             stats:  () => { loadSigStats(); startSigStatTimer(); },
             device: () => loadSigDevice(),
@@ -22795,6 +22844,20 @@ const app=createApp({
                     || !vzLive.value || vzMins.value < 0) return;
                 loadViz();
             }, 15000);
+        };
+        // 逐時評估表
+        const vzDay = ref('');
+        const vzHourly = ref([]);
+        const vzHourlyLoading = ref(false);
+        const vzLowAgree = (v) => (v != null && isFinite(v) && Number(v) < 88);
+        const vzOldParam = (v) => (v != null && isFinite(v) && Math.abs(Number(v) - 12.5) < 0.05);
+        const loadVizHourly = async () => {
+            vzHourlyLoading.value = true;
+            try {
+                const q = vzDay.value ? ('?date=' + vzDay.value) : '';
+                const r = await fetch('/api/signal/shadow/hourly' + q, {credentials: 'include'});
+                if (r.ok) { const d = await r.json(); vzHourly.value = d.rows || []; if (!vzDay.value) vzDay.value = d.date; }
+            } catch (e) {} finally { vzHourlyLoading.value = false; }
         };
         const vzSpan = computed(() => {
             const t = vzData.value.t || [];
@@ -24540,7 +24603,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }

@@ -78,8 +78,22 @@ def main() -> int:
         if args.b:
             paired_b = _get(args.base, "/api/signal/shadow/paired", {"since": args.b[0], "until": args.b[1]}, cookie)
 
+    hourly = None
+    if args.tier == "full":
+        hourly = {}
+        for label, win in (("A " + args.a_label, args.a), ("B " + args.b_label, args.b)):
+            if not win:
+                continue
+            day = win[0][:10]
+            h0, h1 = int(win[0][11:13]), int(win[1][11:13]) or 24
+            try:
+                rows = _get(args.base, "/api/signal/shadow/hourly", {"date": day}, cookie).get("rows", [])
+                hourly[label] = [r for r in rows if h0 <= int(str(r["hour"])[11:13]) < h1]
+            except Exception as e:
+                hourly[label] = []
+                print(f"[hourly] {label} 取得失敗: {e}", file=sys.stderr)
     from detection.signal_report_md import render
-    md = render(report, paired_a, paired_b, {"a_label": args.a_label, "b_label": args.b_label})
+    md = render(report, paired_a, paired_b, {"a_label": args.a_label, "b_label": args.b_label}, hourly)
     if args.out:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)

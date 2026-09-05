@@ -121,8 +121,21 @@ def _tdx_block(t: dict | None) -> str:
     return "\n".join(rows)
 
 
+def _hourly_table(rows: list) -> str:
+    out = ["| 時 | 樣本 | 一致率 | 綠燈段 | 早切(有車) | 同時 | 續綠 | 晚切 | 早切Δ | 代價(秒) | 延滯 | 排隊 | 通過 | cc |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for r in rows:
+        tag = "（進行中）" if r.get("partial") else ""
+        out.append(f"| {str(r.get('hour', ''))[11:]}:00{tag} | {_v(r.get('samples'))} | {_v(r.get('agree_rate'), 1)}% | "
+                   f"{_v(r.get('runs'))} | {_v(r.get('earlier'))}({_v(r.get('earlier_meaningful'))}) | {_v(r.get('same'))} | "
+                   f"{_v(r.get('hold'))} | {_v(r.get('later'))} | {_v(r.get('delta_avg'), 1)} | {_v(r.get('waste_sec'), 0)} | "
+                   f"{_v(r.get('delay_per_veh'), 2)} | {_v(r.get('queue_eval_m'), 2)} | {_v(r.get('throughput_vph'), 0)} | "
+                   f"{_v(r.get('change_cost_avg'), 2)} |")
+    return "\n".join(out)
+
+
 def render(report: dict, paired_a: dict | None = None, paired_b: dict | None = None,
-           meta: dict | None = None) -> str:
+           meta: dict | None = None, hourly: dict | None = None) -> str:
     meta = meta or {}
     tier = report.get("tier", "full")
     tier_name = {"min": "工程報告（最低要求）", "standard": "技術報告（標準組合）", "full": "完整報告"}[tier]
@@ -172,4 +185,10 @@ def render(report: dict, paired_a: dict | None = None, paired_b: dict | None = N
             lines.append(_paired_block(paired_b, "B"))
         lines += ["", "> Δ 為負代表我方會比現行控制早切；「有代價空放」只計紅側真的有車在等的早切。"
                   "晚切必須為 0 —— 我方不會比現行控制更慢放人。", ""]
+    if hourly:
+        lines += ["## 六、逐時評估", ""]
+        for label, rows in hourly.items():
+            if rows:
+                lines += [f"**{label}**", "", _hourly_table(rows), ""]
+        lines += ["> 每整點自動算前一小時。cc = 該小時 change_cost 平均，12.5 代表舊參數（假設飽和流 1800）。", ""]
     return "\n".join(lines)
