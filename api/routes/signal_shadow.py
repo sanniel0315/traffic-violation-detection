@@ -1684,11 +1684,15 @@ async def shadow_report(since: str = Query(...), until: str = Query(...),
     報告不可以把近似值寫成實測值。統計單位是控制器 5F03 重建的號誌週期。"""
     from detection import signal_eval as E
     tier = tier if tier in ("min", "standard", "full") else "full"
+    from services import tdx_travel as T
     A = _eval_window(since, until)
     res = {"tier": tier, "unit": "cycle(controller_5F03)",
            "a": {"since": since, "until": until,
                  "by_phase": {str(ph): E.summarize_cycles(rows, tier) for ph, rows in A.items()},
-                 "all": E.summarize_cycles(A[1] + A[2], tier)}}
+                 "all": E.summarize_cycles(A[1] + A[2], tier),
+                 # 🛑 TDX 量的是國道主線門架之間,現場量的是匝道端進場道,兩個路段不同,
+                 #    分開放、分開標,不可以合併成一個「旅行時間」。
+                 "travel_time_tdx": T.summarize(since, until) if tier != "min" else None}}
     if tier == "full":
         pk = [r for ph in A for r in A[ph] if _is_peak(r["start"])]
         off = [r for ph in A for r in A[ph] if not _is_peak(r["start"])]
@@ -1699,13 +1703,38 @@ async def shadow_report(since: str = Query(...), until: str = Query(...),
         B = _eval_window(b_since, b_until)
         res["b"] = {"since": b_since, "until": b_until,
                     "by_phase": {str(ph): E.summarize_cycles(rows, tier) for ph, rows in B.items()},
-                    "all": E.summarize_cycles(B[1] + B[2], tier)}
+                    "all": E.summarize_cycles(B[1] + B[2], tier),
+                    "travel_time_tdx": T.summarize(b_since, b_until) if tier != "min" else None}
         if tier == "full":
             res["ab_test"] = {"all": E.compare(A[1] + A[2], B[1] + B[2]),
                               "phase_1": E.compare(A[1], B[1]), "phase_2": E.compare(A[2], B[2]),
                               "note": "Welch t-test,樣本 = 號誌週期;b − a 為正代表 B 較大。"
                                       "Cohen's d:<0.2 negligible, <0.5 small, <0.8 medium, ≥0.8 large。"}
     return res
+
+
+# ── TDX eTag 旅行時間(國道主線,實測)────────────────────────────────
+@router.get("/tdx", summary="TDX eTag 站間旅行時間:抓取狀態與時段平均")
+async def shadow_tdx(since: str = Query(""), until: str = Query(""),
+                     _user=Depends(get_current_user)):
+    from services import tdx_travel as T
+    out = {"status": T.status()}
+    if since:
+        out["summary"] = T.summarize(since, until or datetime.now().isoformat(timespec="seconds"))
+    return out
+
+
+@router.get("/tdx/discover", summary="列出交流道里程附近的 eTag 配對(挑 TDX_ETAG_PAIRS 用)")
+async def shadow_tdx_discover(km: float = Query(..., description="交流道里程(公里)"),
+                              road_id: str = Query(""), span_km: float = Query(6.0),
+                              _user=Depends(get_current_user)):
+    from services import tdx_travel as T
+    if not T.enabled():
+        return {"enabled": False, "error": "未設定 TDX_CLIENT_ID / TDX_CLIENT_SECRET"}
+    try:
+        return {"enabled": True, "km": km, "pairs": T.discover(km, road_id or None, span_km)}
+    except Exception as e:
+        return {"enabled": True, "error": f"{type(e).__name__}: {e}"}
 
 
 @router.get("/paired", summary="逐次綠燈配對(精確比對:我方會早幾秒切)")

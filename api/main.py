@@ -314,6 +314,13 @@ async def lifespan(app: FastAPI):
     print("🚀 啟動交通違規影像分析系統")
     _assert_gpu_ready()
     init_db()
+    # TDX eTag 旅行時間:有 TDX_CLIENT_ID/SECRET 才會真的啟動,沒有就閒置不報錯
+    try:
+        from services import tdx_travel
+        if tdx_travel.start():
+            print("[tdx] eTag 旅行時間抓取已啟動", flush=True)
+    except Exception as _e:
+        print(f"[tdx] 未啟動: {_e}", flush=True)
     logs.add_log("info", "系統日誌服務啟動", "system")
     os.makedirs("./output/violations", exist_ok=True)
     # on-demand 串流需求登記表:清掉上次崩潰殘留的 token
