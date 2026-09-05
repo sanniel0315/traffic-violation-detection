@@ -94,6 +94,8 @@ SHADOW_REPORT_SEC = float(os.getenv("SIGNAL_SHADOW_REPORT_SEC", "3600") or 3600)
 SHADOW_ALERT_RATE = float(os.getenv("SIGNAL_SHADOW_ALERT_RATE", "0.75") or 0.75)
 # 一小時內「有車樣本」少於這個數就不評分(車太少，比率沒有意義)。
 SHADOW_MIN_ACTIVE = int(os.getenv("SIGNAL_SHADOW_MIN_ACTIVE", "60") or 60)
+# congestion_samples / traffic_events 所在(成效報告讀它;存 UTC)
+_VIOL_DB = os.getenv("TRAFFIC_VIOL_DB", "data/violations.db")
 _DB_PATH = os.getenv("SIGNAL_SHADOW_DB",
                      os.getenv("SIGNAL_TC3_QDB", "data/signal_shadow.db"))
 _lock = threading.Lock()
