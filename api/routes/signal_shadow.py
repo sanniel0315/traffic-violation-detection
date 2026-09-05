@@ -283,6 +283,109 @@ def _refresh_saturation(hours: float = None) -> None:
         _save_saturation()
 
 
+# ── 其他決策參數也要實測落地(使用者:「都是要落地的準確值」)────────────
+# 損失時間:控制器 5F03 每秒回報,綠燈結束到下一相開始的秒數 = 黃燈 + 全紅,
+#          逐相取中位數(時制表寫 3+2=5,但要用量到的)。
+# 每車佔用長度:停止線相機 5 秒取樣,排隊公尺 ÷ 停等車數(停等 ≥ 2 台才算),取中位數。
+# 回堵判定比例 80% 是政策門檻,不是物理量,維持設定值並在 /plan 標明。
+_PARAMS_FILE = os.path.join(os.path.dirname(_DB_PATH) or ".", "signal_params.json")
+_measured_params = {"lost_time_sec": {}, "meters_per_vehicle": None, "ts": None, "source": "default",
+                    "samples": {}}
+LOST_TIME_MIN, LOST_TIME_MAX = 3.0, 15.0
+MPV_MIN, MPV_MAX = 4.0, 12.0
+
+
+def _save_params() -> None:
+    try:
+        tmp = _PARAMS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_measured_params, f, ensure_ascii=False)
+        os.replace(tmp, _PARAMS_FILE)
+    except Exception as e:
+        _stats["last_error"] = f"params save failed: {e}"
+
+
+def _load_params() -> bool:
+    try:
+        with open(_PARAMS_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+    except FileNotFoundError:
+        return False
+    except Exception as e:
+        _stats["last_error"] = f"params load failed: {e}"
+        return False
+    lt = {int(k): float(v) for k, v in (d.get("lost_time_sec") or {}).items()
+          if v and LOST_TIME_MIN <= float(v) <= LOST_TIME_MAX}
+    mpv = d.get("meters_per_vehicle")
+    mpv = float(mpv) if (mpv and MPV_MIN <= float(mpv) <= MPV_MAX) else None
+    if not lt and mpv is None:
+        return False
+    _measured_params.update({"lost_time_sec": lt, "meters_per_vehicle": mpv, "ts": d.get("ts"),
+                             "source": "measured(restored)", "samples": d.get("samples") or {}})
+    return True
+
+
+def _median(v: list):
+    if not v:
+        return None
+    s_ = sorted(v)
+    n = len(s_)
+    return s_[n // 2] if n % 2 else (s_[n // 2 - 1] + s_[n // 2]) / 2.0
+
+
+def _refresh_params(hours: float = 24.0) -> None:
+    """量損失時間與每車長度;量到合理值才更新(逐項合併),量不到保留上一次。"""
+    since = (datetime.now() - timedelta(hours=hours)).isoformat(timespec="seconds")
+    until = datetime.now().isoformat(timespec="seconds")
+    changed = False
+    # 損失時間:清道 = 綠燈結束 → 該相結束(下一相開始)
+    try:
+        segs = _actual_runs_from_frames(since, until) or []
+        for ph in (1, 2):
+            vals = [sg["end"] - sg["green_end"] for sg in segs
+                    if sg["phase"] == ph and sg["end"] > sg["green_end"]]
+            vals = [v for v in vals if LOST_TIME_MIN <= v <= LOST_TIME_MAX]
+            m = _median(vals)
+            if m is not None and len(vals) >= 20:
+                _measured_params["lost_time_sec"][ph] = round(m, 1)
+                _measured_params["samples"]["lost_time_%d" % ph] = len(vals)
+                changed = True
+    except Exception as e:
+        _stats["last_error"] = f"lost_time measure failed: {e}"
+    # 每車佔用長度:停止線相機,停等 ≥ 2 台
+    try:
+        from detection import signal_eval as E
+        cams = sorted(set(PHASE_STOPLINE.values()))
+        cong = E.load_congestion(_VIOL_DB, cams, since, until)
+        ratios = []
+        for cam in cams:
+            for (_ts, stopped, _veh, qm) in cong.get(cam, []):
+                if stopped >= 2 and qm > 0:
+                    ratios.append(qm / stopped)
+        ratios = [r for r in ratios if MPV_MIN <= r <= MPV_MAX]
+        m = _median(ratios)
+        if m is not None and len(ratios) >= 100:
+            _measured_params["meters_per_vehicle"] = round(m, 2)
+            _measured_params["samples"]["mpv"] = len(ratios)
+            changed = True
+    except Exception as e:
+        _stats["last_error"] = f"mpv measure failed: {e}"
+    if changed:
+        _measured_params["ts"] = datetime.now().isoformat(timespec="seconds")
+        _measured_params["source"] = "measured"
+        _save_params()
+
+
+def _lost_time_for(phase: int) -> float:
+    from detection.signal_decision_engine import DEFAULT_LOST_TIME_SEC
+    return float(_measured_params["lost_time_sec"].get(phase) or DEFAULT_LOST_TIME_SEC)
+
+
+def _mpv() -> float:
+    from detection.signal_decision_engine import DEFAULT_METERS_PER_VEHICLE
+    return float(_measured_params["meters_per_vehicle"] or DEFAULT_METERS_PER_VEHICLE)
+
+
 def _sat_for(phase: int) -> float:
     """該相要用的飽和流(輛/小時)。量到就用量到的,否則用引擎預設。"""
     from detection.signal_decision_engine import DEFAULT_SATURATION_VPH
@@ -566,8 +669,10 @@ def _loop():
                     waiting_sec=green_elapsed),
                 min_green_sec=min_green,
                 max_green_sec=_max_green(pp),
-                # 飽和流用現場量到的(見 _measured_sat 的說明)
+                # 飽和流 / 損失時間 / 每車長度全部用現場量到的(見 _measured_* 的說明)
                 saturation_vph=_sat_for(g_no),
+                meters_per_vehicle=_mpv(),
+                lost_time_sec=_lost_time_for(g_no),
             )
 
             conn = _db()
@@ -625,6 +730,7 @@ def _loop():
             _last_sat_refresh[0] = time.time()
             try:
                 _refresh_saturation()
+                _refresh_params()
             except Exception:
                 pass
         # 到點就自己回報一次 —— 不必等人去撈 DB。
@@ -771,8 +877,10 @@ def start_shadow() -> bool:
         _stats["started_at"] = datetime.now().isoformat(timespec="seconds")
         # 先載回上次量到的,再嘗試重量;重量失敗也不會是空的
         _load_saturation()
+        _load_params()
         try:
             _refresh_saturation()
+            _refresh_params()
         except Exception:
             pass
         _thread = threading.Thread(target=_loop, name="signal-shadow", daemon=True)
@@ -999,7 +1107,8 @@ async def shadow_plan(_user=Depends(get_current_user)):
     d = decide(green_phase=g_no, green_elapsed_sec=green_elapsed,
                green_side=green, red_side=red,
                min_green_sec=min_green, max_green_sec=max_green,
-               saturation_vph=_sat_for(g_no))
+               saturation_vph=_sat_for(g_no),
+               meters_per_vehicle=_mpv(), lost_time_sec=_lost_time_for(g_no))
 
     def side(a: ApproachState, role: dict) -> dict:
         sr = a.spillback_ratio()
@@ -1013,7 +1122,7 @@ async def shadow_plan(_user=Depends(get_current_user)):
             "camera_names": [camera_label(c) for c in PHASE_CAMERAS.get(a.phase_no, [])],
             "vehicles_measured": round(meas[a.phase_no]["vehicles"], 1),
             "queue_m": a.queue_m,
-            "queue_vehicles": round(a.queue_vehicles(DEFAULT_METERS_PER_VEHICLE), 2),
+            "queue_vehicles": round(a.queue_vehicles(_mpv()), 2),
             "flow_vpm": a.flow_vpm,
             "arrival_per_sec": round(a.arrival_rate_per_sec(), 3),
             "storage_m": a.storage_m,
@@ -1069,9 +1178,16 @@ async def shadow_plan(_user=Depends(get_current_user)):
             "saturation_source": _measured_sat.get("source", "default"),
             "saturation_measured_at": _measured_sat.get("ts"),
             "saturation_default_vph": DEFAULT_SATURATION_VPH,
-            "meters_per_vehicle": DEFAULT_METERS_PER_VEHICLE,
+            "meters_per_vehicle": _mpv(),
+            "meters_per_vehicle_source": ("實測(停止線排隊÷停等車數,%s 筆)" % _measured_params["samples"].get("mpv"))
+                                          if _measured_params.get("meters_per_vehicle") else "預設 %g m(未量到)" % DEFAULT_METERS_PER_VEHICLE,
             "spillback_ratio": DEFAULT_SPILLBACK_RATIO,
-            "lost_time_sec": DEFAULT_LOST_TIME_SEC,
+            "lost_time_sec": _lost_time_for(g_no),
+            "lost_time_source": ("實測(控制器 5F03 黃燈+全紅,%s 段)" % _measured_params["samples"].get("lost_time_%d" % g_no))
+                                 if _measured_params["lost_time_sec"].get(g_no) else "預設 %g s(未量到)" % DEFAULT_LOST_TIME_SEC,
+            "lost_time_by_phase": {str(k): v for k, v in _measured_params["lost_time_sec"].items()},
+            "spillback_ratio_source": "設定值(政策門檻,非物理量)",
+            "params_measured_at": _measured_params.get("ts"),
         },
         "gates": gates,
         "action": d.action, "reason": d.reason,
