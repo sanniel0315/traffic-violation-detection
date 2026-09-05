@@ -1483,6 +1483,159 @@ def _paired_runs(rows: list, interval: float = None) -> dict:
     }
 
 
+def _actual_runs_from_frames(since_iso: str, until_iso: str) -> Optional[list]:
+    """用控制器自己回報的 5F03 框(每秒一框)重建精確的綠燈段。
+
+    🛑 使用者要求:影子比對要用「號誌控制器被操控的秒數」,不是影子 5 秒取樣
+       重建的近似值。5F03 每秒一框帶 SubPhaseID/StepID/StepSec,分相何時開始、
+       綠燈(StepID=1)何時結束,精確到 1 秒;取樣法最多差 5 秒。
+    回傳 [{phase, start, green_end, end, green_sec}],時間為 epoch 秒;
+    抄錄框 DB 不可用或該段沒框 → None(呼叫端退回取樣法並標示)。
+    """
+    try:
+        from api.routes.signal_tc3 import decode_frame, _QDB_PATH
+        import sqlite3 as _sq
+        a = datetime.fromisoformat(since_iso).timestamp()
+        b = datetime.fromisoformat(until_iso).timestamp()
+        conn = _sq.connect(f"file:{_QDB_PATH}?mode=ro", uri=True, timeout=10)
+        rows = conn.execute(
+            "SELECT ts, raw FROM signal_frames WHERE code='5F03' AND cks_ok=1 "
+            "AND ts>=? AND ts<? ORDER BY ts", (a, b)).fetchall()
+        conn.close()
+    except Exception:
+        return None
+    if len(rows) < 30:
+        return None
+    segs = []
+    cur = None
+    for ts, raw in rows:
+        try:
+            d = decode_frame(bytes.fromhex(str(raw).replace(" ", "")))
+        except Exception:
+            continue
+        ph = (d or {}).get("phase") or {}
+        sp, st = ph.get("sub_phase_id"), ph.get("step_id")
+        if sp is None:
+            continue
+        if cur is None or sp != cur["phase"]:
+            if cur is not None:
+                segs.append(cur)
+            cur = {"phase": sp, "start": float(ts), "green_end": None, "end": float(ts)}
+        cur["end"] = float(ts)
+        if st == 1:
+            cur["green_end"] = float(ts)
+    if cur is not None:
+        segs.append(cur)
+    out = []
+    for sg in segs:
+        if sg["green_end"] is None:
+            continue
+        out.append({"phase": sg["phase"], "start": sg["start"], "green_end": sg["green_end"],
+                    "end": sg["end"], "green_sec": round(sg["green_end"] - sg["start"], 1)})
+    return out
+
+
+def _paired_precise(rows: list, actual: list, interval: float = None) -> dict:
+    """精確配對:綠燈段來自控制器框(_actual_runs_from_frames),
+    我方判斷來自影子 log。每段找落在 [start, green_end] 內第一筆 SWITCH。
+
+    rows: (ts, green_phase, green_elapsed, ours, actual, forced, clearance,
+           queue_m_1, queue_m_2, switch_gain, keep_gain, change_cost)
+    續綠段(整段沒說 SWITCH)也給比對數據:OPAC 切相那一刻我方的裕度
+    (門檻 − 紅側延滯)、紅側有沒有車、有沒有撞最大綠 —— 「我方同意續綠」
+    到底同意得多堅定,這裡看得到。
+    """
+    if interval is None:
+        interval = SHADOW_INTERVAL_SEC
+    import bisect
+    ts_list = []
+    for r in rows:
+        try:
+            ts_list.append(datetime.fromisoformat(r[0]).timestamp())
+        except Exception:
+            ts_list.append(0.0)
+    out_runs = []
+    for seg in actual:
+        i = bisect.bisect_left(ts_list, seg["start"] - 0.5)
+        j = bisect.bisect_right(ts_list, seg["green_end"] + 0.5)
+        samp = rows[i:j]
+        if not samp:
+            continue
+        ours_sec = None
+        red_waiting = None
+        for r in samp:
+            if r[3] == "SWITCH" and not r[6]:
+                ours_sec = float(r[2] or 0.0)
+                rq = r[8] if seg["phase"] == 1 else r[7]
+                red_waiting = bool(rq and float(rq) > 0)
+                break
+        last = samp[-1]
+        margin = None
+        if last[9] is not None and last[10] is not None and last[11] is not None:
+            margin = round(float(last[10]) + float(last[11]) - float(last[9]), 1)
+        rq_last = last[8] if seg["phase"] == 1 else last[7]
+        d = None
+        waste = 0.0
+        if ours_sec is not None:
+            d = round(ours_sec - seg["green_sec"], 1)
+            if red_waiting and d < -interval:
+                waste = round(-d, 1)
+        out_runs.append({
+            "phase": seg["phase"], "start_ts": datetime.fromtimestamp(seg["start"]).isoformat(timespec="seconds"),
+            "actual_sec": seg["green_sec"], "ours_sec": ours_sec, "delta_sec": d,
+            "red_waiting": red_waiting, "waste_sec": waste, "samples": len(samp),
+            "forced": any(bool(r[5]) for r in samp),
+            # 續綠段的比對數據
+            "margin_at_switch": margin,
+            "red_queue_at_switch": round(float(rq_last), 1) if rq_last is not None else None,
+        })
+    usable = out_runs
+    earlier = [r for r in usable if r["delta_sec"] is not None and r["delta_sec"] < -interval]
+    meaningful = [r for r in earlier if r["red_waiting"]]
+    same = [r for r in usable if r["delta_sec"] is not None and -interval <= r["delta_sec"] <= interval]
+    hold = [r for r in usable if r["delta_sec"] is None]
+    later = [r for r in usable if r["delta_sec"] is not None and r["delta_sec"] > interval]
+    stat = lambda v: (_stat(v) if v else None)
+    hold_margin = [r["margin_at_switch"] for r in hold if r["margin_at_switch"] is not None]
+    hold_redq = [r for r in hold if r["red_queue_at_switch"] and r["red_queue_at_switch"] > 0]
+    by_phase = {}
+    for ph in (1, 2):
+        sub = [r for r in usable if r["phase"] == ph]
+        by_phase[str(ph)] = {
+            "runs": len(sub),
+            "earlier": sum(1 for r in sub if r["delta_sec"] is not None and r["delta_sec"] < -interval),
+            "hold": sum(1 for r in sub if r["delta_sec"] is None),
+            "actual_green": stat([r["actual_sec"] for r in sub]),
+            "delta": stat([r["delta_sec"] for r in sub if r["delta_sec"] is not None]),
+            "waste_sec": round(sum(r["waste_sec"] for r in sub), 1),
+        }
+    return {
+        "source": "controller_5F03", "interval_sec": interval,
+        "runs_usable": len(usable), "runs_truncated": 0,
+        "earlier": len(earlier), "earlier_meaningful": len(meaningful),
+        "earlier_idle": len(earlier) - len(meaningful),
+        "same": len(same), "hold": len(hold), "later": len(later),
+        "delta_all": stat([r["delta_sec"] for r in usable if r["delta_sec"] is not None]),
+        "delta_meaningful": stat([r["delta_sec"] for r in meaningful]),
+        "waste_sec_total": round(sum(r["waste_sec"] for r in usable), 1),
+        "hold_compare": {
+            "runs": len(hold),
+            "margin_at_switch": stat(hold_margin),
+            "red_waiting_at_switch": len(hold_redq),
+            "red_waiting_ratio": round(len(hold_redq) / len(hold), 3) if hold else None,
+            "forced_max_green": sum(1 for r in hold if r["forced"]),
+            "note": "OPAC 切相那一刻,我方仍判續綠的裕度(門檻 − 紅側延滯,車·秒)。"
+                    "裕度越大代表我方越堅定認為還不該切;紅側有車卻仍續綠的比例,是"
+                    "「我方比 OPAC 更保守」的量。",
+        },
+        "by_phase": by_phase,
+        "runs": out_runs,
+        "note": "實際綠燈秒數取自控制器每秒回報的 5F03(SubPhaseID/StepID),精確到 1 秒;"
+                "我方判斷取自影子 log(5 秒取樣)。delta_sec = 我方第一次判 SWITCH 的已亮秒數 −"
+                " 控制器實際綠燈秒數;負 = 我方會早切。同時的容忍 = 一個取樣週期。",
+    }
+
+
 @router.get("/paired", summary="逐次綠燈配對(精確比對:我方會早幾秒切)")
 async def shadow_paired(minutes: int = Query(180, ge=5, le=10080),
                         since: str = Query(""), until: str = Query(""),
@@ -1496,13 +1649,20 @@ async def shadow_paired(minutes: int = Query(180, ge=5, le=10080),
     try:
         conn = _db()
         rows = conn.execute(
-            "SELECT ts,green_phase,green_elapsed,ours,actual,forced,clearance,queue_m_1,queue_m_2 "
+            "SELECT ts,green_phase,green_elapsed,ours,actual,forced,clearance,queue_m_1,queue_m_2,"
+            "switch_gain,keep_gain,change_cost "
             "FROM signal_shadow_log WHERE ts>=? AND ts<=? AND control_mode='external_dynamic' "
             "ORDER BY ts", (since_iso, until_iso)).fetchall()
         conn.close()
     except Exception as e:
         return {"since": since_iso, "until": until_iso, "error": str(e), "runs_usable": 0}
-    out = _paired_runs(rows)
+    # 🛑 優先用控制器框的精確秒數;抄錄框拿不到才退回取樣法,並在 source 標明。
+    actual = _actual_runs_from_frames(since_iso, until_iso)
+    if actual:
+        out = _paired_precise(rows, actual)
+    else:
+        out = _paired_runs([r[:9] for r in rows])
+        out["source"] = "shadow_sampling_fallback"
     out["since"], out["until"] = since_iso, until_iso
     if not include_runs:
         out.pop("runs", None)
