@@ -54,8 +54,10 @@ def test_frontend_matrix_confines_signal_role_to_signal_hub():
     """前端權限矩陣:signal 角色只有 'signal' 一個鍵;signal_hub 對到它;
     側欄改用 hasPerm('signal') 而不是 isAdmin;登入落地到 signal_hub。"""
     html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
-    assert re.search(r"signal:\['signal'\],", html), "defaultPermissionMatrix 少了 signal 角色"
+    assert "signal:['signal','monitor','lock','io']," in html, "signal 角色預設應為 動態號誌+即時監控+電子鎖+I/O"
     assert "signal_hub:'signal'," in html, "pagePermMap 少了 signal_hub"
+    assert "lock:'lock'," in html and "io_panel:'io'," in html, "電子鎖 / I/O 沒有權限鍵"
+    assert "v-if=\"hasPerm('lock')\" class=\"menu-item\"" in html and "v-if=\"hasPerm('io')\" class=\"menu-item\"" in html
     assert "{key:'signal',label:'動態號誌控制'}" in html, "permissionCatalog 少了 signal 鍵"
     assert '''v-if="hasPerm('signal')" class="menu-item" :class="{active:page==='signal_hub'}"''' in html, \
         "側欄的動態號誌控制仍綁 isAdmin"
