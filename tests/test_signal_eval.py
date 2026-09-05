@@ -80,3 +80,20 @@ def test_compare_returns_test_per_metric():
     c = compare(ra, rb)
     assert c["queue_avg_m"]["diff"] < 0 and c["queue_avg_m"]["p"] is not None
     assert c["delay_per_veh"]["diff"] < 0
+
+
+def test_report_window_runs_without_name_errors(tmp_path, monkeypatch):
+    """★ 2026-09-05 教訓:_eval_window 引用的 _VIOL_DB 沒定義,部署後端點直接 500。
+    單元測試只測 signal_eval 純函式抓不到 —— 這裡真的呼叫 _eval_window,
+    指向空的臨時 DB,任何 NameError / 匯入錯都會在這裡炸。"""
+    import sqlite3
+    from api.routes import signal_shadow as S
+    db = tmp_path / "v.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE congestion_samples (camera_id INT, created_at TEXT, stopped_vehicle_count INT, vehicle_count INT, estimated_queue_length_m REAL, is_overall INT)")
+    conn.execute("CREATE TABLE traffic_events (camera_id INT, created_at TEXT, speed_kmh REAL)")
+    conn.commit(); conn.close()
+    monkeypatch.setattr(S, "_VIOL_DB", str(db))
+    monkeypatch.setattr(S, "_actual_runs_from_frames", lambda a, b: [])
+    out = S._eval_window("2026-09-04T09:00:00", "2026-09-04T09:10:00")
+    assert out == {1: [], 2: []}
