@@ -308,6 +308,27 @@ def _first_arg(text, open_paren_idx):
     return ''
 
 
+def _balanced(text, open_idx, limit=8000):
+    """從 open_idx 的 ( 開始做括號配對,回傳整個呼叫的內容(不含最外層括號)。
+
+    只用來界定「這一個 watch 呼叫」的範圍。抓不到配對(超過 limit)就回 None,
+    寧可漏報也不要拿一段亂截的文字去比對 —— 亂截會製造大量誤報
+    (2026-09-06 用固定長度截 1200 字元,一口氣噴出 42 個假陽性)。
+    """
+    depth = 0
+    j = open_idx
+    end = min(len(text), open_idx + limit)
+    while j < end:
+        c = text[j]
+        if c in '([{':
+            depth += 1
+        elif c in ')]}':
+            depth -= 1
+            if depth == 0:
+                return text[open_idx + 1:j]
+        j += 1
+    return None
+
 def lint_watch_tdz(text):
     """回傳 [(watch 行號, 識別字, 宣告行號)]。"""
     # 直接掃全檔:const/let 宣告本來就只出現在 inline <script> 裡,
@@ -323,7 +344,7 @@ def lint_watch_tdz(text):
         # 🛑 _DECL_RE 的 ^\s* 會把行首縮排吃進 match,所以縮排要從 match 內容量,
         #    不能用 m.start() 減行首(那永遠是 0)。
         indent = len(m.group(0)) - len(m.group(0).lstrip())
-        if indent > 12:
+        if indent > 10:   # setup 頂層是 8 空格;12 以上都是巢狀函式內
             continue
         decl.setdefault(m.group(1), m.start())
     # computed 的本體,供一層追進去用
@@ -351,6 +372,19 @@ def lint_watch_tdz(text):
         arg = _first_arg(script, oi)
         # 直接用到的識別字,加上「若它是 computed 就再看它的本體」一層
         names = set(_IDENT_RE.findall(arg))
+        # 🛑 immediate:true 的 watch,回呼在 setup 當下就跑一次 ——
+        #    回呼裡讀到的識別字一樣會 TDZ。只看第一個參數會漏掉
+        #    (2026-09-06:analytics_insights 的 watch 回呼讀 cameras,
+        #     cameras 宣告在後面,深層連結進去整頁白畫面)。
+        call = _balanced(script, oi)
+        if call is not None and 'immediate' in call and 'true' in call:
+            cand = set(_IDENT_RE.findall(call))
+            # 排除物件字面值的鍵(watch 的 {immediate:true, flush:'post'} 這種),
+            # 以及回呼自己的參數名 —— 兩者都不是外層作用域的識別字,算進去全是誤報。
+            cand -= set(re.findall(r'([A-Za-z_$][\w$]*)\s*:', call))
+            for pm in re.finditer(r'\(([^()]*)\)\s*=>', call):
+                cand -= set(re.findall(r'[A-Za-z_$][\w$]*', pm.group(1)))
+            names |= cand
         for n in list(names):
             if n in bodies:
                 names |= set(_IDENT_RE.findall(bodies[n]))

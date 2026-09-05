@@ -3489,10 +3489,18 @@
         .xn-chip b { font-weight:700; color:var(--gov-text); font-variant-numeric:tabular-nums; }
         .xn-stale { color:#f59e0b; font-size:12px; }
         /* 綠燈秒數趨勢:純 CSS 長條,不為了一張圖拉整個圖表庫 */
-        .st-trend { display:flex; align-items:flex-end; gap:2px; height:120px;
-                    padding:8px; background:var(--gov-surface-2); border-radius:var(--r-base,8px); overflow-x:auto; }
-        .st-bar { flex:0 0 6px; min-height:3px; border-radius:2px 2px 0 0;
-                  background:var(--gov-primary); }
+        /* 跟 Chart.js 主題與時間軸同一套語彙:淡虛線水平格線、圓角長條、無外框底色 */
+        .st-trend { display:flex; align-items:flex-end; gap:3px; height:132px;
+                    padding:10px 8px 8px; border:1px solid var(--gov-border);
+                    border-radius:12px; background:var(--gov-surface); overflow-x:auto;
+                    background-image:repeating-linear-gradient(to top,
+                        transparent 0 24%, var(--gov-border) 24% calc(24% + 1px));
+                    background-size:100% 100%; }
+        .st-bar { flex:0 0 7px; min-height:3px; border-radius:4px 4px 2px 2px;
+                  background:var(--gov-primary); opacity:.85;
+                  transition:opacity .15s ease; }
+        .st-trend:hover .st-bar { opacity:.55; }
+        .st-trend .st-bar:hover { opacity:1; }
         .st-bar.p2 { background:var(--gov-primary-strong); }
         .st-bar.forced { background:var(--gov-warn); }
         .st-bar.trunc { background:var(--gov-border-strong); }
@@ -3761,10 +3769,10 @@
         .dc-bars { display:flex; flex-direction:column; gap:7px; margin:12px 0 10px; }
         .dc-bar-row { display:flex; align-items:center; gap:10px; }
         .dc-bar-k { flex:0 0 48px; font-size:12px; font-weight:700; color:var(--gov-muted); }
-        .dc-bar-track { flex:1; height:14px; border-radius:7px; min-width:0;
+        .dc-bar-track { flex:1; height:10px; border-radius:999px; min-width:0;
                         background:var(--gov-surface); border:1px solid var(--gov-border);
                         overflow:hidden; }
-        .dc-bar-fill { height:100%; border-radius:7px;
+        .dc-bar-fill { height:100%; border-radius:999px;
                        transition:width .5s cubic-bezier(.4,0,.2,1); }
         .dc-bar-fill.sw { background:var(--gov-warn); }
         .dc-bar-fill.kp { background:var(--gov-ok); }
@@ -13184,6 +13192,77 @@ const app=createApp({
         const dashboardHasSpeed=computed(()=>(dashboard.value?.speed_dist||[]).some(s=>(s.count||0)));
         const cameraDistTotal=computed(()=>(dashboard.value?.camera_dist||[]).reduce((a,b)=>a+(b.count||0),0));
         const _CH={primary:'#0b5ea8',strong:'#084d8a',ok:'#1f9d55',warn:'#d97706',fault:'#c43a31',muted:'#94a3b8',soft:'#9fc4e6'};
+        // ── 全站圖表共用主題(參考 shadcn area chart 的語彙)────────────────
+        //    只留淡虛線水平格線、不畫軸線、細筆畫、圓角長條、淺色卡片 tooltip。
+        //    🛑 一次設在 Chart.defaults,不要每張圖各自帶一份 options ——
+        //       各自帶就是風格發散的來源(這頁原本就有三種 tooltip 樣式)。
+        const CHART_INK='#243447', CHART_MUTED='#8593a5', CHART_GRID='#e6ebf1';
+        const applyChartTheme=()=>{
+            if(typeof Chart==='undefined'||Chart._dsThemed)return;
+            const D=Chart.defaults;
+            D.font.family="'Noto Sans TC','PingFang TC','IBM Plex Mono',ui-monospace,sans-serif";
+            D.font.size=12; D.font.weight='500'; D.color=CHART_MUTED;
+            D.borderColor=CHART_GRID;
+            D.maintainAspectRatio=false;
+            // 線:平滑、無點、hover 才出現點(shadcn 的 active dot)
+            D.elements.line.tension=0.35;
+            D.elements.line.borderWidth=2;
+            D.elements.line.borderCapStyle='round';
+            D.elements.line.borderJoinStyle='round';
+            D.elements.point.radius=0;
+            D.elements.point.hoverRadius=4.5;
+            D.elements.point.hoverBorderWidth=2;
+            D.elements.point.hoverBorderColor='#fff';
+            // 長條:圓角、不要太粗
+            D.elements.bar.borderRadius=6;
+            D.elements.bar.borderSkipped=false;
+            D.elements.bar.maxBarThickness=44;
+            // 圓環:留白多一點,分隔用底色而不是白線
+            D.elements.arc.borderWidth=2;
+            D.elements.arc.borderColor='#fff';
+            // 圖例:圓點、靠右、字小
+            D.plugins.legend.position='top';
+            D.plugins.legend.align='end';
+            D.plugins.legend.labels.usePointStyle=true;
+            D.plugins.legend.labels.pointStyle='circle';
+            D.plugins.legend.labels.boxWidth=8;
+            D.plugins.legend.labels.boxHeight=8;
+            D.plugins.legend.labels.padding=14;
+            D.plugins.legend.labels.color=CHART_MUTED;
+            // tooltip:淺色卡片(不是深色氣泡),跟時間軸的 tooltip 同一個語彙
+            Object.assign(D.plugins.tooltip,{
+                backgroundColor:'rgba(255,255,255,.98)',
+                titleColor:CHART_INK, bodyColor:CHART_INK, footerColor:CHART_MUTED,
+                borderColor:CHART_GRID, borderWidth:1, cornerRadius:10,
+                padding:{top:9,right:11,bottom:9,left:11},
+                titleFont:{size:11.5,weight:'600'}, bodyFont:{size:12},
+                boxPadding:6, usePointStyle:true, displayColors:true,
+                caretSize:0, caretPadding:10,
+            });
+            D.interaction.mode='index';
+            D.interaction.intersect=false;
+            Chart._dsThemed=true;
+        };
+        // 座標軸預設:x 不畫格線與軸線,y 只畫淡虛線水平格線
+        const chartAxes=(extra)=>Object.assign({
+            x:{grid:{display:false},border:{display:false},
+               ticks:{maxTicksLimit:8,autoSkip:true,maxRotation:0,padding:6}},
+            y:{grid:{color:CHART_GRID,drawTicks:false,
+                     lineWidth:1,borderDash:[3,5]},
+               border:{display:false}, beginAtZero:true, grace:'6%',
+               ticks:{padding:8,maxTicksLimit:5}},
+        }, extra||{});
+        // 面積漸層:從線色淡出到透明。要在 canvas 有尺寸之後才算得出來。
+        const chartFill=(color,alphaTop)=>({
+            target:'origin',
+            above:(ctx)=>{
+                const a=ctx.chart.chartArea; if(!a)return 'transparent';
+                const g=ctx.chart.ctx.createLinearGradient(0,a.top,0,a.bottom);
+                g.addColorStop(0,color+(alphaTop||'40'));
+                g.addColorStop(1,color+'05');
+                return g;
+            },
+        });
         const _dashCharts={};
         const _mkDashChart=(id,cfg)=>{
             const el=document.getElementById(id);
@@ -13195,15 +13274,9 @@ const app=createApp({
             if(typeof Chart==='undefined')return;
             // Chart.js 全域字體統一 — 跟既有統計表格 (車種排行等) 一致: Noto Sans TC 中文 +
             // IBM Plex Mono 數字 + tabular-nums + 公務藍灰，所有圖表 legend/ticks/tooltip 一次套到
-            if(!Chart._dsFontConfigured){
-                Chart.defaults.font.family = "'Noto Sans TC','PingFang TC','IBM Plex Mono',ui-monospace,sans-serif";
-                Chart.defaults.font.size = 13;   // 跟 .ds-vrow / 列表內文一致
-                Chart.defaults.font.weight = '500';
-                Chart.defaults.color = '#5b6778';
-                Chart._dsFontConfigured = true;
-            }
+            applyChartTheme();
             const d=dashboard.value||{};
-            const tip={backgroundColor:_CH.strong,padding:9};
+            const tip={};   // tooltip 樣式已統一在 applyChartTheme,這裡不再各自帶
             nextTick(()=>{
                 const td=d.type_dist||[];
                 if(td.length){
@@ -13211,8 +13284,8 @@ const app=createApp({
                     _mkDashChart('dashChartType',{type:'doughnut',
                         data:{labels:td.map(x=>_VIOL_TYPE_META[String(x.key||'').toUpperCase()]?.label||x.key||'未分類'),
                             datasets:[{data:td.map(x=>x.count),backgroundColor:td.map((_,i)=>pal[i%pal.length]),borderWidth:2,borderColor:'#fff'}]},
-                        options:{responsive:true,maintainAspectRatio:false,cutout:'62%',
-                            plugins:{legend:{position:'bottom',labels:{boxWidth:9,padding:8,font:{size:11}}},tooltip:tip}}});
+                        options:{responsive:true,cutout:'68%',
+                            plugins:{legend:{position:'bottom',align:'center'}}}});
                 }
                 // (camera_dist 已改用 HTML 表格呈現排行，不再 Chart.js bar)
                 const vd=d.vehicle_dist||[];
@@ -13221,29 +13294,47 @@ const app=createApp({
                     _mkDashChart('dashChartVehicle',{type:'doughnut',
                         data:{labels:vd.map(x=>vehicleTypeZh(x.key)),
                             datasets:[{data:vd.map(x=>x.count),backgroundColor:vd.map((_,i)=>pal[i%pal.length]),borderWidth:2,borderColor:'#fff'}]},
-                        options:{responsive:true,maintainAspectRatio:false,cutout:'62%',
-                            plugins:{legend:{position:'bottom',labels:{boxWidth:9,padding:8,font:{size:11}}},tooltip:tip}}});
+                        options:{responsive:true,cutout:'68%',
+                            plugins:{legend:{position:'bottom',align:'center'}}}});
                 }
                 const sd=d.speed_dist||[];
                 if(sd.some(s=>s.count)){
                     const cols=[_CH.soft,_CH.primary,_CH.warn,_CH.fault,'#7a1f19'];
                     _mkDashChart('dashChartSpeed',{type:'bar',
                         data:{labels:sd.map(x=>x.key),datasets:[{data:sd.map(x=>x.count),backgroundColor:sd.map((_,i)=>cols[i%cols.length]),borderRadius:4,barPercentage:0.7}]},
-                        options:{responsive:true,maintainAspectRatio:false,
-                            plugins:{legend:{display:false},tooltip:tip},
-                            scales:{x:{grid:{display:false}},y:{grid:{color:'#eef2f6'},border:{display:false},ticks:{precision:0}}}}});
+                        options:{responsive:true,
+                            plugins:{legend:{display:false}},
+                            scales:chartAxes({y:{grid:{color:CHART_GRID,drawTicks:false,borderDash:[3,5]},
+                                                 border:{display:false},beginAtZero:true,
+                                                 ticks:{precision:0,padding:8,maxTicksLimit:5}}})}});
                 }
             });
         };
         watch([dashboard,page],()=>{if(page.value==='dashboard')renderDashboardCharts();});
         // 切到「分析功能」頁面自動 fetch cameras (給下拉) + 分析資料
+        const cameras=ref([]);
+        // 🛑 這個 watch 帶 immediate:true,回呼在 setup 當下就會執行一次。
+        //    它讀 cameras,所以 cameras 必須先宣告 —— 原本宣告在 watch 之後,
+        //    用 ?page=analytics_insights 直接進來就會
+        //    ReferenceError: Cannot access 'cameras' before initialization → 整頁白畫面
+        //    (2026-09-06 headless 實測到)。watch 的**回呼內容**也要納入 TDZ 檢查,
+        //    不是只看 watch 的來源。
+        // 🛑 不能用 immediate:true —— 回呼會在 setup 當下就執行,而它呼叫的
+        //    loadCameras / loadAnalytics 都在幾千行之後才宣告,
+        //    用 ?page=analytics_insights 直接進來就是 ReferenceError → 整頁白畫面
+        //    (2026-09-06 headless 實測到)。改成掛載後補跑一次,那時所有宣告都完成了。
         watch(page,(p)=>{
             if(p==='analytics_insights'){
                 if(!(cameras.value||[]).length)loadCameras();
                 loadAnalytics();
             }
-        },{immediate:true});
-        const cameras=ref([]);
+        });
+        onMounted(()=>{
+            if(page.value==='analytics_insights'){
+                if(!(cameras.value||[]).length)loadCameras();
+                loadAnalytics();
+            }
+        });
         // ---- 即時監控方塊排版（拖曳互換 + 鎖定，全系統共用一份，僅管理員可改）----
         const monitorLayout=ref({order:[],locked:true,updated_at:null,updated_by:''});
         const monitorDragIndex=ref(-1);      // 目前被拖曳的方塊在 sortedCameras 中的位置
@@ -14162,14 +14253,13 @@ const app=createApp({
                     _mkParkChart('parkChartOccupancy',{type:'line',
                         data:{labels:sm.map(s=>_tpeHM(s.ts)),datasets:[{label:'佔用率',
                             data:sm.map(s=>Number(s.occupancy_rate)||0),borderColor:'#0b5ea8',
-                            backgroundColor:'rgba(11,94,168,0.12)',fill:true,tension:0.3,pointRadius:2,
-                            pointHoverRadius:4,borderWidth:2}]},
+                            fill:chartFill('#0b5ea8')}]},
                         options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
                             plugins:{legend:{display:false},tooltip:{...tip,callbacks:{
                                 title:(it)=>_tpeFull(sm[it[0].dataIndex]?.ts),
                                 label:(c)=>`佔用率 ${c.parsed.y}%　(${sm[c.dataIndex]?.occupied||0}/${sm[c.dataIndex]?.total||0} 格)`}}},
-                            scales:{x:{grid:{display:false},ticks:{maxTicksLimit:8,autoSkip:true,maxRotation:0}},
-                                y:{min:0,max:100,grid:{color:'#eef2f6'},border:{display:false},ticks:{stepSize:25,callback:(v)=>v+'%'}}}}});
+                            scales:chartAxes({y:{min:0,max:100,grid:{color:CHART_GRID,drawTicks:false,borderDash:[3,5]},
+                                border:{display:false},ticks:{stepSize:25,padding:8,callback:(v)=>v+'%'}}})}});
                 }
                 // 2) 交叉校正: 車位偵測 vs 場內車輛 (車數)
                 const ch=(parkingCounting.value?.occupancy_history_24h||[]).filter(s=>s.ts);
@@ -14179,16 +14269,15 @@ const app=createApp({
                     _mkParkChart('parkChartCross',{type:'line',
                         data:{labels:ch.map(s=>_tpeHM(s.ts)),datasets:[
                             {label:'車位偵測',data:ch.map(s=>Number(s.occupied)||0),borderColor:'#0b5ea8',
-                                backgroundColor:'transparent',tension:0.3,pointRadius:2,pointHoverRadius:4,borderWidth:2},
+                                fill:chartFill('#0b5ea8','2e')},
                             {label:'場內車輛',data:ch.map(s=>s.vehicles_in_area==null?null:Number(s.vehicles_in_area)),
-                                borderColor:'#7c3aed',backgroundColor:'transparent',borderDash:[6,4],tension:0.3,
-                                pointRadius:2,pointHoverRadius:4,borderWidth:2,spanGaps:true}]},
+                                borderColor:'#7c3aed',backgroundColor:'transparent',borderDash:[6,4],spanGaps:true}]},
                         options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
-                            plugins:{legend:{position:'top',labels:{boxWidth:14,padding:12,font:{size:12}}},
+                            plugins:{legend:{position:'top'},
                                 tooltip:{...tip,callbacks:{title:(it)=>_tpeFull(ch[it[0].dataIndex]?.ts),label:(c)=>`${c.dataset.label}: ${c.parsed.y} 台`}}},
-                            scales:{x:{grid:{display:false},ticks:{maxTicksLimit:8,autoSkip:true,maxRotation:0}},
-                                y:{min:0,suggestedMax:maxV,grid:{color:'#eef2f6'},border:{display:false},
-                                    ticks:{precision:0,stepSize:Math.max(1,Math.ceil(maxV/5)),callback:(v)=>v+' 台'}}}}});
+                            scales:chartAxes({y:{min:0,suggestedMax:maxV,grid:{color:CHART_GRID,drawTicks:false,borderDash:[3,5]},
+                                border:{display:false},
+                                ticks:{precision:0,padding:8,stepSize:Math.max(1,Math.ceil(maxV/5)),callback:(v)=>v+' 台'}}})}});
                 }
             });
         };
@@ -14205,16 +14294,15 @@ const app=createApp({
             nextTick(()=>{
                 _mkDashChart('analyticsTrendChart',{type:'line',
                     data:{labels,datasets:series.map(s=>{const t=String(s.type||'').toUpperCase();const c=_TREND_COLORS[t]||'#94a3b8';
-                        return{label:_TREND_ZH[t]||s.name||s.type,data:s.data||[],borderColor:c,backgroundColor:c+'22',
-                            fill:true,tension:0.4,borderWidth:2.5,pointRadius:0,pointHoverRadius:5,
-                            pointHoverBackgroundColor:c,pointHoverBorderColor:'#fff',pointHoverBorderWidth:2,pointBackgroundColor:c};})},
+                        return{label:_TREND_ZH[t]||s.name||s.type,data:s.data||[],borderColor:c,
+                            fill:chartFill(c),pointHoverBackgroundColor:c,pointBackgroundColor:c};})},
                     options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
                         layout:{padding:{top:4,right:8,left:4,bottom:0}},
-                        plugins:{legend:{position:'top',align:'end',labels:{usePointStyle:true,pointStyle:'circle',boxWidth:8,boxHeight:8,padding:16,font:{size:12,weight:'600'}}},
-                            tooltip:{backgroundColor:'#0f2742',padding:11,cornerRadius:8,titleFont:{size:12},bodyFont:{size:12},usePointStyle:true,boxPadding:5,
-                                callbacks:{label:(c)=>`  ${c.dataset.label}: ${c.parsed.y} 件`}}},
-                        scales:{x:{grid:{display:false},border:{color:'#e2e8f0'},ticks:{maxTicksLimit:8,autoSkip:true,maxRotation:0,color:'#94a3b8',font:{size:11}}},
-                            y:{beginAtZero:true,grace:'6%',grid:{color:'#f1f5f9'},border:{display:false},ticks:{precision:0,color:'#94a3b8',font:{size:11},maxTicksLimit:6}}}}});
+                        plugins:{legend:{},
+                            tooltip:{callbacks:{label:(c)=>`  ${c.dataset.label}: ${c.parsed.y} 件`}}},
+                        scales:chartAxes({y:{beginAtZero:true,grace:'6%',
+                            grid:{color:CHART_GRID,drawTicks:false,borderDash:[3,5]},border:{display:false},
+                            ticks:{precision:0,padding:8,maxTicksLimit:5}}})}});
             });
         };
         watch([analyticsTrend,page],()=>{ if(page.value==='analytics_insights') renderAnalyticsTrend(); });
