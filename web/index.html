@@ -3683,6 +3683,38 @@
         .wr-map-wrap { position:relative; border-radius:var(--r-card); overflow:hidden;
                        border:1px solid var(--gov-border); background:var(--gov-bg); }
         .wr-map { height:360px; width:100%; background:var(--gov-bg); }
+        /* ── 地圖動態:動畫用來表達資料,不是裝飾 ──
+           排隊帶的虛線往路口方向流動,**速度由判級決定**:
+           順暢跑得快、壅塞幾乎停住。看圖的人不用讀數字就知道哪一側在動。 */
+        .wr-seg { stroke-dasharray:1 0; }
+        .wr-flow { stroke-dasharray:14 9; stroke-linecap:butt;
+                   animation:wrFlow linear infinite; }
+        .wr-flow.lv0 { animation:none; opacity:.5; }        /* 未量到:不動 */
+        .wr-flow.lv1 { animation-duration:.9s; }             /* 暢通:快 */
+        .wr-flow.lv2 { animation-duration:1.8s; }            /* 中等 */
+        .wr-flow.lv3 { animation-duration:3.4s; }            /* 擁擠:慢 */
+        .wr-flow.lv4 { animation-duration:7s; }              /* 嚴重壅塞:幾乎停住 */
+        @keyframes wrFlow { to { stroke-dashoffset:-23; } }
+        /* 燈頭:綠燈呼吸、清道閃爍、紅燈靜止 */
+        .wr-lamp { transition:fill .25s ease; }
+        .wr-lamp.green { animation:wrBreathe 2.4s ease-in-out infinite; }
+        .wr-lamp.amber { animation:wrBlink .7s steps(2) infinite; }
+        @keyframes wrBreathe { 0%,100% { r:7; opacity:1; } 50% { r:9; opacity:.82; } }
+        @keyframes wrBlink { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+        /* 相機點:判級越高脈動越明顯;未量到與離線不動 */
+        .wr-cam-mk { transition:fill .25s ease; }
+        .wr-cam-mk.lv2 { animation:wrPulse 2.6s ease-in-out infinite; }
+        .wr-cam-mk.lv3 { animation:wrPulse 1.7s ease-in-out infinite; }
+        .wr-cam-mk.lv4 { animation:wrPulse 1s ease-in-out infinite; }
+        .wr-cam-mk.off { opacity:.45; }
+        @keyframes wrPulse { 0%,100% { r:7; } 50% { r:9.5; } }
+        /* 狀態列的色點跟著地圖一起脈動,兩邊對得起來 */
+        .wr-camcell .wr-cdot.lv3 { animation:wrDot 1.7s ease-in-out infinite; }
+        .wr-camcell .wr-cdot.lv4 { animation:wrDot 1s ease-in-out infinite; }
+        @keyframes wrDot { 0%,100% { transform:scale(1); } 50% { transform:scale(1.35); } }
+        @media (prefers-reduced-motion: reduce) {
+            .wr-flow, .wr-lamp, .wr-cam-mk, .wr-cdot { animation:none !important; }
+        }
         /* 地圖標籤:只放短碼,收到最小 —— 數字在下方狀態列 */
         .wr-tip { background:rgba(255,255,255,.92); color:var(--gov-text); border:0;
                   font:600 10.5px var(--font-mono); letter-spacing:.02em;
@@ -7899,7 +7931,7 @@
                             <div class="wr-camrow">
                                 <div v-for="c in sigWarMapCams" :key="'mc'+c.camera_id"
                                      class="wr-camcell" :class="{off:!c.online}" :title="c.full">
-                                    <span class="wr-cdot" :style="{background:c.color}"></span>
+                                    <span class="wr-cdot" :class="'lv'+c.lv" :style="{background:c.color}"></span>
                                     <b>{{ c.name }}</b>
                                     <span class="wr-cph">分相 {{ c.phase_no }}</span>
                                     <span class="wr-cv">佔有率 <i>{{ c.occ }}</i></span>
@@ -23788,18 +23820,30 @@ const app=createApp({
                 const A = [stopCam.lat, stopCam.lng];
                 const B = wrOffset(stopCam.lat, stopCam.lng, ux * segLen, uy * segLen);
                 const Q = wrOffset(stopCam.lat, stopCam.lng, ux * Math.min(q, segLen), uy * Math.min(q, segLen));
-                upsert('seg', ph, () => L.polyline([A, B], {color: color, weight: 10, opacity: .35, lineCap: 'butt'}),
+                // 進場道底色(儲車空間全長)
+                upsert('seg', ph, () => L.polyline([A, B], {color: color, weight: 11, opacity: .22,
+                                                           lineCap: 'butt', className: 'wr-seg'}),
                        (l) => { l.setLatLngs([A, B]); l.setStyle({color: color}); });
-                upsert('queue', ph, () => L.polyline([A, Q], {color: color, weight: 10, opacity: .95, lineCap: 'butt'}),
-                       (l) => { l.setLatLngs([A, Q]); l.setStyle({color: color}); });
+                // 排隊帶:虛線往路口方向流動。**流動速度由判級決定** ——
+                // 順暢跑得快、壅塞幾乎停住,一眼就看得出哪一側在動。
+                // 這是把資料畫成動態,不是裝飾:速度等級 = wrLvRank。
+                upsert('queue', ph, () => L.polyline([A, Q], {color: color, weight: 11, opacity: .95,
+                                                             lineCap: 'butt', className: 'wr-flow lv' + lv}),
+                       (l) => { l.setLatLngs([A, Q]); l.setStyle({color: color});
+                                const el = l.getElement();
+                                if (el) el.setAttribute('class',
+                                    (el.getAttribute('class') || '').replace(/\blv[0-4]\b/g, '') + ' wr-flow lv' + lv); });
                 // 燈頭:停止線旁(往路口方向 4 m、側移 6 m),綠/清道黃/紅
                 const isGreen = d.green_phase === ph;
                 const lampColor = !isGreen ? '#c43a31' : (d.clearance ? '#d97706' : '#1f9d55');
                 const nx = -uy, ny = ux;
                 const P = wrOffset(stopCam.lat, stopCam.lng, -ux * 4 + nx * 6, -uy * 4 + ny * 6);
-                upsert('lamp', ph, () => L.circleMarker(P, {radius: 7, color: '#ffffff', weight: 2, fillColor: lampColor, fillOpacity: 1})
+                const lampCls = !isGreen ? 'wr-lamp red' : (d.clearance ? 'wr-lamp amber' : 'wr-lamp green');
+                upsert('lamp', ph, () => L.circleMarker(P, {radius: 7, color: '#ffffff', weight: 2, fillColor: lampColor, fillOpacity: 1, className: lampCls})
                                         .bindTooltip('分相 ' + ph + (isGreen ? (d.clearance ? ' 清道' : ' 綠燈') : ' 紅燈'), {permanent: false}),
-                       (l) => { l.setLatLng(P); l.setStyle({fillColor: lampColor}); });
+                       (l) => { l.setLatLng(P); l.setStyle({fillColor: lampColor});
+                                const el = l.getElement();
+                                if (el) el.setAttribute('class', lampCls); });
                 list.forEach((c) => {
                     const cc = WR_LV_COLOR[wrLvRank(c.level)];
                     // 🛑 常駐標籤只放**短碼**,不放數字。四台相機各掛一段
@@ -23811,12 +23855,16 @@ const app=createApp({
                     const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left')
                                                             : (dy > 0 ? 'top' : 'bottom');
                     const off = {right: [10, 0], left: [-10, 0], top: [0, -10], bottom: [0, 10]}[dir];
+                    // 相機點的動態:判級越高脈動越明顯(lv0 未量到與離線一律不動)
+                    const camCls = 'wr-cam-mk ' + (c.online === false ? 'off' : 'lv' + wrLvRank(c.level));
                     upsert('cam', c.camera_id,
-                           () => L.circleMarker([c.lat, c.lng], {radius: 7, color: '#ffffff', weight: 2.5, fillColor: cc, fillOpacity: 1})
+                           () => L.circleMarker([c.lat, c.lng], {radius: 7, color: '#ffffff', weight: 2.5, fillColor: cc, fillOpacity: 1, className: camCls})
                                    .bindTooltip(c.name, {permanent: true, direction: dir, offset: off, className: 'wr-tip'}),
                            (l) => { l.setLatLng([c.lat, c.lng]);
                                     l.setStyle({fillColor: cc, color: c.online ? '#ffffff' : '#c3ccd7'});
-                                    l.setTooltipContent(c.name); });
+                                    l.setTooltipContent(c.name);
+                                    const el = l.getElement();
+                                    if (el) el.setAttribute('class', camCls); });
                 });
             });
         };
@@ -23830,6 +23878,7 @@ const app=createApp({
                 camera_id: c.camera_id, name: c.name, phase_no: c.phase_no,
                 online: c.online !== false,
                 full: sigCamFullName(c.camera_id) || c.name,
+                lv: wrLvRank(c.level),
                 color: WR_LV_COLOR[wrLvRank(c.level)],
                 occ: (c.occupancy == null) ? '—' : (Number(c.occupancy) * 100).toFixed(0) + '%',
                 queue: (c.queue_m == null) ? null : Number(c.queue_m).toFixed(1),
