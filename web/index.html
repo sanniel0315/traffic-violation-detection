@@ -3629,6 +3629,40 @@
         .lv-lamp.a { background:var(--gov-warn); box-shadow:0 0 0 3px rgba(217,119,6,.28); }
         .lv-lamp.r { background:var(--gov-fault); box-shadow:0 0 0 3px rgba(220,38,38,.22); }
 
+        /* 路口真實幾何圖 */
+        .wr-geo { position:relative; border-radius:var(--r-base); background:#0f1a2c;
+                  border:1px solid var(--wr-line); overflow:hidden; aspect-ratio:440/320; }
+        .wr-geo-svg { width:100%; height:100%; display:block; }
+        .gx-rd { fill:#1a2538; stroke:#2f3f5e; stroke-width:1; }
+        .gx-lane { stroke:#e2e8f0; stroke-opacity:.35; stroke-width:1; stroke-dasharray:4 5; fill:none; }
+        .gx-box { fill:#1a2538; stroke:#2f3f5e; }
+        .gx-stop { stroke:#e2e8f0; stroke-width:2.5; stroke-opacity:.85; }
+        .gx-seg { stroke-width:9; fill:none; opacity:.55; transition:stroke .4s; }
+        .gx-queue { stroke-width:9; fill:none; opacity:.95; transition:stroke .4s; }
+        .gx-head { fill:#0b1220; stroke:#2f3f5e; }
+        .gx-lr, .gx-la, .gx-lg { fill:#1c2436; transition:fill .25s; }
+        .gx-lr.on { fill:#f87171; } .gx-la.on { fill:#fbbf24; } .gx-lg.on { fill:#4ade80; }
+        .gx-ped { fill:#f87171; transition:fill .25s; } .gx-ped.g { fill:#4ade80; }
+        .gx-cam { fill:#7dd3fc; } .gx-cam.off { fill:#5b6b88; }
+        .gx-cone { fill:#7dd3fc; opacity:.12; }
+        .gx-cam-lbl { font:600 9px var(--font-mono); fill:#7dd3fc; }
+        .gx-cam-sub { font:500 8px inherit; fill:var(--wr-dim); }
+        .gx-ph { font:700 10px inherit; fill:var(--wr-fg); }
+        .gx-n { fill:var(--wr-dim); }
+        .wr-geo-count { position:absolute; right:14px; top:12px; text-align:right; }
+        .wr-geo-count b { display:block; font:600 44px/1 var(--font-mono); color:var(--wr-fg); letter-spacing:-.03em; }
+        .wr-geo-count b.warn { color:#fde68a; }
+        .wr-geo-count b.hot { color:#fca5a5; animation:wrHot 1s steps(2) infinite; }
+        @keyframes wrHot { 0%,100%{opacity:1} 50%{opacity:.45} }
+        .wr-geo-count small { display:block; font:500 11px var(--font-mono); color:var(--wr-dim); margin-top:4px; }
+        .wr-geo-legend { position:absolute; left:10px; bottom:8px; display:flex; gap:10px; font-size:10px;
+                         color:var(--wr-dim); align-items:center; }
+        .wr-geo-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
+        .wr-geo-legend i.lv0 { background:#3b4a66; } .wr-geo-legend i.lv1 { background:#4ade80; }
+        .wr-geo-legend i.lv2 { background:#facc15; } .wr-geo-legend i.lv3 { background:#fb923c; }
+        .wr-geo-legend i.lv4 { background:#f87171; }
+        .wr-geo-legend .scale i { width:30px; height:2px; background:var(--wr-dim); border-radius:0; }
+        @media (prefers-reduced-motion: reduce) { .wr-geo-count b.hot { animation:none; } }
         /* 路口圖區:xn-* 元件本身是淺底的,給它一塊白底容器,不要硬改元件 */
         .wr-int { background:var(--wr-panel); border:1px solid var(--wr-line);
                   border-radius:var(--r-base); padding:12px; }
@@ -7660,47 +7694,58 @@
                             </div>
                         </div>
 
-                        <!-- 路口圖:兩欄之間的共同事實來源(同一份 5F03) -->
+                        <!-- 路口圖:真實幾何。相機放在實測 WGS84 座標(docs/相機分相對應表.md),
+                             進場道沿相機軸線畫、北為上。路段底色 = 該進場道兩台相機較差的壅塞等級,
+                             排隊帶從停止線往回長到實際排隊公尺數。燈色來自 5F03(經 /plan 的
+                             green_phase/clearance),不是自己推的。 -->
                         <div class="wr-int">
-                            <div class="wr-sec-hd">路口燈態圖<span>直接由 5F03 燈態回報繪製</span></div>
-                            <div v-if="sigIntersections.length" class="xn-grid">
-                                <div class="xn-card" v-for="xn in sigIntersections" :key="'lv'+xn.addr">
-                                    <div class="xn-head">
-                                        <span class="xn-name"><span class="xn-live" :class="{off:xn.stale}"></span>{{ xn.name }}</span>
-                                        <span class="xn-addr">{{ xn.addr_hex }}</span>
-                                    </div>
-                                    <div class="xn-stage">
-                                        <div class="xn-road-h"></div>
-                                        <div class="xn-road-v"></div>
-                                        <div class="xn-signal" v-for="(L, li) in (xn.phase&&xn.phase.lights||[])" :key="'lvp'+xn.addr+li"
-                                             :class="{horiz:xnPoleHoriz(L.dir)}" :style="xnPoleStyle(L.dir)" :title="L.dir+' '+L.text">
-                                            <span class="xn-dot" :class="{red:xnLampOn(L,'red')}"></span>
-                                            <span class="xn-dot" :class="{amber:xnLampOn(L,'amber')}"></span>
-                                            <span class="xn-dot" :class="{green:xnLampOn(L,'green')}"></span>
-                                            <span v-if="xnBit(L,0x08)" class="xn-arrow left" title="左轉綠"></span>
-                                            <span v-if="xnBit(L,0x10)" class="xn-arrow up" title="直行綠"></span>
-                                            <span v-if="xnBit(L,0x20)" class="xn-arrow right" title="右轉綠"></span>
-                                            <span v-if="xnPedFlash(L)" class="xn-ped flash" title="行人綠閃">
-                                                <i class="ped-fig"></i></span>
-                                            <span v-else-if="xnBit(L,0x40)" class="xn-ped green" title="行人綠燈">
-                                                <i class="ped-fig"></i></span>
-                                            <span v-else-if="xnBit(L,0x80)" class="xn-ped red" title="行人紅燈">
-                                                <i class="ped-fig"></i></span>
-                                        </div>
-                                        <div class="xn-center">
-                                            <div class="xn-count" :key="'lvc'+xn.addr+'-'+xnRemainLive(xn)"
-                                                 :class="{warn:xnRemainLive(xn)!=null&&xnRemainLive(xn)<=10&&xnRemainLive(xn)>5, hot:xnRemainLive(xn)!=null&&xnRemainLive(xn)<=5, tick:xnRemainLive(xn)!=null&&xnRemainLive(xn)>5}">{{ xnRemainLive(xn)==null?'—':xnRemainLive(xn) }}</div>
-                                            <div class="xn-count-tot" v-if="xn.step_total_sec">/ {{ xn.step_total_sec }}s</div>
-                                            <div class="xn-count-tot" v-else>步階</div>
-                                        </div>
-                                    </div>
-                                    <div class="xn-foot" v-if="xn.phase">
-                                        <span v-if="xn.control_mode" class="xn-chip xn-mode" :class="'sev-'+xn.control_mode.severity"><b>{{ xn.control_mode.label }}</b></span>
-                                        <span class="xn-chip"><span class="k">分相</span><b>{{ xn.phase.sub_phase_id }}</b></span>
-                                        <span class="xn-chip"><span class="k">步階</span><b>{{ xn.phase.step_id }}</b></span>
-                                        <span v-if="xnStepSpecial(xn)" class="xn-chip xn-mode sev-warn"><span class="k">狀態</span><b>{{ xn.phase.step_desc }}</b></span>
-                                    </div>
+                            <div class="wr-sec-hd">路口燈態 × 壅塞<span>相機座標實測 · 燈態 5F03 · 路段顏色 = 壅塞等級 · 排隊帶 = 實際排隊長度</span></div>
+                            <div class="wr-geo">
+                                <svg viewBox="0 0 440 320" class="wr-geo-svg" aria-label="路口真實幾何">
+                                    <polygon v-for="(r,ri) in sigGeo.roads" :key="'gr'+ri" class="gx-rd" :points="r.poly"></polygon>
+                                    <polyline v-for="(r,ri) in sigGeo.roads" :key="'gl'+ri" class="gx-lane" :points="r.axis"></polyline>
+                                    <rect :x="sigGeo.center.x-16" :y="sigGeo.center.y-16" width="32" height="32" rx="4" class="gx-box"></rect>
+                                    <polyline v-for="a in sigGeo.approaches" :key="'gs'+a.phase" class="gx-seg" :points="a.segPts" :stroke="a.color"></polyline>
+                                    <polyline v-for="a in sigGeo.approaches" :key="'gq'+a.phase" class="gx-queue" :points="a.queuePts" :stroke="a.color"></polyline>
+                                    <line v-for="a in sigGeo.approaches" :key="'gt'+a.phase" class="gx-stop" :x1="a.stop.x1" :y1="a.stop.y1" :x2="a.stop.x2" :y2="a.stop.y2"></line>
+                                    <g v-for="a in sigGeo.approaches" :key="'gh'+a.phase" :transform="a.headT">
+                                        <rect class="gx-head" x="-7" y="-19" width="14" height="38" rx="4"></rect>
+                                        <circle class="gx-lr" :class="{on:a.lamp==='r'}" cy="-12" r="4.2"></circle>
+                                        <circle class="gx-la" :class="{on:a.lamp==='a'}" r="4.2"></circle>
+                                        <circle class="gx-lg" :class="{on:a.lamp==='g'}" cy="12" r="4.2"></circle>
+                                        <g class="gx-ped" :class="{g:a.lamp==='g'}" transform="translate(12,-2)">
+                                            <circle cx="0" cy="-6" r="2.4"></circle><rect x="-2" y="-3" width="4" height="8" rx="1.5"></rect>
+                                        </g>
+                                    </g>
+                                    <g v-for="c in sigGeo.cams" :key="'gc'+c.id">
+                                        <path class="gx-cone" :d="c.cone"></path>
+                                        <rect class="gx-cam" :class="{off:!c.online}" :x="c.x-4" :y="c.y-3" width="8" height="6" rx="1.5"></rect>
+                                        <circle class="gx-cam" :class="{off:!c.online}" :cx="c.x+5" :cy="c.y" r="2"></circle>
+                                        <text class="gx-cam-lbl" :x="c.lx" :y="c.y-6">{{ c.name }}</text>
+                                        <text class="gx-cam-sub" :x="c.lx" :y="c.y+5">{{ c.site }} · {{ c.occText }}</text>
+                                    </g>
+                                    <text v-for="a in sigGeo.approaches" :key="'gpl'+a.phase" class="gx-ph" :x="a.label.x" :y="a.label.y">分相 {{ a.phase }} {{ a.ramp }} · 儲車 {{ a.storage }} m</text>
+                                    <path class="gx-n" d="M418,18 l6,14 l-6,-4 l-6,4 z"></path>
+                                    <text class="gx-cam-sub" x="414" y="44">N</text>
+                                </svg>
+                                <div class="wr-geo-count" v-if="sigLiveXn0">
+                                    <b :class="sigLiveRemainCls">{{ sigLiveRemainText }}</b>
+                                    <small v-if="sigLiveXn0.step_total_sec">/ {{ sigLiveXn0.step_total_sec }} s · 步階 {{ sigLiveXn0.phase?sigLiveXn0.phase.step_id:'—' }}</small>
+                                    <small v-else>步階 {{ sigLiveXn0.phase?sigLiveXn0.phase.step_id:'—' }}</small>
                                 </div>
+                                <div class="wr-geo-legend">
+                                    <span><i class="lv1"></i>暢通</span><span><i class="lv2"></i>中等</span>
+                                    <span><i class="lv3"></i>擁擠</span><span><i class="lv4"></i>嚴重壅塞</span>
+                                    <span><i class="lv0"></i>未量到</span>
+                                    <span class="scale"><i></i>20 m</span>
+                                </div>
+                            </div>
+                            <div class="xn-foot" v-if="sigLiveXn0 && sigLiveXn0.phase" style="justify-content:center;margin-top:8px">
+                                <span v-if="sigLiveXn0.control_mode" class="xn-chip xn-mode" :class="'sev-'+sigLiveXn0.control_mode.severity"><b>{{ sigLiveXn0.control_mode.label }}</b></span>
+                                <span class="xn-chip"><span class="k">分相</span><b>{{ sigLiveXn0.phase.sub_phase_id }}</b></span>
+                                <span class="xn-chip"><span class="k">步階</span><b>{{ sigLiveXn0.phase.step_id }}</b></span>
+                                <span v-if="sigLiveXn0.phase_elapsed_sec!=null" class="xn-chip"><span class="k">已亮</span><b>{{ Math.round(sigLiveXn0.phase_elapsed_sec) }}</b><span class="k">s</span></span>
+                                <span v-if="xnStepSpecial(sigLiveXn0)" class="xn-chip xn-mode sev-warn"><span class="k">狀態</span><b>{{ sigLiveXn0.phase.step_desc }}</b></span>
                             </div>
                             <p v-else class="wr-empty">尚未收到燈態回報(5F03)。</p>
 
@@ -22919,6 +22964,104 @@ const app=createApp({
                 };
             });
         });
+        // ── 路口真實幾何 ─────────────────────────────────────────────
+        // 相機 WGS84 實測座標(docs/相機分相對應表.md)。以 WN-2 為原點換算公尺,北為上。
+        // 🛑 這是站點幾何,不是量測值,所以放前端常數;分相歸屬與量測一律取 /plan。
+        const SIG_GEO_CAM = {
+            2: {lat: 23.063842, lon: 120.279342, site: '上游'},
+            3: {lat: 23.063623, lon: 120.278884, site: '停等區'},
+            4: {lat: 23.063662, lon: 120.278610, site: '上游'},
+            5: {lat: 23.063574, lon: 120.278733, site: '停等區'},
+        };
+        const SIG_GEO_ORIGIN = 5;
+        const SIG_LV_COLOR = {0: '#3b4a66', 1: '#4ade80', 2: '#facc15', 3: '#fb923c', 4: '#f87171'};
+        const sigLiveXn0 = computed(() => (sigIntersections.value || [])[0] || null);
+        const sigLiveRemainText = computed(() => {
+            const xn = sigLiveXn0.value; if (!xn) return '—';
+            const v = xnRemainLive(xn); return (v == null) ? '—' : String(v);
+        });
+        const sigLiveRemainCls = computed(() => {
+            const xn = sigLiveXn0.value; if (!xn) return '';
+            const v = xnRemainLive(xn); if (v == null) return '';
+            return v <= 5 ? 'hot' : (v <= 10 ? 'warn' : '');
+        });
+        const sigGeo = computed(() => {
+            const d = sigPlan.value || {};
+            const cams = d.cameras || [];
+            const o = SIG_GEO_CAM[SIG_GEO_ORIGIN];
+            const MLAT = 110900, MLON = 102500, PX = 3.0, CX = 170, CY = 175;
+            const m = {};   // id → 公尺座標
+            Object.keys(SIG_GEO_CAM).forEach((k) => {
+                const c = SIG_GEO_CAM[k];
+                m[k] = {x: (c.lon - o.lon) * MLON, y: (c.lat - o.lat) * MLAT};
+            });
+            const P = (x, y) => ({x: CX + x * PX, y: CY - y * PX});
+            const pts = (arr) => arr.map((q) => q.x.toFixed(1) + ',' + q.y.toFixed(1)).join(' ');
+            const unit = (a, b) => { const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1; return {x: dx / L, y: dy / L}; };
+            const along = (org, u, dist) => P(org.x + u.x * dist, org.y + u.y * dist);
+            // 每相:停止線那台當原點,上游那台定方向。哪兩台屬於哪一相由 /plan 決定。
+            const byPhase = {};
+            cams.forEach((c) => { (byPhase[c.phase_no] = byPhase[c.phase_no] || []).push(c); });
+            const sides = {};
+            [d.green_side, d.red_side].forEach((sd) => { if (sd) sides[sd.phase_no] = sd; });
+            const roads = [], approaches = [], camsOut = [];
+            const rank = (l) => ({low: 1, medium: 2, high: 3, critical: 4}[String(l || '').toLowerCase()] || 0);
+            Object.keys(byPhase).map(Number).sort().forEach((ph) => {
+                const list = byPhase[ph];
+                // 停止線台 = 座標離原點/路口較近的那台(WN-2、NE-2),其餘為上游
+                const withGeo = list.filter((c) => m[c.camera_id]);
+                if (withGeo.length < 1) return;
+                withGeo.sort((a, b) => Math.hypot(m[a.camera_id].x, m[a.camera_id].y) - Math.hypot(m[b.camera_id].x, m[b.camera_id].y));
+                const stopCam = withGeo[0], upCam = withGeo[1] || withGeo[0];
+                const org = m[stopCam.camera_id];
+                const u = (upCam === stopCam) ? {x: 0.7, y: 0.7} : unit(org, m[upCam.camera_id]);
+                const n = {x: -u.y, y: u.x};
+                const len = ph === 1 ? 110 : 70, back = 32, w = 10;
+                const a = along(org, u, -back), b = along(org, u, len), h = w / 2 * PX;
+                roads.push({
+                    poly: pts([{x: a.x + n.x * h, y: a.y - n.y * h}, {x: b.x + n.x * h, y: b.y - n.y * h},
+                               {x: b.x - n.x * h, y: b.y + n.y * h}, {x: a.x - n.x * h, y: a.y + n.y * h}]),
+                    axis: pts([a, b]),
+                });
+                // 顏色 = 兩台較差的等級;排隊 = 兩台取最大(跟決策引擎同一種聚合)
+                let lv = 0, q = 0;
+                list.forEach((c) => { lv = Math.max(lv, rank(c.level)); q = Math.max(q, Number(c.queue_m) || 0); });
+                const qDraw = Math.min(q, len);
+                const isGreen = d.green_phase === ph;
+                const lamp = !isGreen ? 'r' : (d.clearance ? 'a' : 'g');
+                const c0 = along(org, u, 0), hh = 5 * PX;
+                const hc = along(org, u, -3);
+                const lab = along(org, u, len * 0.72);
+                const sd = sides[ph] || {};
+                approaches.push({
+                    phase: ph, ramp: sd.ramp || '', storage: sd.storage_m || '—',
+                    color: SIG_LV_COLOR[lv], lamp: lamp,
+                    segPts: pts([along(org, u, 0), along(org, u, len)]),
+                    queuePts: pts([along(org, u, 0), along(org, u, qDraw)]),
+                    stop: {x1: c0.x + n.x * hh, y1: c0.y - n.y * hh, x2: c0.x - n.x * hh, y2: c0.y + n.y * hh},
+                    headT: 'translate(' + (hc.x + n.x * 7 * PX).toFixed(1) + ',' + (hc.y - n.y * 7 * PX).toFixed(1) + ')',
+                    label: {x: lab.x + (ph === 1 ? -58 : -64), y: lab.y + (ph === 1 ? 30 : -22)},
+                });
+                list.forEach((c) => {
+                    const g = m[c.camera_id]; if (!g) return;
+                    const p = P(g.x, g.y);
+                    // 視野扇形:一律朝停止線方向(上游那台看向來車,也就是朝停止線)
+                    const ang = Math.atan2(-(-u.y), -u.x), r = 34, a1 = ang - 0.42, a2 = ang + 0.42;
+                    const cone = 'M' + p.x.toFixed(1) + ',' + p.y.toFixed(1)
+                        + ' L' + (p.x + r * Math.cos(a1)).toFixed(1) + ',' + (p.y + r * Math.sin(a1)).toFixed(1)
+                        + ' A' + r + ',' + r + ' 0 0 1 ' + (p.x + r * Math.cos(a2)).toFixed(1) + ',' + (p.y + r * Math.sin(a2)).toFixed(1) + ' Z';
+                    const occ = (c.occupancy == null) ? null : Number(c.occupancy);
+                    camsOut.push({
+                        id: c.camera_id, name: c.name, online: !!c.online, x: p.x, y: p.y, cone: cone,
+                        lx: p.x + (ph === 1 ? 8 : -62),
+                        site: SIG_GEO_CAM[c.camera_id].site,
+                        occText: occ == null ? '—' : (occ * 100).toFixed(0) + '%',
+                    });
+                });
+            });
+            const oo = m[3] && m[5] ? P((m[3].x + m[5].x) / 2, (m[3].y + m[5].y) / 2) : P(8, 3);
+            return {roads: roads, approaches: approaches, cams: camsOut, center: oo};
+        });
         // 底部原始訊框:只留燈態回報(5F03),那才是畫面上秒數與燈色的來源。
         // 全部訊框混在一起會被查詢回報洗版,看不出跟畫面的對應。
         const sigWarFrames = computed(() =>
@@ -24023,7 +24166,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigGeo,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
