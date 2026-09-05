@@ -1636,6 +1636,76 @@ def _paired_precise(rows: list, actual: list, interval: float = None) -> dict:
     }
 
 
+# ── 成效報告(工程 / 技術 / 完整)──────────────────────────────────────
+# 停止線相機(每相一台,通過事件與排隊都以它為準)與進場道長度(上游台到停止線台)。
+# 🛑 這兩個是站點幾何,不是量測值;換站點改 env。
+PHASE_STOPLINE = {
+    1: int(os.getenv("SIGNAL_EVAL_STOPLINE_PHASE1", "3") or 3),
+    2: int(os.getenv("SIGNAL_EVAL_STOPLINE_PHASE2", "5") or 5),
+}
+APPROACH_LEN_M = {
+    1: float(os.getenv("SIGNAL_EVAL_APPROACH_M_PHASE1", "52.7") or 52.7),
+    2: float(os.getenv("SIGNAL_EVAL_APPROACH_M_PHASE2", "16.0") or 16.0),
+}
+PEAK_WINDOWS = ((9, 12), (17, 20))      # 使用者定義的尖峰:每天 09-12、17-20
+
+
+def _eval_window(since_iso: str, until_iso: str) -> dict:
+    """一個時段、兩相各自的逐週期指標。回 {phase: rows}。"""
+    from detection import signal_eval as E
+    from detection.signal_timing_lookup import phase_role
+    cycles_all = _actual_runs_from_frames(since_iso, until_iso) or []
+    cams = sorted(set(PHASE_STOPLINE.values()))
+    cong = E.load_congestion(_VIOL_DB, cams, since_iso, until_iso)
+    passes = E.load_passes(_VIOL_DB, cams, since_iso, until_iso)
+    out = {}
+    for ph in (1, 2):
+        cyc = [c for c in cycles_all if c["phase"] == ph]
+        cam = PHASE_STOPLINE[ph]
+        role = phase_role(ph) or {}
+        out[ph] = E.per_cycle_metrics(cyc, cong.get(cam, []), passes.get(cam, []),
+                                      role.get("storage_m"), APPROACH_LEN_M.get(ph))
+    return out
+
+
+def _is_peak(ts: float) -> bool:
+    h = datetime.fromtimestamp(ts).hour
+    return any(a <= h < b for a, b in PEAK_WINDOWS)
+
+
+@router.get("/report", summary="成效報告:工程(min)/技術(standard)/完整(full),可 A/B 兩時段")
+async def shadow_report(since: str = Query(...), until: str = Query(...),
+                        b_since: str = Query(""), b_until: str = Query(""),
+                        tier: str = Query("full"),
+                        _user=Depends(get_current_user)):
+    """指標定義見 detection/signal_eval.py。每個指標都帶 method(measured/approx),
+    報告不可以把近似值寫成實測值。統計單位是控制器 5F03 重建的號誌週期。"""
+    from detection import signal_eval as E
+    tier = tier if tier in ("min", "standard", "full") else "full"
+    A = _eval_window(since, until)
+    res = {"tier": tier, "unit": "cycle(controller_5F03)",
+           "a": {"since": since, "until": until,
+                 "by_phase": {str(ph): E.summarize_cycles(rows, tier) for ph, rows in A.items()},
+                 "all": E.summarize_cycles(A[1] + A[2], tier)}}
+    if tier == "full":
+        pk = [r for ph in A for r in A[ph] if _is_peak(r["start"])]
+        off = [r for ph in A for r in A[ph] if not _is_peak(r["start"])]
+        res["a"]["peak"] = E.summarize_cycles(pk, "standard")
+        res["a"]["offpeak"] = E.summarize_cycles(off, "standard")
+        res["a"]["peak_vs_offpeak"] = E.compare(off, pk)
+    if b_since and b_until:
+        B = _eval_window(b_since, b_until)
+        res["b"] = {"since": b_since, "until": b_until,
+                    "by_phase": {str(ph): E.summarize_cycles(rows, tier) for ph, rows in B.items()},
+                    "all": E.summarize_cycles(B[1] + B[2], tier)}
+        if tier == "full":
+            res["ab_test"] = {"all": E.compare(A[1] + A[2], B[1] + B[2]),
+                              "phase_1": E.compare(A[1], B[1]), "phase_2": E.compare(A[2], B[2]),
+                              "note": "Welch t-test,樣本 = 號誌週期;b − a 為正代表 B 較大。"
+                                      "Cohen's d:<0.2 negligible, <0.5 small, <0.8 medium, ≥0.8 large。"}
+    return res
+
+
 @router.get("/paired", summary="逐次綠燈配對(精確比對:我方會早幾秒切)")
 async def shadow_paired(minutes: int = Query(180, ge=5, le=10080),
                         since: str = Query(""), until: str = Query(""),
