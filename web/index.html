@@ -3849,30 +3849,52 @@
             .dc-bar-fill, .dc-occ-fill { transition:none; }
         }
         /* ── 影子演算控制可視化 ── */
-        .vz-wrap { position:relative; width:100%; }
-        .vz-svg { width:100%; height:300px; display:block; border:1px solid var(--gov-border);
-                  border-radius:var(--r-base); background:var(--gov-surface); }
-        .vz-lane { fill:var(--gov-surface); } .vz-lane.alt { fill:var(--gov-surface-2); }
-        .vz-band.p1 { fill:var(--gov-ok); opacity:.55; } .vz-band.p2 { fill:var(--gov-primary); opacity:.45; }
-        .vz-band.none { fill:var(--gov-border); opacity:.5; } .vz-band.clr { fill:var(--gov-warn); opacity:.75; }
-        .vz-q1 { fill:none; stroke:#7c3aed; stroke-width:1.6; vector-effect:non-scaling-stroke; }
-        .vz-q2 { fill:none; stroke:#0e7490; stroke-width:1.6; vector-effect:non-scaling-stroke; }
+        .vz-wrap { position:relative; width:100%; padding:10px 4px 2px;
+                   border:1px solid var(--gov-border); border-radius:12px;
+                   background:var(--gov-surface); }
+        /* 圖表語彙參考 shadcn area chart:漸層面積、只留淡虛線水平格線、
+           不畫軸線與泳道底色、細筆畫圓角。配色一律用專案 tokens。 */
+        .vz-svg { width:100%; height:340px; display:block; background:transparent; }
+        .vz-grid { stroke:var(--gov-border); stroke-width:1; stroke-dasharray:3 5;
+                   opacity:.7; vector-effect:non-scaling-stroke; }
+        .vz-area { stroke:none; }
+        .vz-area.q1 { fill:url(#vzGradQ1); } .vz-area.q2 { fill:url(#vzGradQ2); }
+        .vz-area.mg { fill:url(#vzGradM); }
+        .vz-band.p1 { fill:var(--gov-ok); opacity:.16; } .vz-band.p2 { fill:var(--gov-primary); opacity:.14; }
+        .vz-band.none { fill:var(--gov-border); opacity:.25; } .vz-band.clr { fill:var(--gov-warn); opacity:.45; }
+        .vz-q1 { fill:none; stroke:#7c3aed; stroke-width:1.75; stroke-linecap:round;
+                 stroke-linejoin:round; vector-effect:non-scaling-stroke; }
+        .vz-q2 { fill:none; stroke:#0e7490; stroke-width:1.75; stroke-linecap:round;
+                 stroke-linejoin:round; vector-effect:non-scaling-stroke; }
+        .vz-dot { stroke:var(--gov-surface); stroke-width:2; vector-effect:non-scaling-stroke; }
+        .vz-dot.q1 { fill:#7c3aed; } .vz-dot.q2 { fill:#0e7490; }
         .vz-zero { stroke:var(--gov-border-strong); stroke-width:1; stroke-dasharray:3 3; vector-effect:non-scaling-stroke; }
-        .vz-margin { fill:none; stroke:var(--gov-fault); stroke-width:1.5; vector-effect:non-scaling-stroke; }
+        .vz-margin { fill:none; stroke:var(--gov-fault); stroke-width:1.6; stroke-linecap:round;
+                     stroke-linejoin:round; vector-effect:non-scaling-stroke; }
         .vz-actual { stroke:var(--gov-text); stroke-width:1.2; opacity:.7; vector-effect:non-scaling-stroke; }
         .vz-ours { fill:var(--gov-warn); stroke:#fff; stroke-width:.5; vector-effect:non-scaling-stroke; }
         .vz-ours.idle { fill:var(--gov-mute-2); }
         .vz-gap { fill:repeating-linear-gradient(45deg, transparent 0 4px, rgba(0,0,0,.08) 4px 8px); fill:rgba(0,0,0,.06); }
         .vz-cursor { stroke:var(--gov-primary); stroke-width:1; vector-effect:non-scaling-stroke; }
-        .vz-tick { font:500 10px var(--font-mono); fill:var(--gov-mute-2); }
+        .vz-tick { font:500 10px var(--font-mono); fill:var(--gov-mute-2); opacity:.85; }
         .vz-labels { position:absolute; left:6px; top:0; bottom:0; pointer-events:none; }
-        .vz-labels span { position:absolute; font:600 11px var(--font-sans); color:var(--gov-muted);
-                          background:rgba(255,255,255,.75); padding:0 5px; border-radius:4px; }
+        .vz-labels span { position:absolute; font:600 10.5px var(--font-sans); color:var(--gov-mute-2);
+                          letter-spacing:.02em; padding:0 4px; }
         .vz-tip { position:absolute; top:8px; z-index:3; pointer-events:none; display:flex; flex-direction:column; gap:2px;
                   background:var(--gov-surface); border:1px solid var(--gov-border); border-radius:var(--r-base);
                   box-shadow:var(--shadow-md); padding:8px 10px; font-size:12px; color:var(--gov-text-2);
                   font-variant-numeric:tabular-nums; max-width:320px; }
-        .vz-tip b { font-family:var(--font-mono); color:var(--gov-text); }
+        .vz-tip { border-radius:10px; box-shadow:0 8px 24px rgba(20,35,60,.12); padding:9px 11px; gap:4px; }
+        .vz-tip b { font:600 11.5px var(--font-mono); color:var(--gov-text);
+                    letter-spacing:.02em; margin-bottom:2px; }
+        .vz-tip-row { display:flex; align-items:center; gap:7px; font-size:11.5px; }
+        .vz-tip-row span { color:var(--gov-muted); }
+        .vz-tip-row em { margin-left:auto; font-style:normal; font-family:var(--font-mono);
+                         font-weight:600; color:var(--gov-text); }
+        .vz-tip-row.sub { padding-top:3px; border-top:1px solid var(--gov-border);
+                          font-size:11px; color:var(--gov-mute-2); }
+        .vz-tip-row.sub em { font-weight:500; color:var(--gov-mute-2); }
+        .vz-sw { width:8px; height:8px; border-radius:2px; flex:none; }
         .vz-tip-sw { color:var(--gov-warn); font-weight:700; }
         .vz-tip-why { color:var(--gov-mute-2); white-space:normal; }
         .vz-partial td { color:var(--gov-mute-2); font-style:italic; }
@@ -7875,16 +7897,34 @@
                                      瀏覽器改用 1 使用者單位 = 1px,內容只畫在 1000x280 的範圍,
                                      容器越寬空白越多(2026-09-06 使用者回報「只有 container 一半」的真因)。 -->
                                 <svg class="vz-svg" :view-box.camel="'0 0 '+vzW+' '+vzH" preserveAspectRatio="none">
-                                    <!-- 列標籤底 -->
-                                    <g v-for="(lane,li) in vzLanes" :key="'ln'+li">
-                                        <rect :x="0" :y="lane.y" :width="vzW" :height="lane.h" class="vz-lane" :class="{alt:li%2===1}"></rect>
-                                    </g>
+                                    <defs>
+                                        <!-- 漸層填充:面積往下淡出到透明(shadcn area chart 的作法)。
+                                             用 userSpaceOnUse + 明確的 y1/y2,避免 objectBoundingBox
+                                             在不同泳道高度下算出不一樣的漸層。 -->
+                                        <linearGradient id="vzGradQ1" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stop-color="#7c3aed" stop-opacity="0.28"></stop>
+                                            <stop offset="100%" stop-color="#7c3aed" stop-opacity="0.02"></stop>
+                                        </linearGradient>
+                                        <linearGradient id="vzGradQ2" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stop-color="#0e7490" stop-opacity="0.26"></stop>
+                                            <stop offset="100%" stop-color="#0e7490" stop-opacity="0.02"></stop>
+                                        </linearGradient>
+                                        <linearGradient id="vzGradM" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stop-color="var(--gov-fault)" stop-opacity="0.22"></stop>
+                                            <stop offset="100%" stop-color="var(--gov-fault)" stop-opacity="0.02"></stop>
+                                        </linearGradient>
+                                    </defs>
+                                    <!-- 只畫淡虛線水平格線,不畫泳道底色也不畫軸線 -->
+                                    <line v-for="(gy,gi) in vzGrid" :key="'gr'+gi" :x1="0" :x2="vzW" :y1="gy" :y2="gy" class="vz-grid"></line>
                                     <!-- 燈態帶:分相 1 綠 / 分相 2 綠 / 清道 -->
                                     <rect v-for="(b,bi) in vzBands" :key="'bd'+bi" :x="b.x" :y="b.y" :width="b.w" :height="b.h" :class="'vz-band '+b.cls"><title>{{ b.tip }}</title></rect>
-                                    <!-- 排隊曲線 -->
+                                    <!-- 排隊:漸層面積 + 細折線 -->
+                                    <path :d="vzQ1Area" class="vz-area q1"></path>
+                                    <path :d="vzQ2Area" class="vz-area q2"></path>
                                     <path :d="vzQ1Path" class="vz-q1"></path>
                                     <path :d="vzQ2Path" class="vz-q2"></path>
                                     <!-- 裕度:0 線 + 曲線,正值 = 我方要切 -->
+                                    <path :d="vzMarginArea" class="vz-area mg"></path>
                                     <line :x1="0" :x2="vzW" :y1="vzMarginZero" :y2="vzMarginZero" class="vz-zero"></line>
                                     <path :d="vzMarginPath" class="vz-margin"></path>
                                     <!-- 判切點:我方(琥珀三角)與實際(黑色細線) -->
@@ -7894,6 +7934,8 @@
                                     <rect v-for="(g,gi) in vzGaps" :key="'gp'+gi" :x="g.x" :y="0" :width="g.w" :height="vzH" class="vz-gap"></rect>
                                     <!-- 游標 -->
                                     <line v-if="vzCursor" :x1="vzCursor.x" :x2="vzCursor.x" :y1="0" :y2="vzH" class="vz-cursor"></line>
+                                    <circle v-if="vzCursor && vzCursor.y1!=null" :cx="vzCursor.x" :cy="vzCursor.y1" r="3.5" class="vz-dot q1"></circle>
+                                    <circle v-if="vzCursor && vzCursor.y2!=null" :cx="vzCursor.x" :cy="vzCursor.y2" r="3.5" class="vz-dot q2"></circle>
                                     <!-- 時間刻度 -->
                                     <text v-for="(tk,ti) in vzTicks" :key="'tk'+ti" :x="tk.x" :y="vzH-4" class="vz-tick">{{ tk.label }}</text>
                                 </svg>
@@ -7902,9 +7944,11 @@
                                 </div>
                                 <div v-if="vzCursor" class="vz-tip" :style="vzTipStyle">
                                     <b>{{ vzCursor.time }}</b>
-                                    <span>綠燈 分相 {{ vzCursor.gp }}{{ vzCursor.clr?'(清道)':'' }}</span>
-                                    <span>排隊 分相1 {{ vzNum(vzCursor.q1) }} m · 分相2 {{ vzNum(vzCursor.q2) }} m</span>
-                                    <span>紅側延滯 {{ vzNum(vzCursor.sg) }} · 門檻 {{ vzNum(vzCursor.thr) }} · 裕度 {{ vzNum(vzCursor.margin) }}</span>
+                                    <div class="vz-tip-row"><i class="vz-sw" style="background:var(--gov-ok)"></i><span>綠燈</span><em>分相 {{ vzCursor.gp }}{{ vzCursor.clr?'(清道)':'' }}</em></div>
+                                    <div class="vz-tip-row"><i class="vz-sw" style="background:#7c3aed"></i><span>排隊 分相 1</span><em>{{ vzNum(vzCursor.q1) }} m</em></div>
+                                    <div class="vz-tip-row"><i class="vz-sw" style="background:#0e7490"></i><span>排隊 分相 2</span><em>{{ vzNum(vzCursor.q2) }} m</em></div>
+                                    <div class="vz-tip-row"><i class="vz-sw" style="background:var(--gov-fault)"></i><span>裕度</span><em>{{ vzNum(vzCursor.margin) }}</em></div>
+                                    <div class="vz-tip-row sub"><span>紅側延滯 {{ vzNum(vzCursor.sg) }}</span><em>門檻 {{ vzNum(vzCursor.thr) }}</em></div>
                                     <span :class="vzCursor.ours?'vz-tip-sw':''">我方 {{ vzCursor.ours?'應換相':'續綠' }}{{ vzCursor.actual?' · 實際此刻換相':'' }}</span>
                                     <span v-if="vzCursor.reason" class="vz-tip-why">{{ vzCursor.reason }}</span>
                                 </div>
@@ -22999,7 +23043,52 @@ const app=createApp({
             return m * 1.1;
         });
         const vzMarginPath = computed(() => vzPath(vzMarginArr.value, vzLanes[3], vzScaleM.value, true));
+        // 面積版:折線收到基線再閉合,填漸層(shadcn area chart 的語彙)。
+        // 🛑 斷點一樣要抬筆 —— 面積不可以跨過洞把兩段連成一片,那會憑空長出資料。
+        const vzArea = (arr, lane, scale, center) => {
+            const d = vzData.value; if (!d.available) return '';
+            const base = center ? (lane.y + lane.h / 2) : (lane.y + lane.h);
+            const gaps = d.gaps || [];
+            let out = '', seg = [];
+            const flush = () => {
+                if (seg.length > 1) {
+                    out += 'M' + seg[0][0] + ',' + base.toFixed(1) + ' '
+                         + seg.map((q) => 'L' + q[0] + ',' + q[1]).join(' ')
+                         + ' L' + seg[seg.length - 1][0] + ',' + base.toFixed(1) + ' Z ';
+                }
+                seg = [];
+            };
+            for (let k = 0; k < d.t.length; k++) {
+                const v = arr[k];
+                const inGap = gaps.some((g) => d.t[k] > g[0] && d.t[k] < g[1]);
+                if (v == null || inGap) { flush(); continue; }
+                let y;
+                if (center) {
+                    const half = lane.h / 2;
+                    y = lane.y + half - Math.max(-half, Math.min(half, v / scale * half));
+                } else {
+                    y = lane.y + lane.h - Math.min(lane.h, v / scale * lane.h);
+                }
+                seg.push([vzX(d.t[k]).toFixed(1), y.toFixed(1)]);
+            }
+            flush();
+            return out;
+        };
+        const vzQ1Area = computed(() => vzArea(vzData.value.queue_m_1 || [], vzLanes[2], vzScaleQ.value, false));
+        const vzQ2Area = computed(() => vzArea(vzData.value.queue_m_2 || [], vzLanes[2], vzScaleQ.value, false));
+        const vzMarginArea = computed(() => vzArea(vzMarginArr.value, vzLanes[3], vzScaleM.value, true));
+        // 水平格線:每個資料泳道畫 3 條淡虛線(shadcn 只留水平格線,不畫垂直、不畫軸線)
+        const vzGrid = computed(() => {
+            const out = [];
+            [vzLanes[2], vzLanes[3]].forEach((lane) => {
+                for (let i = 1; i <= 3; i++) out.push(lane.y + lane.h * i / 4);
+            });
+            return out;
+        });
         const vzMarginZero = vzLanes[3].y + vzLanes[3].h / 2;
+        // 游標點的 y:跟折線同一套換算,才會貼在線上(shadcn 的 active dot)
+        const vzDotY = (v, lane, scale) => (v == null || !isFinite(v)) ? null
+            : lane.y + lane.h - Math.min(lane.h, Number(v) / scale * lane.h);
         const vzGaps = computed(() => {
             const d = vzData.value; if (!d.available) return [];
             return (d.gaps || []).map((g) => ({x: vzX(g[0]), w: Math.max(2, vzX(g[1]) - vzX(g[0]))}));
@@ -23035,6 +23124,8 @@ const app=createApp({
                 sg: sg, thr: kg + cc, margin: sg - kg - cc,
                 ours: !!d.ours_switch[k], actual: !!d.actual_switch[k],
                 reason: (d.reason || [])[k] || '',
+                y1: vzDotY(d.queue_m_1[k], vzLanes[2], vzScaleQ.value),
+                y2: vzDotY(d.queue_m_2[k], vzLanes[2], vzScaleQ.value),
             };
         };
         const vzTipStyle = computed(() => {
@@ -24697,7 +24788,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigCamZones,sigCamBox,sigCamOverlayOn,onWarCamLoad,sigCamFullName,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigCamZones,sigCamBox,sigCamOverlayOn,onWarCamLoad,sigCamFullName,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
