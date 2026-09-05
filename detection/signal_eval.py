@@ -116,10 +116,10 @@ def load_passes(db_path: str, cams: list, since_local: str, until_local: str) ->
     """{cam: [(local_ts, speed_kmh|None)]} —— **每筆一輛通過**。
 
     🛑 只取 direction='EXIT'。2026-09-06 查出 traffic_events 混了三種列:
-         IN / EXIT   每車一筆的通過紀錄(cam3 三小時 887 / 873,兩者應該相當)
+         IN / EXIT   每車一筆的通過紀錄(NE-2 三小時 887 / 873,兩者應該相當)
          INOUT       每幀每車的偵測紀錄(同一台車在框內每秒可寫 3 筆)
-         straight 等 **別的進場道**的偵測(cam3 的 straight 是下匝道後平面道路)
-       先前不分 direction 全部計入,cam3 算出 1044 vph、cam5 1358 vph,
+         straight 等 **別的進場道**的偵測(NE-2 的 straight 是下匝道後平面道路)
+       先前不分 direction 全部計入,NE-2 算出 1044 vph、WN-2 1358 vph,
        合計 2403 vph —— 而該相飽和流只有 1184/909 vph,綠燈又只佔約四成,
        物理上不可能。只取 EXIT 後是 291 + 361 = 652 vph,低於容量,
        也與紅燈排隊成長法估到的到達率(515 vph)量級相符。
