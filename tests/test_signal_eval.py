@@ -135,3 +135,45 @@ def test_load_passes_empty_when_no_exit_rows(tmp_path):
     conn.commit(); conn.close()
     got = load_passes(str(db), [3], "2026-09-05T09:00:00", "2026-09-05T11:00:00")
     assert got[3] == []
+
+
+def test_load_flow_reads_shadow_log_flow_columns(tmp_path):
+    """使用者:「in out 不看,我們看流量」—— 流量取 signal_shadow_log 的 flow_vpm。"""
+    import sqlite3
+    from detection.signal_eval import load_flow
+    db = tmp_path / "s.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute("CREATE TABLE signal_shadow_log (ts TEXT, flow_vpm_1 REAL, flow_vpm_2 REAL)")
+    conn.executemany("INSERT INTO signal_shadow_log VALUES (?,?,?)",
+                     [("2026-09-05T17:%02d:00" % i, 20.0 + i, 10.0) for i in range(10)])
+    conn.commit(); conn.close()
+    f = load_flow(str(db), 1, "2026-09-05T17:00:00", "2026-09-05T18:00:00")
+    assert f["samples"] == 10
+    assert abs(f["flow_vpm"] - 24.5) < 1e-6
+    assert abs(f["throughput_vph"] - 24.5 * 60) < 1e-6
+    assert "caveat" in f, "已知的高估/低估方向要一起帶出去"
+    f2 = load_flow(str(db), 2, "2026-09-05T17:00:00", "2026-09-05T18:00:00")
+    assert abs(f2["flow_vpm"] - 10.0) < 1e-6
+
+
+def test_load_flow_empty_window_returns_none_not_zero(tmp_path):
+    import sqlite3
+    from detection.signal_eval import load_flow
+    db = tmp_path / "s2.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute("CREATE TABLE signal_shadow_log (ts TEXT, flow_vpm_1 REAL, flow_vpm_2 REAL)")
+    conn.commit(); conn.close()
+    f = load_flow(str(db), 1, "2026-09-05T17:00:00", "2026-09-05T18:00:00")
+    assert f["samples"] == 0 and f["flow_vpm"] is None and f["throughput_vph"] is None
+
+
+def test_flow_capacity_check_flags_impossible_flow():
+    """流量高於容量就是有一邊量錯,必須標出來而不是照登。"""
+    from detection.signal_eval import flow_capacity_check
+    bad = flow_capacity_check(1596.0, 1184.0, 0.45)      # 09-05 17-20 分相1 實況
+    assert bad["checked"] and bad["over_capacity"] is True
+    assert bad["ratio"] > 2.9
+    ok = flow_capacity_check(400.0, 1184.0, 0.45)
+    assert ok["checked"] and ok["over_capacity"] is False
+    none = flow_capacity_check(None, 1184.0, 0.45)
+    assert none["checked"] is False
