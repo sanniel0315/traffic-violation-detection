@@ -465,3 +465,49 @@ def test_timeline_marks_sampling_gaps(tmp_path, monkeypatch):
     assert g[1] - g[0] >= 20, f"斷點區間看起來不對: {g}"
     # t 必須是實際偏移,不是索引 × interval
     assert r["t"][-1] >= 75, "t 應該是實際秒數偏移"
+
+
+def test_saturation_persists_across_restart(tmp_path, monkeypatch):
+    """★ 2026-09-05 教訓:量到的飽和流只存記憶體,每次部署重啟就歸零,
+    半夜重量又量不到 → 退回預設 1800,早尖峰整段跑假設值。
+    量到必須落地、啟動必須載回。"""
+    from api.routes import signal_shadow as S
+    monkeypatch.setattr(S, "_SAT_FILE", str(tmp_path / "sat.json"))
+    S._measured_sat.update({"vph": {1: 496.0, 2: 506.0}, "ts": "2026-09-04T20:00:00",
+                            "source": "measured", "window_hours": 6, "samples": 4247})
+    S._save_saturation()
+    # 模擬重啟:記憶體清空
+    S._measured_sat.update({"vph": {}, "ts": None, "source": "default"})
+    assert S._sat_for(1) == 1800.0          # 清空後真的退回預設
+    assert S._load_saturation() is True
+    assert S._sat_for(1) == 496.0 and S._sat_for(2) == 506.0
+    assert S._measured_sat["source"] == "measured(restored)"
+
+
+def test_saturation_load_rejects_out_of_range(tmp_path, monkeypatch):
+    """檔案裡的值超出 [SAT_MIN, SAT_MAX] 不可載回 —— 壞檔不能把控制邏輯帶偏。"""
+    import json
+    from api.routes import signal_shadow as S
+    f = tmp_path / "sat.json"
+    f.write_text(json.dumps({"vph": {"1": 50.0, "2": 9999.0}}), encoding="utf-8")
+    monkeypatch.setattr(S, "_SAT_FILE", str(f))
+    S._measured_sat.update({"vph": {}, "ts": None, "source": "default"})
+    assert S._load_saturation() is False
+    assert S._sat_for(1) == 1800.0
+
+
+def test_estimate_saturation_ignores_greens_without_queue():
+    """半夜綠燈亮起時沒車在排,那些段不可以拿來量飽和流。"""
+    from detection.signal_sim import estimate_saturation
+    mk = lambda t, ph, q1, q2: (f"2026-09-05T03:{t//60:02d}:{t%60:02d}", ph, q1, q2)
+    # 分相1 綠燈兩段:第一段起始排隊 0m(沒車)、第二段起始 21m(3 台)消退到 0
+    rows = ([mk(t, 1, 0.0, 0.0) for t in range(0, 30, 5)]        # 無車綠燈 30s
+            + [mk(t, 2, 0.0, 0.0) for t in range(30, 60, 5)]
+            + [mk(t, 1, 21.0 - 0.7 * (t - 60), 0.0) for t in range(60, 90, 5)]  # 有車綠燈
+            + [mk(t, 2, 0.0, 0.0) for t in range(90, 120, 5)])
+    arr = {1: {"veh_per_sec": 0.0}, 2: {"veh_per_sec": 0.0}}
+    loose = estimate_saturation(rows, arr, min_start_queue_m=0.0)[1]
+    strict = estimate_saturation(rows, arr, min_start_queue_m=14.0)[1]
+    # 無門檻:兩段綠燈秒數都算進分母,飽和流被無車那段稀釋
+    assert loose["green_sec"] > strict["green_sec"]
+    assert strict["veh_per_sec"] > loose["veh_per_sec"]
