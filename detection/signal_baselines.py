@@ -135,6 +135,72 @@ def max_pressure(sat_veh_per_sec: dict) -> Callable:
     return switch_fn
 
 
+def cycle_adaptive(sat_veh_per_sec: dict, lost_time_sec: float,
+                   min_green: dict, max_green: float,
+                   cycle_min: float = 60.0, cycle_max: float = 120.0,
+                   window_sec: float = 300.0,
+                   arrival_rate: Optional[Callable] = None) -> Callable:
+    """週期制動態控制 —— 使用者 2026-09-06 給的規格。
+
+        週期長度 = 綠燈_A + 綠燈_B + 損失時間(黃燈 + 全紅)
+        車流大 → 延長週期(上限 cycle_max);車流小 → 縮短(下限 cycle_min)
+        各相綠燈受最小綠 / 最大綠限制
+
+    做法:每次回到週期起點,用最近 window_sec 的實測到達率重算 Webster 最佳週期,
+    夾在 [cycle_min, cycle_max] 之間,再依流量比分配綠燈並套上下限。
+    週期內就照分配好的秒數走(這是週期制與「每 5 秒重新決策」的根本差別)。
+
+    🛑 週期下限是**約束不是優點**:需求遠低於容量時,最小延滯的週期可能比
+       下限還短,這時下限會直接製造延滯。要不要設下限、設多少,應該用
+       benchmark 對照最佳解來決定,不是先訂了再說。
+    """
+    st = {"green": {}, "cycle": None, "elapsed_in_plan": 0.0, "last_plan_t": -1e9}
+
+    def replan(t: float, arrivals: dict):
+        w = webster_split(arrivals, sat_veh_per_sec, lost_time_sec,
+                          min_green=min_green, max_cycle=cycle_max)
+        if w.get("feasible"):
+            cyc = min(max(float(w["cycle"]), cycle_min), cycle_max)
+            g = dict(w["green"])
+        else:
+            # 需求超過容量:Webster 無解,直接用最大週期把綠燈按流量比分
+            cyc = cycle_max
+            tot = sum(max(0.0, arrivals.get(p, 0.0)) for p in (1, 2)) or 1.0
+            g = {p: max(1.0, cyc - lost_time_sec * 2) * max(0.0, arrivals.get(p, 0.0)) / tot
+                 for p in (1, 2)}
+        # 🛑 模擬器把損失時間放在**綠燈區間之內**(換相後前幾秒沒有車能走),
+        #    沒有另外的全紅區間。所以「一個綠燈區間」= Webster 的有效綠 + 損失時間,
+        #    兩個區間相加才等於週期長度。先前寫成 cyc - lost*2 再配比,
+        #    等於把損失時間扣兩次,實際週期只有設定值的 5/6
+        #    (設 60 秒實測跑出 50 秒、切換 2.4 次/分而不是 2.0)。
+        tot_g = sum(g.values()) or 1.0
+        eff_total = max(1.0, cyc - lost_time_sec * 2)
+        for p in (1, 2):
+            interval = eff_total * g[p] / tot_g + lost_time_sec
+            g[p] = max(float(min_green.get(p, 10.0)), min(float(max_green), interval))
+        st["green"], st["cycle"], st["last_plan_t"] = g, cyc, t
+        return g
+
+    def switch_fn(state) -> bool:
+        t = float(state["t"])
+        g = state["green_phase"]
+        if not st["green"] or (t - st["last_plan_t"]) >= window_sec:
+            if arrival_rate is not None:
+                # 給它**準確的**近期需求(取樣平均),這樣比的是週期制這個策略本身,
+                # 不是它的需求估計器 —— 對照組要給最有利的條件。
+                n = max(1, int(window_sec // 10))
+                arr = {p: sum(float(arrival_rate(max(0.0, t - window_sec) + i * 10.0, p) or 0.0)
+                              for i in range(n)) / n for p in (1, 2)}
+            else:
+                qv = state["queue_veh"]
+                arr = {p: max(0.001, float(qv.get(p) or 0.0) / max(window_sec, 1.0) * 60.0)
+                       for p in (1, 2)}
+            replan(t, arr)
+        return state["green_elapsed"] >= float(st["green"].get(g, 30.0))
+
+    return switch_fn
+
+
 # ── 成效彙整 ──────────────────────────────────────────────────────────
 
 def _demand_veh(rate_fn, duration_sec: float, dt: float) -> float:

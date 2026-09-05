@@ -186,3 +186,58 @@ def test_saturation_denominator_is_saturated_green_not_whole_green():
     # 用整段綠燈(60 秒)只會有約 0.17 —— 確定沒有退回舊行為
     assert s1 > 0.30
     assert sat[1]["denominator"] == "saturated_green"
+
+
+# ── 週期制動態控制(使用者 2026-09-06 給的規格)────────────────────────
+
+def _sat():
+    return {1: 1184 / 3600, 2: 909 / 3600}
+
+
+def test_cycle_adaptive_respects_min_and_max_green():
+    from detection.signal_baselines import cycle_adaptive
+    from detection.signal_sim import simulate
+    cfg = SimConfig(dt_sec=5.0, min_green_sec={1: 15.0, 2: 15.0}, max_green_sec=100.0,
+                    lost_time_sec=5.0, meters_per_vehicle=6.0, saturation_by_phase=_sat())
+    def rate(t, p):
+        return 0.11 if p == 1 else 0.09
+    fn = cycle_adaptive(_sat(), 5.0, {1: 15.0, 2: 15.0}, 100.0, 60.0, 120.0, 300.0, rate)
+    sim = simulate(rate, fn, 1800.0, cfg, start_phase=1)
+    traj = sim["trajectory"]
+    for a, b in zip(traj, traj[1:]):
+        if b["green_phase"] != a["green_phase"]:
+            assert 15.0 <= a["green_elapsed"] <= 100.0, a
+
+
+def test_cycle_adaptive_lengthens_cycle_when_demand_rises():
+    """規格:車流大 → 延長週期;車流小 → 縮短。作用方向要說得出來。"""
+    from detection.signal_baselines import cycle_adaptive
+    from detection.signal_sim import simulate
+    cfg = SimConfig(dt_sec=5.0, min_green_sec={1: 15.0, 2: 15.0}, max_green_sec=100.0,
+                    lost_time_sec=5.0, meters_per_vehicle=6.0, saturation_by_phase=_sat())
+    def low(t, p):
+        return 0.03
+    def high(t, p):
+        return 0.14
+    n_low = simulate(low, cycle_adaptive(_sat(), 5.0, {1: 15.0, 2: 15.0}, 100.0,
+                                         60.0, 120.0, 300.0, low),
+                     1800.0, cfg, start_phase=1)["switch_count"]
+    n_high = simulate(high, cycle_adaptive(_sat(), 5.0, {1: 15.0, 2: 15.0}, 100.0,
+                                           60.0, 120.0, 300.0, high),
+                      1800.0, cfg, start_phase=1)["switch_count"]
+    assert n_high < n_low, "車流大時週期應變長(換相次數變少)"
+
+
+def test_cycle_adaptive_clamps_cycle_to_range():
+    """需求極低時 Webster 會算出很短的週期,必須被下限夾住。"""
+    from detection.signal_baselines import cycle_adaptive
+    from detection.signal_sim import simulate
+    cfg = SimConfig(dt_sec=5.0, min_green_sec={1: 15.0, 2: 15.0}, max_green_sec=100.0,
+                    lost_time_sec=5.0, meters_per_vehicle=6.0, saturation_by_phase=_sat())
+    def tiny(t, p):
+        return 0.005
+    sim = simulate(tiny, cycle_adaptive(_sat(), 5.0, {1: 15.0, 2: 15.0}, 100.0,
+                                        60.0, 120.0, 300.0, tiny),
+                   1800.0, cfg, start_phase=1)
+    # 週期 >= 60 秒 → 每分鐘換相次數 <= 2
+    assert sim["switch_per_min"] <= 2.05, sim["switch_per_min"]
