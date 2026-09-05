@@ -155,6 +155,20 @@ def per_cycle_metrics(cycles: list, cong: list, passes: list, storage_m: Optiona
             present_vs += seg[k][2] * dt
         queues = [s[3] for s in seg]
         speeds = [p[1] for p in pas if p[1]]
+        # 綠燈利用率:綠燈期間停止線有車在場的時間比例。
+        # 🛑 第一版用「每 2 秒放一台為滿載」,現場通過量 1200~1600 輛/h 一律算到 0.99,
+        #    沒有鑑別力。有車比例才看得出「綠燈亮著卻沒車可放」。
+        ga, gb = bisect_left(ct, t0), bisect_left(ct, cy["green_end"])
+        gseg = cong[ga:gb]
+        g_present = 0.0
+        g_total = 0.0
+        for k in range(len(gseg)):
+            dt = (gseg[k + 1][0] - gseg[k][0]) if k + 1 < len(gseg) else LOCAL_SAMPLE_SEC
+            dt = min(max(dt, 0.0), LOCAL_SAMPLE_SEC * 3)
+            g_total += dt
+            if gseg[k][2] > 0:
+                g_present += dt
+        green_util = (g_present / g_total) if g_total > 0 else None
         delay_per_veh = (stopped_vs / n_pass) if n_pass else None
         # 停車率:到達的車裡有多少遇到隊伍/紅燈 —— 用「停等車·秒 / 在場車·秒」近似
         stop_ratio = (stopped_vs / present_vs) if present_vs > 0 else None
@@ -176,7 +190,7 @@ def per_cycle_metrics(cycles: list, cong: list, passes: list, storage_m: Optiona
             "travel_sec": None if travel is None else round(travel, 2),
             "speed_avg_kmh": None if not speeds else round(_mean(speeds), 1),
             "spillback": spill,
-            "green_util": round(min(1.0, n_pass / max(1.0, cy["green_sec"] / 2.0)), 3),   # 每 2 秒放一台為滿載近似
+            "green_util": None if green_util is None else round(green_util, 3),
         })
     return out
 
@@ -214,8 +228,8 @@ def summarize_cycles(rows: list, tier: str = "full") -> dict:
             "cycle_sec_avg": {"value": _r(_mean(col("cycle_sec"))), "unit": "秒", "method": "measured"},
             "cycle_sec_std": {"value": _r(math.sqrt(_var(col("cycle_sec")))) if len(col("cycle_sec")) > 1 else None, "unit": "秒", "method": "measured"},
             "green_sec_avg": {"value": _r(_mean(col("green_sec"))), "unit": "秒", "method": "measured", "how": "控制器 5F03 秒數"},
-            "green_util": {"value": _r(_mean(col("green_util"))), "unit": "0~1", "method": "approx",
-                           "how": "通過車數 ÷ (綠燈秒數/2);每 2 秒一台視為滿載"},
+            "green_util": {"value": _r(_mean(col("green_util"))), "unit": "0~1", "method": "measured",
+                           "how": "綠燈期間停止線有車在場的時間比例(5 秒取樣)"},
             "speed_avg_kmh": {"value": _r(_mean(col("speed_avg_kmh"))), "unit": "km/h", "method": "measured", "n": len(col("speed_avg_kmh"))},
         }
     return {"cycles": len(rows), "core": core, "advanced": adv}
