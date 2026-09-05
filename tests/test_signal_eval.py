@@ -91,9 +91,47 @@ def test_report_window_runs_without_name_errors(tmp_path, monkeypatch):
     db = tmp_path / "v.db"
     conn = sqlite3.connect(db)
     conn.execute("CREATE TABLE congestion_samples (camera_id INT, created_at TEXT, stopped_vehicle_count INT, vehicle_count INT, estimated_queue_length_m REAL, is_overall INT)")
-    conn.execute("CREATE TABLE traffic_events (camera_id INT, created_at TEXT, speed_kmh REAL)")
+    conn.execute("CREATE TABLE traffic_events (camera_id INT, created_at TEXT, speed_kmh REAL, direction TEXT)")
     conn.commit(); conn.close()
     monkeypatch.setattr(S, "_VIOL_DB", str(db))
     monkeypatch.setattr(S, "_actual_runs_from_frames", lambda a, b: [])
     out = S._eval_window("2026-09-04T09:00:00", "2026-09-04T09:10:00")
     assert out == {1: [], 2: []}
+
+
+def test_load_passes_counts_only_exit_rows(tmp_path):
+    """traffic_events 混了每幀偵測列與別的進場道;只有 EXIT 是一車一筆的通過。"""
+    import sqlite3
+    from detection.signal_eval import load_passes
+    db = tmp_path / "v.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute("CREATE TABLE traffic_events (camera_id INT, created_at TEXT, "
+                 "speed_kmh REAL, direction TEXT)")
+    rows = []
+    for i in range(5):
+        rows.append((3, "2026-09-05 01:%02d:00" % i, 30.0, "EXIT"))
+    for i in range(40):
+        rows.append((3, "2026-09-05 01:%02d:%02d" % (i // 6, i % 6), 30.0, "INOUT"))
+    for i in range(12):
+        rows.append((3, "2026-09-05 01:00:%02d" % i, 30.0, "straight"))
+    for i in range(7):
+        rows.append((3, "2026-09-05 01:%02d:30" % i, 30.0, "IN"))
+    conn.executemany("INSERT INTO traffic_events VALUES (?,?,?,?)", rows)
+    conn.commit(); conn.close()
+    got = load_passes(str(db), [3], "2026-09-05T09:00:00", "2026-09-05T11:00:00")
+    assert len(got[3]) == 5, "只能算 EXIT,不可把每幀偵測列或別的進場道算進來"
+
+
+def test_load_passes_empty_when_no_exit_rows(tmp_path):
+    """沒有 EXIT 列就回空(量不到),不可退回全部列湊數字。"""
+    import sqlite3
+    from detection.signal_eval import load_passes
+    db = tmp_path / "v2.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute("CREATE TABLE traffic_events (camera_id INT, created_at TEXT, "
+                 "speed_kmh REAL, direction TEXT)")
+    conn.executemany("INSERT INTO traffic_events VALUES (?,?,?,?)",
+                     [(3, "2026-09-05 01:00:%02d" % i, 30.0, "INOUT") for i in range(20)])
+    conn.commit(); conn.close()
+    got = load_passes(str(db), [3], "2026-09-05T09:00:00", "2026-09-05T11:00:00")
+    assert got[3] == []
