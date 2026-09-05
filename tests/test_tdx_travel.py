@@ -76,3 +76,21 @@ def test_start_is_noop_without_credentials(monkeypatch):
     from services import tdx_travel as T
     monkeypatch.setitem(T._state, "enabled", False)
     assert T.start() is False
+
+
+def test_discover_by_coord_prefers_pair_spanning_the_site(monkeypatch):
+    from services import tdx_travel as T
+    site = (23.063772, 120.279169)      # 新市交流道路口(使用者地圖頁座標)
+    pairs = [
+        # 西邊門架 → 東邊門架,站點落在中間(跨過)
+        {"pair_id": "SPAN", "start_lat": 23.0620, "start_lon": 120.2600, "end_lat": 23.0660, "end_lon": 120.3000},
+        # 兩門架都在東邊,沒跨過但很近
+        {"pair_id": "EAST", "start_lat": 23.0660, "start_lon": 120.3000, "end_lat": 23.0700, "end_lon": 120.3400},
+        # 20 公里外
+        {"pair_id": "FAR", "start_lat": 23.2000, "start_lon": 120.5000, "end_lat": 23.2100, "end_lon": 120.5400},
+    ]
+    monkeypatch.setattr(T, "list_pairs", lambda road_id=None: [dict(p) for p in pairs])
+    out = T.discover_by_coord(*site, radius_km=8.0)
+    assert [p["pair_id"] for p in out] == ["SPAN", "EAST"]
+    assert out[0]["spans_site"] is True and out[0]["offset_km"] is not None and out[0]["offset_km"] < 0.5
+    assert out[1]["spans_site"] is False
