@@ -602,6 +602,11 @@ def _loop():
         except Exception as e:
             with _lock:
                 _stats["last_error"] = str(e)
+        # 逐時評估:整點過 2 分算前一小時(輕量,大多數輪次直接 return)
+        try:
+            _hourly_tick()
+        except Exception:
+            pass
         # 定期重量飽和流。它會隨車種組成與天候變動,不是固定不變的。
         if time.time() - _last_sat_refresh[0] >= SAT_REFRESH_SEC:
             _last_sat_refresh[0] = time.time()
@@ -1748,6 +1753,142 @@ async def shadow_tdx_discover(lat: float = Query(None), lng: float = Query(None)
         return out
     except Exception as e:
         return {"enabled": True, "error": f"{type(e).__name__}: {e}"}
+
+
+# ── 逐時評估(使用者:「每小時都要有」)──────────────────────────────────
+# 每個整點 +2 分算前一小時:配對法(控制器 5F03 秒數)、成效核心指標、取樣一致率、
+# 當時的 change_cost(看參數有沒有生效)。存 signal_hourly_eval,端點與報告都讀表;
+# 沒算過的小時(含當前這一小時)才即時算,並標 partial。
+HOURLY_TABLE_SQL = """CREATE TABLE IF NOT EXISTS signal_hourly_eval (
+    hour TEXT PRIMARY KEY,            -- 'YYYY-MM-DDTHH'
+    computed_at TEXT, partial INTEGER,
+    samples INTEGER, agree_rate REAL, queue_avg_m REAL, change_cost_avg REAL,
+    runs INTEGER, earlier INTEGER, earlier_meaningful INTEGER, same INTEGER, hold INTEGER, later INTEGER,
+    delta_avg REAL, waste_sec REAL, source TEXT,
+    delay_per_veh REAL, throughput_vph REAL, queue_eval_m REAL, cycles INTEGER)"""
+
+
+def _hourly_compute(hour_iso: str) -> dict:
+    """算一個小時。hour_iso = 'YYYY-MM-DDTHH'。"""
+    since = hour_iso + ":00:00"
+    h = datetime.fromisoformat(since)
+    until = (h + timedelta(hours=1)).isoformat(timespec="seconds")
+    now = datetime.now()
+    partial = now < (h + timedelta(hours=1, minutes=1))
+    out = {"hour": hour_iso, "partial": partial}
+    try:
+        conn = _db()
+        rows = conn.execute(
+            "SELECT ts,green_phase,green_elapsed,ours,actual,forced,clearance,queue_m_1,queue_m_2,"
+            "switch_gain,keep_gain,change_cost,agree "
+            "FROM signal_shadow_log WHERE ts>=? AND ts<? AND control_mode='external_dynamic' ORDER BY ts",
+            (since, until)).fetchall()
+        conn.close()
+    except Exception:
+        rows = []
+    out["samples"] = len(rows)
+    comp = [r for r in rows if r[12] is not None]
+    hv = [r for r in comp if (r[7] or 0) > 0 or (r[8] or 0) > 0]
+    out["agree_rate"] = round(100.0 * sum(1 for r in hv if r[12]) / len(hv), 1) if hv else None
+    out["queue_avg_m"] = round(sum(max(r[7] or 0, r[8] or 0) for r in rows) / len(rows), 2) if rows else None
+    ccs = [r[11] for r in rows if r[11] is not None]
+    out["change_cost_avg"] = round(sum(ccs) / len(ccs), 2) if ccs else None
+    actual = _actual_runs_from_frames(since, until)
+    if actual and rows:
+        pr = _paired_precise([r[:12] for r in rows], actual)
+        out["source"] = "controller_5F03"
+    elif rows:
+        pr = _paired_runs([r[:9] for r in rows])
+        out["source"] = "shadow_sampling_fallback"
+    else:
+        pr = None
+        out["source"] = None
+    if pr:
+        out.update({"runs": pr["runs_usable"], "earlier": pr["earlier"], "earlier_meaningful": pr["earlier_meaningful"],
+                    "same": pr["same"], "hold": pr["hold"], "later": pr["later"],
+                    "delta_avg": (pr.get("delta_meaningful") or {}).get("avg"), "waste_sec": pr["waste_sec_total"]})
+    else:
+        out.update({"runs": 0, "earlier": 0, "earlier_meaningful": 0, "same": 0, "hold": 0, "later": 0,
+                    "delta_avg": None, "waste_sec": 0.0})
+    # 成效核心(工程報告三項),兩相合併
+    try:
+        from detection import signal_eval as E
+        ev = _eval_window(since, until)
+        allc = ev.get(1, []) + ev.get(2, [])
+        sm = E.summarize_cycles(allc, "min")["core"]
+        out.update({"delay_per_veh": sm["avg_delay_sec"]["value"], "throughput_vph": sm["throughput_vph"]["value"],
+                    "queue_eval_m": sm["avg_queue_m"]["value"], "cycles": len(allc)})
+    except Exception as e:
+        out.update({"delay_per_veh": None, "throughput_vph": None, "queue_eval_m": None, "cycles": 0,
+                    "eval_error": str(e)})
+    return out
+
+
+def _hourly_store(row: dict) -> None:
+    conn = _db()
+    conn.execute(HOURLY_TABLE_SQL)
+    conn.execute("INSERT OR REPLACE INTO signal_hourly_eval VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                 (row["hour"], datetime.now().isoformat(timespec="seconds"), 1 if row.get("partial") else 0,
+                  row.get("samples"), row.get("agree_rate"), row.get("queue_avg_m"), row.get("change_cost_avg"),
+                  row.get("runs"), row.get("earlier"), row.get("earlier_meaningful"), row.get("same"), row.get("hold"),
+                  row.get("later"), row.get("delta_avg"), row.get("waste_sec"), row.get("source"),
+                  row.get("delay_per_veh"), row.get("throughput_vph"), row.get("queue_eval_m"), row.get("cycles")))
+    conn.commit()
+    conn.close()
+
+
+HOURLY_COLS = ["hour", "computed_at", "partial", "samples", "agree_rate", "queue_avg_m", "change_cost_avg",
+               "runs", "earlier", "earlier_meaningful", "same", "hold", "later", "delta_avg", "waste_sec", "source",
+               "delay_per_veh", "throughput_vph", "queue_eval_m", "cycles"]
+
+
+def hourly_rows(day: str, compute_missing: bool = True) -> list:
+    """一天 24 小時的列。存過的直接讀;沒存的(或 partial 的)即時算並回存。"""
+    conn = _db()
+    conn.execute(HOURLY_TABLE_SQL)
+    got = {r[0]: dict(zip(HOURLY_COLS, r)) for r in
+           conn.execute("SELECT %s FROM signal_hourly_eval WHERE hour LIKE ?" % ",".join(HOURLY_COLS), (day + "T%",))}
+    conn.close()
+    now = datetime.now()
+    out = []
+    for hh in range(24):
+        key = f"{day}T{hh:02d}"
+        h = datetime.fromisoformat(key + ":00:00")
+        if h > now:
+            break
+        row = got.get(key)
+        if row is None or row.get("partial"):
+            if not compute_missing:
+                continue
+            row = _hourly_compute(key)
+            _hourly_store(row)
+        out.append(row)
+    return out
+
+
+_last_hourly = [0.0]
+
+
+def _hourly_tick() -> None:
+    """給影子迴圈每輪呼叫:整點過 2 分且這小時還沒算過前一小時 → 算。"""
+    now = datetime.now()
+    if now.minute < 2:
+        return
+    prev = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H")
+    if _last_hourly[0] == prev:
+        return
+    _last_hourly[0] = prev
+    try:
+        _hourly_store(_hourly_compute(prev))
+    except Exception as e:
+        _stats["last_error"] = f"hourly eval failed: {e}"
+
+
+@router.get("/hourly", summary="逐時評估(配對/成效/一致率/參數),每整點自動算前一小時")
+async def shadow_hourly(date: str = Query("", description="YYYY-MM-DD,空 = 今天"),
+                        _user=Depends(get_current_user)):
+    day = date or datetime.now().strftime("%Y-%m-%d")
+    return {"date": day, "rows": hourly_rows(day)}
 
 
 @router.get("/paired", summary="逐次綠燈配對(精確比對:我方會早幾秒切)")
