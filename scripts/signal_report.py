@@ -73,10 +73,14 @@ def main() -> int:
         q.update({"b_since": args.b[0], "b_until": args.b[1]})
     report = _get(args.base, "/api/signal/shadow/report", q, cookie)
     paired_a = paired_b = None
+    sources = [("成效 A/B", args.base + "/api/signal/shadow/report?" + urllib.parse.urlencode(q))]
     if args.tier == "full":
-        paired_a = _get(args.base, "/api/signal/shadow/paired", {"since": args.a[0], "until": args.a[1]}, cookie)
+        # include_runs=1:把每一段綠燈的配對明細一起拉,存成 CSV —— 報告上的每個統計都能回到逐段
+        paired_a = _get(args.base, "/api/signal/shadow/paired", {"since": args.a[0], "until": args.a[1], "include_runs": 1}, cookie)
+        sources.append(("配對 A", args.base + "/api/signal/shadow/paired?since=%s&until=%s" % (args.a[0], args.a[1])))
         if args.b:
-            paired_b = _get(args.base, "/api/signal/shadow/paired", {"since": args.b[0], "until": args.b[1]}, cookie)
+            paired_b = _get(args.base, "/api/signal/shadow/paired", {"since": args.b[0], "until": args.b[1], "include_runs": 1}, cookie)
+            sources.append(("配對 B", args.base + "/api/signal/shadow/paired?since=%s&until=%s" % (args.b[0], args.b[1])))
 
     hourly = None
     if args.tier == "full":
@@ -92,13 +96,32 @@ def main() -> int:
             except Exception as e:
                 hourly[label] = []
                 print(f"[hourly] {label} 取得失敗: {e}", file=sys.stderr)
+    if hourly:
+        for label in hourly:
+            d0 = (args.a if label.startswith("A ") else args.b)[0][:10]
+            sources.append(("逐時 " + label, args.base + "/api/signal/shadow/hourly?date=" + d0))
     from detection.signal_report_md import render
-    md = render(report, paired_a, paired_b, {"a_label": args.a_label, "b_label": args.b_label}, hourly)
+    md = render(report, paired_a, paired_b, {"a_label": args.a_label, "b_label": args.b_label, "sources": sources}, hourly)
     if args.out:
+        import csv
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(md, encoding="utf-8")
         print(f"寫入 {out}({len(md)} 字元)")
+        # 逐段明細與逐時列存 CSV(報告旁),讓每個統計都能回到原始列
+        for tag, pr in (("a", paired_a), ("b", paired_b)):
+            runs = (pr or {}).get("runs") or []
+            if runs:
+                fp = out.with_name(out.stem + f".runs_{tag}.csv")
+                with open(fp, "w", newline="", encoding="utf-8-sig") as f:
+                    w = csv.DictWriter(f, fieldnames=list(runs[0].keys())); w.writeheader(); w.writerows(runs)
+                print(f"寫入 {fp}({len(runs)} 段)")
+        for label, rows in (hourly or {}).items():
+            if rows:
+                fp = out.with_name(out.stem + ".hourly_" + ("a" if label.startswith("A ") else "b") + ".csv")
+                with open(fp, "w", newline="", encoding="utf-8-sig") as f:
+                    w = csv.DictWriter(f, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(rows)
+                print(f"寫入 {fp}({len(rows)} 小時)")
     else:
         sys.stdout.write(md)
     return 0

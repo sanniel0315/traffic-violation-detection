@@ -185,6 +185,12 @@ def render(report: dict, paired_a: dict | None = None, paired_b: dict | None = N
             lines.append(_paired_block(paired_b, "B"))
         lines += ["", "> Δ 為負代表我方會比現行控制早切；「有代價空放」只計紅側真的有車在等的早切。"
                   "晚切必須為 0 —— 我方不會比現行控制更慢放人。", ""]
+    if meta.get("sources"):
+        lines += ["## 附錄、資料來源與重現方式", "",
+                  "每個數字都能用下列 API 重算（需登入）；配對逐段明細與逐時列另存 CSV 於報告旁。", ""]
+        for label, url in meta["sources"]:
+            lines.append(f"- {label}：`{url}`")
+        lines += ["", "> 方法標記與樣本數見各表；近似值的算法寫在 `detection/signal_eval.py`。", ""]
     if hourly:
         lines += ["## 六、逐時評估", ""]
         for label, rows in hourly.items():
