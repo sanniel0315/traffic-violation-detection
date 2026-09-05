@@ -1432,7 +1432,9 @@ def _paired_runs(rows: list, interval: float = None) -> dict:
         waste = 0.0
         if r["ours_sec"] is not None:
             d = round(r["ours_sec"] - r["actual_sec"], 1)
-            if r["red_waiting"] and d < 0:
+            # 🛑 代價只算「超出一個取樣週期」的早切。5 秒取樣分不出 3 秒的差,
+            #    把容忍內的也算進去會把量測誤差當成代價(實測 313 vs 273 秒)。
+            if r["red_waiting"] and d < -interval:
                 waste = round(-d, 1)
         out_runs.append({
             "phase": r["phase"], "start_ts": r["start_ts"], "end_ts": r["end_ts"],
