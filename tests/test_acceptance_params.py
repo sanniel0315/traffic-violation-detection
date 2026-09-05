@@ -27,13 +27,8 @@ def _hourly(n_done, partial=True):
 def test_all_measured_and_sparse_frames(monkeypatch):
     from api.routes import acceptance as A
     now_h = datetime.now().hour
-    def fake_get(path, timeout=4.0):
-        if path.startswith("/api/signal/shadow/plan"):
-            return _plan()
-        if path.startswith("/api/signal/shadow/hourly"):
-            return _hourly(now_h)
-        return None
-    monkeypatch.setattr(A, "_get", fake_get)
+    monkeypatch.setattr(A, "_shadow_constants", lambda: _plan()["constants"])
+    monkeypatch.setattr(A, "_shadow_hourly", lambda day: _hourly(now_h)["rows"])
     items = {i["key"]: i for i in A._check_params()}
     assert items["param_saturation"]["state"] == A.PASS
     assert items["param_lost_time"]["state"] == A.PASS and "5FC4" in items["param_lost_time"]["evidence"]
@@ -45,13 +40,8 @@ def test_all_measured_and_sparse_frames(monkeypatch):
 def test_default_saturation_and_missing_hours_warn(monkeypatch):
     from api.routes import acceptance as A
     now_h = datetime.now().hour
-    def fake_get(path, timeout=4.0):
-        if path.startswith("/api/signal/shadow/plan"):
-            return _plan(sat_src="default", lost_src="預設 5 s(未量到)", mpv_src="預設 7 m(未量到)", fi=1.0)
-        if path.startswith("/api/signal/shadow/hourly"):
-            return _hourly(max(0, now_h - 3))        # 缺 3 個小時
-        return None
-    monkeypatch.setattr(A, "_get", fake_get)
+    monkeypatch.setattr(A, "_shadow_constants", lambda: _plan(sat_src="default", lost_src="預設 5 s(未量到)", mpv_src="預設 7 m(未量到)", fi=1.0)["constants"])
+    monkeypatch.setattr(A, "_shadow_hourly", lambda day: _hourly(max(0, now_h - 3))["rows"])   # 缺 3 個小時
     items = {i["key"]: i for i in A._check_params()}
     assert items["param_saturation"]["state"] == A.WARN
     assert items["param_lost_time"]["state"] == A.WARN
@@ -63,7 +53,8 @@ def test_default_saturation_and_missing_hours_warn(monkeypatch):
 def test_no_plan_is_unknown_not_pass(monkeypatch):
     """量不到一律 unknown,不當成通過 —— 缺資料和通過是兩件事。"""
     from api.routes import acceptance as A
-    monkeypatch.setattr(A, "_get", lambda path, timeout=4.0: None)
+    monkeypatch.setattr(A, "_shadow_constants", lambda: {})
+    monkeypatch.setattr(A, "_shadow_hourly", lambda day: [])
     items = {i["key"]: i for i in A._check_params()}
     assert items["param_saturation"]["state"] == A.UNKNOWN
     assert items["frame_interval"]["state"] == A.UNKNOWN

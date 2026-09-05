@@ -294,11 +294,48 @@ def _check_safety() -> list:
     return out
 
 
+def _shadow_constants() -> dict:
+    """跟 /api/signal/shadow/plan 的 constants 同一套來源,直接讀模組狀態(不經 HTTP)。"""
+    try:
+        from api.routes import signal_shadow as S
+        ms, mp = S._measured_sat, S._measured_params
+        vph = ms.get("vph") or {}
+        g = 1
+        fi = (mp.get("samples") or {}).get("frame_interval_sec")
+        lsrc = (mp.get("samples") or {}).get("lost_time_source")
+        lt = mp.get("lost_time_sec") or {}
+        return {
+            "saturation_vph": vph.get(g) or vph.get(str(g)),
+            "saturation_source": ms.get("source", "default"),
+            "saturation_measured_at": ms.get("ts"),
+            "lost_time_sec": S._lost_time_for(g),
+            "lost_time_source": ("實測(控制器 5F03 每秒回報的黃燈+全紅)" if lsrc == "frames_1hz" and lt
+                                 else ("控制器時制設定 5FC4(黃燈+全紅;5F03 框距 %s 秒)" % fi) if lt
+                                 else "預設(未量到)"),
+            "meters_per_vehicle": S._mpv(),
+            "meters_per_vehicle_source": ("實測(停止線排隊÷停等車數,%s 筆)" % (mp.get("samples") or {}).get("mpv"))
+                                         if mp.get("meters_per_vehicle") else "預設(未量到)",
+            "frame_interval_sec": fi,
+            "max_green_sec": S.MAX_GREEN_SEC,
+        }
+    except Exception:
+        return {}
+
+
+def _shadow_hourly(day: str) -> list:
+    try:
+        from api.routes import signal_shadow as S
+        return (S.hourly_rows(day, compute_missing=False) or {}).get("rows") or []
+    except Exception:
+        return []
+
+
 def _check_params() -> list:
     """決策參數是不是「落地的準確值」(使用者要求),以及量測的前提有沒有成立。"""
     out: list = []
-    plan = _get("/api/signal/shadow/plan") or {}
-    c = plan.get("constants") or {}
+    # 🛑 不能用 _get:它打的是 signal daemon(:8012),/api/signal/shadow/* 在 API 本體,
+    #    打過去永遠 None → 全部 unknown(2026-09-05 部署後實測)。直接讀影子模組的狀態。
+    c = _shadow_constants()
     src = str(c.get("saturation_source") or "")
     st = PASS if src.startswith("measured") else (UNKNOWN if not c else WARN)
     out.append(_item(
@@ -347,8 +384,7 @@ def _check_params() -> list:
     try:
         from datetime import date as _date
         today = _date.today().isoformat()
-        hr = _get(f"/api/signal/shadow/hourly?date={today}") or {}
-        rows = hr.get("rows") or []
+        rows = _shadow_hourly(today)
         done = [r for r in rows if not r.get("partial")]
         expect = max(0, datetime.now().hour)          # 00..(now-1) 小時應已結束
         missing = expect - len(done)
