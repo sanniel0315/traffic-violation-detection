@@ -162,6 +162,13 @@ def _load_saturation() -> bool:
 # 硬上限,不是我方要用的操作上限 —— 綠燈放到 100 秒還沒切,紅側已經等太久。
 # 設 0 = 退回時制表的值。/plan 的 constants 會標明現在用哪一個。
 MAX_GREEN_SEC = float(os.getenv("SIGNAL_MAX_GREEN_SEC", "100") or 0)
+# 綠側價值權重。2026-09-06 使用者決定由 1.0 改 3.0 上線。
+# 依據:只用訓練情境搜出來,在沒調過的五個驗證情境上離最佳解從 +192.7% 收到 +51.8%;
+# 方向與另外兩條獨立線索一致(感應控制贏規則版、歧異幾乎全是我方切/實際續綠)。
+# 🛑 預設值寫在程式裡(不是只設環境變數),這樣它會進版控、會被 review,
+#    也不會因為某台機器忘了設而悄悄跑回舊行為。要臨時回退才用環境變數。
+KEEP_WEIGHT = float(os.getenv("SIGNAL_KEEP_WEIGHT", "3.0") or 3.0)
+KEEP_WEIGHT_SINCE = "2026-09-06"   # 這之前的逐時/配對數字是 keep_weight=1.0,不可並列
 
 
 def _max_green(pp: dict) -> float:
@@ -712,6 +719,7 @@ def _loop():
                 saturation_vph=_sat_for(g_no),
                 meters_per_vehicle=_mpv(),
                 lost_time_sec=_lost_time_for(g_no),
+                keep_weight=KEEP_WEIGHT,
             )
 
             conn = _db()
@@ -1147,7 +1155,8 @@ async def shadow_plan(_user=Depends(get_current_user)):
                green_side=green, red_side=red,
                min_green_sec=min_green, max_green_sec=max_green,
                saturation_vph=_sat_for(g_no),
-               meters_per_vehicle=_mpv(), lost_time_sec=_lost_time_for(g_no))
+               meters_per_vehicle=_mpv(), lost_time_sec=_lost_time_for(g_no),
+               keep_weight=KEEP_WEIGHT)
 
     def side(a: ApproachState, role: dict) -> dict:
         sr = a.spillback_ratio()
@@ -1220,6 +1229,10 @@ async def shadow_plan(_user=Depends(get_current_user)):
             "meters_per_vehicle": _mpv(),
             "meters_per_vehicle_source": ("實測(停止線排隊÷停等車數,%s 筆)" % _measured_params["samples"].get("mpv"))
                                           if _measured_params.get("meters_per_vehicle") else "預設 %g m(未量到)" % DEFAULT_METERS_PER_VEHICLE,
+            "keep_weight": KEEP_WEIGHT,
+            "keep_weight_source": ("現場校正 %g(2026-09-06 上線;驗證情境離最佳 +192.7%%→+51.8%%)"
+                                   % KEEP_WEIGHT) if KEEP_WEIGHT != 1.0 else "純模型值 1.0",
+            "keep_weight_since": KEEP_WEIGHT_SINCE,
             "spillback_ratio": DEFAULT_SPILLBACK_RATIO,
             "lost_time_sec": _lost_time_for(g_no),
             "lost_time_source": (
