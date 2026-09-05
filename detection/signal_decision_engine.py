@@ -52,6 +52,18 @@ DEFAULT_SPILLBACK_RATIO = 0.8
 # 換相損失時間(秒)。與官方時制表 ramp_timing_baseline.json 的
 # lost_time_per_change_sec 對齊(現場值 5)。切一次相位要付的代價。
 DEFAULT_LOST_TIME_SEC = 5.0
+# 綠側價值的權重。1.0 = 純模型值。
+#
+# 🛑 這是**現場校正係數,不是模型結構**:成本函數的形狀不變,只調綠側那一項的權重。
+#    為什麼要它:綠側價值的算式只看得到「當下排隊 + 換相後等待期間會到達的車」,
+#    看不到綠燈期間持續到達、持續被消化的那一段 —— 也就是綠燈真正的價值有被低估。
+#    低估的後果是引擎過度願意換相,實測三條獨立線索都指向同一個方向:
+#      · 感應控制(等綠側放完才切)在十情境上贏規則版 13.5%,而且換相次數更少
+#      · 規則版的歧異幾乎全是「我方切 / 實際續綠」,反向幾乎沒有
+#      · 參數搜尋(只用訓練情境)獨立收斂到 3.0
+#    在**沒有調過的五個驗證情境**上,1.0 → 3.0 讓離最佳解從 +192.7% 收到 +51.8%
+#    (平均每車延滯 154.36 → 80.04)。使用者 2026-09-06 決定上線。
+DEFAULT_KEEP_WEIGHT = 1.0
 
 
 @dataclass
@@ -110,6 +122,7 @@ def decide(
     meters_per_vehicle: float = DEFAULT_METERS_PER_VEHICLE,
     spillback_ratio: float = DEFAULT_SPILLBACK_RATIO,
     lost_time_sec: float = DEFAULT_LOST_TIME_SEC,
+    keep_weight: float = DEFAULT_KEEP_WEIGHT,
 ) -> Decision:
     """算出這一刻該 KEEP 還是 SWITCH。純函式，不碰 IO、不下發。"""
     mpv = meters_per_vehicle
@@ -188,14 +201,20 @@ def decide(
 
     # ④ 一般規則:切換效益 > 保持效益 + 換相成本 → 才值得切
     #    加上換相成本是防抖動:小幅優勢不值得付一次換相的代價
-    threshold = keep_gain + change_cost
+    #    綠側價值乘 keep_weight(現場校正,見 DEFAULT_KEEP_WEIGHT 的說明)
+    weighted_keep = keep_gain * keep_weight
+    threshold = weighted_keep + change_cost
+    d.detail["keep_weight"] = keep_weight
+    d.detail["keep_gain_weighted"] = round(weighted_keep, 2)
+    d.detail["threshold"] = round(threshold, 2)
+    w = "" if keep_weight == 1.0 else f"×{keep_weight:g}"
     if switch_gain > threshold:
         d.action = "SWITCH"
-        d.reason = (f"紅側延滯 {switch_gain:.0f} > 綠側價值 {keep_gain:.0f}"
+        d.reason = (f"紅側延滯 {switch_gain:.0f} > 綠側價值 {keep_gain:.0f}{w}"
                     f" + 換相成本 {change_cost:.0f}")
     else:
         d.action = "KEEP"
-        d.reason = (f"紅側延滯 {switch_gain:.0f} ≤ 綠側價值 {keep_gain:.0f}"
+        d.reason = (f"紅側延滯 {switch_gain:.0f} ≤ 綠側價值 {keep_gain:.0f}{w}"
                     f" + 換相成本 {change_cost:.0f},續綠")
     return d
 

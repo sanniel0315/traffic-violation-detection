@@ -200,12 +200,18 @@ def rule_switch_fn(cfg: SimConfig, roles: dict, params: Optional[dict] = None):
             max_green_sec=cfg.max_green_sec,
             saturation_vph=sat * 3600.0,
             meters_per_vehicle=mpv,
-            lost_time_sec=cfg.lost_time_sec)
+            lost_time_sec=cfg.lost_time_sec,
+            keep_weight=p["keep_weight"])
         if d.forced_by_max_green or d.blocked_by_priority:
             return d.action == "SWITCH"
-        # 乘數版的門檻比較(不改結構,只調權重)
-        thr = d.keep_gain * p["keep_weight"] + d.change_cost * p["change_cost_mult"]
-        want = d.switch_gain > thr
+        # 🛑 keep_weight 交給引擎算(2026-09-06 起引擎原生支援),這裡只再處理
+        #    change_cost_mult —— 驗證平台與線上引擎必須用**同一套算法**,
+        #    在外面各算一次門檻,兩邊遲早會漂移,那時驗證出來的參數就不能上線了。
+        if p["change_cost_mult"] == 1.0:
+            want = d.action == "SWITCH"
+        else:
+            thr = d.keep_gain * p["keep_weight"] + d.change_cost * p["change_cost_mult"]
+            want = d.switch_gain > thr
         # 清空後等待(模仿感應控制的 gap-out):綠側還有車就不准換
         gap = float(p["clear_gap_sec"] or 0.0)
         if gap > 0:

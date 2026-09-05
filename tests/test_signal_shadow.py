@@ -530,3 +530,40 @@ def test_max_green_fixed_100_forces_switch(monkeypatch):
     d2 = decide(green_phase=1, green_elapsed_sec=99.0, green_side=g, red_side=r, min_green_sec=10.0, max_green_sec=100.0,
                 saturation_vph=500.0)
     assert d2.action == "KEEP"
+
+
+def test_keep_weight_raises_switch_threshold():
+    """綠側價值權重是現場校正:權重越大越不願換相,門檻要跟著抬高。"""
+    from detection.signal_decision_engine import ApproachState, decide
+    kw = dict(green_phase=1, green_elapsed_sec=40.0,
+              green_side=ApproachState(1, queue_m=18.0, flow_vpm=12.0, storage_m=210),
+              red_side=ApproachState(2, queue_m=30.0, storage_m=600, waiting_sec=40.0),
+              min_green_sec=10.0, max_green_sec=100.0,
+              saturation_vph=1181.0, meters_per_vehicle=6.0, lost_time_sec=5.0)
+    a = decide(**kw, keep_weight=1.0)
+    b = decide(**kw, keep_weight=3.0)
+    assert b.detail["threshold"] > a.detail["threshold"]
+    assert b.detail["keep_weight"] == 3.0
+    assert b.detail["keep_gain_weighted"] == round(b.keep_gain * 3.0, 2)
+    # 權重只調綠側那一項,紅側延滯與換相成本不動
+    assert a.switch_gain == b.switch_gain and a.change_cost == b.change_cost
+    # 門檻抬高之後不可能從續綠變成換相
+    assert not (a.action == "KEEP" and b.action == "SWITCH")
+
+
+def test_keep_weight_default_is_pure_model():
+    """引擎預設值維持 1.0(純模型);3.0 是部署層的現場校正,不是模型結構。"""
+    from detection.signal_decision_engine import DEFAULT_KEEP_WEIGHT, ApproachState, decide
+    assert DEFAULT_KEEP_WEIGHT == 1.0
+    d = decide(green_phase=1, green_elapsed_sec=40.0,
+               green_side=ApproachState(1, queue_m=18.0, storage_m=210),
+               red_side=ApproachState(2, queue_m=30.0, storage_m=600, waiting_sec=40.0),
+               min_green_sec=10.0, max_green_sec=100.0)
+    assert d.detail["keep_weight"] == 1.0
+
+
+def test_shadow_route_deploys_keep_weight_3():
+    """使用者 2026-09-06 決定上線的值,寫在程式裡才會進版控、不會某台機器忘了設。"""
+    from api.routes import signal_shadow as S
+    assert S.KEEP_WEIGHT == 3.0
+    assert S.KEEP_WEIGHT_SINCE == "2026-09-06"
