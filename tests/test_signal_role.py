@@ -61,7 +61,9 @@ def test_frontend_matrix_confines_signal_role_to_signal_hub():
     assert "{key:'signal',label:'動態號誌控制'}" in html, "permissionCatalog 少了 signal 鍵"
     assert '''v-if="hasPerm('signal')" class="menu-item" :class="{active:page==='signal_hub'}"''' in html, \
         "側欄的動態號誌控制仍綁 isAdmin"
-    assert "if(userRole.value==='signal' && hasPerm('signal')) return 'signal_hub';" in html
+    # 2026-09-06 使用者:「登入就是動態號誌頁面」—— 不再只有 signal 角色落地在這裡,
+    # 任何有 signal 權限的帳號登入都直接進動態號誌頁。
+    assert "if(hasPerm('signal')) return 'signal_hub';" in html
     # 四個角色選單都要有 signal 可選
     assert html.count('<el-option label="signal（號誌操作員）" value="signal"/>') == 4
     # 儲存 / 載入 / 重設 三處都要帶 signal,少一處重新整理就會掉回預設
