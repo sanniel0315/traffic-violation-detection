@@ -3547,112 +3547,143 @@
                          color:var(--gov-text); margin-right:auto; }
         /* ── 動態號誌控制盤 ── */
         .sc-h { margin:14px 0 6px; font-size:13px; font-weight:700; color:var(--gov-text); }
-        /* ── 即時戰情(深色戰情牆)── */
-        /* 🛑 這一頁刻意脫離全站淺色系,而且只作用在 .wr 裡面。
-             理由是使用情境不同:戰情牆掛在遠處螢幕,深底反白 + 等寬數字
-             在幾公尺外才讀得到。其餘頁面維持政府淺色系不受影響。 */
-        .wr { --wr-bg:#0d1117; --wr-panel:#161b22; --wr-line:#30363d; --wr-line-2:#3d444d;
-              --wr-fg:#c9d1d9; --wr-bright:#f0f6fc; --wr-dim:#8b949e; --wr-title:#e3a53a;
-              --wr-cyan:#4ec9b0; --wr-blue:#58a6ff; --wr-btn:#1f6feb;
-              font-family:var(--font-mono), "Noto Sans TC", ui-monospace, monospace;
-              background:var(--wr-bg); color:var(--wr-fg);
-              border:1px solid var(--wr-line); border-radius:var(--r-card);
-              padding:14px; display:flex; flex-direction:column; gap:14px;
-              font-variant-numeric:tabular-nums; }
-        .wr-hd { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
-                 padding-bottom:12px; border-bottom:1px solid var(--wr-line); }
-        .wr-hd b { font-size:20px; letter-spacing:.02em; color:var(--wr-cyan); display:flex; align-items:center; gap:8px; }
-        .wr-hd-sub { font-size:11px; color:var(--gov-warn); font-weight:700;
-                     border:1px solid var(--gov-warn); border-radius:var(--r-pill);
-                     padding:2px 9px; }
-        .wr-hd-dot { width:9px; height:9px; border-radius:50%;
-                     background:var(--gov-ok); box-shadow:0 0 0 3px rgba(22,163,74,.25);
-                     animation:wrBeat 1.8s ease-in-out infinite; }
-        .wr-hd-dot.off { background:var(--gov-fault); box-shadow:none; animation:none; }
-        @keyframes wrBeat { 0%,100%{opacity:1} 50%{opacity:.3} }
-        .wr-hd-act { margin-left:auto; display:flex; align-items:center; gap:10px; }
-        .wr-btn { background:var(--wr-panel); color:var(--wr-fg);
-                  border:1px solid var(--wr-line); border-radius:6px;
-                  padding:6px 12px; font-size:12px; font-weight:700;
-                  cursor:pointer; font-family:inherit; text-decoration:none; }
-        .wr-btn.primary { background:var(--wr-btn); border-color:var(--wr-btn); color:#fff; }
-        .wr-sep { color:var(--wr-line-2); font-style:normal; margin:0 2px; }
-        .wr-btn:hover { border-color:var(--gov-primary); }
+        /* ── 即時戰情(本專案設計系統:淺色 gov tokens)── */
+        .wr { display:flex; flex-direction:column; gap:14px; font-variant-numeric:tabular-nums; }
+        .wr-hd { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+        .wr-led { display:inline-flex; align-items:center; gap:6px; font-size:var(--fs-small); color:var(--gov-text-2); }
+        .wr-led i { width:9px; height:9px; border-radius:50%; background:var(--gov-ok); }
+        .wr-led.warn i { background:var(--gov-warn); }
+        .wr-led.off i { background:var(--gov-mute-2); }
+        .wr-hd-act { margin-left:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+        .wr-btn { border:1px solid var(--gov-border-strong); background:var(--gov-surface); color:var(--gov-text);
+                  border-radius:var(--r-base); padding:6px 12px; font-size:var(--fs-small); font-weight:600;
+                  cursor:pointer; text-decoration:none; }
+        .wr-btn:hover { border-color:var(--gov-primary-line); background:var(--ui-hover-bg); color:var(--gov-primary); }
+        .wr-sep { color:var(--gov-border-strong); font-style:normal; margin:0 2px; }
 
-        .wr-cols { display:grid; gap:12px; grid-template-columns:repeat(2, 1fr); }
+        /* 決策 hero */
+        .wr-decide { position:relative; overflow:hidden; background:var(--gov-surface); border:1px solid var(--gov-border);
+                     border-radius:12px; padding:18px 20px 18px 24px; box-shadow:var(--shadow-sm);
+                     display:grid; grid-template-columns:1.25fr .8fr 1fr; gap:24px; align-items:center; }
+        @media (max-width:1100px) { .wr-decide { grid-template-columns:1fr 1fr; } }
+        @media (max-width:700px) { .wr-decide { grid-template-columns:1fr; } }
+        .wr-decide::before { content:''; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--gov-ok); transition:background .3s; }
+        .wr-decide.sw::before { background:var(--gov-fault); } .wr-decide.clr::before { background:var(--gov-warn); }
+        .wr-pills { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+        .wr-pill { border:1px solid var(--gov-border); border-radius:var(--r-pill); padding:3px 11px;
+                   font-size:var(--fs-micro); color:var(--gov-text-2); background:var(--gov-surface); }
+        .wr-pill b { font-family:var(--font-mono); font-weight:600; }
+        .wr-pill.ok { background:#e9f7ee; border-color:#bfe5cc; color:#156a3a; font-weight:700; }
+        .wr-eyebrow { font-family:var(--font-mono); font-size:var(--fs-caption); letter-spacing:var(--ls-label);
+                      color:var(--gov-mute-2); margin-bottom:6px; }
+        .wr-headline { margin:0 0 12px; font-size:48px; line-height:1.1; font-weight:900; color:var(--gov-text);
+                       letter-spacing:-.015em; text-wrap:balance; }
+        @media (max-width:700px) { .wr-headline { font-size:34px; } }
+        .wr-quote { margin:0; border-left:3px solid var(--gov-border-strong); padding:2px 0 2px 14px;
+                    color:var(--gov-text-2); font-size:var(--fs-body); max-width:40ch; }
+        .wr-gauge { display:flex; flex-direction:column; align-items:center; gap:6px; }
+        .wr-gauge svg { width:170px; height:170px; }
+        .wr-gauge-num { font:600 38px var(--font-mono); fill:var(--gov-text); }
+        .wr-gauge-lvl { font:700 15px var(--font-sans); }
+        .wr-gauge-cap { color:var(--gov-muted); font-size:var(--fs-micro); letter-spacing:var(--ls-wide); }
+        .wr-tiles { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+        .wr-tile { border:1px solid var(--gov-border); border-radius:var(--r-card); padding:12px 8px; text-align:center;
+                   background:var(--gov-surface-2); }
+        .wr-ring { position:relative; width:44px; height:44px; margin:0 auto 8px; border-radius:50%;
+                   border:3px solid var(--gov-ok); display:flex; align-items:center; justify-content:center;
+                   font:700 10px var(--font-mono); color:var(--gov-text); letter-spacing:.06em; }
+        .wr-ring::after { content:''; position:absolute; right:-4px; top:-2px; width:10px; height:10px; border-radius:50%;
+                          background:var(--gov-ok); border:2px solid #fff; }
+        .wr-ring.bad { border-color:var(--gov-fault); } .wr-ring.bad::after { background:var(--gov-fault); }
+        .wr-tile b { display:block; font-size:var(--fs-small); color:var(--gov-text); }
+        .wr-tile span { color:var(--gov-muted); font-size:var(--fs-micro); }
+
+        .wr-cols { display:grid; gap:14px; grid-template-columns:repeat(2, 1fr); }
         @media (max-width: 1000px) { .wr-cols { grid-template-columns:1fr; } }
-        .wr-col { background:var(--wr-panel); border:1px solid var(--wr-line);
-                  border-radius:var(--r-base); padding:12px; }
-        .wr-col-hd { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-        .wr-col-hd { padding-bottom:8px; border-bottom:1px solid var(--wr-line); }
-        .wr-col-hd b, .wr-col-sub { font-size:18px; font-weight:700; color:var(--wr-title); }
-        .wr-rel { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0 10px; align-items:baseline;
-                  font-size:13px; color:var(--wr-dim); }
-        .wr-rel b { font-size:22px; font-weight:700; color:var(--wr-bright); margin:0 2px; }
-        .wr-rel-k { color:var(--wr-dim); }
-        .wr-rel-run { font-size:11px; color:var(--wr-dim); }
+        .wr-col { background:var(--gov-surface); border:1px solid var(--gov-border); border-radius:12px; padding:16px 18px;
+                  box-shadow:var(--shadow-sm); }
+        .wr-col-hd { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+        .wr-col-hd b { font-size:var(--fs-t2); font-weight:700; color:var(--gov-text); }
+        .wr-col-sub { font-size:var(--fs-small); color:var(--gov-muted); }
+        .wr-rel { display:flex; gap:18px; flex-wrap:wrap; margin:4px 0 12px; align-items:baseline;
+                  font-size:var(--fs-small); color:var(--gov-muted); }
+        .wr-rel b { font:600 24px var(--font-mono); color:var(--gov-text); margin:0 3px; }
+        .wr-rel-run { font-size:var(--fs-micro); color:var(--gov-mute-2); }
 
-        .wr-cams { display:grid; gap:9px; grid-template-columns:repeat(2, 1fr); }
+        .wr-cams { display:grid; gap:12px; grid-template-columns:repeat(2, 1fr); }
         @media (max-width: 560px) { .wr-cams { grid-template-columns:1fr; } }
-        .wr-cam { margin:0; position:relative; border-radius:6px;
-                  overflow:hidden; background:var(--wr-bg); padding:8px;
-                  border:1px solid var(--wr-line); }
-        .wr-cam.green { border-color:#2ea043; box-shadow:0 0 0 2px rgba(46,160,67,.25); }
-        .wr-cam.off { opacity:.55; }
-        .wr-cam img { display:block; width:100%; aspect-ratio:16/9;
-                      object-fit:cover; background:#000; }
-        /* 量測疊在影像上方,不是放旁邊 —— 數字要跟它描述的那個畫面貼在一起 */
-        .wr-cam-meta { display:flex; gap:8px; flex-wrap:wrap; align-items:baseline;
-                       padding:0 0 6px; font-size:12px; color:var(--wr-fg); }
-        .wr-cam-meta b { width:100%; font-size:13px; color:var(--wr-blue); font-weight:700; }
-        .wr-cam-meta i { font-style:normal; font-weight:700; color:var(--wr-bright); }
-        .wr-cam-meta i.hot { color:#f0b429; }
-        .wr-cam img { border-radius:4px; border:1px solid var(--wr-line); }
-        .wr-cam-err { position:absolute; inset:0; display:flex;
-                      align-items:center; justify-content:center;
-                      color:#94a3b8; font-size:12px; background:#000; }
-        .wr-cam figcaption { padding:6px 0 0; font-size:11px; color:var(--wr-dim); }
+        .wr-cam { margin:0; position:relative; border-radius:var(--r-card); overflow:hidden; background:var(--gov-surface);
+                  border:1px solid var(--gov-border); transition:box-shadow .3s, border-color .3s; }
+        .wr-cam.green { border-color:#bfe5cc; box-shadow:0 0 0 3px #e9f7ee; }
+        .wr-cam.off { opacity:.6; }
+        .wr-cam img { display:block; width:100%; aspect-ratio:16/9; object-fit:cover; background:#26303c; }
+        .wr-cam-meta { display:flex; gap:10px; flex-wrap:wrap; align-items:baseline; padding:8px 12px;
+                       font-size:var(--fs-small); color:var(--gov-text-2); }
+        .wr-cam-meta b { width:100%; color:var(--gov-primary); font-weight:700; }
+        .wr-cam-meta i { font-style:normal; font:600 var(--fs-mono-num) var(--font-mono); color:var(--gov-text); }
+        .wr-cam-meta i.hot { color:var(--gov-warn); }
+        .wr-cam-err { position:absolute; left:0; right:0; bottom:0; aspect-ratio:16/9; display:flex;
+                      align-items:center; justify-content:center; color:#cbd5e1; font-size:var(--fs-micro); background:#26303c; }
 
-        /* 巨型狀態列:這一相現在到底在做什麼 */
-        .wr-state { display:flex; align-items:center; gap:10px; margin-top:10px;
-                    padding:12px 14px; border-radius:var(--r-base);
-                    border:2px solid; font-size:17px; font-weight:700; }
-        .wr-state-sec { margin-left:auto; font-size:24px; letter-spacing:.04em; }
-        .wr-state.green { border-color:#2ea043; background:#12331e; color:#56d364; }
-        .wr-state.amber { border-color:#d29922; background:#3d2a0f; color:#f0b429; }
-        .wr-state.red { border-color:#da3633; background:#3b1212; color:#ff7b72; }
+        .wr-state { display:flex; align-items:center; gap:12px; margin-top:12px; padding:12px 16px;
+                    border-radius:var(--r-card); border:1px solid; font-size:17px; font-weight:700; }
+        .wr-state-sec { margin-left:auto; font:600 26px var(--font-mono); letter-spacing:.02em; }
+        .wr-state.green { border-color:#bfe5cc; background:#e9f7ee; color:#156a3a; }
+        .wr-state.amber { border-color:#f3d9a6; background:#fff7e6; color:#9a5b00; }
+        .wr-state.red { border-color:#f0c2bd; background:#fdeeec; color:#9b2c24; }
 
-        /* 燈色圓點:整頁共用同一個燈語意 */
-        .lv-lamp { width:11px; height:11px; border-radius:50%; display:inline-block;
-                   flex:0 0 11px; }
-        .lv-lamp.g { background:var(--gov-ok); box-shadow:0 0 0 3px rgba(22,163,74,.28); }
-        .lv-lamp.a { background:var(--gov-warn); box-shadow:0 0 0 3px rgba(217,119,6,.28); }
-        .lv-lamp.r { background:var(--gov-fault); box-shadow:0 0 0 3px rgba(220,38,38,.22); }
+        .lv-lamp { width:11px; height:11px; border-radius:50%; display:inline-block; flex:0 0 11px; }
+        .lv-lamp.g { background:var(--gov-ok); box-shadow:0 0 0 3px #e9f7ee; }
+        .lv-lamp.a { background:var(--gov-warn); box-shadow:0 0 0 3px #fff7e6; }
+        .lv-lamp.r { background:var(--gov-fault); box-shadow:0 0 0 3px #fdeeec; }
 
+        .wr-int, .wr-log { background:var(--gov-surface); border:1px solid var(--gov-border); border-radius:12px;
+                           padding:16px 18px; box-shadow:var(--shadow-sm); }
+        .wr-sec-hd { display:flex; align-items:baseline; gap:10px; margin-bottom:12px;
+                     font-size:var(--fs-t1); font-weight:700; color:var(--gov-text); }
+        .wr-sec-hd span { font-size:var(--fs-micro); color:var(--gov-mute-2); font-weight:400; }
+        .wr-empty { font-size:var(--fs-micro); color:var(--gov-mute-2); margin:6px 0; }
+        .wr-ctl { display:grid; gap:10px; margin-top:12px; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); }
+        .wr-ctl-item { background:var(--gov-surface-2); border:1px solid var(--gov-border); border-radius:var(--r-card);
+                       padding:10px 12px; display:flex; flex-direction:column; gap:3px; }
+        .wr-ctl-item span { font:600 var(--fs-caption) var(--font-mono); letter-spacing:var(--ls-label); color:var(--gov-mute-2); }
+        .wr-ctl-item b { font-size:var(--fs-t1); color:var(--gov-text); }
+        .wr-ctl-item.sw { border-color:#f0c2bd; background:#fdeeec; } .wr-ctl-item.sw b { color:#9b2c24; }
+        .wr-ctl-item.kp { border-color:#bfe5cc; background:#e9f7ee; } .wr-ctl-item.kp b { color:#156a3a; }
+        .wr-why { margin-top:9px; font:400 var(--fs-micro) var(--font-mono); color:var(--gov-muted); }
+
+        .wr-log-body { background:var(--gov-surface-2); border:1px solid var(--gov-border); border-radius:var(--r-base);
+                       padding:8px 12px; max-height:220px; overflow:auto;
+                       font-family:var(--font-mono); font-size:var(--fs-micro); line-height:1.6; }
+        .wr-log-row { display:grid; white-space:nowrap; padding:2px 0; }
+        .wr-log-d { color:var(--gov-text); font-weight:600; }
+        .wr-log-d::before { content:'├─ '; color:var(--gov-mute-2); }
+        .wr-log-d i { font-style:normal; } .wr-log-d i.ok { color:var(--gov-ok); } .wr-log-d i.clr { color:var(--gov-warn); }
+        .wr-log-ts { color:var(--gov-muted); padding-left:22px; }
+        .wr-log-code { color:var(--gov-muted); }
+        .wr-log-raw { color:var(--gov-primary-strong); padding-left:22px; overflow:hidden; text-overflow:ellipsis; }
         /* 戰情地圖(Leaflet,重用系統離線圖磚) */
-        .wr-map-wrap { position:relative; border-radius:6px; overflow:hidden;
-                       border:1px solid var(--wr-line); background:var(--wr-bg); }
-        .wr-map { height:360px; width:100%; background:#0d1117; }
-        .wr-map .leaflet-tile { filter:brightness(.72) saturate(.85); }   /* 圖磚壓暗,疊圖才看得到 */
-        .wr-tip { background:rgba(13,17,23,.92); color:var(--wr-bright); border:1px solid var(--wr-line);
-                  font:600 11px var(--font-mono); padding:2px 6px; border-radius:4px; box-shadow:none; }
-        .wr-tip::before { border-top-color:var(--wr-line); }
-        .wr-map-note { margin:6px 10px; font-size:11px; color:#f0b429; }
-        .wr-geo-count { position:absolute; right:14px; top:12px; text-align:right; z-index:500;
-                        background:rgba(13,17,23,.78); padding:6px 10px; border-radius:6px; border:1px solid var(--wr-line); }
-        .wr-geo-count b { display:block; font:600 44px/1 var(--font-mono); color:var(--wr-fg); letter-spacing:-.03em; }
-        .wr-geo-count b.warn { color:#fde68a; }
-        .wr-geo-count b.hot { color:#fca5a5; animation:wrHot 1s steps(2) infinite; }
+        .wr-map-wrap { position:relative; border-radius:var(--r-card); overflow:hidden;
+                       border:1px solid var(--gov-border); background:var(--gov-bg); }
+        .wr-map { height:360px; width:100%; background:var(--gov-bg); }
+        .wr-tip { background:rgba(255,255,255,.95); color:var(--gov-text); border:1px solid var(--gov-border);
+                  font:600 11px var(--font-mono); padding:2px 6px; border-radius:4px; box-shadow:var(--shadow-sm); }
+        .wr-tip::before { border-top-color:var(--gov-border); }
+        .wr-map-note { margin:6px 10px; font-size:var(--fs-caption); color:var(--gov-warn); }
+        .wr-geo-count { position:absolute; right:12px; top:10px; text-align:right; z-index:500;
+                        background:rgba(255,255,255,.92); padding:6px 12px; border-radius:var(--r-card); border:1px solid var(--gov-border); }
+        .wr-geo-count b { display:block; font:600 40px/1 var(--font-mono); color:var(--gov-text); letter-spacing:-.03em; }
+        .wr-geo-count b.warn { color:var(--gov-warn); }
+        .wr-geo-count b.hot { color:var(--gov-fault); animation:wrHot 1s steps(2) infinite; }
         @keyframes wrHot { 0%,100%{opacity:1} 50%{opacity:.45} }
-        .wr-geo-count small { display:block; font:500 11px var(--font-mono); color:var(--wr-dim); margin-top:4px; }
-        .wr-geo-legend { position:absolute; left:10px; bottom:8px; display:flex; gap:10px; font-size:10px;
-                         color:var(--wr-fg); align-items:center; z-index:500;
-                         background:rgba(13,17,23,.78); padding:4px 8px; border-radius:6px; border:1px solid var(--wr-line); }
+        .wr-geo-count small { display:block; font:500 var(--fs-caption) var(--font-mono); color:var(--gov-muted); margin-top:3px; }
+        .wr-geo-legend { position:absolute; left:10px; bottom:8px; display:flex; gap:10px; font-size:var(--fs-caption);
+                         color:var(--gov-text-2); align-items:center; z-index:500;
+                         background:rgba(255,255,255,.92); padding:4px 8px; border-radius:var(--r-base); border:1px solid var(--gov-border); }
         .wr-geo-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
-        .wr-geo-legend i.lv0 { background:#3b4a66; } .wr-geo-legend i.lv1 { background:#4ade80; }
-        .wr-geo-legend i.lv2 { background:#facc15; } .wr-geo-legend i.lv3 { background:#fb923c; }
-        .wr-geo-legend i.lv4 { background:#f87171; }
-        .wr-geo-legend .scale i { width:30px; height:2px; background:var(--wr-dim); border-radius:0; }
+        .wr-geo-legend i.lv0 { background:var(--gov-border-strong); } .wr-geo-legend i.lv1 { background:var(--gov-ok); }
+        .wr-geo-legend i.lv2 { background:#d9a400; } .wr-geo-legend i.lv3 { background:#e8842b; }
+        .wr-geo-legend i.lv4 { background:var(--gov-fault); }
         @media (prefers-reduced-motion: reduce) { .wr-geo-count b.hot { animation:none; } }
         /* 路口圖區:xn-* 元件本身是淺底的,給它一塊白底容器,不要硬改元件 */
         .wr-int { background:var(--wr-panel); border:1px solid var(--wr-line);
@@ -7640,14 +7671,48 @@
                 <div v-if="page==='signal_hub'" v-show="signalTab==='live'">
                     <div class="wr">
                         <div class="wr-hd">
-                            <b>🚦 號誌機 ({{ sigStatus.host }}) × 即時戰情 <span class="wr-hd-dot" :class="{off:sigStatus.stale}"></span></b>
-                            <span class="wr-hd-sub">影子模式 · 只記錄不下發</span>
+                            <span class="wr-led" :class="{off:sigStatus.stale}"><i></i>號誌機 {{ sigStatus.host }}</span>
+                            <span class="wr-led" :class="{off:!sigPlan.available}"><i></i>決策引擎</span>
+                            <span class="wr-led warn"><i></i>影子模式</span>
                             <span class="wr-hd-act">
                                 <el-switch v-model="sigLiveOn" size="small" active-text="即時影像" inline-prompt></el-switch>
                                 <!-- 匯出接既有端點:summary(分相彙整)/ timeline(逐秒時序),今日 00:00 起 -->
-                                <a class="wr-btn primary" :href="sigWarExportUrl('summary')" target="_blank" rel="noopener">📦 匯出 分相彙整報表</a>
-                                <a class="wr-btn primary" :href="sigWarExportUrl('timeline')" target="_blank" rel="noopener">📊 匯出 逐秒時序全報表</a>
+                                <a class="wr-btn" :href="sigWarExportUrl('summary')" target="_blank" rel="noopener">匯出分相彙整</a>
+                                <a class="wr-btn" :href="sigWarExportUrl('timeline')" target="_blank" rel="noopener">匯出逐秒時序</a>
                             </span>
+                        </div>
+
+                        <!-- ══ 決策 hero:一眼看到我方演算法現在建議什麼 ══
+                             參照本專案決策層版式:左側強調條(續綠綠/應換相紅/清道琥珀)、
+                             膠囊標籤、字距拉開的小標、超大字級的建議動作、回堵風險環、三個狀態方塊。 -->
+                        <div class="wr-decide" :class="sigWarHero.cls">
+                            <div class="wr-decide-main">
+                                <div class="wr-pills">
+                                    <span class="wr-pill ok">影子模式</span>
+                                    <span class="wr-pill">趨勢 <b>{{ sigWarHero.trend }}</b></span>
+                                    <span class="wr-pill">{{ sigCtlModeText }}</span>
+                                </div>
+                                <div class="wr-eyebrow">決策引擎 · 建議動作</div>
+                                <h2 class="wr-headline">{{ sigWarHero.headline }}</h2>
+                                <p class="wr-quote">{{ sigWarHero.why }}</p>
+                            </div>
+                            <div class="wr-gauge">
+                                <svg viewBox="0 0 120 120" aria-label="回堵風險">
+                                    <circle cx="60" cy="60" r="50" fill="none" stroke="var(--gov-border)" stroke-width="9"></circle>
+                                    <circle cx="60" cy="60" r="50" fill="none" :stroke="sigWarRisk.color" stroke-width="9" stroke-linecap="round"
+                                            stroke-dasharray="314" :stroke-dashoffset="sigWarRisk.dash" transform="rotate(-90 60 60)"
+                                            style="transition:stroke-dashoffset .6s,stroke .4s"></circle>
+                                    <text x="60" y="64" text-anchor="middle" class="wr-gauge-num">{{ sigWarRisk.text }}</text>
+                                    <text x="60" y="84" text-anchor="middle" class="wr-gauge-lvl" :fill="sigWarRisk.color">{{ sigWarRisk.level }}</text>
+                                </svg>
+                                <div class="wr-gauge-cap">回堵風險 · {{ sigWarRisk.side }}</div>
+                            </div>
+                            <div class="wr-tiles">
+                                <div class="wr-tile" v-for="tl in sigWarTiles" :key="'tl'+tl.k">
+                                    <div class="wr-ring" :class="{bad:!tl.ok}">{{ tl.k }}</div>
+                                    <b>{{ tl.name }}</b><span>{{ tl.val }}</span>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="wr-cols">
@@ -7656,10 +7721,10 @@
                                 <div class="wr-col-hd">
                                     <span class="lv-lamp" :class="col.lampCls"></span>
                                     <b>{{ col.ramp }}</b>
-                                    <span class="wr-col-sub">（分相 {{ col.phase }} - {{ col.zone }} 區段）</span>
+                                    <span class="wr-col-sub">分相 {{ col.phase }} · {{ col.zone }}</span>
                                 </div>
                                 <div class="wr-rel">
-                                    <span class="wr-rel-k">放行統計：</span>
+
                                     <span>累計 <b>{{ col.rel.total_sec==null?'—':col.rel.total_sec }}</b> 秒</span><i class="wr-sep">|</i>
                                     <span>次數 <b>{{ col.rel.count==null?'—':col.rel.count }}</b> 次</span><i class="wr-sep">|</i>
                                     <span>前次 <b>{{ col.rel.last_sec==null?'—':col.rel.last_sec }}</b> 秒</span>
@@ -7669,7 +7734,7 @@
                                     <figure v-for="cam in col.cams" :key="'wcam'+cam.camera_id"
                                             class="wr-cam" :class="{green:col.isGreen, off:!cam.online}">
                                         <div class="wr-cam-meta">
-                                            <b>📷 {{ cam.name }}</b>
+                                            <b>{{ cam.name }} · {{ cam.site }}</b>
                                             <span>流量: <i>{{ sigWarNum(cam.flow_vpm) }}</i> 輛/分</span><em class="wr-sep">|</em>
                                             <span>佔有率: <i :class="{hot:sigWarHot(cam.occupancy)}">{{ sigWarPct(cam.occupancy) }}</i></span>
                                             <template v-if="cam.queue_m!=null"><em class="wr-sep">|</em><span>排隊: <i>{{ sigWarNum(cam.queue_m) }}</i> m</span></template>
@@ -7678,7 +7743,7 @@
                                              @error="sigLiveErr[cam.camera_id]=true"
                                              @load="sigLiveErr[cam.camera_id]=false">
                                         <span v-if="sigLiveErr[cam.camera_id]" class="wr-cam-err">影像取得失敗</span>
-                                        <figcaption>{{ cam.site }}</figcaption>
+
                                     </figure>
                                 </div>
                                 <!-- 巨型狀態列:這一相現在到底在做什麼 -->
@@ -7695,7 +7760,7 @@
                              排隊帶從停止線往回長到實際排隊公尺數。燈色來自 5F03(經 /plan 的
                              green_phase/clearance),不是自己推的。 -->
                         <div class="wr-int">
-                            <div class="wr-sec-hd">🚥 路口燈態 × 壅塞<span>系統地圖 · 相機座標取地圖頁設定 · 燈態 5F03 · 路段顏色 = 壅塞等級 · 排隊帶 = 實際排隊長度</span></div>
+                            <div class="wr-sec-hd">路口燈態<span>系統地圖 · 燈態 5F03</span></div>
                             <!-- 🛑 地圖用系統既有的:Leaflet + /web/tiles 離線圖磚(國土測繪中心),
                                  相機座標取 cameras 清單裡使用者在地圖頁定好的 lat/lng,
                                  不另外寫一份幾何。壅塞顏色、排隊帶、燈色疊在同一張地圖上。 -->
@@ -7720,7 +7785,7 @@
                                 <span v-if="sigLiveXn0.phase_elapsed_sec!=null" class="xn-chip"><span class="k">已亮</span><b>{{ Math.round(sigLiveXn0.phase_elapsed_sec) }}</b><span class="k">s</span></span>
                                 <span v-if="xnStepSpecial(sigLiveXn0)" class="xn-chip xn-mode sev-warn"><span class="k">狀態</span><b>{{ sigLiveXn0.phase.step_desc }}</b></span>
                             </div>
-                            <p v-else class="wr-empty">尚未收到燈態回報(5F03)。</p>
+                            <p v-else class="wr-empty">尚未收到燈態回報。</p>
 
                             <!-- 控制方 + 我方判定,靠著路口圖放,看圖的同時知道誰在控制 -->
                             <div class="wr-ctl">
@@ -7743,10 +7808,10 @@
 
                         <!-- 原始訊框:證明畫面上每個數字都有來源 -->
                         <div class="wr-log">
-                            <div class="wr-sec-hd">📡 TC3 原始訊框<span>只留 5F03 —— 畫面上每個燈色與秒數都來自這裡</span></div>
+                            <div class="wr-sec-hd">原始訊框<span>5F03</span></div>
                             <div class="wr-log-body">
                                 <div v-for="(f,fi) in sigWarFrames" :key="'wf'+fi" class="wr-log-row">
-                                    <span class="wr-log-d">{{ sigWarFrameDesc(f) }}</span>
+                                    <span class="wr-log-d"><i :class="sigWarFrameDesc(f).cls">{{ sigWarFrameDesc(f).tag }}</i> {{ sigWarFrameDesc(f).text }}</span>
                                     <span class="wr-log-ts">[{{ sigFrameTimeFull(f.ts) }}] <span class="wr-log-code">SEQ: {{ f.seq==null?'—':f.seq }} | 指令: {{ f.code }}</span></span>
                                     <span class="wr-log-raw">RAW: {{ f.raw }}</span>
                                 </div>
@@ -22956,7 +23021,7 @@ const app=createApp({
         let wrMap = null;
         const wrLayers = {seg: {}, queue: {}, cam: {}, lamp: {}};
         const sigWarMapNote = ref('');
-        const WR_LV_COLOR = {0: '#3d444d', 1: '#56d364', 2: '#e3b341', 3: '#f0883e', 4: '#ff7b72'};
+        const WR_LV_COLOR = {0: '#b8c4d4', 1: '#1f9d55', 2: '#d9a400', 3: '#e8842b', 4: '#c43a31'};
         const wrLvRank = (l) => ({low: 1, medium: 2, high: 3, critical: 4}[String(l || '').toLowerCase()] || 0);
         // 公尺 ↔ 經緯度(站點在北緯 23°,等距近似夠用)
         const WR_MLAT = 110900, WR_MLON = 102500;
@@ -23016,20 +23081,20 @@ const app=createApp({
                        (l) => { l.setLatLngs([A, Q]); l.setStyle({color: color}); });
                 // 燈頭:停止線旁(往路口方向 4 m、側移 6 m),綠/清道黃/紅
                 const isGreen = d.green_phase === ph;
-                const lampColor = !isGreen ? '#ff7b72' : (d.clearance ? '#f0b429' : '#56d364');
+                const lampColor = !isGreen ? '#c43a31' : (d.clearance ? '#d97706' : '#1f9d55');
                 const nx = -uy, ny = ux;
                 const P = wrOffset(stopCam.lat, stopCam.lng, -ux * 4 + nx * 6, -uy * 4 + ny * 6);
-                upsert('lamp', ph, () => L.circleMarker(P, {radius: 7, color: '#0d1117', weight: 2, fillColor: lampColor, fillOpacity: 1})
+                upsert('lamp', ph, () => L.circleMarker(P, {radius: 7, color: '#ffffff', weight: 2, fillColor: lampColor, fillOpacity: 1})
                                         .bindTooltip('分相 ' + ph + (isGreen ? (d.clearance ? ' 清道' : ' 綠燈') : ' 紅燈'), {permanent: false}),
                        (l) => { l.setLatLng(P); l.setStyle({fillColor: lampColor}); });
                 list.forEach((c) => {
                     const cc = WR_LV_COLOR[wrLvRank(c.level)];
                     const occ = (c.occupancy == null) ? '—' : (Number(c.occupancy) * 100).toFixed(0) + '%';
-                    const tip = '📷 ' + c.name + ' · 佔有率 ' + occ + (c.queue_m != null ? ' · 排隊 ' + Number(c.queue_m).toFixed(1) + ' m' : '');
+                    const tip = c.name + ' · 佔有率 ' + occ + (c.queue_m != null ? ' · 排隊 ' + Number(c.queue_m).toFixed(1) + ' m' : '');
                     upsert('cam', c.camera_id,
-                           () => L.circleMarker([c.lat, c.lng], {radius: 8, color: '#58a6ff', weight: 2, fillColor: cc, fillOpacity: .95})
+                           () => L.circleMarker([c.lat, c.lng], {radius: 8, color: '#0b5ea8', weight: 2, fillColor: cc, fillOpacity: .95})
                                    .bindTooltip(tip, {permanent: true, direction: 'top', offset: [0, -8], className: 'wr-tip'}),
-                           (l) => { l.setLatLng([c.lat, c.lng]); l.setStyle({fillColor: cc, color: c.online ? '#58a6ff' : '#6e7681'}); l.setTooltipContent(tip); });
+                           (l) => { l.setLatLng([c.lat, c.lng]); l.setStyle({fillColor: cc, color: c.online ? '#0b5ea8' : '#8b95a4'}); l.setTooltipContent(tip); });
                 });
             });
         };
@@ -23048,14 +23113,49 @@ const app=createApp({
             // sigFrameDecode 是非同步填快取的(打 /frames/decode),這裡讀快取;
             // 沒有就觸發一次,下一輪 render 就有了。快取以 raw 為鍵,重複框不會重打。
             const dec = f && f.raw ? sigFrameDecodeCache.value[f.raw] : null;
-            if (!dec) { if (f && f.raw) sigFrameDecode(f); return '⚪ [燈態回報] 5F03 解碼中…'; }
+            if (!dec) { if (f && f.raw) sigFrameDecode(f); return {tag: '解碼中', cls: '', text: '5F03'}; }
             const get = (n) => { const x = (dec.fields || []).find((k) => k.name === n); return x ? x.value : null; };
             const ph = get('SubPhaseID'), st = get('StepID'), sec = get('StepSec');
-            if (ph == null) return '⚪ [燈態回報] 5F03';
+            if (ph == null) return {tag: '燈態', cls: '', text: '5F03'};
             const green = (Number(st) === 1);
-            return (green ? '🟢' : '🔴') + ' [分相 ' + ph + '] ' + (green ? '綠燈放行中' : '過渡/黃燈全紅清道中')
-                   + (sec != null ? ' (剩 ' + sec + ' 秒)' : '');
+            return {tag: green ? '綠燈' : '清道', cls: green ? 'ok' : 'clr',
+                    text: '[分相 ' + ph + '] ' + (green ? '綠燈放行中' : '黃燈、全紅清道中') + (sec != null ? ' (剩 ' + sec + ' 秒)' : '')};
         };
+        // 決策 hero:把引擎的 KEEP/SWITCH 翻成操作的人看得懂的一句話
+        const sigWarHero = computed(() => {
+            const d = sigPlan.value || {};
+            const g = d.green_phase, name = g === 1 ? '上匝道' : '下匝道', other = g === 1 ? '下匝道' : '上匝道';
+            if (!d.available) return {cls: '', headline: '尚無決策資料', why: d.reason || '等待抄錄器與決策引擎。', trend: '—'};
+            const t = d.terms || {};
+            const q2 = Number((d.green_side && d.green_side.phase_no === 2 ? d.green_side : d.red_side) && (d.green_side.phase_no === 2 ? d.green_side.queue_m : (d.red_side || {}).queue_m)) || 0;
+            const trend = q2 >= 60 ? 'rising' : (q2 <= 10 ? 'stable' : 'building');
+            if (d.clearance) return {cls: 'clr', headline: '清道中，等待換相', why: '清道（黃燈、全紅）期間控制器已 committed，不做比對。', trend: trend};
+            if (d.action === 'SWITCH') return {cls: 'sw', headline: '切換至' + other + '放行',
+                why: '紅側延滯 ' + t.switch_gain + ' > 綠側價值 ' + t.keep_gain + ' + 換相成本 ' + t.change_cost + '。' + other + '等待延滯已超過' + name + '續綠的價值。', trend: trend};
+            return {cls: '', headline: '延長綠燈時間',
+                why: '紅側延滯 ' + t.switch_gain + ' ≤ 綠側價值 ' + t.keep_gain + ' + 換相成本 ' + t.change_cost + '。' + name + '仍有車在放行，換相不划算。', trend: trend};
+        });
+        // 回堵風險:主線保護側(priority)的兩台平均佔有率。回堵溢流到國道主線才是真正的風險。
+        const sigWarRisk = computed(() => {
+            const d = sigPlan.value || {};
+            const pri = [d.green_side, d.red_side].find((x) => x && x.priority) || d.red_side || {};
+            const cams = (d.cameras || []).filter((c) => c.phase_no === pri.phase_no && c.occupancy != null);
+            if (!cams.length) return {text: '—', level: '未量到', color: 'var(--gov-mute-2)', dash: 314, side: pri.ramp || ''};
+            const r = cams.reduce((a, c) => a + Number(c.occupancy), 0) / cams.length;
+            const level = r < 0.35 ? '低' : (r < 0.65 ? '中' : '高');
+            const color = r < 0.35 ? 'var(--gov-ok)' : (r < 0.65 ? 'var(--gov-warn)' : 'var(--gov-fault)');
+            return {text: r.toFixed(3), level: level, color: color, dash: Math.round(314 * (1 - r)), side: pri.ramp || ''};
+        });
+        const sigWarTiles = computed(() => {
+            const d = sigPlan.value || {};
+            const cams = d.cameras || [];
+            const on = cams.filter((c) => c.online).length;
+            return [
+                {k: 'CCTV', name: '影像', val: on + '/' + cams.length, ok: cams.length && on === cams.length},
+                {k: 'VD', name: '偵測器', val: on + ' 台', ok: on === cams.length && cams.length},
+                {k: 'AI', name: '決策層', val: d.available ? '已連線' : '未連線', ok: !!d.available},
+            ];
+        });
         // 底部原始訊框:只留燈態回報(5F03),那才是畫面上秒數與燈色的來源。
         // 全部訊框混在一起會被查詢回報洗版,看不出跟畫面的對應。
         const sigWarFrames = computed(() =>
@@ -24160,7 +24260,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
