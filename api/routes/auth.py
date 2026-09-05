@@ -117,6 +117,12 @@ def _current_user(request: Request, db: Session) -> User | None:
     return user
 
 
+# 角色清單。signal = 號誌操作員:登入後只看得到動態號誌控制那一組功能,
+# 其餘頁面由前端權限矩陣擋掉;後端 /api/signal/* 只要求登入(get_current_user),
+# 所以不必為它另外開端點。管理類端點(get_admin_user)它仍然進不去。
+VALID_ROLES = ("admin", "ops", "viewer", "signal")
+
+
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user = _current_user(request, db)
     if not user:
@@ -196,7 +202,7 @@ def create_user(
     role = str(data.role or "viewer").lower().strip()
     if not username or not password:
         raise HTTPException(status_code=400, detail="帳號與密碼不可為空")
-    if role not in ("admin", "ops", "viewer"):
+    if role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail="角色不合法")
     if db.query(User).filter(User.username == username).first():
         raise HTTPException(status_code=400, detail="帳號已存在")
@@ -234,7 +240,7 @@ def update_user(
         raise HTTPException(status_code=404, detail="找不到使用者")
     if data.role is not None:
         role = str(data.role or "").lower().strip()
-        if role not in ("admin", "ops", "viewer"):
+        if role not in VALID_ROLES:
             raise HTTPException(status_code=400, detail="角色不合法")
         user.role = role
     if data.enabled is not None:
