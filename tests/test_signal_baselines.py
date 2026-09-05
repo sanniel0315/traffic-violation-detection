@@ -151,3 +151,38 @@ def test_benchmark_is_deterministic():
                       flow_veh_per_sec={1: 0.045, 2: 0.032})
     assert a["results"]["ours"] == b["results"]["ours"]
     assert a["results"]["actuated"] == b["results"]["actuated"]
+
+
+# ── 飽和流分母(2026-09-05 現場實測發現的系統性低估)──────────────────
+
+def test_saturation_denominator_is_saturated_green_not_whole_green():
+    """隊伍在綠燈前段就清空時,分母若用整段綠燈會系統性低估飽和流。
+
+    構造:綠燈 60 秒,排隊 60 m 在前 20 秒清空(3 m/s = 0.5 輛/秒),
+    後 40 秒維持 0。正確答案 ≈ 0.5 輛/秒;用整段綠燈當分母只有 ≈ 0.17。
+    """
+    from detection.signal_sim import estimate_saturation
+    rows = []
+    t = 0
+    def ts(sec):
+        from datetime import datetime, timedelta
+        return (datetime(2026, 9, 5, 10, 0, 0) + timedelta(seconds=sec)).isoformat()
+    # 紅燈 30 秒(分相2 綠),分相1 排隊長到 60 m
+    for sec in range(0, 30, 5):
+        rows.append((ts(sec), 2, 10.0 + sec * (50.0 / 30.0), 0.0))
+    # 分相1 綠燈 60 秒:前 20 秒把 60 m 清光,之後維持 0
+    for sec in range(30, 90, 5):
+        el = sec - 30
+        q = max(0.0, 60.0 - el * 3.0)
+        rows.append((ts(sec), 1, q, 0.0))
+    # 回到分相2,結束這一段
+    rows.append((ts(90), 2, 0.0, 0.0))
+    arr = {1: {"veh_per_sec": 0.0}, 2: {"veh_per_sec": 0.0}}
+    sat = estimate_saturation(rows, arr, mpv=6.0, min_start_queue_m=14.0)
+    s1 = sat[1]["veh_per_sec"]
+    assert s1 is not None
+    # 飽和段分母 ≈ 20 秒,10 輛 → 0.5 輛/秒(容一點取樣誤差)
+    assert 0.35 <= s1 <= 0.65, s1
+    # 用整段綠燈(60 秒)只會有約 0.17 —— 確定沒有退回舊行為
+    assert s1 > 0.30
+    assert sat[1]["denominator"] == "saturated_green"

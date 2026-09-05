@@ -111,7 +111,8 @@ def estimate_arrivals(rows: list, mpv: float = DEFAULT_METERS_PER_VEHICLE) -> di
 
 def estimate_saturation(rows: list, arrivals: dict,
                         mpv: float = DEFAULT_METERS_PER_VEHICLE,
-                        min_start_queue_m: float = 0.0) -> dict:
+                        min_start_queue_m: float = 0.0,
+                        clear_threshold_m: float = 3.0) -> dict:
     """從綠燈期間的排隊消退量測飽和流(輛/秒)。
 
     🛑 飽和流是**物理量,本來就該現場量**,不是拿教科書的 1800 vph 套上去。
@@ -123,6 +124,18 @@ def estimate_saturation(rows: list, arrivals: dict,
     綠燈期間量到的變化 = 到達 − 離開,所以
         飽和流 = 到達率 + (排隊消退速率)
     到達率用 estimate_arrivals 的結果(那是從紅燈期間量的,乾淨)。
+
+    🛑 分母必須是「隊伍還在的那段綠燈」,不是整段綠燈。
+       飽和流的定義是**停等隊伍存在時**的放行速率;隊伍清空之後車輛
+       以到達率零星通過,把那段時間算進分母就是系統性低估。
+       2026-09-05 現場實測(17-20,167 段有效綠燈):隊伍在綠燈的前 43~48%
+       就清空(中位數),用整段綠燈當分母量到 457/341 vph,用飽和段量到
+       1045/797 vph —— 差 2.3 倍。低估的後果是連鎖的:
+         · 換相成本 = 損失時間 × 飽和流 × 損失時間 被低估 → 引擎過度願意換相
+         · 流量比 y = q/s 被高估 → 模擬器的排隊無界成長,校準必然失敗
+           (同一天 MAE 223m / 577m,相關係數 0.009 / −0.146)
+       同時實測排除了「相機有量測下限」的可能:綠燈末 10 秒排隊中位數 0.0 m,
+       七成樣本低於 1 m —— 相機讀得到零,不是卡在殘值。
     """
     out: dict = {}
     for ph in PHASES:
@@ -137,9 +150,12 @@ def estimate_saturation(rows: list, arrivals: dict,
             t = datetime.fromisoformat(r[0]).timestamp()
             if r[1] == ph:                      # 這一相是綠燈
                 if run is None:
-                    run = [t, q, t, q]
+                    run = [t, q, t, q, None, None]
                 else:
                     run[2], run[3] = t, q
+                    # 第一次低於門檻 = 隊伍清空,飽和段到此為止
+                    if run[4] is None and q < clear_threshold_m:
+                        run[4], run[5] = t, q
             else:
                 # 🛑 只算「綠燈開始時真的有隊伍」的那些段。飽和流的定義是
                 #    停等隊伍的消退速率;半夜綠燈亮起時根本沒車在排,量到的
@@ -148,11 +164,14 @@ def estimate_saturation(rows: list, arrivals: dict,
                 #    預設 1800,整個早尖峰都在跑假設值)。
                 if (run and (run[2] - run[0]) >= 15
                         and run[1] >= min_start_queue_m):
-                    dt = run[2] - run[0]
-                    drop = (run[1] - run[3]) / mpv     # 正值 = 有消退
-                    total_green += dt
-                    if drop > 0:
-                        total_drop += drop
+                    # 分母只取飽和段:綠燈開始 → 排隊首次低於門檻
+                    t_end, q_end = (run[4], run[5]) if run[4] else (run[2], run[3])
+                    dt = t_end - run[0]
+                    drop = (run[1] - q_end) / mpv      # 正值 = 有消退
+                    if dt >= 5:
+                        total_green += dt
+                        if drop > 0:
+                            total_drop += drop
                 run = None
         arr = (arrivals.get(ph) or {}).get("veh_per_sec") or 0.0
         if total_green > 0:
@@ -160,8 +179,11 @@ def estimate_saturation(rows: list, arrivals: dict,
         else:
             sat = None
         out[ph] = {"veh_per_sec": sat,
-                   "green_sec": round(total_green, 1),
+                   "saturated_sec": round(total_green, 1),
+                   "green_sec": round(total_green, 1),   # 相容舊欄位名
                    "drop_veh": round(total_drop, 2),
+                   "denominator": "saturated_green",
+                   "clear_threshold_m": clear_threshold_m,
                    "vph": round(sat * 3600, 0) if sat else None}
     return out
 
