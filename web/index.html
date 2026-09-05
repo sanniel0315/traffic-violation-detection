@@ -7692,7 +7692,7 @@
                                 <div class="wr-pills">
                                     <span class="wr-pill ok">影子模式</span>
                                     <span class="wr-pill">趨勢 <b>{{ sigWarHero.trend }}</b></span>
-                                    <span class="wr-pill">{{ sigCtlModeText }}</span>
+                                    <span class="wr-pill" :title="sigCtlModeNote">{{ sigCtlModeText }}</span>
                                 </div>
                                 <div class="wr-eyebrow">決策引擎 · 建議動作</div>
                                 <h2 class="wr-headline">{{ sigWarHero.headline }}</h2>
@@ -7750,7 +7750,7 @@
                                                  @error="sigLiveErr[cam.camera_id]=true"
                                                  @load="onWarCamLoad($event, cam.camera_id)">
                                             <svg v-if="sigCamOverlayOn && sigCamBox[cam.camera_id]" class="wr-cam-ov"
-                                                 :viewBox="sigCamBox[cam.camera_id]" preserveAspectRatio="none">
+                                                 :view-box.camel="sigCamBox[cam.camera_id]" preserveAspectRatio="none">
                                                 <g v-for="(z, zi) in sigCamZones[cam.camera_id] || []" :key="'z'+zi">
                                                     <polygon v-if="z.poly" :points="z.poly" :class="'ovz ovz-'+z.kind"></polygon>
                                                     <polyline v-else :points="z.line" :class="'ovl ovl-'+z.kind"></polyline>
@@ -7806,7 +7806,7 @@
                             <!-- 控制方 + 我方判定,靠著路口圖放,看圖的同時知道誰在控制 -->
                             <div class="wr-ctl">
                                 <div class="wr-ctl-item">
-                                    <span>控制方</span><b>{{ sigCtlModeText }}</b>
+                                    <span>控制方</span><b :title="sigCtlModeNote">{{ sigCtlModeText }}</b>
                                 </div>
                                 <div class="wr-ctl-item">
                                     <span>時制計畫</span><b>{{ sigCtlPlanId }}</b>
@@ -7870,7 +7870,11 @@
                         <div class="card-body">
                             <div v-if="!vzData.available" class="analysis-setting-tip">{{ vzData.error||'這段時間沒有影子資料。' }}</div>
                             <div v-else class="vz-wrap" @mousemove="vzHover" @mouseleave="vzCursor=null" ref="vzWrapEl">
-                                <svg class="vz-svg" :viewBox="'0 0 '+vzW+' '+vzH" preserveAspectRatio="none">
+                                <!-- 🛑 用 :view-box.camel 不是 :viewBox —— inline template 的屬性名會被 HTML parser
+                                     轉小寫,SVG 的 viewBox 區分大小寫,寫成 :viewBox 會整個失效:
+                                     瀏覽器改用 1 使用者單位 = 1px,內容只畫在 1000x280 的範圍,
+                                     容器越寬空白越多(2026-09-06 使用者回報「只有 container 一半」的真因)。 -->
+                                <svg class="vz-svg" :view-box.camel="'0 0 '+vzW+' '+vzH" preserveAspectRatio="none">
                                     <!-- 列標籤底 -->
                                     <g v-for="(lane,li) in vzLanes" :key="'ln'+li">
                                         <rect :x="0" :y="lane.y" :width="vzW" :height="lane.h" class="vz-lane" :class="{alt:li%2===1}"></rect>
@@ -22704,7 +22708,11 @@ const app=createApp({
         // ── 動態號誌控制父頁(tab 切換)──────────────────────────────
         // 🛑 每個 tab 只在「第一次進入」時載入,之後靠各自既有的輪詢更新。
         //    否則每次切 tab 都會重打一輪 API,八個子頁切來切去會很吵。
-        const signalTab = ref('live');
+        // 支援 ?page=signal_hub&tab=viz 深層連結(也讓 headless 量測能直接開到指定分頁)
+        const signalTab = ref((() => {
+            const t = String(new URLSearchParams(location.search).get('tab') || '').trim();
+            return /^[a-z_]+$/.test(t) ? t : 'live';
+        })());
         const sigTabLoaded = reactive({});
         // tab 順序 = 看現況 → 看為什麼 → 看設定 → 看歷史 → 看驗收
         const sigTabs = ref([
@@ -22743,6 +22751,13 @@ const app=createApp({
             }
         };
         const openSigHub = () => switchSigTab(signalTab.value);
+        // 🛑 openSigHub 原本只有側欄 click 會呼叫。登入直接落地在動態號誌頁、
+        //    或用 ?page=signal_hub&tab=viz 深層連結進來時,分頁的載入器不會跑,
+        //    畫面就停在「這段時間沒有影子資料」。掛載後補呼叫一次。
+        onMounted(() => {
+            watch(page, (v) => { if (v === 'signal_hub') openSigHub(); },
+                  {immediate: true, flush: 'post'});
+        });
         // ── 驗收清單 ────────────────────────────────────────────────
         // 🛑 狀態由後端「實際打端點量」出來,前端只負責呈現。
         //    unknown 一律不當成 pass —— 量不到和通過是兩件事。
@@ -23201,15 +23216,21 @@ const app=createApp({
         });
 
         let sigCtlTimer=null;
-        const SIG_MODE_TEXT={external_dynamic:'動態控制中(外部接管)',
-                             controller_dynamic:'控制器動態',
-                             center_manual:'中心手動', roadside_manual:'路側手動',
-                             fixtime:'定時控制'};
+        // 🛑 這是**控制器回報的模式碼**,不是我方觀察到的行為。
+        //    2026-09-06 實證:模式碼整天都是 external_dynamic,但綠燈長度與排隊
+        //    幾乎不相關(分相1 r=0.019)、長度集中在少數整數值、平均綠燈隨時段
+        //    整段跳動 —— 行為上是固定時制+時段計畫,使用者也確認「現在是時相控制」。
+        //    所以文字一律標成「回報」,不可以寫成「動態控制中」讓人以為真的在動態控制。
+        const SIG_MODE_TEXT={external_dynamic:'回報:外部動態(行為為時制控制)',
+                             controller_dynamic:'回報:控制器動態',
+                             center_manual:'回報:中心手動', roadside_manual:'回報:路側手動',
+                             fixtime:'回報:定時控制'};
         const sigCtlModeText=computed(()=>
             SIG_MODE_TEXT[sigPlan.value.control_mode]||sigPlan.value.control_mode||'尚未取得');
+        const sigCtlModeNote='模式碼由控制器回報;現場行為經實測為固定時制+時段計畫(見上線報告 §7.13)';
         const sigCtlModeType=computed(()=>{
             const m=sigPlan.value.control_mode;
-            if(m==='external_dynamic'||m==='controller_dynamic') return 'success';
+            if(m==='external_dynamic'||m==='controller_dynamic') return 'info';
             if(m==='center_manual'||m==='roadside_manual') return 'warning';
             return 'info';
         });
@@ -24676,7 +24697,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigCamZones,sigCamBox,sigCamOverlayOn,onWarCamLoad,sigCamFullName,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigCamZones,sigCamBox,sigCamOverlayOn,onWarCamLoad,sigCamFullName,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
