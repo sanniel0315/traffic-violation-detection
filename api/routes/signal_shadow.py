@@ -1374,6 +1374,139 @@ async def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
                         "要主張現場實績仍須做 A/B 交替時段。")
     return result
 
+# ── 逐次綠燈配對(精確比對)────────────────────────────────────────
+# 🛑 取樣層級的「一致率」只回答「同一秒兩邊說的一不一樣」,答不了
+#    「我方會早幾秒切」。控制上真正有意義的是:每一次實際綠燈,
+#    我方第一次判 SWITCH 落在第幾秒,跟實際換相差多少。
+#    這裡以「一次綠燈」為單位配對,每一段只算一次,不會被長綠燈灌樣本。
+def _paired_runs(rows: list, interval: float = None) -> dict:
+    """rows: (ts, green_phase, green_elapsed, ours, actual, forced, clearance,
+              queue_m_1, queue_m_2) 依時間排序,且已限定 external_dynamic。
+
+    每段回:
+      actual_sec        實際綠燈長度(區間量測:真值在 [actual_sec, +取樣週期))
+      ours_sec          我方第一次 SWITCH 時的已亮秒數;整段都 KEEP 則 None
+      delta_sec         ours_sec − actual_sec;負 = 我方會比實際早切
+      red_waiting       我方判 SWITCH 那一刻紅側有沒有排隊(有 = 早切是有意義的)
+      waste_sec         紅側有排隊時,從我方判切到實際換相之間的秒數(有代價空放)
+      truncated         段內或段前有斷點,長度不可信 → 不計入統計
+    """
+    if interval is None:
+        interval = SHADOW_INTERVAL_SEC
+    runs = []
+    cur = None
+    prev_ts = None
+    for (ts, ph, el, ours, actual, forced, clr, q1, q2) in rows:
+        el = float(el or 0.0)
+        gap = _ts_gap(prev_ts, ts)
+        prev_ts = ts
+        if cur is None or ph != cur["phase"] or el < cur["last_elapsed"]:
+            if cur is not None:
+                runs.append(cur)
+            cur = {"phase": ph, "start_ts": ts, "end_ts": ts, "actual_sec": el,
+                   "last_elapsed": el, "ours_sec": None, "red_waiting": None,
+                   "forced": bool(forced), "samples": 1,
+                   "truncated": bool(gap and gap > interval * 1.6)}
+        else:
+            cur["end_ts"] = ts
+            cur["actual_sec"] = el
+            cur["last_elapsed"] = el
+            cur["samples"] += 1
+            if gap and gap > interval * 1.6:
+                cur["truncated"] = True
+            if forced:
+                cur["forced"] = True
+        # 清道期間不評估;第一次 SWITCH 才算(之後每筆都會一直說 SWITCH)
+        if cur["ours_sec"] is None and ours == "SWITCH" and not clr:
+            cur["ours_sec"] = el
+            red_q = (q2 if ph == 1 else q1)
+            cur["red_waiting"] = bool(red_q and float(red_q) > 0)
+    if cur is not None:
+        runs.append(cur)
+
+    out_runs = []
+    for r in runs:
+        if r["samples"] < 2:
+            continue                     # 只有一筆的「段」是切換瞬間的殘影
+        d = None
+        waste = 0.0
+        if r["ours_sec"] is not None:
+            d = round(r["ours_sec"] - r["actual_sec"], 1)
+            if r["red_waiting"] and d < 0:
+                waste = round(-d, 1)
+        out_runs.append({
+            "phase": r["phase"], "start_ts": r["start_ts"], "end_ts": r["end_ts"],
+            "actual_sec": round(r["actual_sec"], 1),
+            "ours_sec": None if r["ours_sec"] is None else round(r["ours_sec"], 1),
+            "delta_sec": d, "red_waiting": r["red_waiting"], "waste_sec": waste,
+            "forced": r["forced"], "truncated": r["truncated"], "samples": r["samples"],
+        })
+
+    usable = [r for r in out_runs if not r["truncated"]]
+    # 分類。「同時」給一個取樣週期的容忍 —— 5 秒取樣本來就分不出 3 秒的差。
+    earlier = [r for r in usable if r["delta_sec"] is not None and r["delta_sec"] < -interval]
+    same = [r for r in usable if r["delta_sec"] is not None and -interval <= r["delta_sec"] <= interval]
+    hold = [r for r in usable if r["delta_sec"] is None]       # 整段都同意續綠
+    later = [r for r in usable if r["delta_sec"] is not None and r["delta_sec"] > interval]
+    meaningful = [r for r in earlier if r["red_waiting"]]      # 早切且紅側真的有車在等
+    idle = [r for r in earlier if not r["red_waiting"]]         # 早切但紅側沒車 —— 切了也沒意義
+
+    def stat(vals):
+        return _stat(vals) if vals else None
+
+    by_phase = {}
+    for ph in (1, 2):
+        sub = [r for r in usable if r["phase"] == ph]
+        by_phase[str(ph)] = {
+            "runs": len(sub),
+            "earlier": sum(1 for r in sub if r["delta_sec"] is not None and r["delta_sec"] < -interval),
+            "hold": sum(1 for r in sub if r["delta_sec"] is None),
+            "delta": stat([r["delta_sec"] for r in sub if r["delta_sec"] is not None]),
+            "waste_sec": round(sum(r["waste_sec"] for r in sub), 1),
+        }
+    return {
+        "interval_sec": interval,
+        "runs_total": len(out_runs), "runs_usable": len(usable),
+        "runs_truncated": len(out_runs) - len(usable),
+        "earlier": len(earlier), "earlier_meaningful": len(meaningful), "earlier_idle": len(idle),
+        "same": len(same), "hold": len(hold), "later": len(later),
+        "delta_all": stat([r["delta_sec"] for r in usable if r["delta_sec"] is not None]),
+        "delta_meaningful": stat([r["delta_sec"] for r in meaningful]),
+        "waste_sec_total": round(sum(r["waste_sec"] for r in usable), 1),
+        "by_phase": by_phase,
+        "runs": out_runs,
+        "note": "以一次綠燈為單位配對。delta_sec = 我方第一次判 SWITCH 的已亮秒數 − 實際綠燈長度;"
+                "負值 = 我方會早切。earlier_meaningful 只算紅側當時真的有排隊的段。"
+                "actual_sec 是區間量測(真值在 [值, 值+取樣週期)),同時的容忍 = 一個取樣週期。",
+    }
+
+
+@router.get("/paired", summary="逐次綠燈配對(精確比對:我方會早幾秒切)")
+async def shadow_paired(minutes: int = Query(180, ge=5, le=10080),
+                        since: str = Query(""), until: str = Query(""),
+                        include_runs: int = Query(0, ge=0, le=1),
+                        _user=Depends(get_current_user)):
+    if since:
+        since_iso, until_iso = since, (until or datetime.now().isoformat(timespec="seconds"))
+    else:
+        since_iso = datetime.fromtimestamp(time.time() - minutes * 60).isoformat(timespec="seconds")
+        until_iso = datetime.now().isoformat(timespec="seconds")
+    try:
+        conn = _db()
+        rows = conn.execute(
+            "SELECT ts,green_phase,green_elapsed,ours,actual,forced,clearance,queue_m_1,queue_m_2 "
+            "FROM signal_shadow_log WHERE ts>=? AND ts<=? AND control_mode='external_dynamic' "
+            "ORDER BY ts", (since_iso, until_iso)).fetchall()
+        conn.close()
+    except Exception as e:
+        return {"since": since_iso, "until": until_iso, "error": str(e), "runs_usable": 0}
+    out = _paired_runs(rows)
+    out["since"], out["until"] = since_iso, until_iso
+    if not include_runs:
+        out.pop("runs", None)
+    return out
+
+
 @router.get("/local-metrics", summary="局部可觀測指標(不需反事實模型)")
 async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
                                since: str = Query(""), until: str = Query(""),
