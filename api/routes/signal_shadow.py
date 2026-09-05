@@ -300,7 +300,10 @@ def _camera_live() -> list:
                 "stopped_vehicle_count": r.get("stopped_vehicle_count"),
                 "flow_vpm": r.get("flow_vpm"),
                 "queue_m": r.get("estimated_queue_length_m"),
-                "level": r.get("congestion_level"),
+                # 🛑 鍵是 level / level_name(見 congestion_detector 的 result),
+                #    第一版寫成 congestion_level,四台全回 None,圖上全是「未量到」灰。
+                "level": r.get("level"),
+                "level_name": r.get("level_name"),
             })
     return out
 
