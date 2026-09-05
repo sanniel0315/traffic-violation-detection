@@ -3856,6 +3856,40 @@
             .dc-bar-row.lead .dc-bar-fill { animation:none; }
             .dc-bar-fill, .dc-occ-fill { transition:none; }
         }
+        /* ── 設備狀態:圖示化磚牆 ── */
+        .dv-legend { display:flex; align-items:center; gap:10px; font-size:11.5px; color:var(--gov-mute-2); }
+        .dv-legend .dv-dot { margin-right:3px; }
+        .dv-group { margin-bottom:16px; }
+        .dv-group:last-of-type { margin-bottom:6px; }
+        .dv-gh { display:flex; align-items:center; gap:8px; margin-bottom:7px; }
+        .dv-gh b { font-size:13.5px; color:var(--gov-text); font-weight:700; }
+        .dv-gi { width:15px; height:15px; flex:none; fill:none; stroke:var(--gov-primary-2);
+                 stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+        .dv-gi.sm { width:13px; height:13px; stroke:var(--gov-mute-2); vertical-align:-2px; }
+        .dv-gc { margin-left:auto; font-size:11.5px; color:var(--gov-mute-2); }
+        .dv-gc.bad { color:var(--gov-fault); font-weight:700; }
+        .dv-tiles { display:grid; gap:7px;
+                    grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); }
+        .dv-tile { position:relative; display:flex; align-items:center; gap:8px;
+                   padding:8px 10px; border:1px solid var(--gov-border);
+                   border-radius:9px; background:var(--gov-surface); min-width:0; }
+        .dv-tile.unv { border-style:dashed; }
+        .dv-tile.hit { border-color:var(--gov-fault);
+                       background:color-mix(in srgb, var(--gov-fault) 7%, var(--gov-surface)); }
+        .dv-bit { font:600 10.5px var(--font-mono); color:var(--gov-mute-2);
+                  background:var(--gov-surface-2); border-radius:5px; padding:1px 5px; flex:none; }
+        .dv-dot { width:9px; height:9px; border-radius:50%; flex:none; display:inline-block; }
+        .dv-dot.ok { background:var(--gov-ok); }
+        .dv-dot.bad { background:var(--gov-fault); }
+        .dv-dot.unk { background:transparent; border:1.5px dashed var(--gov-border-strong); }
+        .dv-name { font-size:12.5px; color:var(--gov-text); overflow:hidden;
+                   text-overflow:ellipsis; white-space:nowrap; }
+        .dv-raw { margin-left:auto; font:600 12px var(--font-mono); color:var(--gov-muted); flex:none; }
+        .dv-unv { width:12px; height:12px; flex:none; fill:none; stroke:var(--gov-warn);
+                  stroke-width:2.2; stroke-linecap:round; }
+        .dv-empty { font-size:12.5px; color:var(--gov-mute-2); margin:0; }
+        .dv-foot { margin:12px 0 0; font-size:12px; color:var(--gov-mute-2); max-width:78ch; line-height:1.7; }
+
         /* ── 影子演算控制可視化 ── */
         .vz-wrap { position:relative; width:100%; padding:10px 4px 2px;
                    border:1px solid var(--gov-border); border-radius:12px;
@@ -7454,20 +7488,40 @@
                         </div>
                     </div>
 
-                    <div class="card" v-for="g in (sigDev.groups||[])" :key="g.key">
+                    <!-- 圖示化磚牆:一個位元一塊磚。群組用圖示代表功能,狀態用顏色與形狀,
+                         文字降到最少 —— 原本每列掛兩個標籤、16 列 32 個標籤在搶注意力。 -->
+                    <div class="card">
                         <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-cpu"/></svg>{{ g.title }}</span>
-                            <el-tag size="small" :type="sigDevGroupBad(g)?'danger':'success'">{{ sigDevGroupBad(g)?(sigDevGroupBad(g)+' 項異常'):'正常' }}</el-tag>
+                            <span><svg class="text-icon"><use href="#i-cpu"/></svg>硬體狀態逐位元</span>
+                            <span class="dv-legend">
+                                <i class="dv-dot ok"></i>正常
+                                <i class="dv-dot bad"></i>異常
+                                <i class="dv-dot unk"></i>極性待證
+                            </span>
                         </div>
                         <div class="card-body">
-                            <div v-for="it in sigDevItems(g)" :key="it.key" class="sc-gate" :class="{hit:it.abnormal===true}">
-                                <span class="sc-gate-no">{{ it.bit }}</span>
-                                <b>{{ it.label }}</b>
-                                <span class="sc-sub">{{ sigDevPolarity(it) }} · 現值 {{ it.raw }}</span>
-                                <el-tag size="small" :type="sigDevStateType(it)">{{ sigDevStateText(it) }}</el-tag>
-                                <el-tag size="small" :type="it.verified?'info':'warning'">{{ it.verified?'極性已實證':'極性待確認' }}</el-tag>
+                            <div class="dv-group" v-for="g in (sigDev.groups||[])" :key="g.key">
+                                <div class="dv-gh">
+                                    <svg class="dv-gi"><use :href="'#'+sigDevIcon(g.key)"/></svg>
+                                    <b>{{ g.title }}</b>
+                                    <span class="dv-gc" :class="{bad:sigDevGroupBad(g)}">{{ sigDevGroupBad(g)?(sigDevGroupBad(g)+' 項異常'):'無異常' }}</span>
+                                </div>
+                                <div class="dv-tiles">
+                                    <div v-for="it in sigDevItems(g)" :key="it.key"
+                                         class="dv-tile" :class="sigDevTileCls(it)"
+                                         :title="it.label+' · '+sigDevPolarity(it)+' · 現值 '+it.raw">
+                                        <span class="dv-bit">{{ it.bit }}</span>
+                                        <span class="dv-dot" :class="sigDevDot(it)"></span>
+                                        <span class="dv-name">{{ it.label }}</span>
+                                        <span class="dv-raw">{{ it.raw }}</span>
+                                        <svg v-if="!it.verified" class="dv-unv"><use href="#i-alert"/></svg>
+                                    </div>
+                                    <p v-if="!sigDevItems(g).length" class="dv-empty">此分組沒有項目。</p>
+                                </div>
                             </div>
-                            <p v-if="!sigDevItems(g).length" style="font-size:13px;color:#64748b;margin:0">此分組沒有異常項目。</p>
+                            <p class="dv-foot"><svg class="dv-gi sm"><use href="#i-alert"/></svg>
+                               標示驚嘆號的位元,名稱抄自對方系統前端字串,極性未經我方現場實證 ——
+                               這些位元一律不做正常／異常判定,只顯示現值。</p>
                         </div>
                     </div>
                 </div>
@@ -22947,6 +23001,16 @@ const app=createApp({
             ? 'info' : (it.abnormal?'danger':'success');
         const sigDevStateText=(it)=>(it.abnormal===null||it.abnormal===undefined)
             ? ('位元 '+it.raw) : (it.abnormal?'異常':'正常');
+        // 群組 → 圖示。用功能本身的形狀,不要全部用同一個晶片圖示。
+        const SIG_DEV_ICON = {processor: 'i-cpu', power: 'i-zap', signalLight: 'i-bulb',
+                              communication: 'i-radio', timingPlan: 'i-clock',
+                              ioCabinet: 'i-server'};
+        const sigDevIcon = (k) => SIG_DEV_ICON[k] || 'i-dot';
+        // 三種狀態:正常 / 異常 / 極性待證(不判定,只顯示現值)
+        const sigDevDot = (it) => it.abnormal === true ? 'bad'
+                                : (it.abnormal === false ? 'ok' : 'unk');
+        const sigDevTileCls = (it) => ({hit: it.abnormal === true,
+                                        unv: it.abnormal === null || it.abnormal === undefined});
         const sigDevPolarity=(it)=>{
             if(it.polarity==='error') return 'Error 旗標(1=故障)';
             if(it.polarity==='flag')  return '狀態旗標(0=需注意)';
@@ -24876,7 +24940,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigCamZones,sigCamBox,sigCamOverlayOn,onWarCamLoad,sigCamFullName,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigCamZones,sigCamBox,sigCamOverlayOn,onWarCamLoad,sigCamFullName,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
