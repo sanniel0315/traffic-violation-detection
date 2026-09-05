@@ -3686,41 +3686,6 @@
         .wr-geo-legend i.lv4 { background:var(--gov-fault); }
         @media (prefers-reduced-motion: reduce) { .wr-geo-count b.hot { animation:none; } }
         /* 路口圖區:xn-* 元件本身是淺底的,給它一塊白底容器,不要硬改元件 */
-        .wr-int { background:var(--wr-panel); border:1px solid var(--wr-line);
-                  border-radius:var(--r-base); padding:12px; }
-        .wr-int .xn-grid { background:var(--gov-surface); border-radius:var(--r-base);
-                           padding:10px; }
-        .wr-sec-hd { display:flex; align-items:baseline; gap:10px; margin-bottom:10px;
-                     padding-bottom:8px; border-bottom:1px solid var(--wr-line);
-                     font-size:15px; font-weight:700; color:var(--wr-title); }
-        .wr-sec-hd span { font-size:11px; color:var(--wr-dim); font-weight:400; }
-        .wr-empty { font-size:12px; color:var(--wr-dim); margin:6px 0; }
-        .wr-ctl { display:grid; gap:8px; margin-top:12px;
-                  grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); }
-        .wr-ctl-item { background:var(--wr-bg); border:1px solid var(--wr-line);
-                       border-radius:var(--r-base); padding:9px 11px;
-                       display:flex; flex-direction:column; gap:3px; }
-        .wr-ctl-item span { font-size:11px; color:var(--wr-dim); font-weight:700; }
-        .wr-ctl-item b { font-size:16px; }
-        .wr-ctl-item.sw { border-color:var(--gov-warn); }
-        .wr-ctl-item.sw b { color:#fcd34d; }
-        .wr-ctl-item.kp { border-color:var(--gov-ok); }
-        .wr-ctl-item.kp b { color:#86efac; }
-        .wr-why { margin-top:9px; font-size:12px; color:var(--wr-dim); }
-
-        /* 原始訊框:等寬終端風。存在的意義是「畫面上每個數字都查得到來源」 */
-        .wr-log { background:var(--wr-panel); border:1px solid var(--wr-line);
-                  border-radius:var(--r-base); padding:12px; }
-        .wr-log-body { background:var(--wr-bg); border:1px solid var(--wr-line);
-                       border-radius:6px; padding:8px 12px;
-                       max-height:220px; overflow:auto;
-                       font-family:var(--font-mono); font-size:12px; line-height:1.6; }
-        .wr-log-row { display:grid; white-space:nowrap; padding:2px 0; }
-        .wr-log-d { color:var(--wr-bright); font-weight:700; }
-        .wr-log-d::before { content:'├─ '; color:var(--wr-dim); }
-        .wr-log-ts { color:var(--wr-dim); padding-left:22px; }
-        .wr-log-code { color:var(--wr-dim); }
-        .wr-log-raw { color:var(--wr-cyan); padding-left:22px; overflow:hidden; text-overflow:ellipsis; }
         @media (prefers-reduced-motion: reduce) { .wr-hd-dot { animation:none; } }
         /* ── 分相時間分配色帶 ── */
         .pb-wrap { padding:4px 2px 10px; }
