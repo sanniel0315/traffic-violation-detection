@@ -110,7 +110,8 @@ def estimate_arrivals(rows: list, mpv: float = DEFAULT_METERS_PER_VEHICLE) -> di
 
 
 def estimate_saturation(rows: list, arrivals: dict,
-                        mpv: float = DEFAULT_METERS_PER_VEHICLE) -> dict:
+                        mpv: float = DEFAULT_METERS_PER_VEHICLE,
+                        min_start_queue_m: float = 0.0) -> dict:
     """從綠燈期間的排隊消退量測飽和流(輛/秒)。
 
     🛑 飽和流是**物理量,本來就該現場量**,不是拿教科書的 1800 vph 套上去。
@@ -140,7 +141,13 @@ def estimate_saturation(rows: list, arrivals: dict,
                 else:
                     run[2], run[3] = t, q
             else:
-                if run and (run[2] - run[0]) >= 15:
+                # 🛑 只算「綠燈開始時真的有隊伍」的那些段。飽和流的定義是
+                #    停等隊伍的消退速率;半夜綠燈亮起時根本沒車在排,量到的
+                #    只是零星到達,會把飽和流拉到 100 多 vph(2026-09-05 實測
+                #    6 小時夜間視窗量出 116/137,低於下限被判無效,系統退回
+                #    預設 1800,整個早尖峰都在跑假設值)。
+                if (run and (run[2] - run[0]) >= 15
+                        and run[1] >= min_start_queue_m):
                     dt = run[2] - run[0]
                     drop = (run[1] - run[3]) / mpv     # 正值 = 有消退
                     total_green += dt

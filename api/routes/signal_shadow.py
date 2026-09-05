@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import os
+import json
 import sqlite3 as _sqlite3
 import threading
 import time
@@ -111,6 +112,49 @@ _live_green = {"since": None, "phase": None}
 #    用實測值算約 4.75 —— 換相門檻差了 2.6 倍,直接影響「值不值得切」。
 #    飽和流是物理量,本來就該量,不是套一個假設。
 _measured_sat = {"vph": {}, "ts": None, "source": "default"}
+# 🛑 量到的飽和流要落地。2026-09-05 教訓:它原本只存記憶體,每次部署重啟
+#    就歸零;重啟後用「最近 6 小時」重量,半夜量出 116/137 vph 低於下限被
+#    判無效 → 退回預設 1800 → 之後每小時重量都還是半夜資料,永遠回不來。
+#    早尖峰整段跑假設值,跨日比對整組作廢。
+_SAT_FILE = os.path.join(os.path.dirname(_DB_PATH) or ".", "signal_saturation.json")
+# 只從「綠燈開始時至少排了兩台車」的段量飽和流(見 estimate_saturation)
+SAT_MIN_START_QUEUE_M = float(os.getenv("SIGNAL_SAT_MIN_START_QUEUE_M", "14") or 14)
+SAT_WINDOW_HOURS = float(os.getenv("SIGNAL_SAT_WINDOW_HOURS", "24") or 24)
+
+
+def _save_saturation() -> None:
+    """量到就寫檔(先寫暫存再 rename,半途斷電不會留下半個 JSON)。"""
+    try:
+        tmp = _SAT_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_measured_sat, f, ensure_ascii=False)
+        os.replace(tmp, _SAT_FILE)
+    except Exception as e:
+        # 🛑 不可以靜默吞掉。第一版就是 json 沒 import,NameError 被 pass 掉,
+        #    測試才抓到 —— 正式環境裡這種失敗永遠不會有人看見。
+        _stats["last_error"] = f"saturation save failed: {e}"
+
+
+def _load_saturation() -> bool:
+    """啟動時把上次量到的載回來。回傳是否載到有效值。"""
+    try:
+        with open(_SAT_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        vph = {int(k): float(v) for k, v in (d.get("vph") or {}).items()
+               if v and SAT_MIN_VPH <= float(v) <= SAT_MAX_VPH}
+    except FileNotFoundError:
+        return False                        # 第一次啟動本來就沒有檔,不是錯
+    except Exception as e:
+        _stats["last_error"] = f"saturation load failed: {e}"
+        return False
+    if not vph:
+        return False
+    _measured_sat["vph"] = vph
+    _measured_sat["ts"] = d.get("ts")
+    _measured_sat["source"] = "measured(restored)"
+    _measured_sat["window_hours"] = d.get("window_hours")
+    _measured_sat["samples"] = d.get("samples")
+    return True
 # 量出來的值超出這個範圍就不採信(視為量測異常),退回預設值。
 SAT_MIN_VPH = float(os.getenv("SIGNAL_SAT_MIN_VPH", "200") or 200)
 SAT_MAX_VPH = float(os.getenv("SIGNAL_SAT_MAX_VPH", "2200") or 2200)
@@ -181,12 +225,17 @@ def _mark_reported(ts: float) -> None:
         pass
 
 
-def _refresh_saturation(hours: float = 6.0) -> None:
+def _refresh_saturation(hours: float = None) -> None:
     """從最近 N 小時的紀錄量飽和流,寫進 _measured_sat。
 
-    🛑 量出來不合理就不採信 —— 退回預設值並把 source 標成 default,
-       不要讓一次異常量測把控制邏輯帶偏。
+    🛑 量出來不合理就不採信 —— **保留上一次有效值**,不要讓一次異常量測
+       把控制邏輯帶偏。逐相合併:相 1 量到、相 2 沒量到,只更新相 1,
+       相 2 維持原值(先前整個 dict 覆蓋,會把另一相打回預設)。
+    視窗預設 24 小時且只取「綠燈開始時有隊伍」的段 —— 任何時刻重量都會
+    涵蓋到一個尖峰,而且不會被半夜的零星到達拉低。
     """
+    if hours is None:
+        hours = SAT_WINDOW_HOURS
     from detection.signal_sim import estimate_arrivals, estimate_saturation
     since = (datetime.now() - timedelta(hours=hours)).isoformat(timespec="seconds")
     until = datetime.now().isoformat(timespec="seconds")
@@ -202,18 +251,21 @@ def _refresh_saturation(hours: float = 6.0) -> None:
     if len(rows) < 200:
         return
     arr = estimate_arrivals(rows)
-    sat = estimate_saturation(rows, arr)
+    sat = estimate_saturation(rows, arr, min_start_queue_m=SAT_MIN_START_QUEUE_M)
     good = {}
     for ph in (1, 2):
         v = (sat.get(ph) or {}).get("vph")
         if v and SAT_MIN_VPH <= v <= SAT_MAX_VPH:
             good[ph] = float(v)
     if good:
-        _measured_sat["vph"] = good
+        merged = dict(_measured_sat.get("vph") or {})
+        merged.update(good)                 # 逐相合併,沒量到的那一相不動
+        _measured_sat["vph"] = merged
         _measured_sat["ts"] = datetime.now().isoformat(timespec="seconds")
         _measured_sat["source"] = "measured"
         _measured_sat["window_hours"] = hours
         _measured_sat["samples"] = len(rows)
+        _save_saturation()
 
 
 def _sat_for(phase: int) -> float:
@@ -694,6 +746,8 @@ def start_shadow() -> bool:
             return False
         _stop.clear()
         _stats["started_at"] = datetime.now().isoformat(timespec="seconds")
+        # 先載回上次量到的,再嘗試重量;重量失敗也不會是空的
+        _load_saturation()
         try:
             _refresh_saturation()
         except Exception:
