@@ -511,3 +511,22 @@ def test_estimate_saturation_ignores_greens_without_queue():
     # 無門檻:兩段綠燈秒數都算進分母,飽和流被無車那段稀釋
     assert loose["green_sec"] > strict["green_sec"]
     assert strict["veh_per_sec"] > loose["veh_per_sec"]
+
+
+def test_max_green_fixed_100_forces_switch(monkeypatch):
+    """使用者:最大綠固定 100 秒。時制表寫 210 也要在 100 秒強制切;設 0 才退回時制表。"""
+    from api.routes import signal_shadow as S
+    from detection.signal_decision_engine import ApproachState, decide
+    monkeypatch.setattr(S, "MAX_GREEN_SEC", 100.0)
+    assert S._max_green({"max_green": 210}) == 100.0
+    monkeypatch.setattr(S, "MAX_GREEN_SEC", 0.0)
+    assert S._max_green({"max_green": 210}) == 210.0 and S._max_green({}) == 210.0
+    # 引擎:綠側還有隊伍、紅側沒車(平常會 KEEP),已亮 100s 仍強制 SWITCH
+    g = ApproachState(1, queue_m=40.0, flow_vpm=10.0, storage_m=210, priority=False)
+    r = ApproachState(2, queue_m=0.0, flow_vpm=0.0, storage_m=600, priority=True, waiting_sec=100.0)
+    d = decide(green_phase=1, green_elapsed_sec=100.0, green_side=g, red_side=r, min_green_sec=10.0, max_green_sec=100.0,
+               saturation_vph=500.0)
+    assert d.action == "SWITCH" and "最大綠" in d.reason
+    d2 = decide(green_phase=1, green_elapsed_sec=99.0, green_side=g, red_side=r, min_green_sec=10.0, max_green_sec=100.0,
+                saturation_vph=500.0)
+    assert d2.action == "KEEP"
