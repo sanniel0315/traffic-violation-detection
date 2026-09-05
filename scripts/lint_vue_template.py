@@ -316,6 +316,15 @@ def lint_watch_tdz(text):
     # 每個識別字第一次被 const/let 宣告的位置(字元 offset)
     decl = {}
     for m in _DECL_RE.finditer(script):
+        # 只採計 setup 頂層的宣告。函式內的區域 const 不會造成 TDZ ——
+        # 它跟 watch 不在同一個作用域。先前沒濾,roi_editor.html 的 watch 被誤報:
+        # 它讀到 computed 本體裡的物件鍵 label,而 label 是幾百行後某個
+        # 繪圖函式內的區域變數(2026-09-06 誤報)。
+        # 🛑 _DECL_RE 的 ^\s* 會把行首縮排吃進 match,所以縮排要從 match 內容量,
+        #    不能用 m.start() 減行首(那永遠是 0)。
+        indent = len(m.group(0)) - len(m.group(0).lstrip())
+        if indent > 12:
+            continue
         decl.setdefault(m.group(1), m.start())
     # computed 的本體,供一層追進去用
     bodies = {}
@@ -353,6 +362,38 @@ def lint_watch_tdz(text):
     return hits
 
 
+SVG_CAMEL_ATTRS = (
+    "viewBox", "preserveAspectRatio", "gradientUnits", "gradientTransform",
+    "patternUnits", "patternContentUnits", "clipPathUnits", "maskUnits",
+    "markerWidth", "markerHeight", "refX", "refY", "textLength", "lengthAdjust",
+    "spreadMethod", "startOffset", "baseFrequency", "stdDeviation",
+)
+
+
+def _kebab(name):
+    return re.sub(r'([A-Z])', lambda m: '-' + m.group(1).lower(), name)
+
+
+def lint_svg_camel(text):
+    """v-bind 到 SVG 的 camelCase 屬性必須加 .camel 修飾詞。
+
+    inline template 由瀏覽器的 HTML parser 先解析,屬性名一律轉小寫。
+    :viewBox="..." 到 Vue 手上已經是 :viewbox,設出來的是 viewbox 屬性 ——
+    SVG 屬性名區分大小寫,瀏覽器直接忽略。後果不是報錯,是默默壞掉:
+    沒有 viewBox 的 SVG 改用 1 使用者單位 = 1px,內容只佔容器一角。
+    2026-09-06 使用者回報「控制時間軸只有 container 一半」就是這個。
+    正確寫法::view-box.camel="..."
+    """
+    bad = []
+    for i, line in enumerate(text.splitlines(), 1):
+        for attr in SVG_CAMEL_ATTRS:
+            if attr.lower() == attr:
+                continue
+            for form in (":" + attr + "=", "v-bind:" + attr + "="):
+                if form in line:
+                    bad.append((i, attr, line.strip()[:90]))
+    return bad
+
 def lint_one(target):
     """回傳 (fails, warns)。"""
     if str(target).startswith(('http://', 'https://')):
@@ -371,6 +412,11 @@ def lint_one(target):
         for api, line in api_missing:
             print(f'       第 {line} 行用到 {api}() —— 請加進 const {{ ... }} = Vue')
         fails += len(api_missing)
+    svgc = lint_svg_camel(text)
+    for ln, attr, snippet in svgc:
+        print("[FAIL] %s:%s SVG 屬性 :%s 在 inline template 會被轉小寫而失效,"
+              " 要寫成 :%s.camel —— %s" % (target, ln, attr, _kebab(attr), snippet))
+    fails += len(svgc)
     tdz = lint_watch_tdz(text)
     if tdz:
         print(f'[FAIL] {len(tdz)} 處 watch 會讀到還沒宣告的 const '

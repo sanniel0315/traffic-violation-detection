@@ -41,13 +41,16 @@ def test_default_saturation_and_missing_hours_warn(monkeypatch):
     from api.routes import acceptance as A
     now_h = datetime.now().hour
     monkeypatch.setattr(A, "_shadow_constants", lambda: _plan(sat_src="default", lost_src="預設 5 s(未量到)", mpv_src="預設 7 m(未量到)", fi=1.0)["constants"])
-    monkeypatch.setattr(A, "_shadow_hourly", lambda day: _hourly(max(0, now_h - 3))["rows"])   # 缺 3 個小時
+    # 缺 3 個小時。🛑 不可寫死 now_h-3:凌晨 0~2 時 now_h 太小,夾到 0 之後其實不缺,
+    #    判定會變成 PASS(2026-09-06 02:xx 實際踩到)。用相對值算實際缺幾個。
+    done = max(0, now_h - 3)
+    monkeypatch.setattr(A, "_shadow_hourly", lambda day: _hourly(done)["rows"])
     items = {i["key"]: i for i in A._check_params()}
     assert items["param_saturation"]["state"] == A.WARN
     assert items["param_lost_time"]["state"] == A.WARN
     assert items["param_mpv"]["state"] == A.WARN
     assert items["frame_interval"]["state"] == A.PASS
-    assert items["hourly_eval"]["state"] == (A.WARN if now_h >= 3 else A.PASS)
+    assert items["hourly_eval"]["state"] == (A.WARN if now_h - done > 0 else A.PASS)
 
 
 def test_no_plan_is_unknown_not_pass(monkeypatch):
