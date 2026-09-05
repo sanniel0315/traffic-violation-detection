@@ -143,6 +143,69 @@ def load_passes(db_path: str, cams: list, since_local: str, until_local: str) ->
     return out
 
 
+def load_flow(shadow_db: str, phase: int, since_local: str, until_local: str) -> dict:
+    """該分相的**流量**(輛/分)—— 系統自己的流量量測,不走 IN/OUT 事件。
+
+    使用者 2026-09-06:「in out 不看,我們看流量」。
+
+    流量的定義在 congestion_detector._update_flow_vpm:一個 track 出現過、
+    之後從畫面消失就算通過一台,取最近 60 秒滾動視窗。停著不走的車 track
+    一直在,不會被計入 —— 衡量的是「車走掉的速率」不是「車有多少」。
+    影子紀錄每 5 秒存一次(signal_shadow_log.flow_vpm_1 / flow_vpm_2),
+    所以歷史區間查得到。
+
+    🛑 兩個已知的偏差方向,回傳時一起帶出去,不要只給一個數字:
+       · 低估:分析率約 0.8 fps,快車可能兩幀之間就穿過 ROI,track 接不起來。
+       · 高估:同樣因為幀率低,track 斷掉再接會被算成兩台(ID 跳動)。
+       2026-09-06 實測 09-05 17-20:分相1 平均 26.6 輛/分(1596 vph)、
+       分相2 23.5(1412 vph),但同期實測飽和流只有 1184/909 vph、綠燈約佔四成,
+       容量約 533/380 vph —— 流量是容量的 3 倍,物理上不可能同時成立。
+       這個矛盾尚未解決(見 docs/上線報告_骨架.md §7.12),所以本函式回傳的
+       `over_capacity` 會標出來,呼叫端必須照實呈現,不可以當成乾淨的通過量。
+    """
+    conn = sqlite3.connect(f"file:{shadow_db}?mode=ro", uri=True, timeout=20)
+    col = "flow_vpm_1" if phase == 1 else "flow_vpm_2"
+    rows = conn.execute(
+        f"SELECT ts, {col} FROM signal_shadow_log WHERE ts>=? AND ts<? "
+        f"AND {col} IS NOT NULL ORDER BY ts", (since_local, until_local)).fetchall()
+    conn.close()
+    vals = [float(v) for _, v in rows if v is not None]
+    if not vals:
+        return {"samples": 0, "flow_vpm": None, "throughput_vph": None,
+                "method": "measured", "how": "系統流量量測(track 消失計一台,60 秒視窗)"}
+    mean = sum(vals) / len(vals)
+    return {
+        "samples": len(vals),
+        "flow_vpm": round(mean, 2),
+        "throughput_vph": round(mean * 60.0, 1),
+        "method": "measured",
+        "how": "系統流量量測(track 消失計一台,60 秒滾動視窗,每 5 秒取樣平均)",
+        "caveat": "幀率約 0.8 fps:快車漏接會低估、track 斷接會高估",
+    }
+
+
+def flow_capacity_check(flow_vph: Optional[float], saturation_vph: Optional[float],
+                        green_share: Optional[float]) -> dict:
+    """流量與容量的一致性檢查。流量超過容量就是有一邊量錯了,必須標出來。
+
+    容量 = 飽和流 × 綠燈時間佔比。長時間下進場等於出場,所以流量不可能
+    穩定高於容量 —— 高於就代表流量高估、或飽和流低估、或兩者都有。
+    """
+    if not flow_vph or not saturation_vph or not green_share:
+        return {"checked": False, "reason": "缺少流量、飽和流或綠燈佔比"}
+    cap = saturation_vph * green_share
+    ratio = flow_vph / cap if cap else None
+    return {
+        "checked": True,
+        "capacity_vph": round(cap, 1),
+        "flow_vph": round(flow_vph, 1),
+        "ratio": round(ratio, 2) if ratio else None,
+        "over_capacity": bool(ratio and ratio > 1.05),
+        "note": ("流量高於容量 —— 兩者必有一邊量錯,結果不可引用"
+                 if ratio and ratio > 1.05 else "流量在容量之內,一致"),
+    }
+
+
 # ── 指標 ─────────────────────────────────────────────────────────────
 def per_cycle_metrics(cycles: list, cong: list, passes: list, storage_m: Optional[float],
                       approach_len_m: Optional[float]) -> list:
