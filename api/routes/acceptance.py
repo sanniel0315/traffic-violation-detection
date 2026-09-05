@@ -294,6 +294,79 @@ def _check_safety() -> list:
     return out
 
 
+def _check_params() -> list:
+    """決策參數是不是「落地的準確值」(使用者要求),以及量測的前提有沒有成立。"""
+    out: list = []
+    plan = _get("/api/signal/shadow/plan") or {}
+    c = plan.get("constants") or {}
+    src = str(c.get("saturation_source") or "")
+    st = PASS if src.startswith("measured") else (UNKNOWN if not c else WARN)
+    out.append(_item(
+        "param_saturation", "決策參數", "飽和流量:現場實測",
+        "saturation_source = measured(24h 視窗、只從有隊伍的綠燈量、落地檔重啟載回)",
+        st, f"{c.get('saturation_vph')} vph,來源 {src or '—'},量於 {c.get('saturation_measured_at')}",
+        "退回預設 1800 會讓 change_cost 從 ~3.5 變 12.5,引擎明顯不願意換相。"
+        "09-05 凌晨就是這樣把整個早尖峰比對作廢的。"))
+
+    lsrc = str(c.get("lost_time_source") or "")
+    if "5F03" in lsrc and "實測" in lsrc:
+        st, ev = PASS, f"{c.get('lost_time_sec')} s,{lsrc}"
+    elif "5FC4" in lsrc:
+        st, ev = PASS, f"{c.get('lost_time_sec')} s,{lsrc}(控制器回報的設定值,非假設)"
+    elif not c:
+        st, ev = UNKNOWN, "決策引擎無資料"
+    else:
+        st, ev = WARN, f"{c.get('lost_time_sec')} s,{lsrc or '預設'}"
+    out.append(_item(
+        "param_lost_time", "決策參數", "換相損失時間:控制器數值",
+        "來源為控制器 5F03 每秒回報實測,或控制器 5FC4 時制設定;不可為假設值",
+        st, ev,
+        "🛑 5F03 不是每秒一框時不可用框量:2026-09-05 量出 8.5 秒(真值 5),差的是一個框距。"))
+
+    msrc = str(c.get("meters_per_vehicle_source") or "")
+    st = PASS if msrc.startswith("實測") else (UNKNOWN if not c else WARN)
+    out.append(_item(
+        "param_mpv", "決策參數", "每車佔用長度:現場實測",
+        "停止線相機 排隊公尺 ÷ 停等車數(停等 ≥2 台)取中位數,≥100 筆才採信",
+        st, f"{c.get('meters_per_vehicle')} m,{msrc or '—'}"))
+
+    fi = c.get("frame_interval_sec")
+    if fi is None:
+        st, ev = UNKNOWN, "無法量框距(抄錄框不足)"
+    elif float(fi) <= 1.5:
+        st, ev = PASS, f"5F03 中位框距 {fi} 秒(每秒一框)"
+    else:
+        st, ev = WARN, f"5F03 中位框距 {fi} 秒 —— 09-04 14:22:48 起控制器 TransmitCycle 被改為 0(僅變化時回報)"
+    out.append(_item(
+        "frame_interval", "資料源", "控制器燈態回報週期",
+        "5F03 每秒一框(5F6F TransmitCycle=1),配對法秒數精度才有 ±1 秒",
+        st, ev,
+        "框距變大時:配對法精度只剩一個框距、損失時間不可用框量。回復需送 5F6F,目前 QUERY_ONLY=1,要使用者同意。"))
+
+    # 逐時評估:今天到目前為止每一小時都有列(已結束的小時不可缺)
+    try:
+        from datetime import date as _date
+        today = _date.today().isoformat()
+        hr = _get(f"/api/signal/shadow/hourly?date={today}") or {}
+        rows = hr.get("rows") or []
+        done = [r for r in rows if not r.get("partial")]
+        expect = max(0, datetime.now().hour)          # 00..(now-1) 小時應已結束
+        missing = expect - len(done)
+        if not rows:
+            st, ev = UNKNOWN, "今天尚無逐時列"
+        elif missing <= 0:
+            st, ev = PASS, f"今天 {len(done)} 個已結束小時全部有列(進行中 {len(rows) - len(done)})"
+        else:
+            st, ev = WARN, f"今天缺 {missing} 個小時的列({len(done)}/{expect}),背景回填中或有錯"
+    except Exception as e:
+        st, ev = UNKNOWN, f"取逐時列失敗: {e}"
+    out.append(_item(
+        "hourly_eval", "歷史與統計", "逐時評估無缺漏",
+        "每整點自動算前一小時(配對/成效/一致率/參數),存表可查",
+        st, ev, "使用者要求「每小時都要有」。"))
+    return out
+
+
 @router.get("", summary="號誌整合驗收清單(每項實測)")
 async def acceptance(_user=Depends(get_current_user)):
     """逐項實際量測目前狀態。量不到一律 unknown,不當成通過。"""
@@ -305,6 +378,7 @@ async def acceptance(_user=Depends(get_current_user)):
     items += _check_device()
     items += _check_safety()
     items += _check_shadow()
+    items += _check_params()
     items += _check_stats()
 
     counts = {k: 0 for k in (PASS, FAIL, WARN, UNKNOWN)}
