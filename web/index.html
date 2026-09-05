@@ -3683,11 +3683,28 @@
         .wr-map-wrap { position:relative; border-radius:var(--r-card); overflow:hidden;
                        border:1px solid var(--gov-border); background:var(--gov-bg); }
         .wr-map { height:360px; width:100%; background:var(--gov-bg); }
-        .wr-tip { background:rgba(255,255,255,.95); color:var(--gov-text); border:1px solid var(--gov-border);
-                  font:600 11px var(--font-mono); padding:2px 6px; border-radius:4px; box-shadow:var(--shadow-sm); }
-        .wr-tip::before { border-top-color:var(--gov-border); }
+        /* 地圖標籤:只放短碼,收到最小 —— 數字在下方狀態列 */
+        .wr-tip { background:rgba(255,255,255,.92); color:var(--gov-text); border:0;
+                  font:600 10.5px var(--font-mono); letter-spacing:.02em;
+                  padding:1px 6px; border-radius:999px;
+                  box-shadow:0 1px 3px rgba(20,35,60,.18); white-space:nowrap; }
+        .wr-tip::before { display:none; }
+        /* 地圖下方的相機狀態列 */
+        .wr-camrow { display:grid; gap:7px; margin-top:9px;
+                     grid-template-columns:repeat(auto-fit, minmax(215px, 1fr)); }
+        .wr-camcell { display:flex; align-items:center; gap:7px; min-width:0;
+                      padding:7px 10px; border:1px solid var(--gov-border);
+                      border-radius:9px; background:var(--gov-surface); font-size:12px; }
+        .wr-camcell.off { opacity:.5; border-style:dashed; }
+        .wr-camcell b { font:600 12px var(--font-mono); color:var(--gov-text); flex:none; }
+        .wr-cdot { width:9px; height:9px; border-radius:50%; flex:none;
+                   box-shadow:0 0 0 2px var(--gov-surface), 0 0 0 3px var(--gov-border); }
+        .wr-cph { color:var(--gov-mute-2); font-size:11px; flex:none; }
+        .wr-cv { margin-left:auto; color:var(--gov-muted); white-space:nowrap; }
+        .wr-cv + .wr-cv { margin-left:10px; }
+        .wr-cv i { font-style:normal; font-family:var(--font-mono); font-weight:600; color:var(--gov-text); }
         .wr-map-note { margin:6px 10px; font-size:var(--fs-caption); color:var(--gov-warn); }
-        .wr-geo-count { position:absolute; right:12px; top:10px; text-align:right; z-index:500;
+        .wr-geo-count { position:absolute; right:10px; top:9px; text-align:right; z-index:500;
                         background:rgba(255,255,255,.92); padding:6px 12px; border-radius:var(--r-card); border:1px solid var(--gov-border); }
         .wr-geo-count b { display:block; font:600 40px/1 var(--font-mono); color:var(--gov-text); letter-spacing:-.03em; }
         .wr-geo-count b.warn { color:var(--gov-warn); }
@@ -7878,6 +7895,17 @@
                                 </div>
                                 <p v-if="sigWarMapNote" class="wr-map-note">{{ sigWarMapNote }}</p>
                             </div>
+                            <!-- 數字從地圖上搬下來:地圖只表達位置與狀態,量測值放這裡 -->
+                            <div class="wr-camrow">
+                                <div v-for="c in sigWarMapCams" :key="'mc'+c.camera_id"
+                                     class="wr-camcell" :class="{off:!c.online}" :title="c.full">
+                                    <span class="wr-cdot" :style="{background:c.color}"></span>
+                                    <b>{{ c.name }}</b>
+                                    <span class="wr-cph">分相 {{ c.phase_no }}</span>
+                                    <span class="wr-cv">佔有率 <i>{{ c.occ }}</i></span>
+                                    <span class="wr-cv" v-if="c.queue!=null">排隊 <i>{{ c.queue }}</i> m</span>
+                                </div>
+                            </div>
                             <div class="xn-foot" v-if="sigLiveXn0 && sigLiveXn0.phase" style="justify-content:center;margin-top:8px">
                                 <span v-if="sigLiveXn0.control_mode" class="xn-chip xn-mode" :class="'sev-'+sigLiveXn0.control_mode.severity"><b>{{ sigLiveXn0.control_mode.label }}</b></span>
                                 <span class="xn-chip"><span class="k">分相</span><b>{{ sigLiveXn0.phase.sub_phase_id }}</b></span>
@@ -8257,10 +8285,10 @@
                             <div class="sc-wrap">
                             <table class="sc-table">
                                 <tbody>
-                                    <tr><td>計畫編號</td><td class="sc-num">{{ sigPlan.plan.plan_id }}</td><td></td></tr>
-                                    <tr><td>最小綠</td><td class="sc-num">{{ sigPlan.plan.min_green_sec }}</td><td>秒(本分相)</td></tr>
-                                    <tr><td>最大綠</td><td class="sc-num">{{ sigPlan.plan.max_green_sec }}</td><td>秒</td></tr>
-                                    <tr><td>週期 / 黃燈 / 全紅</td><td class="sc-num">{{ sigPlan.plan.cycle }} / {{ sigPlan.plan.yellow }} / {{ sigPlan.plan.all_red }}</td><td>秒</td></tr>
+                                    <tr><td>計畫編號</td><td class="sc-num">{{ sigPlanTiming.plan_id }}</td><td></td></tr>
+                                    <tr><td>最小綠</td><td class="sc-num">{{ sigPlanTiming.min_green_sec }}</td><td>秒(本分相)</td></tr>
+                                    <tr><td>最大綠</td><td class="sc-num">{{ sigPlanTiming.max_green_sec }}</td><td>秒</td></tr>
+                                    <tr><td>週期 / 黃燈 / 全紅</td><td class="sc-num">{{ sigPlanTiming.cycle }} / {{ sigPlanTiming.yellow }} / {{ sigPlanTiming.all_red }}</td><td>秒</td></tr>
                                 </tbody>
                             </table>
                             </div>
@@ -23480,6 +23508,11 @@ const app=createApp({
         const sigCtlGreenRamp=computed(()=>{
             const g=sigPlan.value.green_side; return g?('('+(g.ramp||'')+')'):'';
         });
+        // 🛑 /plan 沒帶 plan 欄位時,模板裡的 sigPlan.plan.plan_id 會直接
+        //    TypeError: Cannot read properties of undefined → 整頁掛掉。
+        //    現場一直有這個欄位所以看不出來,但端點回傳不完整(重啟中、查表失敗)
+        //    就會白畫面。統一走這個保底物件。
+        const sigPlanTiming=computed(()=>sigPlan.value.plan||{});
         const sigCtlPlanId=computed(()=>{
             const pl=sigPlan.value.plan; return pl?pl.plan_id:'—';
         });
@@ -23769,18 +23802,39 @@ const app=createApp({
                        (l) => { l.setLatLng(P); l.setStyle({fillColor: lampColor}); });
                 list.forEach((c) => {
                     const cc = WR_LV_COLOR[wrLvRank(c.level)];
-                    const occ = (c.occupancy == null) ? '—' : (Number(c.occupancy) * 100).toFixed(0) + '%';
-                    const tip = c.name + ' · 佔有率 ' + occ + (c.queue_m != null ? ' · 排隊 ' + Number(c.queue_m).toFixed(1) + ' m' : '');
+                    // 🛑 常駐標籤只放**短碼**,不放數字。四台相機各掛一段
+                    //    「名稱 · 佔有率 · 排隊」的常駐標籤,在 360px 高的地圖上必然互相遮蓋
+                    //    (2026-09-06 使用者回報)。數字改放地圖下方的狀態列,
+                    //    那裡有足夠寬度、也不會擋住路口幾何。
+                    // 方向依相機相對路口中心的位置往**外**放,兩兩才不會撞在一起。
+                    const dx = (c.lng - center[1]) * WR_MLON, dy = (c.lat - center[0]) * WR_MLAT;
+                    const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left')
+                                                            : (dy > 0 ? 'top' : 'bottom');
+                    const off = {right: [10, 0], left: [-10, 0], top: [0, -10], bottom: [0, 10]}[dir];
                     upsert('cam', c.camera_id,
-                           () => L.circleMarker([c.lat, c.lng], {radius: 8, color: '#0b5ea8', weight: 2, fillColor: cc, fillOpacity: .95})
-                                   .bindTooltip(tip, {permanent: true, direction: 'top', offset: [0, -8], className: 'wr-tip'}),
-                           (l) => { l.setLatLng([c.lat, c.lng]); l.setStyle({fillColor: cc, color: c.online ? '#0b5ea8' : '#8b95a4'}); l.setTooltipContent(tip); });
+                           () => L.circleMarker([c.lat, c.lng], {radius: 7, color: '#ffffff', weight: 2.5, fillColor: cc, fillOpacity: 1})
+                                   .bindTooltip(c.name, {permanent: true, direction: dir, offset: off, className: 'wr-tip'}),
+                           (l) => { l.setLatLng([c.lat, c.lng]);
+                                    l.setStyle({fillColor: cc, color: c.online ? '#ffffff' : '#c3ccd7'});
+                                    l.setTooltipContent(c.name); });
                 });
             });
         };
         // 資料更新就重畫;地圖物件 upsert,不會累積
         watch(() => sigPlan.value, () => { if (wrMap) drawWarMap(); });
         // 匯出:接既有端點,今日 00:00 起到現在
+        // 地圖下方的相機狀態列。顏色跟地圖上的圓點同一套判級色,才對得起來。
+        const sigWarMapCams = computed(() => {
+            const cams = (sigPlan.value || {}).cameras || [];
+            return cams.map((c) => ({
+                camera_id: c.camera_id, name: c.name, phase_no: c.phase_no,
+                online: c.online !== false,
+                full: sigCamFullName(c.camera_id) || c.name,
+                color: WR_LV_COLOR[wrLvRank(c.level)],
+                occ: (c.occupancy == null) ? '—' : (Number(c.occupancy) * 100).toFixed(0) + '%',
+                queue: (c.queue_m == null) ? null : Number(c.queue_m).toFixed(1),
+            })).sort((a, b) => (a.phase_no - b.phase_no) || (a.camera_id - b.camera_id));
+        });
         const sigWarExportUrl = (kind) => {
             const day = sigDayOffsetAt(0, 0);
             const now = new Date(), pad = (n) => String(n).padStart(2, '0');
@@ -24940,7 +24994,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigCamZones,sigCamBox,sigCamOverlayOn,onWarCamLoad,sigCamFullName,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigCamZones,sigCamBox,sigCamOverlayOn,onWarCamLoad,sigCamFullName,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
