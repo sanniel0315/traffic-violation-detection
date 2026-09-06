@@ -3588,7 +3588,14 @@
                        letter-spacing:-.015em; text-wrap:balance; }
         @media (max-width:700px) { .wr-headline { font-size:var(--fs-t3); } }
         .wr-quote { margin:0; border-left:3px solid var(--gov-border-strong); padding:2px 0 2px 14px;
-                    color:var(--gov-text-2); font-size:var(--fs-body); max-width:40ch; }
+                    color:var(--gov-text-2); font-size:var(--fs-body); max-width:64ch;
+                    display:flex; flex-direction:column; gap:5px; }
+        .wr-basis-gate { font-size:var(--fs-caption); letter-spacing:var(--ls-wide); color:var(--gov-mute-2);
+                         text-transform:none; }
+        .wr-basis-eq { font-size:var(--fs-small); color:var(--gov-text); line-height:1.7; }
+        .wr-basis-eq i { font-style:normal; }
+        .wr-basis-eq b { font:600 var(--fs-mono-num) var(--font-mono); }
+        .wr-basis-say { font-size:var(--fs-small); color:var(--gov-muted); line-height:1.7; }
         /* 拿掉 VD/AI 之後只剩一張,不能再寫死三欄(會縮在左邊三分之一) */
 
         .wr-cols { display:grid; gap:14px; grid-template-columns:repeat(2, 1fr); }
@@ -3597,9 +3604,12 @@
                   box-shadow:var(--shadow-sm); }
         .wr-col-hd { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
         .wr-col-hd b { font-size:var(--fs-t2); font-weight:700; color:var(--gov-text); }
-        .wr-live-sec { margin-left:auto; font:600 var(--fs-mono-num) var(--font-mono);
+        /* 文字走 sans、數字走 mono —— 中文不可以套 mono 字族(會掉到替代字型) */
+        .wr-live-sec { margin-left:auto; font:600 var(--fs-small) var(--font-sans);
                        padding:2px 9px; border-radius:999px; letter-spacing:.02em;
                        background:var(--gov-bg-soft,#f1f5f9); color:var(--gov-muted); }
+        .wr-live-sec i { font-style:normal; }
+        .wr-live-sec b { font:600 var(--fs-mono-num) var(--font-mono); }
         .wr-live-sec.green { background:rgba(47,179,68,.12); color:#1f7a34; }
         .wr-live-sec.amber { background:rgba(240,160,32,.14); color:#96620a; }
         .wr-live-sec.red   { background:rgba(229,52,42,.10); color:#a4271f; }
@@ -7821,7 +7831,12 @@
                                     <span class="wr-pill" :title="sigCtlModeNote">{{ sigCtlModeText }}</span>
                                 </div>
                                 <h2 class="wr-headline">{{ sigWarHero.headline }}</h2>
-                                <p class="wr-quote">{{ sigWarHero.why }}</p>
+                                <p class="wr-quote">
+                                    <span class="wr-basis-gate">{{ sigWarBasis.gate }}</span>
+                                    <span class="wr-basis-eq"><template v-for="(b, i) in sigWarBasis.parts"
+                                        :key="'bp'+i"><b v-if="b.num">{{ b.t }}</b><i v-else>{{ b.t }}</i></template></span>
+                                    <span class="wr-basis-say">{{ sigWarBasis.say }}</span>
+                                </p>
                             </div>
                         </div>
 
@@ -7882,7 +7897,9 @@
                                 <div class="wr-state" :class="col.stateCls">
                                     <span class="lv-lamp" :class="col.lampCls"></span>
                                     <b>{{ col.ramp }} {{ col.stateText }}</b>
-                                    <span class="wr-live-sec" :class="col.liveCls">{{ col.liveText }}</span>
+                                    <span class="wr-live-sec" :class="col.liveCls"><template
+                                        v-for="(p, i) in col.liveParts" :key="'lp'+i"><b
+                                        v-if="p.num">{{ p.t }}</b><i v-else>{{ p.t }}</i></template></span>
                                 </div>
                             </div>
                         </div>
@@ -23814,23 +23831,28 @@ const app=createApp({
                 //    「還剩 0 秒」,是「這一輪的倒數已經用完、還沒收到新的」。
                 //    當成沒有數字處理,只顯示狀態文字。
                 if (remain != null && remain <= 0) remain = null;
-                let liveText = '', liveCls = '';
+                // 🛑 中文用 sans、數字用 mono:整段套 mono 的話,中文會掉到 mono 字族的
+                //    替代字型,跟全站的 Noto Sans TC 對不起來(現場回報「字體沒統一」)。
+                //    所以拆成 parts,num=true 的才包 <b>(mono)。
+                let liveParts = [], liveCls = '';
                 if (clearing) {
-                    liveText = (remain == null) ? '清道中' : ('清道 剩 ' + remain + ' s');
+                    liveParts = (remain == null) ? [{t: '清道中'}]
+                              : [{t: '清道 剩 '}, {t: String(remain), num: true}, {t: ' 秒'}];
                     liveCls = 'amber';
                 } else if (isGreen) {
-                    liveText = '已亮 ' + (sec == null ? '–' : Math.round(sec)) + ' s'
-                             + (remain == null ? '' : ' · 剩 ' + remain + ' s');
+                    liveParts = [{t: '已亮 '}, {t: (sec == null ? '–' : String(Math.round(sec))), num: true}, {t: ' 秒'}];
+                    if (remain != null) liveParts.push({t: ' · 剩 '}, {t: String(remain), num: true}, {t: ' 秒'});
                     liveCls = (remain != null && remain <= 5) ? 'hot' : 'green';
                 } else {
-                    liveText = (remain == null) ? '紅燈等待中' : ('約 ' + remain + ' s 後換相');
+                    liveParts = (remain == null) ? [{t: '紅燈等待中'}]
+                              : [{t: '約 '}, {t: String(remain), num: true}, {t: ' 秒後換相'}];
                     liveCls = 'red';
                 }
                 return {
                     phase: ph, ramp: meta.ramp, zone: meta.zone,
                     isGreen: isGreen, stateText: stateText,
                     stateCls: stateCls, lampCls: lampCls,
-                    liveText: liveText, liveCls: liveCls,
+                    liveParts: liveParts, liveCls: liveCls,
                     rel: rel[String(ph)] || {},
                     cams: cams.filter((c) => c.phase_no === ph)
                               .map((c) => Object.assign({}, c,
@@ -24012,6 +24034,44 @@ const app=createApp({
         });
         // 底部原始訊框:只留燈態回報(5F03),那才是畫面上秒數與燈色的來源。
         // 全部訊框混在一起會被查詢回報洗版,看不出跟畫面的對應。
+        // 決策依據:把「憑什麼這樣判」攤開。三段 —— 決定於哪一道閘門、實際算式、白話。
+        // 🛑 舊版只印 switch_gain / keep_gain / change_cost,但引擎比較的是
+        //    **加權後**的 keep_gain(× keep_weight),所以畫面上那個不等式根本不成立
+        //    (現場回報「完全沒清楚依據」)。這裡改成印真正參與比較的數字,
+        //    並把權重、門檻、差距、單位全部寫出來,讓人可以自己驗算。
+        // 🛑 數字包 <b>(mono)、文字包 <i>(sans):中文套 mono 會掉到替代字型。
+        const sigWarBasis = computed(() => {
+            const d = sigPlan.value || {};
+            const t = d.terms || {};
+            const gates = d.gates || [];
+            const hit = gates.find((g) => g.hit);
+            const gname = hit ? ('第 ' + hit.order + ' 道閘門 · ' + hit.name) : '尚未取得閘門';
+            if (!d.available) return {gate: '', parts: [], say: d.reason || '等待抄錄器回報。'};
+            if (d.clearance) return {gate: gname, parts: [],
+                say: '清道（黃燈、全紅）期間控制器已 committed，這段不做比對。'};
+            const g = d.green_phase, name = g === 1 ? '上匝道' : '下匝道',
+                  other = g === 1 ? '下匝道' : '上匝道';
+            const n = (v) => (v == null ? '—' : Number(v).toFixed(2));
+            // 只有第 4 道閘門是算式決定的;前三道是安全閘門,印算式反而誤導
+            if (!hit || hit.order !== 4) {
+                return {gate: gname, parts: [], say: d.reason || ''};
+            }
+            const parts = [
+                {t: other + '等待延滯 '}, {t: n(t.switch_gain), num: true}, {t: ' 車·秒'},
+                {t: (d.action === 'SWITCH' ? '  ＞  ' : '  ≤  ')},
+                {t: '門檻 '}, {t: n(t.threshold), num: true}, {t: ' 車·秒'},
+                {t: '（' + name + '續綠價值 '}, {t: n(t.keep_gain), num: true},
+                {t: ' × 權重 '}, {t: n(t.keep_weight), num: true},
+                {t: ' ＝ '}, {t: n(t.keep_gain_weighted), num: true},
+                {t: '，＋換相成本 '}, {t: n(t.change_cost), num: true}, {t: '）'},
+            ];
+            const margin = Number(t.margin);
+            const say = (d.action === 'SWITCH'
+                ? '差距 ' + n(t.margin) + ' 車·秒：' + other + '已經等到值得付換相成本。'
+                : '差距 ' + n(t.margin) + ' 車·秒：' + name + '仍有車在放行，換相不划算。')
+                + '　換相成本 = 損失時間² × 飽和流，車·秒是「車數 × 秒數」的延滯單位。';
+            return {gate: gname, parts: parts, say: say};
+        });
         const sigWarFrames = computed(() =>
             (sigFrames.value || []).filter((f) => String(f.code || '').toUpperCase() === '5F03')
                                    .slice(0, 12));
@@ -25129,7 +25189,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigWarExportUrl,sigWarFrameDesc,sigWarHero,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarBasis,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
