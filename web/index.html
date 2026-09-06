@@ -3619,6 +3619,15 @@
                   box-shadow:var(--shadow-sm); }
         .wr-col-hd { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
         .wr-col-hd b { font-size:var(--fs-t2); font-weight:700; color:var(--gov-text); }
+        .wr-live-sec { margin-left:auto; font:600 var(--fs-mono-num) var(--font-mono);
+                       padding:2px 9px; border-radius:999px; letter-spacing:.02em;
+                       background:var(--gov-bg-soft,#f1f5f9); color:var(--gov-muted); }
+        .wr-live-sec.green { background:rgba(47,179,68,.12); color:#1f7a34; }
+        .wr-live-sec.amber { background:rgba(240,160,32,.14); color:#96620a; }
+        .wr-live-sec.red   { background:rgba(229,52,42,.10); color:#a4271f; }
+        .wr-live-sec.hot   { background:rgba(229,52,42,.18); color:#8f1f18; animation:wrSecPulse 1s ease-in-out infinite; }
+        @keyframes wrSecPulse { 0%,100%{opacity:1} 50%{opacity:.55} }
+        @media (prefers-reduced-motion: reduce) { .wr-live-sec.hot { animation:none; } }
         .wr-col-sub { font-size:var(--fs-small); color:var(--gov-muted); }
         .wr-rel { display:flex; gap:18px; flex-wrap:wrap; margin:4px 0 12px; align-items:baseline;
                   font-size:var(--fs-small); color:var(--gov-muted); }
@@ -7834,7 +7843,6 @@
                                     <span class="wr-pill">趨勢 <b>{{ sigWarHero.trend }}</b></span>
                                     <span class="wr-pill" :title="sigCtlModeNote">{{ sigCtlModeText }}</span>
                                 </div>
-                                <div class="wr-eyebrow">決策引擎 · 建議動作</div>
                                 <h2 class="wr-headline">{{ sigWarHero.headline }}</h2>
                                 <p class="wr-quote">{{ sigWarHero.why }}</p>
                             </div>
@@ -7915,6 +7923,7 @@
                                 <div class="wr-state" :class="col.stateCls">
                                     <span class="lv-lamp" :class="col.lampCls"></span>
                                     <b>{{ col.ramp }} {{ col.stateText }}</b>
+                                    <span class="wr-live-sec" :class="col.liveCls">{{ col.liveText }}</span>
                                     <span class="wr-state-sec">{{ col.secText }}</span>
                                 </div>
                             </div>
@@ -23824,10 +23833,30 @@ const app=createApp({
                 if (clearing) { stateText = '清道過渡'; stateCls = 'amber'; lampCls = 'a'; }
                 else if (isGreen) { stateText = '綠燈放行中'; stateCls = 'green'; lampCls = 'g'; }
                 const sec = isGreen ? d.green_elapsed_sec : null;
+                // 即時秒數:綠側顯示「已亮 / 剩」,紅側顯示「約還要多久換相」。
+                // 🛑 倒數的來源是控制器每秒回報的 5F03(sigRemain 逐秒遞減),
+                //    不是我方推算的 —— 綠燈可能被延長,所以紅側那個數字標「約」。
+                //    d.green_elapsed_sec 是我方觀測到的已亮秒數(5 秒取樣),
+                //    與 5F03 的步階倒數是兩個不同來源,不要混成同一個數字。
+                const xn = sigLiveXn0.value;
+                const remain = xn ? xnRemainLive(xn) : null;
+                let liveText = '', liveCls = '';
+                if (clearing) {
+                    liveText = (remain == null) ? '清道中' : ('清道 剩 ' + remain + ' s');
+                    liveCls = 'amber';
+                } else if (isGreen) {
+                    liveText = '已亮 ' + (sec == null ? '–' : Math.round(sec)) + ' s'
+                             + (remain == null ? '' : ' · 剩 ' + remain + ' s');
+                    liveCls = (remain != null && remain <= 5) ? 'hot' : 'green';
+                } else {
+                    liveText = (remain == null) ? '紅燈等待' : ('約 ' + remain + ' s 後換相');
+                    liveCls = 'red';
+                }
                 return {
                     phase: ph, ramp: meta.ramp, zone: meta.zone,
                     isGreen: isGreen, stateText: stateText,
                     stateCls: stateCls, lampCls: lampCls,
+                    liveText: liveText, liveCls: liveCls,
                     secText: (sec == null) ? '– –' : (sec + ' s'),
                     rel: rel[String(ph)] || {},
                     cams: cams.filter((c) => c.phase_no === ph)
