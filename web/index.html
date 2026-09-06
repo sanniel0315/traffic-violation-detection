@@ -23567,18 +23567,21 @@ const app=createApp({
         });
 
         let sigCtlTimer=null;
-        // 🛑 這是**控制器回報的模式碼**,不是我方觀察到的行為。
-        //    2026-09-06 實證:模式碼整天都是 external_dynamic,但綠燈長度與排隊
-        //    幾乎不相關(分相1 r=0.019)、長度集中在少數整數值、平均綠燈隨時段
-        //    整段跳動 —— 行為上是固定時制+時段計畫,使用者也確認「現在是時相控制」。
-        //    所以文字一律標成「回報」,不可以寫成「動態控制中」讓人以為真的在動態控制。
-        const SIG_MODE_TEXT={external_dynamic:'回報:外部動態(行為為時制控制)',
+        // 🛑 這是**控制器回報的模式碼**,不是我方觀察到的行為。文字一律標成「回報」,
+        //    不可以寫成「動態控制中」讓人以為系統知道對方真的在動態控制。
+        // 🛑 也**不可以**反過來標成「行為為時制控制」—— 那個說法(舊 §7.13)已於
+        //    2026-09-06 用同一段程式重跑 09-05 後推翻(見 §7.13a):綠燈長度變異係數
+        //    0.61~0.74、範圍 5~103 秒、跟排隊正相關,不是固定時制。
+        //    現行控制的類型**未定性**,兩個方向都不要寫死。
+        const SIG_MODE_TEXT={external_dynamic:'回報:外部動態(未經我方驗證)',
                              controller_dynamic:'回報:控制器動態',
                              center_manual:'回報:中心手動', roadside_manual:'回報:路側手動',
                              fixtime:'回報:定時控制'};
         const sigCtlModeText=computed(()=>
             SIG_MODE_TEXT[sigPlan.value.control_mode]||sigPlan.value.control_mode||'尚未取得');
-        const sigCtlModeNote='模式碼由控制器回報;現場行為經實測為固定時制+時段計畫(見上線報告 §7.13)';
+        const sigCtlModeNote='模式碼由控制器回報,不是我方驗證過的行為。'
+                            +'現行控制的類型尚未定性 —— 舊結論「固定時制+時段計畫」已於 2026-09-06 推翻'
+                            +'(上線報告 §7.13a);對外一律寫「相對於現行控制」。';
         const sigCtlModeType=computed(()=>{
             const m=sigPlan.value.control_mode;
             if(m==='external_dynamic'||m==='controller_dynamic') return 'info';
