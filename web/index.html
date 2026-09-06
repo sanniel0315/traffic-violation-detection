@@ -3594,7 +3594,8 @@
         .wr-gauge-num { font:600 38px var(--font-mono); fill:var(--gov-text); }
         .wr-gauge-lvl { font:700 15px var(--font-sans); }
         .wr-gauge-cap { color:var(--gov-muted); font-size:var(--fs-micro); letter-spacing:var(--ls-wide); }
-        .wr-tiles { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+        /* 拿掉 VD/AI 之後只剩一張,不能再寫死三欄(會縮在左邊三分之一) */
+        .wr-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; }
         .wr-tile { border:1px solid var(--gov-border); border-radius:var(--r-card); padding:12px 8px; text-align:center;
                    background:var(--gov-surface-2); }
         .wr-ring { position:relative; width:44px; height:44px; margin:0 auto 8px; border-radius:50%;
@@ -24027,10 +24028,11 @@ const app=createApp({
             const d = sigPlan.value || {};
             const cams = d.cameras || [];
             const on = cams.filter((c) => c.online).length;
+            // 🛑 只留影像。VD 那張是假的 —— 現場 4 台 VD 偵測器 2026-09-06 已拆除,
+            //    而且它顯示的根本是相機數(on + ' 台'),跟 CCTV 那張同一個數字。
+            //    AI 決策層那張也拿掉(使用者 2026-09-06)。
             return [
                 {k: 'CCTV', name: '影像', val: on + '/' + cams.length, ok: cams.length && on === cams.length},
-                {k: 'VD', name: '偵測器', val: on + ' 台', ok: on === cams.length && cams.length},
-                {k: 'AI', name: '決策層', val: d.available ? '已連線' : '未連線', ok: !!d.available},
             ];
         });
         // 底部原始訊框:只留燈態回報(5F03),那才是畫面上秒數與燈色的來源。
