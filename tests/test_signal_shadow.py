@@ -506,11 +506,20 @@ def test_estimate_saturation_ignores_greens_without_queue():
             + [mk(t, 1, 21.0 - 0.7 * (t - 60), 0.0) for t in range(60, 90, 5)]  # 有車綠燈
             + [mk(t, 2, 0.0, 0.0) for t in range(90, 120, 5)])
     arr = {1: {"veh_per_sec": 0.0}, 2: {"veh_per_sec": 0.0}}
-    loose = estimate_saturation(rows, arr, min_start_queue_m=0.0)[1]
-    strict = estimate_saturation(rows, arr, min_start_queue_m=14.0)[1]
-    # 無門檻:兩段綠燈秒數都算進分母,飽和流被無車那段稀釋
-    assert loose["green_sec"] > strict["green_sec"]
-    assert strict["veh_per_sec"] > loose["veh_per_sec"]
+    # 🛑 2026-09-06 起有兩道門檻,要分開驗:
+    #    min_start_queue_m —— 綠燈起始沒有隊伍就不採計
+    #    min_saturated_sec —— 隊伍幾秒就放完(起動加速主導)也不採計
+    #    無車那一段兩道都會擋,所以只關掉 min_saturated_sec 才看得出第一道的作用。
+    loose = estimate_saturation(rows, arr, min_start_queue_m=0.0,
+                                min_saturated_sec=0.0)[1]
+    strict = estimate_saturation(rows, arr, min_start_queue_m=14.0,
+                                 min_saturated_sec=0.0)[1]
+    assert loose["green_sec"] > strict["green_sec"], "無門檻時無車綠燈會被算進分母"
+    assert strict["veh_per_sec"] > loose["veh_per_sec"], "被稀釋的飽和流一定較低"
+    # 兩道門檻都開時,無車那一段一定不在採計範圍內
+    both = estimate_saturation(rows, arr, min_start_queue_m=14.0,
+                               min_saturated_sec=8.0)[1]
+    assert both["green_sec"] <= strict["green_sec"]
 
 
 def test_max_green_fixed_100_forces_switch(monkeypatch):
@@ -567,3 +576,59 @@ def test_shadow_route_deploys_keep_weight_3():
     from api.routes import signal_shadow as S
     assert S.KEEP_WEIGHT == 3.0
     assert S.KEEP_WEIGHT_SINCE == "2026-09-06"
+
+
+def _sat_rows(green_sec, start_q, clear_at, phase=1):
+    """造一段綠燈:start_q 公尺的隊伍在 clear_at 秒清空,綠燈共 green_sec 秒。"""
+    from datetime import datetime, timedelta
+    base = datetime(2026, 9, 6, 10, 0, 0)
+    rows = []
+    other = 2 if phase == 1 else 1
+    # 前置紅燈(讓上一段收尾)
+    for k in range(4):
+        rows.append(((base + timedelta(seconds=k * 5)).isoformat(), other, 0.0, 0.0))
+    for k in range(0, green_sec, 5):
+        q = max(0.0, start_q * (1 - k / clear_at)) if k < clear_at else 0.0
+        rows.append(((base + timedelta(seconds=20 + k)).isoformat(), phase,
+                     q if phase == 1 else 0.0, q if phase == 2 else 0.0))
+    rows.append(((base + timedelta(seconds=20 + green_sec)).isoformat(), other, 0.0, 0.0))
+    return rows
+
+
+def test_saturation_skips_runs_that_clear_too_fast():
+    """隊伍兩三秒就放完的綠燈,量到的是起動加速不是穩態放行,整段要丟掉。
+
+    2026-09-06 的病徵:同一路口同一算法,週五晚尖峰量到 1407/1171 vph、
+    週日早尖峰只有 758/523 —— 飽和流變成跟著當天車流跑,而它是物理容量。
+    """
+    from detection.signal_sim import estimate_arrivals, estimate_saturation
+    arr = {1: {"veh_per_sec": 0.0}, 2: {"veh_per_sec": 0.0}}
+    # 隊伍 20 m 在 5 秒內清空 —— 飽和段太短,應被丟掉
+    fast = _sat_rows(green_sec=60, start_q=20.0, clear_at=5)
+    s = estimate_saturation(fast, arr, mpv=6.0, min_start_queue_m=14.0,
+                            min_saturated_sec=8.0)
+    assert s[1]["veh_per_sec"] is None, "飽和段太短的綠燈不可採計"
+    assert s[1]["runs_skipped_short"] >= 1 and s[1]["runs_used"] == 0
+    # 同一段資料在舊門檻(不丟)下會算出值 —— 證明差別確實來自這個門檻
+    s_old = estimate_saturation(fast, arr, mpv=6.0, min_start_queue_m=14.0,
+                                min_saturated_sec=0.0)
+    assert s_old[1]["veh_per_sec"] is not None
+
+
+def test_saturation_keeps_runs_with_sustained_queue():
+    """隊伍夠長、放行持續 30 秒的綠燈要採計,而且算得出合理的飽和流。"""
+    from detection.signal_sim import estimate_saturation
+    arr = {1: {"veh_per_sec": 0.0}, 2: {"veh_per_sec": 0.0}}
+    # 90 m 隊伍在 30 秒清空 = 15 輛 / 30 秒 = 0.5 輛/秒 = 1800 vph
+    slow = _sat_rows(green_sec=60, start_q=90.0, clear_at=30)
+    s = estimate_saturation(slow, arr, mpv=6.0, min_start_queue_m=14.0,
+                            min_saturated_sec=8.0)
+    assert s[1]["runs_used"] >= 1 and s[1]["runs_skipped_short"] == 0
+    assert 0.35 <= s[1]["veh_per_sec"] <= 0.65, s[1]["veh_per_sec"]
+
+
+def test_saturation_window_is_seven_days():
+    """飽和流是物理容量,不該每天重算成不同的值 —— 視窗拉長到 7 天。"""
+    from api.routes import signal_shadow as S
+    assert S.SAT_WINDOW_HOURS == 168.0
+    assert S.SAT_MIN_SATURATED_SEC == 8.0
