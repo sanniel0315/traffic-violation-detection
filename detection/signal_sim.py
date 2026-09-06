@@ -112,7 +112,8 @@ def estimate_arrivals(rows: list, mpv: float = DEFAULT_METERS_PER_VEHICLE) -> di
 def estimate_saturation(rows: list, arrivals: dict,
                         mpv: float = DEFAULT_METERS_PER_VEHICLE,
                         min_start_queue_m: float = 0.0,
-                        clear_threshold_m: float = 3.0) -> dict:
+                        clear_threshold_m: float = 3.0,
+                        min_saturated_sec: float = 8.0) -> dict:
     """從綠燈期間的排隊消退量測飽和流(輛/秒)。
 
     🛑 飽和流是**物理量,本來就該現場量**,不是拿教科書的 1800 vph 套上去。
@@ -136,12 +137,25 @@ def estimate_saturation(rows: list, arrivals: dict,
            (同一天 MAE 223m / 577m,相關係數 0.009 / −0.146)
        同時實測排除了「相機有量測下限」的可能:綠燈末 10 秒排隊中位數 0.0 m,
        七成樣本低於 1 m —— 相機讀得到零,不是卡在殘值。
+
+    🛑 飽和段太短的綠燈要整段丟掉(min_saturated_sec,預設 8 秒)。
+       飽和流的物理定義是「隊伍**持續**放行時的速率」。隊伍只有幾公尺、
+       兩三秒就放完的綠燈,量到的大半是前幾輛車的**起動加速**,不是穩態放行,
+       速率會被系統性低估。後果是飽和流變成**跟著當天車流高低跑**,
+       而它本該是路口的物理容量:
+         · 09-05 17-20(週五晚尖峰,隊伍長):分相1 1407 / 分相2 1171 vph
+         · 09-06 09-12(週日早尖峰,隊伍短):分相1  758 / 分相2  523 vph
+       同一個路口、同一套算法,差了 2~3 倍 —— 那是量測偏差不是容量變了。
+       這個偏差會一路傳到換相成本(09-06 一天內 7.36 → 5.73,降 22%),
+       讓引擎在車少的日子反而更願意換相,方向與現場校正相反。
     """
     out: dict = {}
     for ph in PHASES:
         idx = 2 if ph == 1 else 3
         total_drop = 0.0
         total_green = 0.0
+        used_runs = 0
+        skipped_runs = 0
         run = None
         for r in rows:
             q = r[idx]
@@ -168,10 +182,14 @@ def estimate_saturation(rows: list, arrivals: dict,
                     t_end, q_end = (run[4], run[5]) if run[4] else (run[2], run[3])
                     dt = t_end - run[0]
                     drop = (run[1] - q_end) / mpv      # 正值 = 有消退
-                    if dt >= 5:
+                    # 飽和段太短 = 起動加速主導,整段丟掉(見上方說明)
+                    if dt >= max(5.0, min_saturated_sec):
                         total_green += dt
+                        used_runs += 1
                         if drop > 0:
                             total_drop += drop
+                    else:
+                        skipped_runs += 1
                 run = None
         arr = (arrivals.get(ph) or {}).get("veh_per_sec") or 0.0
         if total_green > 0:
@@ -184,6 +202,9 @@ def estimate_saturation(rows: list, arrivals: dict,
                    "drop_veh": round(total_drop, 2),
                    "denominator": "saturated_green",
                    "clear_threshold_m": clear_threshold_m,
+                   "min_saturated_sec": min_saturated_sec,
+                   "runs_used": used_runs,
+                   "runs_skipped_short": skipped_runs,
                    "vph": round(sat * 3600, 0) if sat else None}
     return out
 

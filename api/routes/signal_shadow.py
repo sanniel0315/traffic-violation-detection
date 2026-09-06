@@ -121,7 +121,15 @@ _measured_sat = {"vph": {}, "ts": None, "source": "default"}
 _SAT_FILE = os.path.join(os.path.dirname(_DB_PATH) or ".", "signal_saturation.json")
 # 只從「綠燈開始時至少排了兩台車」的段量飽和流(見 estimate_saturation)
 SAT_MIN_START_QUEUE_M = float(os.getenv("SIGNAL_SAT_MIN_START_QUEUE_M", "14") or 14)
-SAT_WINDOW_HOURS = float(os.getenv("SIGNAL_SAT_WINDOW_HOURS", "24") or 24)
+# 飽和流的量測視窗。2026-09-06 由 24 小時改為 7 天:
+# 飽和流是路口的**物理容量**,不該每天重算成不同的值。24 小時視窗會把
+# 「今天車多不多」寫進參數 —— 09-06(週日)一天之內就從 1184/885 掉到 928/703,
+# 換相成本跟著掉 22%,引擎在車少的日子反而更願意換相。
+# 長視窗讓單日的車流差異被稀釋掉;真的有工程變更(車道數、幾何)時,
+# 7 天也足夠讓新值取代舊值。
+SAT_WINDOW_HOURS = float(os.getenv("SIGNAL_SAT_WINDOW_HOURS", "168") or 168)
+# 飽和段短於這個秒數的綠燈整段丟掉 —— 那段量到的是起動加速不是穩態放行。
+SAT_MIN_SATURATED_SEC = float(os.getenv("SIGNAL_SAT_MIN_SATURATED_SEC", "8") or 8)
 
 
 def _save_saturation() -> None:
@@ -273,7 +281,8 @@ def _refresh_saturation(hours: float = None) -> None:
     if len(rows) < 200:
         return
     arr = estimate_arrivals(rows)
-    sat = estimate_saturation(rows, arr, min_start_queue_m=SAT_MIN_START_QUEUE_M)
+    sat = estimate_saturation(rows, arr, min_start_queue_m=SAT_MIN_START_QUEUE_M,
+                              min_saturated_sec=SAT_MIN_SATURATED_SEC)
     good = {}
     for ph in (1, 2):
         v = (sat.get(ph) or {}).get("vph")
@@ -1229,6 +1238,8 @@ async def shadow_plan(_user=Depends(get_current_user)):
             "meters_per_vehicle": _mpv(),
             "meters_per_vehicle_source": ("實測(停止線排隊÷停等車數,%s 筆)" % _measured_params["samples"].get("mpv"))
                                           if _measured_params.get("meters_per_vehicle") else "預設 %g m(未量到)" % DEFAULT_METERS_PER_VEHICLE,
+            "saturation_window_hours": SAT_WINDOW_HOURS,
+            "saturation_min_saturated_sec": SAT_MIN_SATURATED_SEC,
             "keep_weight": KEEP_WEIGHT,
             "keep_weight_source": ("現場校正 %g(2026-09-06 上線;驗證情境離最佳 +192.7%%→+51.8%%)"
                                    % KEEP_WEIGHT) if KEEP_WEIGHT != 1.0 else "純模型值 1.0",
@@ -1926,7 +1937,8 @@ async def shadow_benchmark(minutes: int = Query(360, ge=30, le=1440),
                     meters_per_vehicle=_mpv())
     overall = estimate_arrivals(rows, cfg.meters_per_vehicle)
     sat = estimate_saturation(rows, overall,
-                              min_start_queue_m=SAT_MIN_START_QUEUE_M)
+                              min_start_queue_m=SAT_MIN_START_QUEUE_M,
+                              min_saturated_sec=SAT_MIN_SATURATED_SEC)
     cfg.saturation_by_phase = {p: (sat[p]["veh_per_sec"] or None) for p in (1, 2)}
     profile = arrival_profile(rows, mpv=cfg.meters_per_vehicle)
     rate_fn = profile_rate_fn(profile)
