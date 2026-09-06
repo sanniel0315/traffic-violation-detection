@@ -1884,6 +1884,135 @@ def _is_peak(ts: float) -> bool:
     return any(a <= h < b for a, b in PEAK_WINDOWS)
 
 
+@router.get("/count-check", summary="人工計數對照表(90% 準確度條款的證據產生器)")
+async def count_check(camera_id: int = Query(..., ge=1),
+                      since: str = Query(...), until: str = Query(...),
+                      manual: int = Query(-1, description="人工數到的通過車輛數;不給就只列機器量測"),
+                      _user=Depends(get_current_user)):
+    """同一段時間、同一台相機,把**所有機器量測**攤在一起與人工計數對照。
+
+    為什麼需要這支:
+      · 驗收規格(R34 16613)要求偵測設備「經驗證具 90% 以上準確度」。
+        現場 4 台 VD 於 2026-09-06 移除後,AI 影像是**唯一**資料來源,
+        這條從「要補證據」變成必要條件。
+      · 我方目前有四種互相矛盾的通過量(見上線報告 §7.12),差到 4 倍。
+        機器之間互相比不出對錯 —— 只有人工計數能定案。
+
+    🛑 人工計數請用**錄影回放**做,不要到現場站著數:Frigate 四台都是全時錄影
+       (保留 3 天),回放頁 /web/nvr_playback.html 可以逐格看。回傳裡附了
+       這段時間的回放參數。
+
+    🛑 這支只讀不寫,不會改任何參數。
+    """
+    import sqlite3
+    from datetime import datetime as _dt
+
+    def _utc(local_iso: str) -> str:
+        # traffic_events 存 UTC,congestion/shadow 存本地 —— 這裡要換
+        d = _dt.fromisoformat(local_iso)
+        return (d - timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        mins = max(1e-9, (_dt.fromisoformat(until) - _dt.fromisoformat(since)).total_seconds() / 60.0)
+    except Exception as e:
+        return {"error": "時間格式要是 YYYY-MM-DDTHH:MM:SS: %s" % e}
+
+    out = {"camera_id": camera_id, "camera": camera_label(camera_id),
+           "since": since, "until": until, "minutes": round(mins, 2),
+           "methods": [], "note": "", "playback": {}}
+
+    # ── 1) traffic_events 的三種算法 ──
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=20)
+        a, b = _utc(since), _utc(until)
+        row = conn.execute(
+            "SELECT COUNT(*), SUM(CASE WHEN direction='EXIT' THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN direction='IN' THEN 1 ELSE 0 END) "
+            "FROM traffic_events WHERE camera_id=? AND created_at>=? AND created_at<?",
+            (camera_id, a, b)).fetchone()
+        total_rows, n_exit, n_in = (row[0] or 0), (row[1] or 0), (row[2] or 0)
+        out["methods"].append({"key": "events_all", "label": "traffic_events 全部列",
+                               "count": total_rows,
+                               "how": "不分 direction 全部計入(混了每幀偵測列與別的進場道)"})
+        out["methods"].append({"key": "events_exit", "label": "traffic_events 只取 EXIT",
+                               "count": n_exit,
+                               "how": "離開停等區 = 通過停止線,每車一筆"})
+        out["methods"].append({"key": "events_in", "label": "traffic_events 只取 IN",
+                               "count": n_in, "how": "進入停等區,理論上應與 EXIT 相當"})
+        conn.close()
+    except Exception as e:
+        out["methods"].append({"key": "events_all", "label": "traffic_events", "count": None,
+                               "how": "查詢失敗: %s" % e})
+
+    # ── 2) 系統流量 flow_vpm(影子紀錄每 5 秒一筆)──
+    ph = next((k for k, v in PHASE_STOPLINE.items() if v == camera_id), None)
+    if ph:
+        try:
+            conn = _db()
+            col = "flow_vpm_1" if ph == 1 else "flow_vpm_2"
+            r = conn.execute("SELECT AVG(%s), COUNT(%s) FROM signal_shadow_log "
+                             "WHERE ts>=? AND ts<? AND %s IS NOT NULL" % (col, col, col),
+                             (since, until)).fetchone()
+            conn.close()
+            if r and r[0] is not None:
+                out["methods"].append({
+                    "key": "flow_vpm", "label": "系統流量 flow_vpm",
+                    "count": round(float(r[0]) * mins, 1),
+                    "how": "track 消失計一台、60 秒滾動視窗;平均 %.1f 輛/分 × %.1f 分(%s 筆取樣)"
+                           % (float(r[0]), mins, r[1])})
+        except Exception:
+            pass
+
+    # ── 3) 容量上限:量到的通過量不可能超過它 ──
+    if ph:
+        sat = _sat_for(ph)
+        try:
+            conn = _db()
+            r = conn.execute("SELECT COUNT(*), SUM(CASE WHEN green_phase=? THEN 1 ELSE 0 END) "
+                             "FROM signal_shadow_log WHERE ts>=? AND ts<?",
+                             (ph, since, until)).fetchone()
+            conn.close()
+            share = (float(r[1]) / float(r[0])) if (r and r[0]) else None
+        except Exception:
+            share = None
+        if sat and share:
+            out["methods"].append({
+                "key": "capacity", "label": "容量上限(飽和流 × 綠燈佔比)",
+                "count": round(sat * share / 60.0 * mins, 1), "is_bound": True,
+                "how": "飽和流 %.0f vph × 綠燈佔比 %.0f%% —— **超過這個數字的量測一定錯**"
+                       % (sat, share * 100)})
+
+    # ── 4) 人工計數比對 ──
+    if manual >= 0:
+        out["manual"] = manual
+        for m in out["methods"]:
+            c = m.get("count")
+            if c is None or manual == 0:
+                continue
+            err = (c - manual) / float(manual)
+            m["error_pct"] = round(err * 100, 1)
+            m["accuracy_pct"] = round((1 - abs(err)) * 100, 1)
+            m["meets_90"] = bool(abs(err) <= 0.10)
+        ok = [m for m in out["methods"] if m.get("meets_90") and not m.get("is_bound")]
+        out["verdict"] = ("達 90% 準確度的量測:" + "、".join(m["label"] for m in ok)) if ok \
+                         else "🛑 沒有任何一種量測達到規格要求的 90% 準確度"
+    else:
+        out["verdict"] = "尚未輸入人工計數 —— 加上 &manual=<你數到的台數> 才會判定"
+
+    # ── 5) 回放參數(用錄影計數,不必到現場)──
+    out["playback"] = {
+        "page": "/web/nvr_playback.html",
+        "camera": "cam_%d" % camera_id,
+        "since": since, "until": until,
+        "hint": "Frigate 四台全時錄影、保留 3 天。回放頁選這台相機與這段時間,逐格數 EXIT 方向的車。",
+    }
+    out["note"] = ("這支只讀不寫。人工計數是這幾種量測之間唯一的裁判 —— "
+                   "機器彼此比不出對錯(§7.12 三種算法差到 4 倍)。"
+                   "現場 4 台 VD 移除後,AI 影像是唯一資料來源,"
+                   "規格的 90% 準確度條款因此是必要條件不是加分項。")
+    return out
+
+
 @router.get("/benchmark", summary="演算法驗收:我方 vs 公認基準(固定時制/Webster/感應/MaxPressure)")
 async def shadow_benchmark(minutes: int = Query(360, ge=30, le=1440),
                            since: str = Query(""), until: str = Query(""),
