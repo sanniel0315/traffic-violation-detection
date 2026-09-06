@@ -24318,13 +24318,28 @@ const app=createApp({
             sigFrameDecode(row);
         };
         // 展開一列時才解碼(可讀性:欄位+白話),結果快取避免重複打。
+        // 🛑 這支會被 render 呼叫(sigWarFrameDesc 在快取 miss 時觸發),所以
+        //    「同一個 raw 只能打一次」必須擋在**送出前**,不能只靠回應後才填的快取:
+        //    2026-09-06 現場實測,戰情頁對 /frames/decode 每秒打數十次(同一個 raw
+        //    重複、六條連線同時跑),把瀏覽器的連線資源吃光 → 相機的 WebSocket
+        //    再也擠不進去 → 四塊磚全黑(ERR_INSUFFICIENT_RESOURCES)。
+        const _decodeInflight=new Set();
         const sigFrameDecode=async(row)=>{
-            if(!row||!row.raw||sigFrameDecodeCache.value[row.raw])return;
+            if(!row||!row.raw)return;
+            const raw=row.raw;
+            if(sigFrameDecodeCache.value[raw]||_decodeInflight.has(raw))return;
+            // 訊框每 3 秒進新的,快取沒上限會一直長大;超過就整批清掉重來。
+            if(Object.keys(sigFrameDecodeCache.value).length>500)sigFrameDecodeCache.value={};
+            _decodeInflight.add(raw);
             try{
-                const p=new URLSearchParams({code:row.code||'',raw:(row.raw||'').replace(/ /g,'')});
+                const p=new URLSearchParams({code:row.code||'',raw:raw.replace(/ /g,'')});
                 const r=await fetch('/api/signal/frames/decode?'+p.toString(),{credentials:'include'});
-                if(r.ok)sigFrameDecodeCache.value={...sigFrameDecodeCache.value,[row.raw]:await r.json()};
-            }catch(_){ }
+                // 🛑 失敗也要寫快取(寫空殼)。不寫的話 render 每次都是 miss → 再打一次,
+                //    解不出來的訊框會變成無限重試 —— 這正是打爆連線的那一半原因。
+                sigFrameDecodeCache.value[raw]=r.ok?await r.json():{code:row.code,fields:null};
+            }catch(_){
+                sigFrameDecodeCache.value[raw]={code:row.code,fields:null};
+            }finally{ _decodeInflight.delete(raw); }
         };
         // ── 號控方法 ──────────────────────────────────────────────────
         const loadSigControl=async()=>{
