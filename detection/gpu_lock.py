@@ -43,6 +43,20 @@ class _InstrumentedRLock:
         self._win = window_sec
         self._buf = deque()          # (release_ts, wait_sec, hold_sec)
         self._buf_lock = threading.Lock()
+        # 巢狀呼叫端的自報時間。by_caller 是依 thread 名歸戶,而巢狀只記最外層,
+        # 所以 truck_classifier 這種「跑在 detection thread 內」的推論會被算進
+        # detection,無法單獨看它吃掉多少通道 —— 要評估「多跑一顆分類器」的成本
+        # 就少了關鍵數字。這裡讓呼叫端自己回報,補上那一塊。
+        self._nested = deque()       # (ts, tag, hold_sec)
+
+    def record_nested(self, tag: str, hold_sec: float) -> None:
+        """由巢狀推論的呼叫端自報耗時,只影響統計、不影響鎖行為。"""
+        now = time.time()
+        with self._buf_lock:
+            self._nested.append((now, tag, hold_sec))
+            cut = now - self._win
+            while self._nested and self._nested[0][0] < cut:
+                self._nested.popleft()
 
     # ── 與 threading.RLock 相容的介面 ──────────────────────────────────
     def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
@@ -114,6 +128,26 @@ class _InstrumentedRLock:
         def p(sorted_vals, q):
             return sorted_vals[min(len(sorted_vals) - 1, int(len(sorted_vals) * q))]
 
+        # 巢狀推論歸戶(truck_cls 等):時間已含在外層 caller 的 hold 內,這裡拆出來看。
+        # 🛑 不要用 items[0][0](視窗內第一次「釋放」的時間)當下界:nested 是在釋放
+        #    之前記錄的,那樣會把第一次 hold 內的巢狀呼叫全部漏掉,share 系統性偏低
+        #    (實測 0.66 被算成 0.55)。兩個 deque 都已用 now-window 修剪過,直接全取。
+        with self._buf_lock:
+            nested_items = list(self._nested)
+        by_nested: dict = {}
+        for _ts, tag, h in nested_items:
+            b = by_nested.setdefault(tag, {"calls": 0, "hold_sec": 0.0})
+            b["calls"] += 1
+            b["hold_sec"] += h
+        total_hold = max(1e-9, sum(holds))
+        nested_stats = sorted(
+            ({"tag": k,
+              "calls_per_sec": round(v["calls"] / span, 2),
+              "hold_ms_avg": round(v["hold_sec"] / v["calls"] * 1000, 1),
+              "share_of_channel": round(v["hold_sec"] / total_hold, 3)}
+             for k, v in by_nested.items()),
+            key=lambda x: -x["share_of_channel"])
+
         return {
             "samples": n,
             "window_sec": round(span, 1),
@@ -126,6 +160,9 @@ class _InstrumentedRLock:
             # 1.0 = 鎖被佔滿,再多 CPU 也提不了分析率
             "utilization": round(min(1.0, sum(holds) / span), 3),
             "by_caller": callers,
+            # 巢狀推論(含在上面某個 caller 的 hold 內,不是額外的時間)。
+            # share_of_channel = 該項佔整條通道的比例 → 直接讀出「再跑一顆要多少」。
+            "nested": nested_stats,
         }
 
 

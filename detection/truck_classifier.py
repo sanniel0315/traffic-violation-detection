@@ -12,6 +12,7 @@
 """
 
 import os
+import time
 import warnings
 from typing import Optional
 
@@ -142,13 +143,17 @@ class TruckClassifier:
             return self._default_result()
 
         # 推論（過 process-wide GPU lock 避免跟其他 detector 並發踩到 CUDA stream race）
+        # 這裡通常巢狀在 VehicleDetector.detect 的 lock 內,時間會被算進 detection,
+        # 所以自報一次讓 gpu-lock-stats 的 nested 能單獨看到本分類器的通道佔用。
         with GPU_INFERENCE_LOCK:
+            _t0 = time.perf_counter()
             results = self.model.predict(
                 source=crop,
                 imgsz=self.imgsz,
                 verbose=False,
                 device=self.device,
             )
+            GPU_INFERENCE_LOCK.record_nested("truck_cls", time.perf_counter() - _t0)
 
         if not results or results[0].probs is None:
             return self._default_result()
