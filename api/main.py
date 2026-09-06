@@ -15,6 +15,9 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import ClientDisconnect
+
+import anyio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 import os
@@ -408,7 +411,15 @@ app.add_middleware(
 
 @app.middleware("http")
 async def no_cache_web_html(request: Request, call_next):
-    response = await call_next(request)
+    # 🛑 客戶端在回應送完前斷線(關掉 MJPEG 串流分頁、換頁、網路斷)時,
+    #    call_next 會拋 anyio.EndOfStream / ClientDisconnect。那不是我方的錯誤,
+    #    但預設會被 Starlette 當成未處理例外,印一整份 traceback。
+    #    現場實測尖峰 624 筆/小時(2026-09-06),把 journal 洗掉而且白燒 CPU。
+    #    這裡吃掉它,回 499(nginx 慣例:client closed request)。
+    try:
+        response = await call_next(request)
+    except (anyio.EndOfStream, ClientDisconnect):
+        return Response(status_code=499)
     path = str(request.url.path or "")
     if path.startswith("/web"):
         # 🛑 第三方函式庫(/web/lib/)要讓瀏覽器永久快取。
