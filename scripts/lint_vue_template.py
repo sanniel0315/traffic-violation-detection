@@ -438,9 +438,19 @@ def lint_reactive_dot_value(text):
     導致影像載入完成的旗標永遠清不掉,戰情的相機格被深色遮罩蓋住。
     """
     bad = []
-    decls = set(re.findall(r'(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*reactive\s*\(', text))
+    # 🛑 排除誤報:reactive 物件自己就有一個叫 value 的欄位時(例如對話框狀態
+    #    reactive({visible:false, value:''})),obj.value 是正當存取。
+    #    2026-09-06 首次啟用這條規則就誤報了 violationEditDialog 四處。
+    decls = set()
+    for m in re.finditer(r'(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*reactive\s*\(', text):
+        body = _balanced(text, text.index('(', m.end() - 1))
+        if body is not None and re.search(r'(^|[{,\s])value\s*:', body):
+            continue          # 這個 reactive 有 value 欄位,.value 是合法的
+        decls.add(m.group(1))
     for name in sorted(decls):
-        for m in re.finditer(r'' + re.escape(name) + r'\.value', text):
+        # 前後都要 word boundary,避免 abc.value 被當成 c.value。
+        pat = r'\b' + re.escape(name) + r'\.value\b'
+        for m in re.finditer(pat, text):
             ln = text[:m.start()].count(chr(10)) + 1
             bad.append((ln, name))
     return bad
