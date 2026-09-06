@@ -3603,6 +3603,49 @@
         .wr-headline { margin:0 0 12px; font-size:var(--fs-hero); line-height:1.1; font-weight:900; color:var(--gov-text);
                        letter-spacing:-.015em; text-wrap:balance; }
         @media (max-width:700px) { .wr-headline { font-size:var(--fs-t3); } }
+        /* 決策依據明細:預設收合的折疊區 */
+        .wr-detail { margin-top:14px; border:1px solid var(--gov-border); border-radius:12px;
+                     background:var(--gov-surface); }
+        .wr-detail > summary { cursor:pointer; list-style:none; padding:12px 16px;
+                               font-size:var(--fs-small); font-weight:700; color:var(--gov-text);
+                               display:flex; align-items:center; gap:8px; }
+        .wr-detail > summary::-webkit-details-marker { display:none; }
+        .wr-detail > summary::before { content:'▸'; color:var(--gov-muted); font-size:var(--fs-micro); }
+        .wr-detail[open] > summary::before { content:'▾'; }
+        .wr-detail[open] > summary { border-bottom:1px solid var(--gov-border); }
+        .wr-detail-body { padding:12px 12px 4px; }
+
+        /* ── 手機版(RWD)。融合後才做,先做會白做(版面已重排)。 ────────────
+           🛑 每一條都對應一個實際會壞的地方,不是「保險起見」加的:
+              · 相機每欄兩台並排 → 320px 寬時每台只剩 140px,看不出東西
+              · 即時秒數靠 margin-left:auto 貼右 → 標題長時會擠掉
+              · 決策算式 max-width:64ch 不換行 → 直接撐出橫向捲軸
+              · 趨勢圖 Y 軸固定寬 + 長條區 → 兩者相加超出螢幕
+              · 分頁列 6 個橫排 → 擠成兩行且點不準 */
+        @media (max-width: 640px) {
+            .wr-cols { grid-template-columns:1fr; }
+            .wr-cams { grid-template-columns:1fr; }
+            .wr-col-hd { flex-wrap:wrap; }
+            .wr-live-sec { margin-left:0; width:100%; margin-top:4px; text-align:center; }
+            .wr-quote { max-width:100%; }
+            .wr-basis-eq { word-break:break-word; }
+            .wr-basis-eq b { white-space:nowrap; }      /* 數字本身不可斷 */
+            .wr-cam-meta { flex-wrap:wrap; row-gap:2px; }
+            .wr-vd-t { margin-left:0; }
+            .wr-detail-body { padding:8px 6px 2px; }
+            .st-y { min-width:20px; font-size:var(--fs-caption); }
+            .st-axis { margin-left:26px; }
+            .sig-tab-bar { flex-wrap:wrap; row-gap:6px; }
+            .dv-tiles { grid-template-columns:1fr; }
+            .xn-foot { flex-wrap:wrap; row-gap:6px; }
+        }
+        /* 分頁列橫向可捲,不要擠成兩行 —— 兩行會讓「現在在哪一頁」變難找 */
+        @media (max-width: 820px) {
+            .sig-tabs { overflow-x:auto; flex-wrap:nowrap; -webkit-overflow-scrolling:touch;
+                        scrollbar-width:none; }
+            .sig-tabs::-webkit-scrollbar { display:none; }
+            .sig-tabs > * { flex:0 0 auto; }
+        }
         .wr-quote { margin:0; border-left:3px solid var(--gov-border-strong); padding:2px 0 2px 14px;
                     color:var(--gov-text-2); font-size:var(--fs-body); max-width:64ch;
                     display:flex; flex-direction:column; gap:5px; }
@@ -7550,7 +7593,9 @@
                     </div>
                 </div>
 
-                <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
+                <!-- 設備狀態併入「燈態與設備」分頁:兩者都是控制器硬體層的東西,
+                     分兩個分頁只是讓人多點一次(2026-09-07 融合)。 -->
+                <div v-if="page==='signal_hub'" v-show="signalTab==='light'">
                     <div class="sig-tab-bar">
                         <span class="sig-tab-title">設備狀態</span>
                         <el-switch v-model="sigDevFaultsOnly" size="small" active-text="只看異常" inline-prompt></el-switch>
@@ -7871,6 +7916,39 @@
                             </div>
                         </div>
 
+                        <div class="card">
+                            <div class="card-header">
+                                <span><svg class="text-icon"><use href="#i-alert"/></svg>控制權現況</span>
+                                <el-tag size="small" :type="sigCtlModeType">{{ sigCtlModeText }}</el-tag>
+                            </div>
+                            <div class="card-body">
+                                <div class="xn-foot">
+                                    <span class="xn-chip"><span class="k">現行控制方</span><b>{{ sigCtlModeText }}</b></span>
+                                    <span class="xn-chip"><span class="k">綠燈分相</span><b>{{ sigPlan.green_phase||'—' }}</b><span class="k">{{ sigCtlGreenRamp }}</span></span>
+                                    <span class="xn-chip"><span class="k">已亮</span><b>{{ sigPlan.green_elapsed_sec }}</b>s</span>
+                                    <span class="xn-chip"><span class="k">步階</span><b>{{ sigPlan.step_id }}</b><span class="k">{{ sigPlan.clearance?'清道中':'放行中' }}</span></span>
+                                    <span class="xn-chip"><span class="k">時制計畫</span><b>{{ sigCtlPlanId }}</b></span>
+                                </div>
+                                <div class="cs-block">
+                                    <div class="cs-flags">
+                                        <div v-for="f in sigStrategyFlags" :key="'csf'+f.bit"
+                                             class="cs-flag" :class="{on:f.on, flip:f.flip, key:f.keyBit}"
+                                             :title="f.desc">
+                                            <span class="cs-flag-dot"></span>
+                                            <span class="cs-flag-name">{{ f.name }}</span>
+                                            <span class="cs-flag-bit">bit{{ f.bit }}</span>
+                                        </div>
+                                    </div>
+                                    <div class="cs-raw">
+                                        <span class="cs-raw-k">原始值</span>
+                                        <b>{{ sigStrategyHex }}</b>
+                                        <span class="cs-raw-note">{{ sigStrategyNote }}</span>
+                                    </div>
+                                </div>
+                                <p v-if="!sigPlan.available" style="font-size:13px;color:#b45309;margin-top:10px">{{ sigPlan.reason||'尚未取得決策資料' }}</p>
+                            </div>
+                        </div>
+
                         <div class="wr-cols">
                             <!-- 左右各一相 -->
                             <div v-for="col in sigWarCols" :key="'wc'+col.phase" class="wr-col">
@@ -8009,6 +8087,260 @@
                                 <p v-if="!sigWarFrames.length" class="wr-empty">尚無訊框。</p>
                             </div>
                         </div>
+                        <!-- 決策依據明細:預設收合。即時畫面要乾淨,但驗收要驗算 ——
+                             收在這裡兩邊都成立(原「決策盤」分頁的四張卡)。 -->
+                        <details class="wr-detail" :open="sigDetailOpen">
+                            <summary>決策依據明細 · 演算法規格、影子比對、接管路線圖</summary>
+                            <div class="wr-detail-body">
+                    <div class="card" v-if="sigPlan.available">
+                                <div class="card-header">
+                                    <span><svg class="text-icon"><use href="#i-cpu"/></svg>即時決策盤</span>
+                                    <el-tag size="small" :type="sigPlan.action==='SWITCH'?'warning':'success'">判定:{{ sigPlan.action==='SWITCH'?'應換相':'續綠' }}</el-tag>
+                                </div>
+                                <div class="card-body">
+                                    <!-- ══ 判定天平 ══
+                                         🛑 決策的本質是兩股力量在拉:紅側等太久了該換 vs
+                                            綠側還在放行別浪費。原本攤成兩欄數字,讀的人要
+                                            在腦裡做減法才知道差多少。改成同一把尺的兩條
+                                            對抗條 —— 差距是看出來的,不是算出來的。 -->
+                                    <div class="dc-verdict" :class="sigPlan.action==='SWITCH'?'sw':'kp'">
+                                        <div class="dc-verdict-head">
+                                            <span class="dc-verdict-k">判定</span>
+                                            <b class="dc-verdict-v">{{ sigPlan.action==='SWITCH'?'應換相':'續綠' }}</b>
+                                            <span class="dc-verdict-margin">
+                                                裕度 <b>{{ sigPlan.terms.margin }}</b> 車·秒
+                                            </span>
+                                        </div>
+                                        <div class="dc-bars">
+                                            <div class="dc-bar-row" :class="{lead:sigPlan.action==='SWITCH'}">
+                                                <span class="dc-bar-k">換相力</span>
+                                                <div class="dc-bar-track">
+                                                    <div class="dc-bar-fill sw" :style="{width:sigBalW(sigPlan.terms.switch_gain)}"></div>
+                                                </div>
+                                                <span class="dc-bar-v">{{ sigPlan.terms.switch_gain }}</span>
+                                            </div>
+                                            <div class="dc-bar-row" :class="{lead:sigPlan.action!=='SWITCH'}">
+                                                <span class="dc-bar-k">續綠力</span>
+                                                <div class="dc-bar-track">
+                                                    <div class="dc-bar-fill kp" :style="{width:sigBalW(sigPlan.terms.threshold)}"></div>
+                                                </div>
+                                                <span class="dc-bar-v">{{ sigPlan.terms.threshold }}</span>
+                                            </div>
+                                        </div>
+                                        <div class="dc-verdict-why">{{ sigPlan.reason }}</div>
+                                    </div>
+
+                                    <h4 class="sc-h">兩側量測輸入</h4>
+                                    <div class="dc-sides">
+                                        <div v-for="sd in sigPlanSides" :key="'sd'+sd.phase" class="dc-side" :class="sd.tone">
+                                            <div class="dc-side-head">
+                                                <span class="dc-side-tag">{{ sd.tone==='green'?'綠燈側':'紅燈側' }}</span>
+                                                <b>分相 {{ sd.phase }}</b>
+                                                <span class="dc-side-ramp">{{ sd.ramp }} {{ sd.label }}</span>
+                                                <span v-if="sd.priority" class="dc-side-pri" title="下匝道回堵會溢流到國道主線,這一側有主線保護優先">主線保護</span>
+                                            </div>
+                                            <div class="dc-side-main">
+                                                <span class="dc-side-num">{{ sigFmtNum(sd.queue_m) }}</span>
+                                                <span class="dc-side-unit">m 排隊</span>
+                                                <span class="dc-side-sub">≈ {{ sd.queue_vehicles }} 輛</span>
+                                            </div>
+                                            <div class="dc-side-occ" :title="'佔用 '+sigFmtPct(sd.spillback_ratio)+'，儲車上限 '+sd.storage_m+' m'">
+                                                <div class="dc-occ-track">
+                                                    <div class="dc-occ-fill" :class="{warn:sd.nearSpill}" :style="{width:sigOccW(sd.spillback_ratio)}"></div>
+                                                    <span class="dc-occ-mark" title="回堵判定線 80%"></span>
+                                                </div>
+                                                <span class="dc-occ-v">{{ sigFmtPct(sd.spillback_ratio) }} / {{ sd.storage_m }} m</span>
+                                            </div>
+                                            <div class="dc-side-foot">
+                                                <span><i>到達流量</i>{{ sigFmtNum(sd.flow_vpm) }} 輛/分</span>
+                                                <!-- 決策實際聚合該相「全部」相機取最大,只印基準測點會誤導 -->
+                                                <span :title="'基準測點 '+sd.camera+'，決策取這 '+sd.cameras_used+' 台的最大值'">
+                                                    <i>量測相機</i>{{ (sd.camera_names||[]).join(' / ') || sd.camera }}
+                                                    <b v-if="sd.cameras_used" class="dc-cam-n">{{ sd.cameras_used }} 台</b>
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <h4 class="sc-h">成本算式(單位:車·秒)</h4>
+                                    <div class="sc-wrap">
+                                    <table class="sc-table">
+                                        <thead><tr><th>項</th><th>算式</th><th>值</th></tr></thead>
+                                        <tbody>
+                                            <tr><td>紅側延滯<div class="sc-sub">switch_gain</div></td>
+                                                <td>紅側車數 {{ sigPlan.terms.red_veh }} × 已等待 {{ sigPlan.terms.red_wait_sec }} s</td>
+                                                <td class="sc-num">{{ sigPlan.terms.switch_gain }}</td></tr>
+                                            <tr><td>綠側價值<div class="sc-sub">keep_gain</div></td>
+                                                <td>(排隊 + 被擋下的到達 {{ sigPlan.terms.stranded_arrivals }}) = {{ sigPlan.terms.green_remain }} 輛 × 換相後等待</td>
+                                                <td class="sc-num">{{ sigPlan.terms.keep_gain }}</td></tr>
+                                            <tr><td>換相成本<div class="sc-sub">change_cost</div></td>
+                                                <td>損失時間 {{ sigPlan.constants.lost_time_sec }} s × 飽和流 × 損失時間(防抖動)</td>
+                                                <td class="sc-num">{{ sigPlan.terms.change_cost }}</td></tr>
+                                            <tr class="sc-total"><td>換相門檻</td><td>綠側價值 + 換相成本</td>
+                                                <td class="sc-num">{{ sigPlan.terms.threshold }}</td></tr>
+                                            <tr class="sc-total"><td>裕度</td><td>紅側延滯 − 門檻(正值才換相)</td>
+                                                <td class="sc-num" :style="sigMarginStyle">{{ sigPlan.terms.margin }}</td></tr>
+                                        </tbody>
+                                    </table>
+                                    </div>
+
+                                    <h4 class="sc-h">安全閘門(依判定順序,先中的先生效)</h4>
+                                    <!-- 🛑 原本四關都印「未觸發」是錯的表達:先中的先生效,
+                                         生效那一關後面的閘門根本沒跑到,不能跟「跑過但沒中」
+                                         用同一個字。改成三種狀態:通過 / 生效 / 未評估。 -->
+                                    <div class="dc-gates">
+                                        <div v-for="g in sigPlanGates" :key="'g'+g.order"
+                                             class="dc-gate" :class="g.state">
+                                            <div class="dc-gate-no">{{ g.order }}</div>
+                                            <div class="dc-gate-body">
+                                                <b>{{ g.name }}</b>
+                                                <span class="dc-gate-rule">{{ g.rule }}</span>
+                                            </div>
+                                            <span class="dc-gate-state">{{ g.stateText }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card" v-if="sigPlan.available">
+                                <div class="card-header">
+                                    <span><svg class="text-icon"><use href="#i-list"/></svg>演算法規格與參數</span>
+                                </div>
+                                <div class="card-body">
+                                    <div class="analysis-setting-tip">
+                                        🛑 <b>刻意不複製 OPAC 的黑箱。</b>OPAC 的 pn1/pn2 是它內部的累積計數器,外部無法重建。
+                                        我方改用可稽核的延滯成本模型:每一項都能追回到量測值。
+                                    </div>
+                                    <h4 class="sc-h">決策規則</h4>
+                                    <pre class="sc-code">SWITCH ⟺ 紅側延滯 &gt; 綠側價值 + 換相成本
+
+紅側延滯 = 紅側車數 × 紅燈已等待秒數
+綠側價值 = (綠側排隊 + 到達率 × 換相後等待) × 換相後等待
+換相成本 = 損失時間 × 飽和流(每秒) × 損失時間
+換相後等待 = 換相損失 + 最小綠</pre>
+                                    <h4 class="sc-h">常數</h4>
+                                    <div class="sc-wrap">
+                                    <table class="sc-table">
+                                        <tbody>
+                                            <tr><td>飽和流量</td><td class="sc-num">{{ sigPlan.constants.saturation_vph }}</td><td>輛/小時</td></tr>
+                                            <tr><td>每車佔用長度</td><td class="sc-num">{{ sigPlan.constants.meters_per_vehicle }}</td><td>公尺</td></tr>
+                                            <tr><td>回堵判定比例</td><td class="sc-num">{{ sigFmtPct(sigPlan.constants.spillback_ratio) }}</td><td>佔儲車上限</td></tr>
+                                            <tr><td>換相損失時間</td><td class="sc-num">{{ sigPlan.constants.lost_time_sec }}</td><td>秒</td></tr>
+                                        </tbody>
+                                    </table>
+                                    </div>
+                                    <h4 class="sc-h">本時段時制基準(官方查表)</h4>
+                                    <div class="sc-wrap">
+                                    <table class="sc-table">
+                                        <tbody>
+                                            <tr><td>計畫編號</td><td class="sc-num">{{ sigPlanTiming.plan_id }}</td><td></td></tr>
+                                            <tr><td>最小綠</td><td class="sc-num">{{ sigPlanTiming.min_green_sec }}</td><td>秒(本分相)</td></tr>
+                                            <tr><td>最大綠</td><td class="sc-num">{{ sigPlanTiming.max_green_sec }}</td><td>秒</td></tr>
+                                            <tr><td>週期 / 黃燈 / 全紅</td><td class="sc-num">{{ sigPlanTiming.cycle }} / {{ sigPlanTiming.yellow }} / {{ sigPlanTiming.all_red }}</td><td>秒</td></tr>
+                                        </tbody>
+                                    </table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card">
+                                <div class="card-header">
+                                    <span><svg class="text-icon"><use href="#i-zap"/></svg>影子決策比對(我方演算法 vs 現行控制)</span>
+                                    <div style="display:flex;gap:8px;align-items:center">
+                                        <el-tag size="small" :type="sigShadow.running?'success':'info'">{{ sigShadow.running?'運轉中':'未啟動' }}</el-tag>
+                                        <el-select v-model="sigShadowMins" size="small" style="width:110px" @change="loadSigShadow">
+                                            <el-option :value="60" label="最近 1 小時"></el-option>
+                                            <el-option :value="180" label="最近 3 小時"></el-option>
+                                            <el-option :value="720" label="最近 12 小時"></el-option>
+                                            <el-option :value="1440" label="最近 24 小時"></el-option>
+                                            <el-option :value="-1" label="今日早尖峰 09-12"></el-option>
+                                        </el-select>
+                                        <el-button size="small" @click="loadSigShadow">重新載入</el-button>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <div class="analysis-setting-tip">
+                                        我方演算法與**現行控制**同步運算,<b>只記錄不下發</b>。
+                                        一致率只算前提成立的樣本 —— 清道(黃燈/全紅)、非外部動態控制、
+                                        切換瞬間都排除,因為那些時候比對沒有意義。
+                                    </div>
+                                    <div v-if="sigShadow.samples" class="xn-foot" style="margin-top:10px">
+                                        <span class="xn-chip"><span class="k">有車一致率</span>
+                                            <b :style="sigShadowRateStyle">{{ sigShadowPct }}</b></span>
+                                        <span class="xn-chip"><span class="k">可比對</span>
+                                            <b>{{ sigShadow.judged_samples }}</b> / {{ sigShadow.samples }}</span>
+                                        <span class="xn-chip"><span class="k">其中有車</span>
+                                            <b>{{ sigShadow.active_samples }}</b></span>
+                                        <span class="xn-chip"><span class="k">我方提早切</span>
+                                            <b>{{ sigShadow.disagree_switch_early }}</b></span>
+                                        <span class="xn-chip"><span class="k">我方較晚切</span>
+                                            <b>{{ sigShadow.disagree_switch_late }}</b></span>
+                                        <span class="xn-chip"><span class="k">綠側價值=0</span>
+                                            <b>{{ sigShadow.keep_gain_zero }}</b></span>
+                                        <span class="xn-chip"><span class="k">最長綠</span>
+                                            <b>{{ sigShadow.max_green_elapsed }}</b>s</span>
+                                    </div>
+                                    <div v-if="sigShadow.samples" style="margin-top:8px;font-size:12px;color:var(--gov-mute-2)">
+                                        排除不計:清道 {{ sigShadow.excluded_clearance }}、
+                                        非外部動態 {{ sigShadow.excluded_not_opac }}、
+                                        切換瞬間 {{ sigShadow.excluded_switch_instant }}
+                                    </div>
+                                    <!-- 逐時拆解:整段平均會被無車時段稀釋,尖峰哪一小時掉下來只有拆開才看得見 -->
+                                    <div v-if="sigShadowHours.length" class="sc-wrap" style="margin-top:10px">
+                                        <table class="sc-table">
+                                            <thead><tr><th>時段</th><th>樣本</th><th>可比對</th><th>有車</th><th>有車一致率</th></tr></thead>
+                                            <tbody>
+                                                <tr v-for="b in sigShadowHours" :key="'h'+b.hour">
+                                                    <td>{{ b.hour }} 時</td>
+                                                    <td class="sc-num">{{ b.samples }}</td>
+                                                    <td class="sc-num">{{ b.judged }}</td>
+                                                    <td class="sc-num">{{ b.active }}</td>
+                                                    <td class="sc-num" :style="sigHourStyle(b)">{{ sigHourPct(b) }}</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <p v-else style="font-size:13px;color:#64748b;margin-top:10px">
+                                        這段時間沒有樣本。影子模式需要 SIGNAL_SHADOW_ENABLED=1 且抄錄器連線正常。</p>
+                                    <div v-if="sigShadowRecent.length" style="margin-top:10px;max-height:280px;overflow-y:auto;border:1px solid var(--gov-line,#e5e7eb);border-radius:6px">
+                                        <div v-for="(r,ri) in sigShadowRecent" :key="'shr'+ri"
+                                             style="display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;padding:6px 10px;border-bottom:1px solid var(--gov-line,#f1f5f9);font-size:13px">
+                                            <span style="color:#64748b;font-variant-numeric:tabular-nums;white-space:nowrap">{{ r.ts }}</span>
+                                            <el-tag size="small" type="info">分相 {{ r.green_phase }}</el-tag>
+                                            <el-tag size="small" :type="sigShadowRowType(r)">{{ sigShadowRowText(r) }}</el-tag>
+                                            <span style="color:var(--gov-muted);min-width:0">{{ r.reason }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card">
+                                <div class="card-header">
+                                    <span><svg class="text-icon"><use href="#i-road"/></svg>接管路線圖</span>
+                                    <el-tag size="small" type="warning">目前 L4</el-tag>
+                                </div>
+                                <div class="card-body">
+                                    <div class="analysis-setting-tip">
+                                        終局是我方自己做動態號誌控制。現階段兩者並行,先「看得見、算得出、比得了」,驗證成熟才接手控制權。
+                                    </div>
+                                    <div v-for="st in sigRoadmap" :key="st.id" class="sc-step" :class="st.state">
+                                        <span class="sc-step-id">{{ st.id }}</span>
+                                        <div style="min-width:0">
+                                            <b>{{ st.title }}</b>
+                                            <div class="sc-sub">{{ st.desc }}</div>
+                                        </div>
+                                        <el-tag size="small" :type="st.state==='done'?'success':(st.state==='doing'?'warning':'info')">{{ st.state==='done'?'已完成':(st.state==='doing'?'進行中':'未開始') }}</el-tag>
+                                    </div>
+                                    <div class="analysis-setting-tip" style="margin-top:10px">
+                                        🛑 <b>L5 的前置條件缺一不可</b>:①影子一致率連續數日 95% 以上且差異可解釋
+                                        ②下發通道驗證過(目前 SIGNAL_TC3_CONTROL 未開,另有 QUERY_ONLY 雙保險)
+                                        ③接管安全機制對齊(死人開關續約、資料失聯降級、min/max green 硬邊界)
+                                        ④中心端停用 OPAC,避免兩邊搶控制權。
+                                    </div>
+                                </div>
+                            </div>
+                            </div>
+                        </details>
                     </div>
                 </div>
 
@@ -8163,294 +8495,6 @@
                                         <tr v-if="!vzHourly.length"><td colspan="14" class="sc-sub">這一天沒有資料。</td></tr>
                                     </tbody>
                                 </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div v-if="page==='signal_hub'" v-show="signalTab==='plan'">
-                    <div class="sig-tab-bar">
-                        <span class="sig-tab-title">即時決策盤</span>
-                        <el-button size="small" plain @click="loadSigConsole"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-alert"/></svg>控制權現況</span>
-                            <el-tag size="small" :type="sigCtlModeType">{{ sigCtlModeText }}</el-tag>
-                        </div>
-                        <div class="card-body">
-                            <div class="xn-foot">
-                                <span class="xn-chip"><span class="k">現行控制方</span><b>{{ sigCtlModeText }}</b></span>
-                                <span class="xn-chip"><span class="k">綠燈分相</span><b>{{ sigPlan.green_phase||'—' }}</b><span class="k">{{ sigCtlGreenRamp }}</span></span>
-                                <span class="xn-chip"><span class="k">已亮</span><b>{{ sigPlan.green_elapsed_sec }}</b>s</span>
-                                <span class="xn-chip"><span class="k">步階</span><b>{{ sigPlan.step_id }}</b><span class="k">{{ sigPlan.clearance?'清道中':'放行中' }}</span></span>
-                                <span class="xn-chip"><span class="k">時制計畫</span><b>{{ sigCtlPlanId }}</b></span>
-                            </div>
-                            <div class="cs-block">
-                                <div class="cs-flags">
-                                    <div v-for="f in sigStrategyFlags" :key="'csf'+f.bit"
-                                         class="cs-flag" :class="{on:f.on, flip:f.flip, key:f.keyBit}"
-                                         :title="f.desc">
-                                        <span class="cs-flag-dot"></span>
-                                        <span class="cs-flag-name">{{ f.name }}</span>
-                                        <span class="cs-flag-bit">bit{{ f.bit }}</span>
-                                    </div>
-                                </div>
-                                <div class="cs-raw">
-                                    <span class="cs-raw-k">原始值</span>
-                                    <b>{{ sigStrategyHex }}</b>
-                                    <span class="cs-raw-note">{{ sigStrategyNote }}</span>
-                                </div>
-                            </div>
-                            <p v-if="!sigPlan.available" style="font-size:13px;color:#b45309;margin-top:10px">{{ sigPlan.reason||'尚未取得決策資料' }}</p>
-                        </div>
-                    </div>
-
-                    <div class="card" v-if="sigPlan.available">
-                        <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-cpu"/></svg>即時決策盤</span>
-                            <el-tag size="small" :type="sigPlan.action==='SWITCH'?'warning':'success'">判定:{{ sigPlan.action==='SWITCH'?'應換相':'續綠' }}</el-tag>
-                        </div>
-                        <div class="card-body">
-                            <!-- ══ 判定天平 ══
-                                 🛑 決策的本質是兩股力量在拉:紅側等太久了該換 vs
-                                    綠側還在放行別浪費。原本攤成兩欄數字,讀的人要
-                                    在腦裡做減法才知道差多少。改成同一把尺的兩條
-                                    對抗條 —— 差距是看出來的,不是算出來的。 -->
-                            <div class="dc-verdict" :class="sigPlan.action==='SWITCH'?'sw':'kp'">
-                                <div class="dc-verdict-head">
-                                    <span class="dc-verdict-k">判定</span>
-                                    <b class="dc-verdict-v">{{ sigPlan.action==='SWITCH'?'應換相':'續綠' }}</b>
-                                    <span class="dc-verdict-margin">
-                                        裕度 <b>{{ sigPlan.terms.margin }}</b> 車·秒
-                                    </span>
-                                </div>
-                                <div class="dc-bars">
-                                    <div class="dc-bar-row" :class="{lead:sigPlan.action==='SWITCH'}">
-                                        <span class="dc-bar-k">換相力</span>
-                                        <div class="dc-bar-track">
-                                            <div class="dc-bar-fill sw" :style="{width:sigBalW(sigPlan.terms.switch_gain)}"></div>
-                                        </div>
-                                        <span class="dc-bar-v">{{ sigPlan.terms.switch_gain }}</span>
-                                    </div>
-                                    <div class="dc-bar-row" :class="{lead:sigPlan.action!=='SWITCH'}">
-                                        <span class="dc-bar-k">續綠力</span>
-                                        <div class="dc-bar-track">
-                                            <div class="dc-bar-fill kp" :style="{width:sigBalW(sigPlan.terms.threshold)}"></div>
-                                        </div>
-                                        <span class="dc-bar-v">{{ sigPlan.terms.threshold }}</span>
-                                    </div>
-                                </div>
-                                <div class="dc-verdict-why">{{ sigPlan.reason }}</div>
-                            </div>
-
-                            <h4 class="sc-h">兩側量測輸入</h4>
-                            <div class="dc-sides">
-                                <div v-for="sd in sigPlanSides" :key="'sd'+sd.phase" class="dc-side" :class="sd.tone">
-                                    <div class="dc-side-head">
-                                        <span class="dc-side-tag">{{ sd.tone==='green'?'綠燈側':'紅燈側' }}</span>
-                                        <b>分相 {{ sd.phase }}</b>
-                                        <span class="dc-side-ramp">{{ sd.ramp }} {{ sd.label }}</span>
-                                        <span v-if="sd.priority" class="dc-side-pri" title="下匝道回堵會溢流到國道主線,這一側有主線保護優先">主線保護</span>
-                                    </div>
-                                    <div class="dc-side-main">
-                                        <span class="dc-side-num">{{ sigFmtNum(sd.queue_m) }}</span>
-                                        <span class="dc-side-unit">m 排隊</span>
-                                        <span class="dc-side-sub">≈ {{ sd.queue_vehicles }} 輛</span>
-                                    </div>
-                                    <div class="dc-side-occ" :title="'佔用 '+sigFmtPct(sd.spillback_ratio)+'，儲車上限 '+sd.storage_m+' m'">
-                                        <div class="dc-occ-track">
-                                            <div class="dc-occ-fill" :class="{warn:sd.nearSpill}" :style="{width:sigOccW(sd.spillback_ratio)}"></div>
-                                            <span class="dc-occ-mark" title="回堵判定線 80%"></span>
-                                        </div>
-                                        <span class="dc-occ-v">{{ sigFmtPct(sd.spillback_ratio) }} / {{ sd.storage_m }} m</span>
-                                    </div>
-                                    <div class="dc-side-foot">
-                                        <span><i>到達流量</i>{{ sigFmtNum(sd.flow_vpm) }} 輛/分</span>
-                                        <!-- 決策實際聚合該相「全部」相機取最大,只印基準測點會誤導 -->
-                                        <span :title="'基準測點 '+sd.camera+'，決策取這 '+sd.cameras_used+' 台的最大值'">
-                                            <i>量測相機</i>{{ (sd.camera_names||[]).join(' / ') || sd.camera }}
-                                            <b v-if="sd.cameras_used" class="dc-cam-n">{{ sd.cameras_used }} 台</b>
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <h4 class="sc-h">成本算式(單位:車·秒)</h4>
-                            <div class="sc-wrap">
-                            <table class="sc-table">
-                                <thead><tr><th>項</th><th>算式</th><th>值</th></tr></thead>
-                                <tbody>
-                                    <tr><td>紅側延滯<div class="sc-sub">switch_gain</div></td>
-                                        <td>紅側車數 {{ sigPlan.terms.red_veh }} × 已等待 {{ sigPlan.terms.red_wait_sec }} s</td>
-                                        <td class="sc-num">{{ sigPlan.terms.switch_gain }}</td></tr>
-                                    <tr><td>綠側價值<div class="sc-sub">keep_gain</div></td>
-                                        <td>(排隊 + 被擋下的到達 {{ sigPlan.terms.stranded_arrivals }}) = {{ sigPlan.terms.green_remain }} 輛 × 換相後等待</td>
-                                        <td class="sc-num">{{ sigPlan.terms.keep_gain }}</td></tr>
-                                    <tr><td>換相成本<div class="sc-sub">change_cost</div></td>
-                                        <td>損失時間 {{ sigPlan.constants.lost_time_sec }} s × 飽和流 × 損失時間(防抖動)</td>
-                                        <td class="sc-num">{{ sigPlan.terms.change_cost }}</td></tr>
-                                    <tr class="sc-total"><td>換相門檻</td><td>綠側價值 + 換相成本</td>
-                                        <td class="sc-num">{{ sigPlan.terms.threshold }}</td></tr>
-                                    <tr class="sc-total"><td>裕度</td><td>紅側延滯 − 門檻(正值才換相)</td>
-                                        <td class="sc-num" :style="sigMarginStyle">{{ sigPlan.terms.margin }}</td></tr>
-                                </tbody>
-                            </table>
-                            </div>
-
-                            <h4 class="sc-h">安全閘門(依判定順序,先中的先生效)</h4>
-                            <!-- 🛑 原本四關都印「未觸發」是錯的表達:先中的先生效,
-                                 生效那一關後面的閘門根本沒跑到,不能跟「跑過但沒中」
-                                 用同一個字。改成三種狀態:通過 / 生效 / 未評估。 -->
-                            <div class="dc-gates">
-                                <div v-for="g in sigPlanGates" :key="'g'+g.order"
-                                     class="dc-gate" :class="g.state">
-                                    <div class="dc-gate-no">{{ g.order }}</div>
-                                    <div class="dc-gate-body">
-                                        <b>{{ g.name }}</b>
-                                        <span class="dc-gate-rule">{{ g.rule }}</span>
-                                    </div>
-                                    <span class="dc-gate-state">{{ g.stateText }}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card" v-if="sigPlan.available">
-                        <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-list"/></svg>演算法規格與參數</span>
-                        </div>
-                        <div class="card-body">
-                            <div class="analysis-setting-tip">
-                                🛑 <b>刻意不複製 OPAC 的黑箱。</b>OPAC 的 pn1/pn2 是它內部的累積計數器,外部無法重建。
-                                我方改用可稽核的延滯成本模型:每一項都能追回到量測值。
-                            </div>
-                            <h4 class="sc-h">決策規則</h4>
-                            <pre class="sc-code">SWITCH ⟺ 紅側延滯 &gt; 綠側價值 + 換相成本
-
-紅側延滯 = 紅側車數 × 紅燈已等待秒數
-綠側價值 = (綠側排隊 + 到達率 × 換相後等待) × 換相後等待
-換相成本 = 損失時間 × 飽和流(每秒) × 損失時間
-換相後等待 = 換相損失 + 最小綠</pre>
-                            <h4 class="sc-h">常數</h4>
-                            <div class="sc-wrap">
-                            <table class="sc-table">
-                                <tbody>
-                                    <tr><td>飽和流量</td><td class="sc-num">{{ sigPlan.constants.saturation_vph }}</td><td>輛/小時</td></tr>
-                                    <tr><td>每車佔用長度</td><td class="sc-num">{{ sigPlan.constants.meters_per_vehicle }}</td><td>公尺</td></tr>
-                                    <tr><td>回堵判定比例</td><td class="sc-num">{{ sigFmtPct(sigPlan.constants.spillback_ratio) }}</td><td>佔儲車上限</td></tr>
-                                    <tr><td>換相損失時間</td><td class="sc-num">{{ sigPlan.constants.lost_time_sec }}</td><td>秒</td></tr>
-                                </tbody>
-                            </table>
-                            </div>
-                            <h4 class="sc-h">本時段時制基準(官方查表)</h4>
-                            <div class="sc-wrap">
-                            <table class="sc-table">
-                                <tbody>
-                                    <tr><td>計畫編號</td><td class="sc-num">{{ sigPlanTiming.plan_id }}</td><td></td></tr>
-                                    <tr><td>最小綠</td><td class="sc-num">{{ sigPlanTiming.min_green_sec }}</td><td>秒(本分相)</td></tr>
-                                    <tr><td>最大綠</td><td class="sc-num">{{ sigPlanTiming.max_green_sec }}</td><td>秒</td></tr>
-                                    <tr><td>週期 / 黃燈 / 全紅</td><td class="sc-num">{{ sigPlanTiming.cycle }} / {{ sigPlanTiming.yellow }} / {{ sigPlanTiming.all_red }}</td><td>秒</td></tr>
-                                </tbody>
-                            </table>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-zap"/></svg>影子決策比對(我方演算法 vs 現行控制)</span>
-                            <div style="display:flex;gap:8px;align-items:center">
-                                <el-tag size="small" :type="sigShadow.running?'success':'info'">{{ sigShadow.running?'運轉中':'未啟動' }}</el-tag>
-                                <el-select v-model="sigShadowMins" size="small" style="width:110px" @change="loadSigShadow">
-                                    <el-option :value="60" label="最近 1 小時"></el-option>
-                                    <el-option :value="180" label="最近 3 小時"></el-option>
-                                    <el-option :value="720" label="最近 12 小時"></el-option>
-                                    <el-option :value="1440" label="最近 24 小時"></el-option>
-                                    <el-option :value="-1" label="今日早尖峰 09-12"></el-option>
-                                </el-select>
-                                <el-button size="small" @click="loadSigShadow">重新載入</el-button>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="analysis-setting-tip">
-                                我方演算法與**現行控制**同步運算,<b>只記錄不下發</b>。
-                                一致率只算前提成立的樣本 —— 清道(黃燈/全紅)、非外部動態控制、
-                                切換瞬間都排除,因為那些時候比對沒有意義。
-                            </div>
-                            <div v-if="sigShadow.samples" class="xn-foot" style="margin-top:10px">
-                                <span class="xn-chip"><span class="k">有車一致率</span>
-                                    <b :style="sigShadowRateStyle">{{ sigShadowPct }}</b></span>
-                                <span class="xn-chip"><span class="k">可比對</span>
-                                    <b>{{ sigShadow.judged_samples }}</b> / {{ sigShadow.samples }}</span>
-                                <span class="xn-chip"><span class="k">其中有車</span>
-                                    <b>{{ sigShadow.active_samples }}</b></span>
-                                <span class="xn-chip"><span class="k">我方提早切</span>
-                                    <b>{{ sigShadow.disagree_switch_early }}</b></span>
-                                <span class="xn-chip"><span class="k">我方較晚切</span>
-                                    <b>{{ sigShadow.disagree_switch_late }}</b></span>
-                                <span class="xn-chip"><span class="k">綠側價值=0</span>
-                                    <b>{{ sigShadow.keep_gain_zero }}</b></span>
-                                <span class="xn-chip"><span class="k">最長綠</span>
-                                    <b>{{ sigShadow.max_green_elapsed }}</b>s</span>
-                            </div>
-                            <div v-if="sigShadow.samples" style="margin-top:8px;font-size:12px;color:var(--gov-mute-2)">
-                                排除不計:清道 {{ sigShadow.excluded_clearance }}、
-                                非外部動態 {{ sigShadow.excluded_not_opac }}、
-                                切換瞬間 {{ sigShadow.excluded_switch_instant }}
-                            </div>
-                            <!-- 逐時拆解:整段平均會被無車時段稀釋,尖峰哪一小時掉下來只有拆開才看得見 -->
-                            <div v-if="sigShadowHours.length" class="sc-wrap" style="margin-top:10px">
-                                <table class="sc-table">
-                                    <thead><tr><th>時段</th><th>樣本</th><th>可比對</th><th>有車</th><th>有車一致率</th></tr></thead>
-                                    <tbody>
-                                        <tr v-for="b in sigShadowHours" :key="'h'+b.hour">
-                                            <td>{{ b.hour }} 時</td>
-                                            <td class="sc-num">{{ b.samples }}</td>
-                                            <td class="sc-num">{{ b.judged }}</td>
-                                            <td class="sc-num">{{ b.active }}</td>
-                                            <td class="sc-num" :style="sigHourStyle(b)">{{ sigHourPct(b) }}</td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                            <p v-else style="font-size:13px;color:#64748b;margin-top:10px">
-                                這段時間沒有樣本。影子模式需要 SIGNAL_SHADOW_ENABLED=1 且抄錄器連線正常。</p>
-                            <div v-if="sigShadowRecent.length" style="margin-top:10px;max-height:280px;overflow-y:auto;border:1px solid var(--gov-line,#e5e7eb);border-radius:6px">
-                                <div v-for="(r,ri) in sigShadowRecent" :key="'shr'+ri"
-                                     style="display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;padding:6px 10px;border-bottom:1px solid var(--gov-line,#f1f5f9);font-size:13px">
-                                    <span style="color:#64748b;font-variant-numeric:tabular-nums;white-space:nowrap">{{ r.ts }}</span>
-                                    <el-tag size="small" type="info">分相 {{ r.green_phase }}</el-tag>
-                                    <el-tag size="small" :type="sigShadowRowType(r)">{{ sigShadowRowText(r) }}</el-tag>
-                                    <span style="color:var(--gov-muted);min-width:0">{{ r.reason }}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-road"/></svg>接管路線圖</span>
-                            <el-tag size="small" type="warning">目前 L4</el-tag>
-                        </div>
-                        <div class="card-body">
-                            <div class="analysis-setting-tip">
-                                終局是我方自己做動態號誌控制。現階段兩者並行,先「看得見、算得出、比得了」,驗證成熟才接手控制權。
-                            </div>
-                            <div v-for="st in sigRoadmap" :key="st.id" class="sc-step" :class="st.state">
-                                <span class="sc-step-id">{{ st.id }}</span>
-                                <div style="min-width:0">
-                                    <b>{{ st.title }}</b>
-                                    <div class="sc-sub">{{ st.desc }}</div>
-                                </div>
-                                <el-tag size="small" :type="st.state==='done'?'success':(st.state==='doing'?'warning':'info')">{{ st.state==='done'?'已完成':(st.state==='doing'?'進行中':'未開始') }}</el-tag>
-                            </div>
-                            <div class="analysis-setting-tip" style="margin-top:10px">
-                                🛑 <b>L5 的前置條件缺一不可</b>:①影子一致率連續數日 95% 以上且差異可解釋
-                                ②下發通道驗證過(目前 SIGNAL_TC3_CONTROL 未開,另有 QUERY_ONLY 雙保險)
-                                ③接管安全機制對齊(死人開關續約、資料失聯降級、min/max green 硬邊界)
-                                ④中心端停用 OPAC,避免兩邊搶控制權。
                             </div>
                         </div>
                     </div>
@@ -23035,31 +23079,35 @@ const app=createApp({
         // tab 順序 = 看現況 → 看為什麼 → 看設定 → 看歷史 → 看驗收
         const sigTabs = ref([
             {key: 'live',   label: '即時戰情', icon: 'i-activity'},
-            {key: 'light',  label: '燈態',     icon: 'i-zap'},
-            {key: 'plan',   label: '決策盤',   icon: 'i-cpu'},
+            {key: 'light',  label: '燈態與設備', icon: 'i-zap'},
             {key: 'viz',    label: '影子可視化', icon: 'i-activity'},
             {key: 'config', label: '設定',     icon: 'i-list'},
             {key: 'stats',  label: '運作統計', icon: 'i-bar'},
-            {key: 'device', label: '設備狀態', icon: 'i-cpu'},
             {key: 'accept', label: '驗收',     icon: 'i-check'},
         ]);
         const sigTabLoaders = {
-            // 即時戰情同時要燈態(秒數/路口圖)與決策盤(判定/排隊),兩邊都帶起來
+            // 即時戰情把原「決策盤」也吃進來了(判定/排隊/控制權),所以兩邊的載入都要帶
             live:   () => { loadSignal(); startSignalTimer(); sigStartTick();
                             loadSigConsole(); startSigConsoleTimer(); startSigLiveTimer();
                             loadSignalFrames(); if (!cameras.value.length) loadCameras();
                             loadWarVd(); startWarVdTimer();
                             try { streamWantHeartbeat(); } catch (e) { }   // 立刻預約 lite,別等 3 秒
                             setTimeout(initWarMap, 50); },
-            light:  () => { loadSignal(); startSignalTimer(); },
-            plan:   () => { loadSigConsole(); startSigConsoleTimer(); },
+            light:  () => { loadSignal(); startSignalTimer(); loadSigDevice(); },
             viz:    () => { loadViz(); startVizTimer(); loadVizHourly(); },
             config: () => loadSigConfig(),
             stats:  () => { loadSigStats(); startSigStatTimer(); },
-            device: () => loadSigDevice(),
             accept: () => loadSigAcceptance(),
         };
+        // 明細區預設收合;從舊的 ?tab=plan 進來的人自動展開,不然會以為東西不見了。
+        const sigDetailOpen = ref(false);
+        // 🛑 舊分頁鍵要轉址,不能讓既有連結點到空頁(2026-09-07 分頁 8 → 6)。
+        const SIG_TAB_ALIAS = {plan: 'live', device: 'light'};
         const switchSigTab = (key) => {
+            if (SIG_TAB_ALIAS[key]) {
+                if (key === 'plan') sigDetailOpen.value = true;
+                key = SIG_TAB_ALIAS[key];
+            }
             signalTab.value = key;
             // v-show 隱藏期間 Leaflet 量不到尺寸,切回來要重算
             if (key === 'live' && wrMap) setTimeout(() => wrMap.invalidateSize(true), 60);
@@ -25240,7 +25288,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarBasis,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarBasis,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
