@@ -7436,7 +7436,7 @@
                                 <h1 class="ds-section-title">動態號誌<b>控制</b></h1>
                             </div>
                             <div class="ds-page-hero-meta">
-                                <el-tag size="small" :type="sigPlan.available?'success':'info'">{{ sigPlan.available?'決策引擎運轉中':'尚無資料' }}</el-tag>
+                                <el-tag size="small" :type="sigPlan.available?'success':'info'">{{ sigPlan.available?'資料即時':'尚無資料' }}</el-tag>
                                 <el-tag size="small" type="danger">不下發</el-tag>
                             </div>
                         </div>
@@ -7823,7 +7823,6 @@
                     <div class="wr">
                         <div class="wr-hd">
                             <span class="wr-led" :class="{off:sigStatus.stale}"><i></i>號誌機 {{ sigStatus.host }}</span>
-                            <span class="wr-led" :class="{off:!sigPlan.available}"><i></i>決策引擎</span>
                             <span class="wr-led warn"><i></i>影子模式</span>
                             <span class="wr-hd-act">
                                 <el-switch v-model="sigLiveOn" size="small" active-text="即時影像" inline-prompt></el-switch>
@@ -8369,7 +8368,7 @@
                         </div>
                         <div class="card-body">
                             <div class="analysis-setting-tip">
-                                我方決策引擎與現行控制(OPAC)同步運轉,<b>只記錄不下發</b>。
+                                我方演算法與**現行控制**同步運算,<b>只記錄不下發</b>。
                                 一致率只算前提成立的樣本 —— 清道(黃燈/全紅)、非外部動態控制、
                                 切換瞬間都排除,因為那些時候比對沒有意義。
                             </div>
@@ -23851,7 +23850,12 @@ const app=createApp({
                 //    d.green_elapsed_sec 是我方觀測到的已亮秒數(5 秒取樣),
                 //    與 5F03 的步階倒數是兩個不同來源,不要混成同一個數字。
                 const xn = sigLiveXn0.value;
-                const remain = xn ? xnRemainLive(xn) : null;
+                let remain = xn ? xnRemainLive(xn) : null;
+                // 🛑 倒數歸零後會**停在 0**,直到下一個 5F03 帶新步階進來。
+                //    那段期間(實測可達 30 秒)顯示「剩 0 s」是錯的 —— 它不是
+                //    「還剩 0 秒」,是「這一輪的倒數已經用完、還沒收到新的」。
+                //    當成沒有數字處理,只顯示狀態文字。
+                if (remain != null && remain <= 0) remain = null;
                 let liveText = '', liveCls = '';
                 if (clearing) {
                     liveText = (remain == null) ? '清道中' : ('清道 剩 ' + remain + ' s');
@@ -23861,7 +23865,7 @@ const app=createApp({
                              + (remain == null ? '' : ' · 剩 ' + remain + ' s');
                     liveCls = (remain != null && remain <= 5) ? 'hot' : 'green';
                 } else {
-                    liveText = (remain == null) ? '紅燈等待' : ('約 ' + remain + ' s 後換相');
+                    liveText = (remain == null) ? '紅燈等待中' : ('約 ' + remain + ' s 後換相');
                     liveCls = 'red';
                 }
                 return {
@@ -24081,7 +24085,7 @@ const app=createApp({
         const sigWarHero = computed(() => {
             const d = sigPlan.value || {};
             const g = d.green_phase, name = g === 1 ? '上匝道' : '下匝道', other = g === 1 ? '下匝道' : '上匝道';
-            if (!d.available) return {cls: '', headline: '尚無決策資料', why: d.reason || '等待抄錄器與決策引擎。', trend: '—'};
+            if (!d.available) return {cls: '', headline: '尚無資料', why: d.reason || '等待抄錄器回報。', trend: '—'};
             const t = d.terms || {};
             const q2 = Number((d.green_side && d.green_side.phase_no === 2 ? d.green_side : d.red_side) && (d.green_side.phase_no === 2 ? d.green_side.queue_m : (d.red_side || {}).queue_m)) || 0;
             const trend = q2 >= 60 ? 'rising' : (q2 <= 10 ? 'stable' : 'building');
