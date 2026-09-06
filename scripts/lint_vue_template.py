@@ -428,6 +428,23 @@ def lint_svg_camel(text):
                     bad.append((i, attr, line.strip()[:90]))
     return bad
 
+def lint_reactive_dot_value(text):
+    """reactive(...) 宣告的物件不可以用 .value 存取。
+
+    ref 要 .value、reactive 不要,兩者混用不會有語法錯,只會在執行時丟
+    TypeError: Cannot set properties of undefined —— 而且常常是在事件處理器裡,
+    畫面不會整頁掛掉,只有那個功能默默失效。
+    2026-09-06:sigLiveErr 是 reactive 卻寫成 sigLiveErr.value[id]=false,
+    導致影像載入完成的旗標永遠清不掉,戰情的相機格被深色遮罩蓋住。
+    """
+    bad = []
+    decls = set(re.findall(r'(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*reactive\s*\(', text))
+    for name in sorted(decls):
+        for m in re.finditer(r'' + re.escape(name) + r'\.value', text):
+            ln = text[:m.start()].count(chr(10)) + 1
+            bad.append((ln, name))
+    return bad
+
 def lint_one(target):
     """回傳 (fails, warns)。"""
     if str(target).startswith(('http://', 'https://')):
@@ -446,6 +463,11 @@ def lint_one(target):
         for api, line in api_missing:
             print(f'       第 {line} 行用到 {api}() —— 請加進 const {{ ... }} = Vue')
         fails += len(api_missing)
+    rdv = lint_reactive_dot_value(text)
+    for ln, name in rdv:
+        print("[FAIL] %s:%s %s 是 reactive() 宣告的,不可以用 .value 存取"
+              " —— 執行時會丟 TypeError,該功能默默失效" % (target, ln, name))
+    fails += len(rdv)
     svgc = lint_svg_camel(text)
     for ln, attr, snippet in svgc:
         print("[FAIL] %s:%s SVG 屬性 :%s 在 inline template 會被轉小寫而失效,"

@@ -23669,7 +23669,12 @@ const app=createApp({
         const sigCamBox = ref({});          // {camId: "0 0 W H"} —— 影像載入後才知道
         const sigCamOverlayOn = ref(true);
         const onWarCamLoad = (ev, id) => {
-            sigLiveErr.value[id] = false;
+            // 🛑 sigLiveErr 是 reactive({}) 不是 ref —— 不可以寫 .value。
+            //    寫錯的話這一行就丟 TypeError,後面的 sigCamBox 設定不會執行,
+            //    而且 @error 設過的錯誤旗標**永遠清不掉** ——
+            //    .wr-cam-err 是深色遮罩,一次暫時性載入失敗就讓那格影像永久變黑。
+            //    (2026-09-06 使用者回報「戰情 dashboard 影像沒抓出來」的真因。)
+            sigLiveErr[id] = false;
             const im = ev && ev.target;
             if (im && im.naturalWidth && im.naturalHeight) {
                 sigCamBox.value[id] = '0 0 ' + im.naturalWidth + ' ' + im.naturalHeight;
