@@ -94,3 +94,61 @@ def test_discover_by_coord_prefers_pair_spanning_the_site(monkeypatch):
     assert [p["pair_id"] for p in out] == ["SPAN", "EAST"]
     assert out[0]["spans_site"] is True and out[0]["offset_km"] is not None and out[0]["offset_km"] < 0.5
     assert out[1]["spans_site"] is False
+
+
+def test_list_pairs_does_not_send_server_side_filter(monkeypatch):
+    """TDX 的 ETagPair 端點不吃 RoadID 的 $filter —— 加了會回 400(2026-09-06 實測)。"""
+    from services import tdx_travel as T
+    seen = {}
+
+    def fake_get(path, params):
+        seen["path"], seen["params"] = path, dict(params)
+        return [{"ETagPairID": "01F0-01F1", "RoadID": "000010",
+                 "StartETag": {}, "EndETag": {}},
+                {"ETagPairID": "08F0-08F1", "RoadID": "000080",
+                 "StartETag": {}, "EndETag": {}}]
+
+    monkeypatch.setattr(T, "_get_json", fake_get)
+    out = T.list_pairs("000080")
+    assert "$filter" not in seen["params"], "不可以下 $filter,TDX 會回 400"
+    # 過濾改在本地做:只留該國道
+    assert [x["pair_id"] for x in out] == ["08F0-08F1"]
+
+
+def test_fetch_live_remembers_the_path_that_worked(monkeypatch):
+    """即時路徑用候選清單試,試到通就記住 —— TDX 有流量限制,不能每次重試一輪。"""
+    from services import tdx_travel as T
+    T._live_path["value"] = None
+    calls = []
+
+    def fake_get(path, params):
+        calls.append(path)
+        if path != T.LIVE_PATH_CANDIDATES[1]:
+            return []                      # 前面的候選都沒資料
+        return [{"ETagPairID": "08F0-08F1", "RoadID": "000080",
+                 "TravelTime": 60, "SpaceMeanSpeed": 80, "VehicleCount": 5}]
+
+    monkeypatch.setattr(T, "_get_json", fake_get)
+    T.fetch_live("000080")
+    assert T._live_path["value"] == T.LIVE_PATH_CANDIDATES[1]
+    n_first = len(calls)
+    T.fetch_live("000080")
+    assert len(calls) == n_first + 1, "記住之後只該打一次,不可以再試一輪"
+
+
+def test_fetch_live_stops_on_rate_limit(monkeypatch):
+    """打到 429 就停手,不要把剩下的候選也試完 —— 那會直接把配額打光。"""
+    from services import tdx_travel as T
+    T._live_path["value"] = None
+    calls = []
+
+    def fake_get(path, params):
+        calls.append(path)
+        raise RuntimeError("TDX 429 流量限制,暫停抓取: %s" % path)
+
+    monkeypatch.setattr(T, "_get_json", fake_get)
+    try:
+        T.fetch_live("000080")
+    except RuntimeError as e:
+        assert "429" in str(e)
+    assert len(calls) == 1, "第一個候選就撞到 429,不該繼續試"
