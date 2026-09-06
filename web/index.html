@@ -23730,7 +23730,15 @@ const app=createApp({
             const camera = {id: id};
             if (!h264LiveEnabled.value) return '';
             if (!hasGo2rtcStream(camera) && !go2rtcLive.value.has(go2rtcStreamName(camera))) return '';
-            return getGo2rtcWsUrl(camera, {annotated: false, lite: lowBandwidth.value});
+            // 🛑 一律基礎串流 cam_N,**不要帶 lite**。
+            //    2026-09-06 現場實測:這台機器上的 cam_N_lite 是「宣告了但沒有來源」的
+            //    空串流 —— go2rtc.yaml 裡根本沒定義,直接連只回
+            //    "mse: streams: unknown error",送 /api/go2rtc/want 心跳也生不出編碼器
+            //    (等 10 秒 producers 仍是 0)。而 hasGo2rtcLite() 只看名字在不在清單裡,
+            //    所以窄頻時會選中一條永遠播不了的路 → 四塊磚全黑、video 卻沒有 error code
+            //    (影像尺寸 0x0、ready=0、錯誤=無)。
+            //    基礎串流則實測可用:原生 WS 講 MSE,cam_2 八秒收到 6.8 MB。
+            return getGo2rtcWsUrl(camera, {annotated: false});
         };
         // 影片的原生尺寸 —— ROI 疊加層的 viewBox 要用它。
         // 🛑 影片是 object-fit:contain(置中留黑邊),所以 SVG 要用
