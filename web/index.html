@@ -23712,10 +23712,18 @@ const app=createApp({
         //    不要讓播放器對著不存在的來源一直重連。
         //    基礎串流不需要 on-demand 心跳(那是 _annotated/_lite/_lofi 變體才需要)。
         const warCamWs = (id) => {
-            const name = 'cam_' + id;
-            if (!go2rtcStreams.value.has(name) && !go2rtcLive.value.has(name)) return '';
-            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            return proto + '//' + location.hostname + ':1984/api/ws?src=' + encodeURIComponent(name);
+            // 🛑 走跟監控頁「原始畫面」**完全同一條路**,不要自己拼網址:
+            //    共用的基礎串流 cam_N(無疊加),經 getGo2rtcWsUrl 決定變體。
+            //    自己拼的版本漏了兩件監控頁有做的事 ——
+            //    (1) h264LiveEnabled:開頁時會探測「:1984 直連通不通」,不通要退回
+            //        走 :8000 的畫面。漏掉的話,在 :1984 不可達的機器上監控頁正常、
+            //        戰情卻整片黑,而且看起來完全沒有錯誤。
+            //    (2) lowBandwidth 時該用 lite 變體。
+            //    annotated 一律 false —— 戰情要的是乾淨畫面,疊加框由前端 SVG 畫。
+            const camera = {id: id};
+            if (!h264LiveEnabled.value) return '';
+            if (!hasGo2rtcStream(camera) && !go2rtcLive.value.has(go2rtcStreamName(camera))) return '';
+            return getGo2rtcWsUrl(camera, {annotated: false, lite: lowBandwidth.value});
         };
         // 影片的原生尺寸 —— ROI 疊加層的 viewBox 要用它。
         // 🛑 影片是 object-fit:contain(置中留黑邊),所以 SVG 要用
