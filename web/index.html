@@ -18690,6 +18690,11 @@ const app=createApp({
         //    所以「名稱存在」對未啟用的相機也成立 —— 只看名稱會讓那幾台切到一條
         //    沒有資料的 H.264,畫面是 0x0 全黑(實測 104 的 cam_8 就這樣)。
         const go2rtcLive=ref(new Set());
+        // 目前 go2rtc 真的收到 publisher 的串流(producers 非空)。
+        // 🛑 一般不該拿它判斷可用性 —— on-demand 變體沒人看就沒 producer,
+        //    用它會造成「永遠不選 → 永遠不觸發 → 永遠沒 producer」的死鎖。
+        //    只有 lite 例外,原因見 hasGo2rtcLite。
+        const go2rtcProducing=ref(new Set());
         let _go2rtc1984Probed=false;   // :1984 直連可達性只探一次
         const loadGo2rtcStreams=async()=>{
             try{
@@ -18701,6 +18706,7 @@ const app=createApp({
                 //    沒人看就沒 producer,但它們是已宣告的空串流。若只收有 producer 的,
                 //    前端 hasGo2rtcLofi 永遠 false → 永遠不選 lofi → 心跳不觸發 → 死鎖。
                 go2rtcLive.value=new Set(Object.keys(d));
+                go2rtcProducing.value=new Set(Object.keys(d).filter((k)=>((d[k]||{}).producers||[]).length));
                 // h264 的 WS/HLS 是「直連 go2rtc :1984」(繞過 :8000 代理求效能)。有些機器
                 // (如 104)只對外開 :8000、:1984 不可達 → h264 全黑。這裡探測 :1984 直連,
                 // 不可達就自動關 h264 退回 MJPEG(走 :8000,必通);87 的 :1984 可達則維持 h264。
@@ -18740,7 +18746,18 @@ const app=createApp({
         //    lite 是 1.12 Mbps,塞得下,而且解析度 960x540 仍然看得清
         //    (先前用 MJPEG w=400 降級是糊到不能用,而且 2.0 Mbps 還是超標)。
         const go2rtcLiteName=(camera)=>camera?.id?`cam_${camera.id}_lite`:'';
-        const hasGo2rtcLite=(camera)=>go2rtcLive.value.has(go2rtcLiteName(camera));
+        // 🛑 lite 一定要「真的有 publisher」才算可用,不能只看名字在不在清單裡。
+        //    2026-09-06 現場實測:cam_N_lite 是空殼串流(annotated/lite/lofi 都靠後端
+        //    push 進去),而後端的 lite 推流器**不會被 on-demand 叫起來** ——
+        //    掛一條 consumer 等 25 秒,producers 始終是 0;送 /api/go2rtc/want 心跳
+        //    也一樣。go2rtc 對這種串流直接回 "mse: streams: unknown error",
+        //    而瀏覽器端只看到影像尺寸 0x0、readyState 0、**沒有任何 error code**,
+        //    完全像正常運作,實際上四塊磚全黑(戰情頁窄頻時就踩到這個)。
+        //    對照組:cam_N_annotated 同為 on-demand 但有 producer,18 秒送 1.1 MB,
+        //    所以壞的不是機制而是 lite 這一條。
+        //    用「有沒有 producer」當條件是自我修正的:哪天後端把 lite 推起來
+        //    (像 LOFI_ALWAYS 那樣常駐),前端就會自動重新採用,不必再改這裡。
+        const hasGo2rtcLite=(camera)=>go2rtcProducing.value.has(go2rtcLiteName(camera));
         // 遠端省流變體:同解析度、10fps/350k。遠端(web/app)開此開關就走這條,
         // 塞得進 4G 窄上行;現場不開,照舊看高幀高碼的 annotated。
         const go2rtcLofiName=(camera)=>camera?.id?`cam_${camera.id}_lofi`:'';
@@ -23730,15 +23747,12 @@ const app=createApp({
             const camera = {id: id};
             if (!h264LiveEnabled.value) return '';
             if (!hasGo2rtcStream(camera) && !go2rtcLive.value.has(go2rtcStreamName(camera))) return '';
-            // 🛑 一律基礎串流 cam_N,**不要帶 lite**。
-            //    2026-09-06 現場實測:這台機器上的 cam_N_lite 是「宣告了但沒有來源」的
-            //    空串流 —— go2rtc.yaml 裡根本沒定義,直接連只回
-            //    "mse: streams: unknown error",送 /api/go2rtc/want 心跳也生不出編碼器
-            //    (等 10 秒 producers 仍是 0)。而 hasGo2rtcLite() 只看名字在不在清單裡,
-            //    所以窄頻時會選中一條永遠播不了的路 → 四塊磚全黑、video 卻沒有 error code
-            //    (影像尺寸 0x0、ready=0、錯誤=無)。
-            //    基礎串流則實測可用:原生 WS 講 MSE,cam_2 八秒收到 6.8 MB。
-            return getGo2rtcWsUrl(camera, {annotated: false});
+            // 與監控頁「原始畫面」同一套:annotated 一律 false;窄頻才考慮 lite。
+            // 🛑 lite 能不能用由 hasGo2rtcLite 把關(要求真的有 publisher)——
+            //    2026-09-06 就是因為那道關卡只看名字,窄頻時選到空殼 cam_N_lite,
+            //    四塊磚全黑而且 video 沒有任何 error code。現在後端沒推 lite,
+            //    這裡會自動落回基礎串流 cam_N(實測 MSE 八秒 6.8 MB)。
+            return getGo2rtcWsUrl(camera, {annotated: false, lite: lowBandwidth.value});
         };
         // 影片的原生尺寸 —— ROI 疊加層的 viewBox 要用它。
         // 🛑 影片是 object-fit:contain(置中留黑邊),所以 SVG 要用
