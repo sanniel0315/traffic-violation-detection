@@ -3925,16 +3925,16 @@
             .dc-bar-fill, .dc-occ-fill { transition:none; }
         }
         /* ── 設備狀態:圖示化磚牆 ── */
-        .dv-legend { display:flex; align-items:center; gap:10px; font-size:11.5px; color:var(--gov-mute-2); }
-        .dv-legend .dv-dot { margin-right:3px; }
+        .dv-legend { display:flex; align-items:center; gap:10px; font-size:var(--fs-caption); color:var(--gov-mute-2); }
+        .dv-legend .dv-dot { margin-right:4px; vertical-align:-2px; }
         .dv-group { margin-bottom:16px; }
         .dv-group:last-of-type { margin-bottom:6px; }
         .dv-gh { display:flex; align-items:center; gap:8px; margin-bottom:7px; }
-        .dv-gh b { font-size:13.5px; color:var(--gov-text); font-weight:700; }
+        .dv-gh b { font-size:var(--fs-small); color:var(--gov-text); font-weight:700; }
         .dv-gi { width:15px; height:15px; flex:none; fill:none; stroke:var(--gov-primary-2);
                  stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
         .dv-gi.sm { width:13px; height:13px; stroke:var(--gov-mute-2); vertical-align:-2px; }
-        .dv-gc { margin-left:auto; font-size:11.5px; color:var(--gov-mute-2); }
+        .dv-gc { margin-left:auto; font-size:var(--fs-caption); color:var(--gov-mute-2); }
         .dv-gc.bad { color:var(--gov-fault); font-weight:700; }
         .dv-tiles { display:grid; gap:7px;
                     grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); }
@@ -3944,19 +3944,38 @@
         .dv-tile.unv { border-style:dashed; }
         .dv-tile.hit { border-color:var(--gov-fault);
                        background:color-mix(in srgb, var(--gov-fault) 7%, var(--gov-surface)); }
-        .dv-bit { font:600 10.5px var(--font-mono); color:var(--gov-mute-2);
+        .dv-bit { font:600 var(--fs-caption) var(--font-mono); color:var(--gov-mute-2);
                   background:var(--gov-surface-2); border-radius:5px; padding:1px 5px; flex:none; }
-        .dv-dot { width:9px; height:9px; border-radius:50%; flex:none; display:inline-block; }
-        .dv-dot.ok { background:var(--gov-ok); }
-        .dv-dot.bad { background:var(--gov-fault); }
-        .dv-dot.unk { background:transparent; border:1.5px dashed var(--gov-border-strong); }
-        .dv-name { font-size:12.5px; color:var(--gov-text); overflow:hidden;
+        /* LED 燈號:玻璃感球體 + 外圈光暈。狀態靠「亮度與節奏」而不只是顏色 ——
+           色盲使用者看不出紅綠差異,但看得出「在閃的那個」。
+           🛑 異常才閃,正常只是緩慢呼吸;整片都在閃等於沒有重點。 */
+        .dv-dot { position:relative; width:14px; height:14px; border-radius:50%; flex:none;
+                  display:inline-block; background:var(--gov-border-strong);
+                  box-shadow:inset 0 1px 1.5px rgba(255,255,255,.55),
+                             inset 0 -1px 2px rgba(0,0,0,.18),
+                             0 0 0 1px rgba(0,0,0,.06); }
+        .dv-dot::after { content:''; position:absolute; inset:-3px; border-radius:50%; pointer-events:none; }
+        .dv-dot.ok  { background:radial-gradient(circle at 34% 28%, #86e6a6 0%, var(--gov-ok) 62%); }
+        .dv-dot.ok::after  { box-shadow:0 0 7px 1px rgba(47,179,68,.40);
+                             animation:dvBreath 3.2s ease-in-out infinite; }
+        .dv-dot.bad { background:radial-gradient(circle at 34% 28%, #ffa79f 0%, var(--gov-fault) 62%); }
+        .dv-dot.bad::after { box-shadow:0 0 10px 2px rgba(229,52,42,.55);
+                             animation:dvAlarm 1.1s ease-in-out infinite; }
+        .dv-dot.unk { background:repeating-linear-gradient(45deg,
+                        var(--gov-surface-2) 0 3px, transparent 3px 6px);
+                      border:1.5px dashed var(--gov-border-strong); box-shadow:none; }
+        @keyframes dvBreath { 0%,100%{opacity:.45} 50%{opacity:1} }
+        @keyframes dvAlarm  { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.35;transform:scale(1.18)} }
+        @media (prefers-reduced-motion: reduce) {
+            .dv-dot.ok::after, .dv-dot.bad::after { animation:none; }
+        }
+        .dv-name { font-size:var(--fs-micro); color:var(--gov-text); overflow:hidden;
                    text-overflow:ellipsis; white-space:nowrap; }
-        .dv-raw { margin-left:auto; font:600 12px var(--font-mono); color:var(--gov-muted); flex:none; }
+        .dv-raw { margin-left:auto; font:600 var(--fs-mono-data) var(--font-mono); color:var(--gov-muted); flex:none; }
         .dv-unv { width:12px; height:12px; flex:none; fill:none; stroke:var(--gov-warn);
                   stroke-width:2.2; stroke-linecap:round; }
-        .dv-empty { font-size:12.5px; color:var(--gov-mute-2); margin:0; }
-        .dv-foot { margin:12px 0 0; font-size:12px; color:var(--gov-mute-2); max-width:78ch; line-height:1.7; }
+        .dv-empty { font-size:var(--fs-micro); color:var(--gov-mute-2); margin:0; }
+        .dv-foot { margin:12px 0 0; font-size:var(--fs-micro); color:var(--gov-mute-2); max-width:78ch; line-height:1.7; }
 
         /* ── 影子演算控制可視化 ── */
         .vz-wrap { position:relative; width:100%; padding:10px 4px 2px;
