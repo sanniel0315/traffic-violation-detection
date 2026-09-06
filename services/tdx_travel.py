@@ -84,6 +84,10 @@ def _get_json(path: str, params: dict) -> list:
         if e.code == 401:
             tok = get_token(force=True)
             raw = _http(url, headers={"authorization": "Bearer " + tok, "accept": "application/json"})
+        elif e.code == 429:
+            # 🛑 TDX 有流量限制,打到 429 就要停手,不要重試 ——
+            #    2026-09-06 一次探測五個路徑就把當天配額打完。
+            raise RuntimeError("TDX 429 流量限制,暫停抓取: %s" % path)
         else:
             raise
     d = json.loads(raw)
@@ -100,10 +104,14 @@ def _get_json(path: str, params: dict) -> list:
 def list_pairs(road_id: str = None) -> list:
     """該國道所有 eTag 配對(含起訖門架里程、方向)。"""
     road_id = road_id or ROAD_ID
+    # 🛑 不要下 $filter=RoadID —— TDX 的 ETagPair 端點不吃這個欄位,會回 400
+    #    (2026-09-06 實測:不加 filter 回 200,加了 400)。改成全抓再前端過濾。
     rows = _get_json("/v2/Road/Traffic/ETagPair/Freeway",
-                     {"$filter": f"RoadID eq '{road_id}'", "$format": "JSON", "$top": 1000})
+                     {"$format": "JSON", "$top": 3000})
     out = []
     for r in rows:
+        if road_id and str(r.get("RoadID") or "") not in ("", str(road_id)):
+            continue
         s, e = r.get("StartETag") or {}, r.get("EndETag") or {}
         out.append({
             "pair_id": r.get("ETagPairID"),
@@ -205,14 +213,43 @@ def _ensure_table(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS ix_tdx_travel_ts ON tdx_travel_time(ts, pair_id)")
 
 
+# 即時 eTag 站間旅行時間的路徑。TDX 文件與實際部署對不上,
+# 2026-09-06 實測 /v2/Road/Traffic/Live/ETagPairLive/Freeway 回 404。
+# 🛑 用候選清單試,**試到通就記住**(_live_path),不要每次都重試一輪 ——
+#    TDX 有流量限制,亂試會直接把配額打完(當天就吃到 429)。
+LIVE_PATH_CANDIDATES = (
+    "/v2/Road/Traffic/ETagPairLive/Freeway",
+    "/v2/Road/Traffic/Live/ETagPair/Freeway",
+    "/v2/Road/Traffic/Live/ETagPairLive/Freeway",
+    "/v2/Road/Traffic/ETagPairLive/Highway",
+)
+_live_path = {"value": None}
+
+
 def fetch_live(road_id: str = None) -> list:
     road_id = road_id or ROAD_ID
-    rows = _get_json("/v2/Road/Traffic/Live/ETagPairLive/Freeway",
-                     {"$filter": f"RoadID eq '{road_id}'", "$format": "JSON", "$top": 1000})
+    params = {"$format": "JSON", "$top": 1000}
+    rows = []
+    if _live_path["value"]:
+        rows = _get_json(_live_path["value"], params)
+    else:
+        for cand in LIVE_PATH_CANDIDATES:
+            try:
+                rows = _get_json(cand, params)
+            except Exception as e:
+                if "429" in str(e):
+                    raise            # 被限流就停手,下次再試
+                continue
+            if rows:
+                _live_path["value"] = cand
+                print("[tdx] 即時路徑確定為 %s" % cand, flush=True)
+                break
     out = []
     for r in rows:
         pid = r.get("ETagPairID")
         if PAIRS and pid not in PAIRS:
+            continue
+        if road_id and str(r.get("RoadID") or "") not in ("", str(road_id)):
             continue
         # Flows 依車種拆,總旅行時間/車速通常在 Flows 內;有的版本在頂層
         flows = r.get("Flows") or []
