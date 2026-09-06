@@ -18822,6 +18822,16 @@ const app=createApp({
                 //    所以窄頻時先**預約**原始模式那幾台的 lite:編碼器約 6 秒起來,
                 //    hasGo2rtcLite 隨即轉真,網址自動換過去。這幾秒照樣看基礎串流;
                 //    起不來(例如硬體編碼通道用完)就一直停在基礎串流,不會變黑畫面。
+                // 戰情頁的四台:一律預約 lite(它固定走 lite,不看窄頻)。
+                // 🛑 戰情直連 go2rtc:1984,繞過 proxy 的需求登記,所以一定要靠這個心跳;
+                //    漏掉的話後端不會生編碼器,hasGo2rtcLite 永遠 false,戰情就一直
+                //    停在 1080p60 的原生串流(也就是「很不順」的狀態)。
+                if(page.value==='signal_hub' && signalTab.value==='live' && h264LiveEnabled.value){
+                    Object.keys(SIG_CAM_SITE).map(Number).forEach((id)=>{
+                        const n=go2rtcLiteName({id:id});
+                        if(n && go2rtcLive.value.has(n))srcs.add(n);
+                    });
+                }
                 if(lowBandwidth.value && h264LiveEnabled.value){
                     const preOrder=(cam)=>{
                         if(!cam || resolveCameraStreamMode(cam)==='overlay')return;
@@ -23034,6 +23044,7 @@ const app=createApp({
                             loadSigConsole(); startSigConsoleTimer(); startSigLiveTimer();
                             loadSignalFrames(); if (!cameras.value.length) loadCameras();
                             loadWarVd(); startWarVdTimer();
+                            try { streamWantHeartbeat(); } catch (e) { }   // 立刻預約 lite,別等 3 秒
                             setTimeout(initWarMap, 50); },
             light:  () => { loadSignal(); startSignalTimer(); },
             plan:   () => { loadSigConsole(); startSigConsoleTimer(); },
@@ -23744,15 +23755,16 @@ const app=createApp({
             const camera = {id: id};
             if (!h264LiveEnabled.value) return '';
             if (!hasGo2rtcStream(camera) && !go2rtcLive.value.has(go2rtcStreamName(camera))) return '';
-            // 🛑 一律**共用的基礎串流 cam_N**:不帶 annotated、也不帶 lite。
-            //    使用者 2026-09-06:「戰情的影像不是要疊加的,共用原始」。
-            //    lite 不算「共用」—— 它是後端另外重新編碼推上去的一路,
-            //    每路要吃一個硬體編碼通道(這台機器 NVENC 通道有限,先前 lite
-            //    起不來就是通道被佔滿)。cam_N 是相機原生那條,所有頁面共用,
-            //    不多花任何編碼資源。
-            //    畫面上的 ROI 線是前端 SVG 另外疊的向量圖(使用者要的「線再轉出
-            //    疊加」),不是燒進影像裡,可獨立開關、縮放不糊。
-            return getGo2rtcWsUrl(camera, {annotated: false});
+            // 🛑 走 **lite**:重新編碼的低幀率、**不疊加**版本(使用者 2026-09-06 選擇)。
+            //    原因是實測的解碼負擔:四路原生串流都是 1920x1080,其中 NE-1 是
+            //    **60 fps**(2.76 Mbps)、其餘 30 fps,而戰情只把它們畫成四塊約
+            //    300x170 的小圖 —— 解碼量是顯示需求的三十幾倍,現場回報「很不順」。
+            //    lite 由後端重編成供幀率(NE-1 60→21、其餘 30→14~15),畫面乾淨無框。
+            // 🛑 annotated 一律 false:戰情要的是沒有疊加的畫面。
+            // 🛑 hasGo2rtcLite 要求「真的有 publisher」,所以 lite 還沒起來時
+            //    這裡會自動落回共用的 cam_N —— 看得到畫面,只是還沒省到解碼。
+            //    lite 的預約在 streamWantHeartbeat(否則前後端互相等,永遠起不來)。
+            return getGo2rtcWsUrl(camera, {annotated: false, lite: true});
         };
         // 車流資料(車種分流、平均車速、佔有率)。原本現場有 4 台 VD 偵測器,
         // 2026-09-06 拿走之後,這份資料的唯一來源就是本系統的相機偵測。
