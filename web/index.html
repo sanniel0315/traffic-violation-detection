@@ -8253,7 +8253,7 @@
                                             <el-option :value="180" label="最近 3 小時"></el-option>
                                             <el-option :value="720" label="最近 12 小時"></el-option>
                                             <el-option :value="1440" label="最近 24 小時"></el-option>
-                                            <el-option :value="-1" label="今日早尖峰 09-12"></el-option>
+                                            <el-option :value="-1" label="今日早尖峰 07-12"></el-option>
                                         </el-select>
                                         <el-button size="small" @click="loadSigShadow">重新載入</el-button>
                                     </div>
@@ -8355,7 +8355,7 @@
                             <el-option :value="15" label="最近 15 分鐘"></el-option>
                             <el-option :value="60" label="最近 1 小時"></el-option>
                             <el-option :value="180" label="最近 3 小時"></el-option>
-                            <el-option :value="-1" label="今日早尖峰 09-12"></el-option>
+                            <el-option :value="-1" label="今日早尖峰 07-12"></el-option>
                             <el-option :value="-2" label="今日晚尖峰 17-20"></el-option>
                         </el-select>
                         <el-switch v-model="vzLive" size="small" active-text="即時" inline-prompt></el-switch>
@@ -23246,7 +23246,7 @@ const app=createApp({
         ];
         const vzNum = (v, nd) => (v === null || v === undefined || !isFinite(v)) ? '—' : Number(v).toFixed(nd == null ? 1 : nd);
         const vzQuery = () => {
-            if (vzMins.value === -1) return 'since=' + sigDayAt(9) + '&until=' + sigDayAt(12);
+            if (vzMins.value === -1) return 'since=' + sigDayAt(7) + '&until=' + sigDayAt(12);
             if (vzMins.value === -2) return 'since=' + sigDayAt(17) + '&until=' + sigDayAt(20);
             return 'minutes=' + vzMins.value;
         };
@@ -23481,9 +23481,9 @@ const app=createApp({
             {key: 'm360',  label: '最近 6 小時',    mins: 360},
             {key: 'm1440', label: '最近 24 小時',   mins: 1440},
             // 尖峰時段依使用者定義:早 09-12、晚 17-20(比對基準與每日回報都用同一組)
-            {key: 'peak',  label: '今日早尖峰 09-12', fixed: true},
+            {key: 'peak',  label: '今日早尖峰 07-12', fixed: true},
             {key: 'peakE', label: '今日晚尖峰 17-20', fixed: true},
-            {key: 'peaky', label: '昨日早尖峰 09-12', fixed: true},
+            {key: 'peaky', label: '昨日早尖峰 07-12', fixed: true},
             {key: 'peakyE', label: '昨日晚尖峰 17-20', fixed: true},
             {key: 'yday',  label: '昨日全日',       fixed: true},
         ]);
@@ -23582,9 +23582,9 @@ const app=createApp({
         });
         const sigStatQuery = () => {
             const k = sigStatRange.value;
-            if (k === 'peak') return 'since=' + sigDayAt(9) + '&until=' + sigDayAt(12);
+            if (k === 'peak') return 'since=' + sigDayAt(7) + '&until=' + sigDayAt(12);
             if (k === 'peakE') return 'since=' + sigDayAt(17) + '&until=' + sigDayAt(20);
-            if (k === 'peaky') return 'since=' + sigDayOffsetAt(-1, 9) + '&until=' + sigDayOffsetAt(-1, 12);
+            if (k === 'peaky') return 'since=' + sigDayOffsetAt(-1, 7) + '&until=' + sigDayOffsetAt(-1, 12);
             if (k === 'peakyE') return 'since=' + sigDayOffsetAt(-1, 17) + '&until=' + sigDayOffsetAt(-1, 20);
             if (k === 'yday') return 'since=' + sigDayOffsetAt(-1, 0)
                                      + '&until=' + sigDayOffsetAt(0, 0);
@@ -23779,7 +23779,7 @@ const app=createApp({
             // -1 = 今日尖峰固定時段。用固定起訖才有可比性,
             // 「最近 N 分鐘」會隨查詢時間漂移。
             const q=(sigShadowMins.value===-1)
-                ? ('since='+sigDayAt(9)+'&until='+sigDayAt(12))
+                ? ('since='+sigDayAt(7)+'&until='+sigDayAt(12))
                 : ('minutes='+sigShadowMins.value);
             try{
                 const r=await fetch('/api/signal/shadow/summary?'+q,{credentials:'include'});
