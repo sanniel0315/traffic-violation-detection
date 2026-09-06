@@ -3632,6 +3632,9 @@
         .wr-cam-meta i.hot { color:var(--gov-warn); }
         /* 原始影像 + 向量疊加層(線不燒進影像,縮放不糊,可獨立關掉) */
         .wr-cam-stack { position:relative; line-height:0; }
+        /* go2rtc 串流版:維持 16:9 的框,影片 contain 置中(與疊加層同一套映射) */
+        .wr-cam-live { width:100%; aspect-ratio:16/9; background:#26303c; }
+        .wr-cam-live video { width:100%; height:100%; object-fit:contain; display:block; }
         .wr-cam-stack img { display:block; width:100%; height:auto; }
         .wr-cam-ov { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
         .wr-cam-ov .ovz { fill:rgba(47,111,181,.13); stroke:#2f6fb5; stroke-width:3; }
@@ -7879,11 +7882,18 @@
                                              好處:線是向量、縮放不糊,可以獨立開關,而且伺服器不必為了畫線
                                              重新編碼一次影像。座標系用該張快照的原始像素(與 ROI 編輯器同一套)。 -->
                                         <div class="wr-cam-stack">
-                                            <img :src="sigLiveSrc(cam.camera_id)" :alt="cam.name"
+                                            <!-- 🛑 優先走 go2rtc 的**原始 H.264 串流**(WebSocket + MSE),
+                                                 不是每秒抓一張快照:快照是 1 fps 的靜態畫面、每張都要
+                                                 後端重新編碼;原始串流是連續影像,而且 traffic-api
+                                                 完全不參與編碼。go2rtc 拿不到那一路時才退回快照。 -->
+                                            <div v-if="warCamWs(cam.camera_id)" class="go2rtc-host wr-cam-live"
+                                                 :data-wrcam="cam.camera_id" v-go2rtc="warCamWs(cam.camera_id)"></div>
+                                            <img v-else :src="sigLiveSrc(cam.camera_id)" :alt="cam.name"
                                                  @error="sigLiveErr[cam.camera_id]=true"
                                                  @load="onWarCamLoad($event, cam.camera_id)">
                                             <svg v-if="sigCamOverlayOn && sigCamBox[cam.camera_id]" class="wr-cam-ov"
-                                                 :view-box.camel="sigCamBox[cam.camera_id]" preserveAspectRatio="none">
+                                                 :view-box.camel="sigCamBox[cam.camera_id]"
+                                                 preserveAspectRatio="xMidYMid meet">
                                                 <g v-for="(z, zi) in sigCamZones[cam.camera_id] || []" :key="'z'+zi">
                                                     <polygon v-if="z.poly" :points="z.poly" :class="'ovz ovz-'+z.kind"></polygon>
                                                     <polyline v-else :points="z.line" :class="'ovl ovl-'+z.kind"></polyline>
@@ -7891,7 +7901,8 @@
                                                 </g>
                                             </svg>
                                         </div>
-                                        <span v-if="sigLiveErr[cam.camera_id]" class="wr-cam-err">影像取得失敗</span>
+                                        <span v-if="!warCamWs(cam.camera_id) && sigLiveErr[cam.camera_id]"
+                                              class="wr-cam-err">影像取得失敗</span>
 
                                     </figure>
                                 </div>
@@ -23680,6 +23691,30 @@ const app=createApp({
                 sigCamBox.value[id] = '0 0 ' + im.naturalWidth + ' ' + im.naturalHeight;
             }
         };
+        // 戰情相機的 go2rtc 原始串流網址(基礎那一路 cam_N,無疊加框)。
+        // 🛑 只有在 go2rtc 真的有這一路時才回網址 —— 回空字串讓模板退回快照,
+        //    不要讓播放器對著不存在的來源一直重連。
+        //    基礎串流不需要 on-demand 心跳(那是 _annotated/_lite/_lofi 變體才需要)。
+        const warCamWs = (id) => {
+            const name = 'cam_' + id;
+            if (!go2rtcStreams.value.has(name) && !go2rtcLive.value.has(name)) return '';
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            return proto + '//' + location.hostname + ':1984/api/ws?src=' + encodeURIComponent(name);
+        };
+        // 影片的原生尺寸 —— ROI 疊加層的 viewBox 要用它。
+        // 🛑 影片是 object-fit:contain(置中留黑邊),所以 SVG 要用
+        //    preserveAspectRatio="xMidYMid meet" 走同一套映射,兩者才會對齊。
+        //    這個坑監控頁踩過:SVG 撐滿容器、影片留黑邊,同一個框出現在兩個位置。
+        const warCamProbe = () => {
+            document.querySelectorAll('[data-wrcam]').forEach((host) => {
+                const id = Number(host.getAttribute('data-wrcam'));
+                if (!id || sigCamBox.value[id]) return;
+                const v = host.querySelector('video');
+                if (v && v.videoWidth && v.videoHeight) {
+                    sigCamBox.value[id] = '0 0 ' + v.videoWidth + ' ' + v.videoHeight;
+                }
+            });
+        };
         // ROI 幾何只抓一次:zones 很少變,而且每秒重抓會白白打 API。
         const loadWarCamZones = async (ids) => {
             for (const id of ids) {
@@ -23955,6 +23990,7 @@ const app=createApp({
                 if (page.value !== 'signal_hub' || signalTab.value !== 'live'
                     || !isPageVisible() || !sigLiveOn.value) return;
                 sigLiveTick.value = Date.now();
+                warCamProbe();          // 影片載到 metadata 才有原生尺寸,順便探
             }, 1000);
         };
         // ── 控制策略 8 位元旗標 ──────────────────────────────────────
@@ -25048,7 +25084,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigCamZones,sigCamBox,sigCamOverlayOn,onWarCamLoad,sigCamFullName,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigCamZones,sigCamBox,sigCamOverlayOn,onWarCamLoad,sigCamFullName,warCamWs,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
