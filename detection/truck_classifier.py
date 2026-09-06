@@ -60,6 +60,12 @@ class TruckClassifier:
         #           "confidence": 0.92, "group": "large", "length_m": 12.0}
     """
 
+    # 🛑 類別層級預設:__init__ 在模型檔不存在時會提早 return,那條路徑不會設這兩個
+    #    屬性;測試也可能用 __new__ 直接建物件。放在類別上,任何建構路徑都拿得到,
+    #    且預設 = 不啟用仲裁 = 與加這功能之前完全相同的行為。
+    primary = None
+    primary_names = None
+
     def __init__(
         self,
         model_path: Optional[str] = None,
@@ -92,6 +98,40 @@ class TruckClassifier:
         # 建立 class index → name 的映射
         self.class_names = self.model.names  # {0: 'bus', 1: 'heavy_truck', ...}
         print(f"✅ 大型車分類器初始化完成 (模型: {model_path}, 類別: {self.class_names})")
+
+        # ── 大小貨車仲裁(規則 A) ──────────────────────────────────────
+        # TRUCK_CLS_PRIMARY_MODEL 設了才啟用。主模型先判,只有它判「小貨」時
+        # 才叫上面這顆(現行模型)當仲裁,若仲裁說大貨就採大貨。
+        # 依據:2026-09-06 用 695 條盲標的歧異抽樣檢定,主模型 v4 單獨上線是
+        # -2.46pp(已回滾),但它幾乎每一格都贏,只輸「線上大貨→v4小貨」這一格
+        # (246 條中線上對 226、v4 只對 19)。擋掉那一格 = +1.62pp,
+        # 95%CI[+273,+557],留半驗證前半+393/後半+437(後半更高,非過擬合)。
+        # 🛑 只在主模型判小貨時才跑第二顆(實測佔 15.8% 的車),成本才壓得住:
+        #    truck_cls 佔 GPU 通道 5.4% → 額外約 0.9%,而非兩顆全跑的 5.4%。
+        # 🛑 載不起來就退回「只用現行模型」= 與啟用前完全相同的行為,
+        #    絕不會變成「只跑主模型」(那是實測更差的狀態)。
+        self.primary = None
+        self.primary_names = None
+        primary_path = os.getenv("TRUCK_CLS_PRIMARY_MODEL", "").strip()
+        if primary_path:
+            try:
+                if not os.path.isabs(primary_path):
+                    primary_path = os.path.join(get_model_dir(), primary_path)
+                p_engine = os.path.splitext(primary_path)[0] + ".engine"
+                if os.path.exists(p_engine) and os.getenv("DISABLE_TRT", "").lower() not in ("1", "true", "yes"):
+                    primary_path = p_engine
+                if not os.path.exists(primary_path):
+                    raise FileNotFoundError(primary_path)
+                self.primary = YOLO(primary_path, task='classify')
+                if not primary_path.endswith(".engine"):
+                    self.primary.to(self.device)
+                # 🛑 兩顆模型的 index→name 未必相同,各用各的,不可共用 class_names
+                self.primary_names = self.primary.names
+                print(f"⚖️  大小貨車仲裁啟用 — 主模型 {primary_path} 類別 {self.primary_names}", flush=True)
+            except Exception as exc:
+                self.primary = None
+                self.primary_names = None
+                print(f"⚠️  主模型載入失敗({exc}),退回單一模型(行為同啟用前)", flush=True)
 
     @property
     def enabled(self) -> bool:
@@ -142,26 +182,21 @@ class TruckClassifier:
         if crop.size == 0:
             return self._default_result()
 
-        # 推論（過 process-wide GPU lock 避免跟其他 detector 並發踩到 CUDA stream race）
-        # 這裡通常巢狀在 VehicleDetector.detect 的 lock 內,時間會被算進 detection,
-        # 所以自報一次讓 gpu-lock-stats 的 nested 能單獨看到本分類器的通道佔用。
-        with GPU_INFERENCE_LOCK:
-            _t0 = time.perf_counter()
-            results = self.model.predict(
-                source=crop,
-                imgsz=self.imgsz,
-                verbose=False,
-                device=self.device,
-            )
-            GPU_INFERENCE_LOCK.record_nested("truck_cls", time.perf_counter() - _t0)
+        if self.primary is not None:
+            # 主模型先判
+            class_name, top1_conf = self._infer(self.primary, self.primary_names, crop, "truck_cls")
+            # 🛑 只有主模型判「小貨」時才叫仲裁 —— 這是把成本從 5.4% 壓到 0.9% 的關鍵。
+            #    主模型判其他三類時實測都比現行模型好,不需要也不該去問第二顆。
+            if class_name == "light_truck":
+                arb_name, arb_conf = self._infer(
+                    self.model, self.class_names, crop, "truck_cls_arbiter")
+                if arb_name == "heavy_truck":
+                    class_name, top1_conf = arb_name, arb_conf
+        else:
+            class_name, top1_conf = self._infer(self.model, self.class_names, crop, "truck_cls")
 
-        if not results or results[0].probs is None:
+        if class_name is None:
             return self._default_result()
-
-        probs = results[0].probs
-        top1_idx = probs.top1
-        top1_conf = probs.top1conf.item()
-        class_name = self.class_names[top1_idx]
 
         # 信心度不足 → 回傳預設
         if top1_conf < self.conf_threshold:
@@ -175,6 +210,28 @@ class TruckClassifier:
             "group": meta["group"],
             "length_m": meta["length_m"],
         }
+
+    def _infer(self, model, names, crop, tag: str):
+        """跑一顆模型,回 (class_name, conf);失敗回 (None, 0.0)。
+
+        過 process-wide GPU lock 避免跟其他 detector 並發踩到 CUDA stream race。
+        這裡通常巢狀在 VehicleDetector.detect 的 lock 內,時間會被算進 detection,
+        所以自報一次讓 gpu-lock-stats 的 nested 能單獨看到各模型的通道佔用。
+        """
+        with GPU_INFERENCE_LOCK:
+            _t0 = time.perf_counter()
+            results = model.predict(
+                source=crop,
+                imgsz=self.imgsz,
+                verbose=False,
+                device=self.device,
+            )
+            GPU_INFERENCE_LOCK.record_nested(tag, time.perf_counter() - _t0)
+
+        if not results or results[0].probs is None:
+            return None, 0.0
+        probs = results[0].probs
+        return names[probs.top1], probs.top1conf.item()
 
     def classify_batch(
         self,
