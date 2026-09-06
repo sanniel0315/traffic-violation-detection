@@ -23102,7 +23102,10 @@ const app=createApp({
         // 明細區預設收合;從舊的 ?tab=plan 進來的人自動展開,不然會以為東西不見了。
         const sigDetailOpen = ref(false);
         // 🛑 舊分頁鍵要轉址,不能讓既有連結點到空頁(2026-09-07 分頁 8 → 6)。
-        const SIG_TAB_ALIAS = {plan: 'live', device: 'light'};
+        // 🛑 舊分頁鍵一律導到「即時戰情」(使用者 2026-09-07 決定「都要」)。
+        //    device 的內容實際搬到「燈態與設備」,但使用者要的是單一入口 ——
+        //    從舊連結進來的人先看到戰情,再自己切到燈態與設備。
+        const SIG_TAB_ALIAS = {plan: 'live', device: 'live'};
         const switchSigTab = (key) => {
             if (SIG_TAB_ALIAS[key]) {
                 if (key === 'plan') sigDetailOpen.value = true;
