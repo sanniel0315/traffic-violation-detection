@@ -18824,6 +18824,21 @@ const app=createApp({
                 };
                 if(monitorZoomVisible.value && monitorZoomCamera.value){ collect(monitorZoomCamera.value); }
                 else { (sortedCameras.value||[]).forEach(collect); }
+                // 🛑 lite 的雞生蛋:hasGo2rtcLite 要求「真的有 publisher」才選它,
+                //    而後端只在有人登記需求時才起編碼器 —— 只靠「選中才登記」
+                //    兩邊會互相等,lite 永遠起不來。
+                //    所以窄頻時先**預約**原始模式那幾台的 lite:編碼器約 6 秒起來,
+                //    hasGo2rtcLite 隨即轉真,網址自動換過去。這幾秒照樣看基礎串流;
+                //    起不來(例如硬體編碼通道用完)就一直停在基礎串流,不會變黑畫面。
+                if(lowBandwidth.value && h264LiveEnabled.value){
+                    const preOrder=(cam)=>{
+                        if(!cam || resolveCameraStreamMode(cam)==='overlay')return;
+                        const n=go2rtcLiteName(cam);
+                        if(n && go2rtcLive.value.has(n))srcs.add(n);
+                    };
+                    if(monitorZoomVisible.value && monitorZoomCamera.value){ preOrder(monitorZoomCamera.value); }
+                    else { (sortedCameras.value||[]).forEach(preOrder); }
+                }
                 if(srcs.size){
                     fetch('/api/go2rtc/want',{method:'POST',credentials:'include',
                         headers:{'Content-Type':'application/json'},body:JSON.stringify({srcs:[...srcs]})}).catch(()=>{});
