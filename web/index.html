@@ -3511,6 +3511,7 @@
                          font:500 var(--fs-caption) var(--font-sans); color:var(--gov-mute-2);
                          background:var(--gov-surface); padding:0 4px; }
         .st-sub { font-size:var(--fs-micro); color:var(--gov-muted); }
+        .xn-unavail { font-size:var(--fs-small); color:var(--gov-warn); margin-top:10px; }
         .st-bar { flex:0 0 7px; min-height:3px; border-radius:4px 4px 2px 2px;
                   background:var(--gov-primary); opacity:.85;
                   transition:opacity .15s ease; }
@@ -7539,19 +7540,7 @@
 
                     <div class="card">
                         <div class="card-body">
-                            <div class="analysis-setting-tip">
-                                🛑 <b>位元名稱的來源分兩級</b>：<code>bit14 控制器就緒</code> 經我方現場實證；
-                                其餘 15 個位元的名稱抄自對方系統的前端字串，<b>未經我方現場實證</b>，
-                                每一項都標了「待證」。抄來的名稱不等於驗證過的事實。
-                                <br>極性：Error 類 <b>1 = 故障</b>；Flag 類（通訊連線／時制轉換中／控制器就緒）<b>0 = 需注意</b>。
-                            </div>
-                            <div v-if="sigDev.available" class="xn-foot" style="margin-top:10px">
-                                <span class="xn-chip"><span class="k">原始值</span><b style="font-family:monospace">{{ sigDev.value_hex }}</b></span>
-                                <span class="xn-chip"><span class="k">二進位</span><b style="font-family:monospace;font-size:12px">{{ sigDev.value_bin }}</b></span>
-                                <span class="xn-chip"><span class="k">送中央</span><b style="font-family:monospace">{{ sigDev.sent_hex }}</b></span>
-                                <span class="xn-chip" v-if="sigDev.ts"><span class="k">最後回報</span><b>{{ sigFrameTime(sigDev.ts) }}</b></span>
-                            </div>
-                            <p v-else style="font-size:13px;color:#b45309;margin-top:10px">{{ sigDev.reason||'尚未取得設備狀態' }}</p>
+                            <p v-if="!sigDev.available" class="xn-unavail">{{ sigDev.reason||'尚未取得設備狀態' }}</p>
                         </div>
                     </div>
 
