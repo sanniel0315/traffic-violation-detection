@@ -3584,15 +3584,15 @@
         .wr-pill.ok { background:#e9f7ee; border-color:#bfe5cc; color:#156a3a; font-weight:700; }
         .wr-eyebrow { font-family:var(--font-mono); font-size:var(--fs-caption); letter-spacing:var(--ls-label);
                       color:var(--gov-mute-2); margin-bottom:6px; }
-        .wr-headline { margin:0 0 12px; font-size:48px; line-height:1.1; font-weight:900; color:var(--gov-text);
+        .wr-headline { margin:0 0 12px; font-size:var(--fs-hero); line-height:1.1; font-weight:900; color:var(--gov-text);
                        letter-spacing:-.015em; text-wrap:balance; }
-        @media (max-width:700px) { .wr-headline { font-size:34px; } }
+        @media (max-width:700px) { .wr-headline { font-size:var(--fs-t3); } }
         .wr-quote { margin:0; border-left:3px solid var(--gov-border-strong); padding:2px 0 2px 14px;
                     color:var(--gov-text-2); font-size:var(--fs-body); max-width:40ch; }
         .wr-gauge { display:flex; flex-direction:column; align-items:center; gap:6px; }
         .wr-gauge svg { width:170px; height:170px; }
-        .wr-gauge-num { font:600 38px var(--font-mono); fill:var(--gov-text); }
-        .wr-gauge-lvl { font:700 15px var(--font-sans); }
+        .wr-gauge-num { font:600 var(--fs-mono-big) var(--font-mono); fill:var(--gov-text); }
+        .wr-gauge-lvl { font:700 var(--fs-body-lg) var(--font-sans); }
         .wr-gauge-cap { color:var(--gov-muted); font-size:var(--fs-micro); letter-spacing:var(--ls-wide); }
         /* 拿掉 VD/AI 之後只剩一張,不能再寫死三欄(會縮在左邊三分之一) */
         .wr-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; }
@@ -3600,7 +3600,7 @@
                    background:var(--gov-surface-2); }
         .wr-ring { position:relative; width:44px; height:44px; margin:0 auto 8px; border-radius:50%;
                    border:3px solid var(--gov-ok); display:flex; align-items:center; justify-content:center;
-                   font:700 10px var(--font-mono); color:var(--gov-text); letter-spacing:.06em; }
+                   font:700 var(--fs-caption) var(--font-mono); color:var(--gov-text); letter-spacing:.06em; }
         .wr-ring::after { content:''; position:absolute; right:-4px; top:-2px; width:10px; height:10px; border-radius:50%;
                           background:var(--gov-ok); border:2px solid #fff; }
         .wr-ring.bad { border-color:var(--gov-fault); } .wr-ring.bad::after { background:var(--gov-fault); }
@@ -3611,7 +3611,7 @@
                        cursor:pointer; padding:12px 8px; }
         .wr-diag-btn:hover { color:var(--gov-primary-2); border-color:var(--gov-primary-2); }
         .wr-diag-box { max-width:min(720px,92vw); }
-        .wr-diag-box .el-message-box__message { white-space:pre-wrap; font:12px/1.7 var(--font-mono); }
+        .wr-diag-box .el-message-box__message { white-space:pre-wrap; font:var(--fs-micro)/1.7 var(--font-mono); }
 
         .wr-cols { display:grid; gap:14px; grid-template-columns:repeat(2, 1fr); }
         @media (max-width: 1000px) { .wr-cols { grid-template-columns:1fr; } }
@@ -3631,7 +3631,7 @@
         .wr-col-sub { font-size:var(--fs-small); color:var(--gov-muted); }
         .wr-rel { display:flex; gap:18px; flex-wrap:wrap; margin:4px 0 12px; align-items:baseline;
                   font-size:var(--fs-small); color:var(--gov-muted); }
-        .wr-rel b { font:600 24px var(--font-mono); color:var(--gov-text); margin:0 3px; }
+        .wr-rel b { font:600 var(--fs-t2) var(--font-mono); color:var(--gov-text); margin:0 3px; }
         .wr-rel-run { font-size:var(--fs-micro); color:var(--gov-mute-2); }
 
         .wr-cams { display:grid; gap:12px; grid-template-columns:repeat(2, 1fr); }
@@ -3648,7 +3648,7 @@
         .wr-cam-meta i.hot { color:var(--gov-warn); }
         .wr-vd { color:var(--gov-muted); }
         .wr-vd i { font-style:normal; font:600 var(--fs-mono-num) var(--font-mono); color:var(--gov-text); }
-        .wr-vd-t { margin-left:auto; font:500 10.5px var(--font-mono); color:var(--gov-mute-2); }
+        .wr-vd-t { margin-left:auto; font:500 var(--fs-caption) var(--font-mono); color:var(--gov-mute-2); }
         /* 原始影像 + 向量疊加層(線不燒進影像,縮放不糊,可獨立關掉) */
         .wr-cam-stack { position:relative; line-height:0; }
         /* go2rtc 串流版:維持 16:9 的框,影片 contain 置中(與疊加層同一套映射) */
@@ -3659,8 +3659,7 @@
                       align-items:center; justify-content:center; color:#cbd5e1; font-size:var(--fs-micro); background:#26303c; }
 
         .wr-state { display:flex; align-items:center; gap:12px; margin-top:12px; padding:12px 16px;
-                    border-radius:var(--r-card); border:1px solid; font-size:17px; font-weight:700; }
-        .wr-state-sec { margin-left:auto; font:600 26px var(--font-mono); letter-spacing:.02em; }
+                    border-radius:var(--r-card); border:1px solid; font-size:var(--fs-t1); font-weight:700; }
         .wr-state.green { border-color:#bfe5cc; background:#e9f7ee; color:#156a3a; }
         .wr-state.amber { border-color:#f3d9a6; background:#fff7e6; color:#9a5b00; }
         .wr-state.red { border-color:#f0c2bd; background:#fdeeec; color:#9b2c24; }
@@ -3733,7 +3732,7 @@
         }
         /* 地圖標籤:只放短碼,收到最小 —— 數字在下方狀態列 */
         .wr-tip { background:rgba(255,255,255,.92); color:var(--gov-text); border:0;
-                  font:600 10.5px var(--font-mono); letter-spacing:.02em;
+                  font:600 var(--fs-caption) var(--font-mono); letter-spacing:.02em;
                   padding:1px 6px; border-radius:999px;
                   box-shadow:0 1px 3px rgba(20,35,60,.18); white-space:nowrap; }
         .wr-tip::before { display:none; }
@@ -3742,19 +3741,19 @@
                      grid-template-columns:repeat(auto-fit, minmax(215px, 1fr)); }
         .wr-camcell { display:flex; align-items:center; gap:7px; min-width:0;
                       padding:7px 10px; border:1px solid var(--gov-border);
-                      border-radius:9px; background:var(--gov-surface); font-size:12px; }
+                      border-radius:9px; background:var(--gov-surface); font-size:var(--fs-micro); }
         .wr-camcell.off { opacity:.5; border-style:dashed; }
-        .wr-camcell b { font:600 12px var(--font-mono); color:var(--gov-text); flex:none; }
+        .wr-camcell b { font:600 var(--fs-micro) var(--font-mono); color:var(--gov-text); flex:none; }
         .wr-cdot { width:9px; height:9px; border-radius:50%; flex:none;
                    box-shadow:0 0 0 2px var(--gov-surface), 0 0 0 3px var(--gov-border); }
-        .wr-cph { color:var(--gov-mute-2); font-size:11px; flex:none; }
+        .wr-cph { color:var(--gov-mute-2); font-size:var(--fs-caption); flex:none; }
         .wr-cv { margin-left:auto; color:var(--gov-muted); white-space:nowrap; }
         .wr-cv + .wr-cv { margin-left:10px; }
         .wr-cv i { font-style:normal; font-family:var(--font-mono); font-weight:600; color:var(--gov-text); }
         .wr-map-note { margin:6px 10px; font-size:var(--fs-caption); color:var(--gov-warn); }
         .wr-geo-count { position:absolute; right:10px; top:9px; text-align:right; z-index:500;
                         background:rgba(255,255,255,.92); padding:6px 12px; border-radius:var(--r-card); border:1px solid var(--gov-border); }
-        .wr-geo-count b { display:block; font:600 40px/1 var(--font-mono); color:var(--gov-text); letter-spacing:-.03em; }
+        .wr-geo-count b { display:block; font:600 var(--fs-hero)/1 var(--font-mono); color:var(--gov-text); letter-spacing:-.03em; }
         .wr-geo-count b.warn { color:var(--gov-warn); }
         .wr-geo-count b.hot { color:var(--gov-fault); animation:wrHot 1s steps(2) infinite; }
         @keyframes wrHot { 0%,100%{opacity:1} 50%{opacity:.45} }
@@ -7923,7 +7922,6 @@
                                     <span class="lv-lamp" :class="col.lampCls"></span>
                                     <b>{{ col.ramp }} {{ col.stateText }}</b>
                                     <span class="wr-live-sec" :class="col.liveCls">{{ col.liveText }}</span>
-                                    <span class="wr-state-sec">{{ col.secText }}</span>
                                 </div>
                             </div>
                         </div>
@@ -23873,7 +23871,6 @@ const app=createApp({
                     isGreen: isGreen, stateText: stateText,
                     stateCls: stateCls, lampCls: lampCls,
                     liveText: liveText, liveCls: liveCls,
-                    secText: (sec == null) ? '– –' : (sec + ' s'),
                     rel: rel[String(ph)] || {},
                     cams: cams.filter((c) => c.phase_no === ph)
                               .map((c) => Object.assign({}, c,
