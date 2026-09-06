@@ -209,6 +209,12 @@ LOFI_ALWAYS = os.getenv("ANNOTATED_STREAM_LOFI_ALWAYS", "1") != "0"
 # 🛑 為什麼不直接轉發相機原始碼流:相機怎麼編(時間戳/GOP/60fps)我們控制不了,
 #    MSE 和 app 會凍在一張。走我們的編碼器 = 定速、乾淨 PTS、1 秒 IDR → 一定順。
 LITE_BITRATE = os.getenv("ANNOTATED_STREAM_LITE_BITRATE", "3M") or "3M"
+# lite 的輸出寬度。0 = 不縮放(維持來源解析度)。
+# 🛑 為什麼需要:戰情儀表板把四路畫成約 300x170 的小磚,但來源是 1920x1080
+#    (其中一路還是 60fps),瀏覽器要解的量是顯示需求的三十幾倍 ——
+#    現場實測「影像很不順」。降幀率只解決一半,解析度才是另一半。
+#    高度依來源比例自動算,並對齊偶數(H.264 要求)。
+LITE_WIDTH = int(os.getenv("ANNOTATED_STREAM_LITE_WIDTH", "0") or 0)
 # on-demand:go2rtc 沒有觀看者(consumer)就不編碼(連畫框都跳過),省 CPU。
 # 87 分析已吃 ~3.6 核、常駐 8 條編碼器會超載,故預設開。
 ON_DEMAND = os.getenv("ANNOTATED_STREAM_ONDEMAND", "1") != "0"
@@ -409,6 +415,14 @@ class AnnotatedStreamer:
             threading.Thread(target=self._writer_loop, args=(_v,),
                              name=f"annot-{_v}-{camera_id}", daemon=True).start()
 
+    def _out_size(self, variant: str):
+        """這個變體要輸出的解析度。只有 lite 且設了 LITE_WIDTH 才縮,其餘照來源。"""
+        if variant != "lite" or LITE_WIDTH <= 0 or LITE_WIDTH >= self.width:
+            return self.width, self.height
+        w = LITE_WIDTH - (LITE_WIDTH % 2)                       # H.264 要偶數
+        h = int(round(self.height * w / float(self.width)))
+        return w, h - (h % 2)
+
     def _spawn(self, variant: str = "annotated"):
         rtsp_url = f"rtsp://127.0.0.1:8554/cam_{self.camera_id}_{variant}"
         # lofi(遠端省流):固定低幀率;lite(原始畫面):實測供幀率+高碼率;annotated:供幀率
@@ -418,7 +432,10 @@ class AnnotatedStreamer:
             fps, brate = self.fps, LITE_BITRATE
         else:
             fps, brate = self.fps, STREAM_BITRATE
+        ow, oh = self._out_size(variant)
         if USE_HW:
+            # 縮放交給 nvvidconv(硬體),不佔 CPU;不縮的時候 caps 就不帶尺寸。
+            _scale = f",width={ow},height={oh}" if (ow, oh) != (self.width, self.height) else ""
             gst = (
                 f"gst-launch-1.0 -q fdsrc ! "
                 # 🛑 用 I420 不要用 BGRx。1080p 的 BGRx 是每幀 8.3MB,I420 只有 3.1MB
@@ -426,7 +443,7 @@ class AnnotatedStreamer:
                 f"rawvideoparse width={self.width} height={self.height} "
                 f"format=i420 framerate={fps}/1 ! "
                 # 🛑 caps 一定要加引號:括號在 sh -c 裡會被當成子 shell → 語法錯誤
-                f"nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12' ! "
+                f"nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12{_scale}' ! "
                 # 🛑 profile 與 preset 的預設值是「最快最粗」,不是「最好」:
                 #    profile 預設 0=Baseline(沒有 CABAC 熵編碼)、
                 #    preset-level 預設 1=UltraFast。
@@ -467,6 +484,9 @@ class AnnotatedStreamer:
             "-s", f"{self.width}x{self.height}",
             "-r", str(fps),
             "-i", "-",
+            # 軟體路徑也要縮,否則 LITE_WIDTH 只有硬體編碼時生效(設定看起來有效
+            # 其實沒作用,是最難查的那種)。
+            *(["-vf", f"scale={ow}:{oh}"] if (ow, oh) != (self.width, self.height) else []),
             "-c:v", STREAM_ENCODER,
             "-preset", "ultrafast", "-tune", "zerolatency",
             "-b:v", brate, "-maxrate", brate,
@@ -486,8 +506,10 @@ class AnnotatedStreamer:
                 err_fh = open(err_path, "wb")
             except Exception:
                 err_fh = subprocess.DEVNULL
+            _sz = (f"{self.width}x{self.height}" if (ow, oh) == (self.width, self.height)
+                   else f"{self.width}x{self.height}→{ow}x{oh}")
             print(f"🎬 [annot] cam_{self.camera_id}/{variant} spawn "
-                  f"{self.width}x{self.height}@{fps} {brate} {STREAM_ENCODER}", flush=True)
+                  f"{_sz}@{fps} {brate} {STREAM_ENCODER}", flush=True)
             with capture_open_guard():
                 self.procs[variant] = subprocess.Popen(
                     cmd, stdin=subprocess.PIPE,
