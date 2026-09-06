@@ -23749,9 +23749,19 @@ const app=createApp({
                                           {credentials: 'include'});
                     if (!r.ok) continue;
                     const d = await r.json();
-                    const items = (d.items || []).filter((x) => Number(x.totalFlow) > 0);
-                    const it = items.length ? items[items.length - 1] : null;
-                    if (!it) continue;
+                    // 🛑 端點回的桶是「新 → 舊」排序,不是舊到新。
+                    //    原本寫 items[items.length-1] 取到的是**最舊**那一桶,
+                    //    視窗一小時 → 畫面上的時間永遠停在一小時前(現場回報「一直卡住」
+                    //    停在 14:00,當時已經 15:00)。這裡自己排一次不依賴端點順序。
+                    const items = (d.items || []).filter((x) => Number(x.totalFlow) > 0)
+                        .sort((a, b) => String(b.timeText || '').localeCompare(String(a.timeText || '')));
+                    if (!items.length) continue;
+                    // 當下那一桶還在累積,流量會偏低 → 跳過它,取最近一個已收滿的。
+                    const bk = new Date(now.getTime());
+                    bk.setMinutes(bk.getMinutes() - (bk.getMinutes() % 5), 0, 0);
+                    const cur = bk.getFullYear() + '-' + pad(bk.getMonth() + 1) + '-' + pad(bk.getDate())
+                                + ' ' + pad(bk.getHours()) + ':' + pad(bk.getMinutes());
+                    const it = items.find((x) => String(x.timeText || '').slice(0, 16) < cur) || items[0];
                     sigVd.value[id] = {
                         small: Number(it.smallFlow) || 0,
                         large: Number(it.largeFlow) || 0,
