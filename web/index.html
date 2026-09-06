@@ -23757,17 +23757,18 @@ const app=createApp({
             //    (1) h264LiveEnabled:開頁時會探測「:1984 直連通不通」,不通要退回
             //        走 :8000 的畫面。漏掉的話,在 :1984 不可達的機器上監控頁正常、
             //        戰情卻整片黑,而且看起來完全沒有錯誤。
-            //    (2) lowBandwidth 時該用 lite 變體。
-            //    annotated 一律 false —— 戰情要的是乾淨畫面,疊加框由前端 SVG 畫。
             const camera = {id: id};
             if (!h264LiveEnabled.value) return '';
             if (!hasGo2rtcStream(camera) && !go2rtcLive.value.has(go2rtcStreamName(camera))) return '';
-            // 與監控頁「原始畫面」同一套:annotated 一律 false;窄頻才考慮 lite。
-            // 🛑 lite 能不能用由 hasGo2rtcLite 把關(要求真的有 publisher)——
-            //    2026-09-06 就是因為那道關卡只看名字,窄頻時選到空殼 cam_N_lite,
-            //    四塊磚全黑而且 video 沒有任何 error code。現在後端沒推 lite,
-            //    這裡會自動落回基礎串流 cam_N(實測 MSE 八秒 6.8 MB)。
-            return getGo2rtcWsUrl(camera, {annotated: false, lite: lowBandwidth.value});
+            // 🛑 一律**共用的基礎串流 cam_N**:不帶 annotated、也不帶 lite。
+            //    使用者 2026-09-06:「戰情的影像不是要疊加的,共用原始」。
+            //    lite 不算「共用」—— 它是後端另外重新編碼推上去的一路,
+            //    每路要吃一個硬體編碼通道(這台機器 NVENC 通道有限,先前 lite
+            //    起不來就是通道被佔滿)。cam_N 是相機原生那條,所有頁面共用,
+            //    不多花任何編碼資源。
+            //    畫面上的 ROI 線是前端 SVG 另外疊的向量圖(使用者要的「線再轉出
+            //    疊加」),不是燒進影像裡,可獨立開關、縮放不糊。
+            return getGo2rtcWsUrl(camera, {annotated: false});
         };
         // 影片的原生尺寸 —— ROI 疊加層的 viewBox 要用它。
         // 🛑 影片是 object-fit:contain(置中留黑邊),所以 SVG 要用
