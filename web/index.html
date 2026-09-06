@@ -3630,6 +3630,9 @@
         .wr-cam-meta b { width:100%; color:var(--gov-primary); font-weight:700; }
         .wr-cam-meta i { font-style:normal; font:600 var(--fs-mono-num) var(--font-mono); color:var(--gov-text); }
         .wr-cam-meta i.hot { color:var(--gov-warn); }
+        .wr-vd { color:var(--gov-muted); }
+        .wr-vd i { font-style:normal; font:600 var(--fs-mono-num) var(--font-mono); color:var(--gov-text); }
+        .wr-vd-t { margin-left:auto; font:500 10.5px var(--font-mono); color:var(--gov-mute-2); }
         /* 原始影像 + 向量疊加層(線不燒進影像,縮放不糊,可獨立關掉) */
         .wr-cam-stack { position:relative; line-height:0; }
         /* go2rtc 串流版:維持 16:9 的框,影片 contain 置中(與疊加層同一套映射) */
@@ -7873,6 +7876,17 @@
                                             class="wr-cam" :class="{green:col.isGreen, off:!cam.online}">
                                         <div class="wr-cam-meta" :title="sigCamFullName(cam.camera_id)">
                                             <b>{{ cam.name }} · {{ cam.site }}</b>
+                                            <!-- 車流資料(原本由現場 VD 提供,VD 2026-09-06 移除後改由本系統的
+                                                 相機偵測產生)。刻意**不掛 VD 字樣** —— 使用者:放在 CCTV 標誌旁,
+                                                 不用放 VD 偵測器勳章。這裡只放 /plan 沒有的兩項:車種分流與平均車速,
+                                                 流量/佔有率/排隊已經在下一行。 -->
+                                            <template v-if="sigVd[cam.camera_id]">
+                                                <span class="wr-vd">小 <i>{{ sigVd[cam.camera_id].small }}</i>
+                                                    · 大 <i>{{ sigVd[cam.camera_id].large }}</i> 輛</span>
+                                                <em class="wr-sep">|</em>
+                                                <span class="wr-vd">均速 <i>{{ sigVd[cam.camera_id].speed }}</i> km/h</span>
+                                                <span class="wr-vd-t">{{ sigVd[cam.camera_id].at }}</span>
+                                            </template>
                                             <span>流量: <i>{{ sigWarNum(cam.flow_vpm) }}</i> 輛/分</span><em class="wr-sep">|</em>
                                             <span>佔有率: <i :class="{hot:sigWarHot(cam.occupancy)}">{{ sigWarPct(cam.occupancy) }}</i></span>
                                             <template v-if="cam.queue_m!=null"><em class="wr-sep">|</em><span>排隊: <i>{{ sigWarNum(cam.queue_m) }}</i> m</span></template>
@@ -22988,6 +23002,7 @@ const app=createApp({
                             loadSigConsole(); startSigConsoleTimer(); startSigLiveTimer();
                             loadSignalFrames(); if (!cameras.value.length) loadCameras();
                             loadWarCamZones(Object.keys(SIG_CAM_SITE).map(Number));
+                            loadWarVd(); startWarVdTimer();
                             setTimeout(initWarMap, 50); },
             light:  () => { loadSignal(); startSignalTimer(); },
             plan:   () => { loadSigConsole(); startSigConsoleTimer(); },
@@ -23715,6 +23730,37 @@ const app=createApp({
                 }
             });
         };
+        // 車流資料(車種分流、平均車速、佔有率)。原本現場有 4 台 VD 偵測器,
+        // 2026-09-06 拿走之後,這份資料的唯一來源就是本系統的相機偵測。
+        // 🛑 取 5 分鐘桶的**最後一筆已完成的桶**:當下那一桶還在累積,
+        //    直接拿會看到偏低的流量(現場實測當下桶 totalFlow=0)。
+        // 🛑 端點吃的是 UTC,不要傳本地時間。
+        const sigVd = ref({});
+        const loadWarVd = async () => {
+            const pad = (n) => String(n).padStart(2, '0');
+            const iso = (d) => d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate())
+                             + 'T' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
+            const now = new Date(), from = new Date(now.getTime() - 3600000);
+            for (const id of Object.keys(SIG_CAM_SITE).map(Number)) {
+                try {
+                    const r = await fetch('/api/traffic/vd-report?camera_id=' + id
+                                          + '&bucket_size=5m&start_time=' + iso(from) + '&end_time=' + iso(now),
+                                          {credentials: 'include'});
+                    if (!r.ok) continue;
+                    const d = await r.json();
+                    const items = (d.items || []).filter((x) => Number(x.totalFlow) > 0);
+                    const it = items.length ? items[items.length - 1] : null;
+                    if (!it) continue;
+                    sigVd.value[id] = {
+                        small: Number(it.smallFlow) || 0,
+                        large: Number(it.largeFlow) || 0,
+                        speed: (it.avgSpeed == null) ? '—' : Number(it.avgSpeed).toFixed(0),
+                        occ: (it.avgOccupancyPct == null) ? '—' : Number(it.avgOccupancyPct).toFixed(0) + '%',
+                        at: String(it.timeText || '').slice(11),
+                    };
+                } catch (e) { /* 取不到就不顯示,不影響其他區塊 */ }
+            }
+        };
         // ROI 幾何只抓一次:zones 很少變,而且每秒重抓會白白打 API。
         const loadWarCamZones = async (ids) => {
             for (const id of ids) {
@@ -23924,6 +23970,14 @@ const app=createApp({
                 queue: (c.queue_m == null) ? null : Number(c.queue_m).toFixed(1),
             })).sort((a, b) => (a.phase_no - b.phase_no) || (a.camera_id - b.camera_id));
         });
+        let warVdTimer = null;
+        const startWarVdTimer = () => {
+            if (warVdTimer) return;
+            warVdTimer = setInterval(() => {
+                if (page.value !== 'signal_hub' || signalTab.value !== 'live' || !isPageVisible()) return;
+                loadWarVd();
+            }, 60000);
+        };
         const sigWarExportUrl = (kind) => {
             const day = sigDayOffsetAt(0, 0);
             const now = new Date(), pad = (n) => String(n).padStart(2, '0');
@@ -25084,7 +25138,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigCamZones,sigCamBox,sigCamOverlayOn,onWarCamLoad,sigCamFullName,warCamWs,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,sigCamZones,sigCamBox,sigCamOverlayOn,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
