@@ -3589,29 +3589,7 @@
         @media (max-width:700px) { .wr-headline { font-size:var(--fs-t3); } }
         .wr-quote { margin:0; border-left:3px solid var(--gov-border-strong); padding:2px 0 2px 14px;
                     color:var(--gov-text-2); font-size:var(--fs-body); max-width:40ch; }
-        .wr-gauge { display:flex; flex-direction:column; align-items:center; gap:6px; }
-        .wr-gauge svg { width:170px; height:170px; }
-        .wr-gauge-num { font:600 var(--fs-mono-big) var(--font-mono); fill:var(--gov-text); }
-        .wr-gauge-lvl { font:700 var(--fs-body-lg) var(--font-sans); }
-        .wr-gauge-cap { color:var(--gov-muted); font-size:var(--fs-micro); letter-spacing:var(--ls-wide); }
         /* 拿掉 VD/AI 之後只剩一張,不能再寫死三欄(會縮在左邊三分之一) */
-        .wr-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; }
-        .wr-tile { border:1px solid var(--gov-border); border-radius:var(--r-card); padding:12px 8px; text-align:center;
-                   background:var(--gov-surface-2); }
-        .wr-ring { position:relative; width:44px; height:44px; margin:0 auto 8px; border-radius:50%;
-                   border:3px solid var(--gov-ok); display:flex; align-items:center; justify-content:center;
-                   font:700 var(--fs-caption) var(--font-mono); color:var(--gov-text); letter-spacing:.06em; }
-        .wr-ring::after { content:''; position:absolute; right:-4px; top:-2px; width:10px; height:10px; border-radius:50%;
-                          background:var(--gov-ok); border:2px solid #fff; }
-        .wr-ring.bad { border-color:var(--gov-fault); } .wr-ring.bad::after { background:var(--gov-fault); }
-        .wr-tile b { display:block; font-size:var(--fs-small); color:var(--gov-text); }
-        .wr-tile span { color:var(--gov-muted); font-size:var(--fs-micro); }
-        .wr-diag-btn { border:1px dashed var(--gov-border-strong); border-radius:var(--r-card);
-                       background:transparent; color:var(--gov-muted); font-size:var(--fs-micro);
-                       cursor:pointer; padding:12px 8px; }
-        .wr-diag-btn:hover { color:var(--gov-primary-2); border-color:var(--gov-primary-2); }
-        .wr-diag-box { max-width:min(720px,92vw); }
-        .wr-diag-box .el-message-box__message { white-space:pre-wrap; font:var(--fs-micro)/1.7 var(--font-mono); }
 
         .wr-cols { display:grid; gap:14px; grid-template-columns:repeat(2, 1fr); }
         @media (max-width: 1000px) { .wr-cols { grid-template-columns:1fr; } }
@@ -7831,36 +7809,19 @@
                             </span>
                         </div>
 
-                        <!-- ══ 決策 hero:一眼看到我方演算法現在建議什麼 ══
-                             參照本專案決策層版式:左側強調條(續綠綠/應換相紅/清道琥珀)、
-                             膠囊標籤、字距拉開的小標、超大字級的建議動作、回堵風險環、三個狀態方塊。 -->
+                        <!-- ══ hero:一眼看到我方演算法現在建議什麼,以及依據的算式 ══
+                             2026-09-07 瘦身:拿掉「趨勢」(沒說是什麼的趨勢)、回堵風險環
+                             (使用者說過風險值不重要,而且幾乎恆為低)、CCTV 磚(與下方每台
+                             相機的狀態重複)、影像診斷鈕(它要解的問題已經解掉)。
+                             留下的兩樣就是這頁存在的理由:建議動作,以及算式。 -->
                         <div class="wr-decide" :class="sigWarHero.cls">
                             <div class="wr-decide-main">
                                 <div class="wr-pills">
                                     <span class="wr-pill ok">影子模式</span>
-                                    <span class="wr-pill">趨勢 <b>{{ sigWarHero.trend }}</b></span>
                                     <span class="wr-pill" :title="sigCtlModeNote">{{ sigCtlModeText }}</span>
                                 </div>
                                 <h2 class="wr-headline">{{ sigWarHero.headline }}</h2>
                                 <p class="wr-quote">{{ sigWarHero.why }}</p>
-                            </div>
-                            <div class="wr-gauge">
-                                <svg viewBox="0 0 120 120" aria-label="回堵風險">
-                                    <circle cx="60" cy="60" r="50" fill="none" stroke="var(--gov-border)" stroke-width="9"></circle>
-                                    <circle cx="60" cy="60" r="50" fill="none" :stroke="sigWarRisk.color" stroke-width="9" stroke-linecap="round"
-                                            stroke-dasharray="314" :stroke-dashoffset="sigWarRisk.dash" transform="rotate(-90 60 60)"
-                                            style="transition:stroke-dashoffset .6s,stroke .4s"></circle>
-                                    <text x="60" y="64" text-anchor="middle" class="wr-gauge-num">{{ sigWarRisk.text }}</text>
-                                    <text x="60" y="84" text-anchor="middle" class="wr-gauge-lvl" :fill="sigWarRisk.color">{{ sigWarRisk.level }}</text>
-                                </svg>
-                                <div class="wr-gauge-cap">回堵風險 · {{ sigWarRisk.side }}</div>
-                            </div>
-                            <div class="wr-tiles">
-                                <div class="wr-tile" v-for="tl in sigWarTiles" :key="'tl'+tl.k">
-                                    <div class="wr-ring" :class="{bad:!tl.ok}">{{ tl.k }}</div>
-                                    <b>{{ tl.name }}</b><span>{{ tl.val }}</span>
-                                </div>
-                                <button class="wr-diag-btn" type="button" @click="warDiag">影像診斷</button>
                             </div>
                         </div>
 
@@ -17461,7 +17422,6 @@ const app=createApp({
             }
         };
 
-
         // ═══════ 互動描定攝影機座標 ═══════
         const mapPlacingCamera=ref(null);
         const mapPlacingDraft=ref(null);  // {lat, lng} 暫存使用者選的點
@@ -24018,46 +23978,6 @@ const app=createApp({
                 loadWarVd();
             }, 60000);
         };
-        // 影像診斷:把「為什麼這塊磚是黑的」一次問完,結果複製到剪貼簿。
-        // 🛑 存在的理由:開發機與現場都沒有帶 H.264 解碼器的瀏覽器
-        //    (playwright 內建 chromium isTypeSupported('avc1.640029') = false),
-        //    所以無法在這邊重現使用者看到的畫面。與其反覆猜,不如讓現場那台
-        //    瀏覽器自己把狀態講出來。只讀,不改任何設定。
-        const warDiag = async () => {
-            const L = [];
-            L.push('時間 ' + new Date().toLocaleString());
-            L.push('網址 ' + location.protocol + '//' + location.host);
-            L.push('h264LiveEnabled=' + h264LiveEnabled.value
-                   + ' lowBandwidth=' + lowBandwidth.value + ' remoteSaver=' + remoteSaver.value);
-            L.push('MSE H.264 支援=' + (window.MediaSource
-                   ? MediaSource.isTypeSupported('video/mp4; codecs="avc1.640029"') : '無 MediaSource'));
-            L.push('go2rtc 已宣告串流=' + go2rtcStreams.value.size + ' / live=' + go2rtcLive.value.size);
-            try {
-                const r = await fetch(location.protocol + '//' + location.hostname + ':1984/api/streams',
-                                      {signal: AbortSignal.timeout(3000)});
-                L.push(':1984 直連 → HTTP ' + r.status);
-            } catch (e) { L.push(':1984 直連 → 失敗 ' + (e && (e.name || e))); }
-            for (const id of Object.keys(SIG_CAM_SITE).map(Number)) {
-                const url = warCamWs(id);
-                const host = document.querySelector('[data-wrcam="' + id + '"]');
-                if (!host) { L.push('cam ' + id + ' → 沒有串流容器(退回快照) url=' + (url || '(空字串)')); continue; }
-                const vs = host.querySelector('video-stream'), v = host.querySelector('video');
-                const b = host.getBoundingClientRect();
-                L.push('cam ' + id + ' url=…' + (url ? url.slice(-22) : '(空)')
-                       + ' 容器=' + Math.round(b.width) + 'x' + Math.round(b.height)
-                       + ' player=' + (vs ? '有' : '無') + ' video=' + (v ? '有' : '無')
-                       + (v ? (' 影像尺寸=' + v.videoWidth + 'x' + v.videoHeight
-                               + ' ready=' + v.readyState + ' paused=' + v.paused
-                               + ' 錯誤=' + (v.error ? v.error.code : '無')) : '')
-                       + ' 重試=' + (host.__go2rtcRetries != null ? host.__go2rtcRetries : '-')
-                       + ' 監看=' + (host.__go2rtcWatch ? '運作中' : '已停止'));
-            }
-            const txt = L.join(String.fromCharCode(10));
-            try { await navigator.clipboard.writeText(txt); } catch (e) { }
-            try { console.log(txt); } catch (e) { }
-            ElementPlus.ElMessageBox.alert(txt, '戰情影像診斷(已複製到剪貼簿)',
-                {customClass: 'wr-diag-box', confirmButtonText: '關閉'});
-        };
         const sigWarExportUrl = (kind) => {
             const day = sigDayOffsetAt(0, 0);
             const now = new Date(), pad = (n) => String(n).padStart(2, '0');
@@ -24082,37 +24002,13 @@ const app=createApp({
         const sigWarHero = computed(() => {
             const d = sigPlan.value || {};
             const g = d.green_phase, name = g === 1 ? '上匝道' : '下匝道', other = g === 1 ? '下匝道' : '上匝道';
-            if (!d.available) return {cls: '', headline: '尚無資料', why: d.reason || '等待抄錄器回報。', trend: '—'};
+            if (!d.available) return {cls: '', headline: '尚無資料', why: d.reason || '等待抄錄器回報。'};
             const t = d.terms || {};
-            const q2 = Number((d.green_side && d.green_side.phase_no === 2 ? d.green_side : d.red_side) && (d.green_side.phase_no === 2 ? d.green_side.queue_m : (d.red_side || {}).queue_m)) || 0;
-            const trend = q2 >= 60 ? 'rising' : (q2 <= 10 ? 'stable' : 'building');
-            if (d.clearance) return {cls: 'clr', headline: '清道中，等待換相', why: '清道（黃燈、全紅）期間控制器已 committed，不做比對。', trend: trend};
+            if (d.clearance) return {cls: 'clr', headline: '清道中，等待換相', why: '清道（黃燈、全紅）期間控制器已 committed，不做比對。'};
             if (d.action === 'SWITCH') return {cls: 'sw', headline: '切換至' + other + '放行',
-                why: '紅側延滯 ' + t.switch_gain + ' > 綠側價值 ' + t.keep_gain + ' + 換相成本 ' + t.change_cost + '。' + other + '等待延滯已超過' + name + '續綠的價值。', trend: trend};
+                why: '紅側延滯 ' + t.switch_gain + ' > 綠側價值 ' + t.keep_gain + ' + 換相成本 ' + t.change_cost + '。' + other + '等待延滯已超過' + name + '續綠的價值。'};
             return {cls: '', headline: '延長綠燈時間',
-                why: '紅側延滯 ' + t.switch_gain + ' ≤ 綠側價值 ' + t.keep_gain + ' + 換相成本 ' + t.change_cost + '。' + name + '仍有車在放行，換相不划算。', trend: trend};
-        });
-        // 回堵風險:主線保護側(priority)的兩台平均佔有率。回堵溢流到國道主線才是真正的風險。
-        const sigWarRisk = computed(() => {
-            const d = sigPlan.value || {};
-            const pri = [d.green_side, d.red_side].find((x) => x && x.priority) || d.red_side || {};
-            const cams = (d.cameras || []).filter((c) => c.phase_no === pri.phase_no && c.occupancy != null);
-            if (!cams.length) return {text: '—', level: '未量到', color: 'var(--gov-mute-2)', dash: 314, side: pri.ramp || ''};
-            const r = cams.reduce((a, c) => a + Number(c.occupancy), 0) / cams.length;
-            const level = r < 0.35 ? '低' : (r < 0.65 ? '中' : '高');
-            const color = r < 0.35 ? 'var(--gov-ok)' : (r < 0.65 ? 'var(--gov-warn)' : 'var(--gov-fault)');
-            return {text: r.toFixed(3), level: level, color: color, dash: Math.round(314 * (1 - r)), side: pri.ramp || ''};
-        });
-        const sigWarTiles = computed(() => {
-            const d = sigPlan.value || {};
-            const cams = d.cameras || [];
-            const on = cams.filter((c) => c.online).length;
-            // 🛑 只留影像。VD 那張是假的 —— 現場 4 台 VD 偵測器 2026-09-06 已拆除,
-            //    而且它顯示的根本是相機數(on + ' 台'),跟 CCTV 那張同一個數字。
-            //    AI 決策層那張也拿掉(使用者 2026-09-06)。
-            return [
-                {k: 'CCTV', name: '影像', val: on + '/' + cams.length, ok: cams.length && on === cams.length},
-            ];
+                why: '紅側延滯 ' + t.switch_gain + ' ≤ 綠側價值 ' + t.keep_gain + ' + 換相成本 ' + t.change_cost + '。' + name + '仍有車在放行，換相不划算。'};
         });
         // 底部原始訊框:只留燈態回報(5F03),那才是畫面上秒數與燈色的來源。
         // 全部訊框混在一起會被查詢回報洗版,看不出跟畫面的對應。
@@ -25233,7 +25129,7 @@ const app=createApp({
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,warDiag,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarRisk,sigWarTiles,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigWarExportUrl,sigWarFrameDesc,sigWarHero,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
