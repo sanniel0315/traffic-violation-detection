@@ -392,6 +392,16 @@ class AnnotatedStreamer:
         self._stopped = False
         self._restart_count = 0
         self._max_restart = 200
+        # 每個變體各自的「連續 spawn 失敗」退避。
+        # 🛑 _restart_count 擋不住這種失敗:它是**所有變體共用**的,而且任一變體
+        #    乾淨停止(_stop_variant_proc)就歸零 —— annotated/lofi 一直在起停,
+        #    計數永遠回到 0,所以 lite 起不來時會每秒重生一次、每次 core dump。
+        #    2026-09-06 現場實測:硬體編碼通道被 8 個編碼器佔滿後,lite 連續
+        #    40 秒每秒 spawn 一次(ffmpeg stderr:InitNVENC: Host1x channel open
+        #    failed → free(): double free detected),日誌被洗版、CPU 空燒,
+        #    而症狀在前端只是「畫面全黑但沒有 error code」。
+        self._spawn_fail = {}        # variant -> 連續失敗次數
+        self._spawn_next_try = {}    # variant -> 下次可以再試的 monotonic 時間
 
         self._pacer = threading.Thread(target=self._pacer_loop, name=f"annot-pacer-{camera_id}", daemon=True)
         self._pacer.start()
@@ -507,12 +517,40 @@ class AnnotatedStreamer:
         with self._proc_lock:
             proc = self.procs.get(variant)
             if proc is not None and proc.poll() is None:
+                self._spawn_fail[variant] = 0        # 活著就把退避清掉
                 return True
             if self._restart_count >= self._max_restart:
                 return False
+            now = time.monotonic()
+            if now < self._spawn_next_try.get(variant, 0.0):
+                return False                          # 還在退避,不要每秒重生
             self._restart_count += 1
             self._spawn(variant)
-            return self.procs.get(variant) is not None
+            alive = self.procs.get(variant) is not None and self.procs[variant].poll() is None
+            if alive:
+                self._spawn_fail[variant] = 0
+                return True
+            # 起不來:退避 2、4、8…最多 60 秒,並把 stderr 的原因講清楚(只講一次)
+            n = self._spawn_fail.get(variant, 0) + 1
+            self._spawn_fail[variant] = n
+            self._spawn_next_try[variant] = now + min(60.0, 2.0 ** min(n, 6))
+            if n in (1, 5, 20):
+                print(f"⚠️ [annot] cam_{self.camera_id}/{variant} 編碼器起不來"
+                      f"(連續 {n} 次) → {self._spawn_fail_reason(variant)}", flush=True)
+            return False
+
+    def _spawn_fail_reason(self, variant: str) -> str:
+        """從 ffmpeg/gst 的 stderr 判斷起不來的原因,給人看得懂的一句話。"""
+        try:
+            tail = open(f"/tmp/annot_cam{self.camera_id}_{variant}.err",
+                        "rb").read()[-800:].decode("utf-8", "replace")
+        except Exception:
+            return "讀不到 stderr"
+        if "Host1x channel open failed" in tail or "InitNVENC" in tail:
+            return ("硬體編碼通道用完了(NVENC)。這台機器同時只能開有限個硬體編碼器,"
+                    "目前已被其他變體佔滿。減少常駐變體(例如 ANNOTATED_STREAM_LOFI_ALWAYS=0"
+                    "讓 lofi 也改成 on-demand)或關掉這個變體。")
+        return (tail.strip().splitlines() or ["stderr 是空的"])[-1][:160]
 
     def _resolve_fps(self) -> bool:
         """決定編碼率,並持續校正。
