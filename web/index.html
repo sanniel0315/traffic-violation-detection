@@ -3697,8 +3697,13 @@
 
         .wr-cols { display:grid; gap:14px; grid-template-columns:repeat(2, 1fr); }
         @media (max-width: 1000px) { .wr-cols { grid-template-columns:1fr; } }
+        /* 🛑 左右兩欄的內容長度天生不一樣(相機有沒有排隊、有沒有「本段進行中」),
+           不處理的話兩邊的巨型狀態列會一高一低,牆上看起來像沒對齊。
+           欄位改成 flex 直排 + 狀態列 margin-top:auto 推到底 —— 不論上面多長,
+           兩邊的狀態列一定在同一條水平線上。 */
         .wr-col { background:var(--gov-surface); border:1px solid var(--gov-border); border-radius:12px; padding:16px 18px;
-                  box-shadow:var(--shadow-sm); }
+                  box-shadow:var(--shadow-sm); display:flex; flex-direction:column; }
+        .wr-col > .wr-state { margin-top:auto; }
         .wr-col-hd { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
         .wr-col-hd b { font-size:var(--fs-t2); font-weight:700; color:var(--gov-text); }
         /* 文字走 sans、數字走 mono —— 中文不可以套 mono 字族(會掉到替代字型) */
@@ -8075,7 +8080,10 @@
                                     <span>累計 <b>{{ col.rel.total_sec==null?'—':col.rel.total_sec }}</b> 秒</span><i class="wr-sep">|</i>
                                     <span>次數 <b>{{ col.rel.count==null?'—':col.rel.count }}</b> 次</span><i class="wr-sep">|</i>
                                     <span>前次 <b>{{ col.rel.last_sec==null?'—':col.rel.last_sec }}</b> 秒</span>
-                                    <span v-if="col.rel.running" class="wr-rel-run">（本段進行中）</span>
+                                    <!-- 🛑 這個標籤只會出現在「正在放行」那一欄。用 v-if 的話
+                                         兩欄的這一列寬度不同,窄螢幕會其中一欄換行 → 高度不齊。
+                                         改成永遠在 DOM 裡,用 visibility 控制顯示,佔位一致。 -->
+                                    <span class="wr-rel-run" :style="{visibility: col.rel.running?'visible':'hidden'}">（本段進行中）</span>
                                 </div>
                                 <div class="wr-cams">
                                     <figure v-for="cam in col.cams" :key="'wcam'+cam.camera_id"
@@ -8089,8 +8097,6 @@
                                             <template v-if="sigVd[cam.camera_id]">
                                                 <span class="wr-vd">小 <i>{{ sigVd[cam.camera_id].small }}</i>
                                                     · 大 <i>{{ sigVd[cam.camera_id].large }}</i> 輛</span>
-                                                <em class="wr-sep">|</em>
-                                                <span class="wr-vd">均速 <i>{{ sigVd[cam.camera_id].speed }}</i> km/h</span>
                                                 <span class="wr-vd-t">{{ sigVd[cam.camera_id].at }}</span>
                                             </template>
                                             <span>流量: <i>{{ sigWarNum(cam.flow_vpm) }}</i> 輛/分</span><em class="wr-sep">|</em>
@@ -24218,7 +24224,6 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                     sigVd.value[id] = {
                         small: Number(it.smallFlow) || 0,
                         large: Number(it.largeFlow) || 0,
-                        speed: (it.avgSpeed == null) ? '—' : Number(it.avgSpeed).toFixed(0),
                         occ: (it.avgOccupancyPct == null) ? '—' : Number(it.avgOccupancyPct).toFixed(0) + '%',
                         at: String(it.timeText || '').slice(11),
                     };
