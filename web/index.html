@@ -3739,6 +3739,9 @@
         .wr-cam-live { width:100%; aspect-ratio:16/9; background:#26303c; }
         .wr-cam-live video { width:100%; height:100%; object-fit:contain; display:block; }
         .wr-cam-stack img { display:block; width:100%; height:auto; }
+        .wr-cam-off { margin:0; padding:14px 12px; text-align:center; font-size:var(--fs-caption);
+                      color:var(--gov-muted); background:var(--gov-surface-2);
+                      border-top:1px solid var(--gov-border); }
         .wr-cam-err { position:absolute; left:0; right:0; bottom:0; aspect-ratio:16/9; display:flex;
                       align-items:center; justify-content:center; color:#cbd5e1; font-size:var(--fs-micro); background:#26303c; }
 
@@ -8055,7 +8058,7 @@
                                         </div>
                                         <!-- 🛑 純原始畫面,**不疊任何東西**(使用者 2026-09-06:「原始影像沒 roi」)。
                                              走 go2rtc 的共用基礎串流 cam_N,traffic-api 完全不參與編碼。 -->
-                                        <div class="wr-cam-stack">
+                                        <div class="wr-cam-stack" v-if="sigLiveOn">
                                             <!-- 🛑 優先走 go2rtc 的**原始 H.264 串流**(WebSocket + MSE),
                                                  不是每秒抓一張快照:快照是 1 fps 的靜態畫面、每張都要
                                                  後端重新編碼;原始串流是連續影像,而且 traffic-api
@@ -8075,7 +8078,8 @@
                                                  @error="sigLiveErr[cam.camera_id]=true"
                                                  @load="onWarCamLoad($event, cam.camera_id)">
                                         </div>
-                                        <span v-if="!warCamWs(cam.camera_id) && sigLiveErr[cam.camera_id]"
+                                        <p v-if="!sigLiveOn" class="wr-cam-off">影像已關閉 —— 量測與燈態照常更新</p>
+                                        <span v-if="sigLiveOn && !warCamWs(cam.camera_id) && sigLiveErr[cam.camera_id]"
                                               class="wr-cam-err">影像取得失敗</span>
 
                                     </figure>
@@ -24056,7 +24060,21 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         //    快取與 per-camera 鎖,而且直接吃偵測執行緒已經產出的 frame —— 四台每秒
         //    輪詢幾乎都是快取命中,不會多開任何一路 RTSP。
         //    overlay=1 會帶上 ROI 與偵測框,現場看得到「量到哪一段」。
-        const sigLiveOn = ref(true);
+        // 🛑 戰情影像開關。2026-09-07 之前它只控制秒數 tick,影像照跑 ——
+        //    標籤寫「即時影像」卻關不掉影像,而且關掉的是倒數(剛好相反)。
+        //    現在:關 = 影像區塊移除 + 主動斷掉 go2rtc 連線(不只是隱藏,
+        //    隱藏的話串流照跑,照樣吃頻寬與編碼器)。選擇記在瀏覽器,
+        //    戰情牆重開頁面不會跑回開啟。
+        const sigLiveOn = ref((() => {
+            try { return localStorage.getItem('tvd_war_live') !== '0'; }
+            catch (e) { return true; }
+        })());
+        watch(sigLiveOn, (on) => {
+            try { localStorage.setItem('tvd_war_live', on ? '1' : '0'); } catch (e) { }
+            // v-if 移除節點時 unmounted 會拆連線;開啟時要等節點畫出來再接。
+            if (on) nextTick(() => setTimeout(() => resumeAllGo2rtc(WAR_CAM_SEL), 80));
+            else stopAllGo2rtc(WAR_CAM_SEL);
+        });
         const sigLiveErr = reactive({});
         const sigLiveTick = ref(0);
         let sigLiveTimer = null;
@@ -24430,8 +24448,11 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         const startSigLiveTimer = () => {
             if (sigLiveTimer) return;
             sigLiveTimer = setInterval(() => {
+                // 🛑 不要被影像開關關掉:這個 tick 驅動的是綠燈倒數,屬於
+                //    「即時演變狀態」,關掉影像的時候更需要它 —— 那正是
+                //    使用者只想看狀態不想看影像的情境。
                 if (page.value !== 'signal_hub' || signalTab.value !== 'live'
-                    || !isPageVisible() || !sigLiveOn.value) return;
+                    || !isPageVisible()) return;
                 sigLiveTick.value = Date.now();
             }, 1000);
         };
