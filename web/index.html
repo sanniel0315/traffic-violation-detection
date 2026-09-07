@@ -8158,7 +8158,7 @@
                                     <tbody>
                                         <tr v-for="(f,fi) in sec.fields" :key="sec.key+'f'+fi">
                                             <td>{{ f.name }}</td>
-                                            <td class="sc-num" style="font-family:monospace">{{ sigCfgVal(f.value) }}<span v-if="sigDecodeValue(f.name,f.value)" style="color:#2563eb;font-weight:400;margin-left:8px">= {{ sigDecodeValue(f.name,f.value) }}</span></td>
+                                            <td class="sc-num" style="font-family:monospace;white-space:pre-line">{{ sigCfgVal(f.value) }}<span v-if="sigDecodeValue(f.name,f.value)" style="color:#2563eb;font-weight:400;margin-left:8px">= {{ sigDecodeValue(f.name,f.value) }}</span></td>
                                             <td class="sc-sub">{{ f.desc }}</td>
                                         </tr>
                                     </tbody>
@@ -24221,8 +24221,38 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         const sigCfgSecType = (sec) => !sec.received ? 'danger' : (sec.stale ? 'warning' : 'success');
         const sigCfgSecText = (sec) => !sec.received ? '從未抄到' : (sec.stale ? '資料陳舊' : '今日資料');
         // 陣列值攤平顯示,不要印成 [object Object]
-        const sigCfgVal = (v) => Array.isArray(v) ? ('[' + v.join(', ') + ']')
-                                 : ((v === null || v === undefined) ? '—' : v);
+        // 🛑 2026-09-08 現場回報:TimeIn / Segment / Date 全都顯示成
+        //    「[[object Object], [object Object]]」。原因是舊版直接 v.join(',') ——
+        //    TC3 的 repeat 欄位(時段、日期、調撥時間)每一項都是**物件**,
+        //    join 會對物件呼叫預設的 toString。抄到的資料其實是好的,
+        //    是這一格把它顯示壞了 —— 看的人會以為抄錄失敗。
+        const sigCfgScalar = (v) => {
+            if (v === null || v === undefined) return '—';
+            if (typeof v === 'boolean') return v ? '是' : '否';
+            return String(v);
+        };
+        const sigCfgObj = (o) => Object.keys(o)
+            .map((k) => k + '=' + (
+                (o[k] !== null && typeof o[k] === 'object')
+                    ? (Array.isArray(o[k]) ? '[' + o[k].map(sigCfgScalar).join(', ') + ']'
+                                           : sigCfgObj(o[k]))
+                    : sigCfgScalar(o[k])))
+            .join(', ');
+        const sigCfgVal = (v) => {
+            if (v === null || v === undefined) return '—';
+            if (Array.isArray(v)) {
+                if (!v.length) return '(空)';
+                const hasObj = v.some((x) => x !== null && typeof x === 'object');
+                // 純量陣列維持單行;物件陣列逐項編號換行 —— 五個時段擠成一行讀不了。
+                if (!hasObj) return '[' + v.map(sigCfgScalar).join(', ') + ']';
+                return v.map((x, i) => '#' + (i + 1) + '  ' + (
+                    (x !== null && typeof x === 'object') ? sigCfgObj(x) : sigCfgScalar(x)
+                )).join('
+');
+            }
+            if (typeof v === 'object') return sigCfgObj(v);
+            return sigCfgScalar(v);
+        };
         const sigCfgHasFields = (sec) => !!(sec && sec.fields && sec.fields.length);
         const loadSigConfig = async () => {
             try {
