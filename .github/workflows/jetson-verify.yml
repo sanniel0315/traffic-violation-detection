@@ -239,7 +239,10 @@ jobs:
             echo "traffic-signal: 無相關變動,不重啟(避免中斷抄錄)"
           fi
 
-          if echo "$CHANGED" | grep -qE '^(services/io_daemon\.py|api/routes/(lock|io)_?.*\.py|api/utils/door_state\.py)'; then
+          # 🛑 io_daemon.py 只是進入點,鎖/DI/DO 的實際邏輯全在 services/io_service.py ——
+          #    漏掉它會重演上面那個「改完沒生效」的坑:2026-09-07 修的刷卡瞬斷
+          #    (io_service.py)推上去後 traffic-io 沒被重啟,跑的仍是舊碼。
+          if echo "$CHANGED" | grep -qE '^(services/io_(daemon|service)\.py|api/routes/(lock|io)_?.*\.py|api/utils/door_state\.py)'; then
             echo "=== restart traffic-io (IO/電子鎖相關檔案有變動) ==="
             sudo -n systemctl restart traffic-io.service || \
               echo "::warning::traffic-io 重啟失敗,請人工確認"
