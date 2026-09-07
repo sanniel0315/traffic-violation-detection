@@ -8128,7 +8128,16 @@
                                                 <span class="wr-vd-t">{{ sigVd[cam.camera_id].at }}</span>
                                             </template>
                                             <span>流量: <i>{{ sigWarNum(cam.flow_vpm) }}</i> 輛/分</span><em class="wr-sep">|</em>
-                                            <span>佔有率: <i :class="{hot:sigWarHot(cam.occupancy)}">{{ sigWarPct(cam.occupancy) }}</i></span>
+                                            <!-- 🛑 這兩個是不同的數,先前只顯示後者卻標成「佔有率」,
+                                                 現場看到「佔有率 85.5% 但路上沒車」(2026-09-07)。
+                                                 congestion_detector 的 occupancy 欄位其實是
+                                                 max(佔有率, 排隊分數) 的 10 筆移動平均 = **壅塞分數**,
+                                                 raw_occupancy 才是車輛實際覆蓋 ROI 的比例。
+                                                 判級用的是壅塞分數,所以兩個都要顯示:
+                                                 佔有率回答「路上有多少車」,壅塞分數解釋「為什麼判這一級」。 -->
+                                            <span>佔有率: <i>{{ sigWarPct(cam.raw_occupancy) }}</i></span>
+                                            <em class="wr-sep">|</em>
+                                            <span title="判級用的分數 = max(佔有率, 排隊分數) 的移動平均,不是佔有率本身">壅塞分數: <i :class="{hot:sigWarHot(cam.occupancy)}">{{ sigWarPct(cam.occupancy) }}</i></span>
                                             <template v-if="cam.queue_m!=null"><em class="wr-sep">|</em><span>排隊: <i>{{ sigWarNum(cam.queue_m) }}</i> m</span></template>
                                         </div>
                                         <!-- 🛑 兩條量測棒:佔有率與排隊。寬度是真實比例,不是裝飾 ——
@@ -8138,8 +8147,8 @@
                                         <div class="wr-meter">
                                             <span class="wr-meter-row">
                                                 <em>佔有</em>
-                                                <span class="wr-bar sm"><i :class="sigMeterCls(cam.occupancy)"
-                                                      :style="{width: sigPctW(cam.occupancy)}"></i></span>
+                                                <span class="wr-bar sm"><i :class="sigMeterCls(cam.raw_occupancy)"
+                                                      :style="{width: sigPctW(cam.raw_occupancy)}"></i></span>
                                             </span>
                                             <span class="wr-meter-row" v-if="cam.queue_m!=null">
                                                 <em>排隊</em>
@@ -24536,9 +24545,17 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //   這是把資料畫成動態,不是裝飾:速度=壅塞等級,動不動=燈態。
                 const flowState = !isGreen ? 'fl-stop' : (d.clearance ? 'fl-clear' : 'fl-go');
                 const flowCls = 'wr-flow lv' + lv + ' ' + flowState;
-                upsert('queue', ph, () => L.polyline([A, Q], {color: color, weight: 11, opacity: .95,
+                // 🛑 這條帶子畫的是**停等排隊長度**,綠燈放行時排隊是 0 —— 路上明明
+                //    有車(實測 3~4 台、佔有率 20~26%),圖上卻只剩底色什麼都沒有
+                //    (2026-09-07 使用者:「應該有車的,看起來是綠色」)。
+                //    綠燈時改畫到整段末端當「通行帶」:車正在通過這一段,
+                //    這是實測的 —— 該分相是綠燈、且相機量到車。
+                //    紅燈時仍然只畫到排隊末端,那才是停等的實際長度。
+                const hasVeh = byPhase[ph].some((c) => Number(c.vehicle_count) > 0);
+                const bandEnd = (isGreen && !d.clearance && hasVeh && q <= 0) ? B : Q;
+                upsert('queue', ph, () => L.polyline([A, bandEnd], {color: color, weight: 11, opacity: .95,
                                                              lineCap: 'butt', className: flowCls}),
-                       (l) => { l.setLatLngs([A, Q]); l.setStyle({color: color});
+                       (l) => { l.setLatLngs([A, bandEnd]); l.setStyle({color: color});
                                 const el = l.getElement();
                                 // 🛑 只抽掉**我們自己的** class 再補上 —— 整個覆蓋會把
                                 //    Leaflet 的 leaflet-interactive 洗掉,滑鼠事件就失效。
