@@ -1378,8 +1378,13 @@ def _center_relay_loop() -> None:
                     if DOWNLINK_POLICY == "hold_5f10":
                         if _downlink_allow(rec):
                             _controller_send(frame)
-                    elif DOWNLINK_POLICY == "log_only":
-                        _downlink_allow(rec)      # 只記帳,轉發已在上面做過
+                    elif DOWNLINK_POLICY != "pass":
+                        # 🛑 log_only / reassert 都走這裡:轉發已在上面原封做過,
+                        #    這一呼叫只為了記帳與觸發(reassert 的重新宣告)。
+                        #    2026-09-07 踩過:這裡原本寫死 == "log_only",
+                        #    新增 reassert 之後它兩個分支都不符合 → 永遠不被呼叫,
+                        #    政策看起來啟用了卻完全沒作用。
+                        _downlink_allow(rec)
                     if rec is None:
                         continue
                     rec["src"] = "center"       # 來源:中央下傳(下行)
