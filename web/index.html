@@ -8005,6 +8005,41 @@
                             </div>
                         </div>
 
+                        <!-- ══ 現場關鍵數值:相機量測 + 燈態 + 控制參數 ══
+                             🛑 2026-09-07 使用者決定搬到上層:這些是最重要的資訊,
+                                原本埋在路口圖底下要捲下去才看得到。現在緊接著決策
+                                hero,一眼就能對照「我方建議什麼」與「現場實際是什麼」。 -->
+                        <div class="wr-camrow">
+                            <div v-for="c in sigWarMapCams" :key="'mc'+c.camera_id"
+                                 class="wr-camcell" :class="{off:!c.online}" :title="c.full">
+                                <span class="wr-cdot" :class="'lv'+c.lv" :style="{background:c.color}"></span>
+                                <b>{{ c.name }}</b>
+                                <span class="wr-cph">分相 {{ c.phase_no }}</span>
+                                <span class="wr-cv">佔有率 <i>{{ c.occ }}</i></span>
+                                <span class="wr-cv" v-if="c.queue!=null">排隊 <i>{{ c.queue }}</i> m</span>
+                            </div>
+                        </div>
+                        <div class="xn-foot" v-if="sigLiveXn0 && sigLiveXn0.phase" style="justify-content:center;margin-top:8px">
+                            <span v-if="sigLiveXn0.control_mode" class="xn-chip xn-mode" :class="'sev-'+sigLiveXn0.control_mode.severity"><b>{{ sigLiveXn0.control_mode.label }}</b></span>
+                            <span class="xn-chip"><span class="k">分相</span><b>{{ sigLiveXn0.phase.sub_phase_id }}</b></span>
+                            <span class="xn-chip"><span class="k">步階</span><b>{{ sigLiveXn0.phase.step_id }}</b></span>
+                            <span v-if="xnStepSpecial(sigLiveXn0)" class="xn-chip xn-mode sev-warn"><span class="k">狀態</span><b>{{ sigLiveXn0.phase.step_desc }}</b></span>
+                        </div>
+                        <p v-else class="wr-empty">尚未收到燈態回報。</p>
+
+                        <!-- 🛑 2026-09-07 合併(使用者指出重複):這裡原本還有
+                             「控制方」與「我方影子判定 + 判定理由」,但上方 hero 的
+                             「控制方式」三行與閘門說明已經把同樣的東西講過一次 ——
+                             同一頁講兩次,看的人得比對兩處才敢確定是同一件事。
+                             只留 hero 沒有的兩項:時制計畫編號與控制策略碼。 -->
+                        <div class="wr-ctl">
+                            <div class="wr-ctl-item">
+                                <span>時制計畫</span><b>{{ sigCtlPlanId }}</b>
+                            </div>
+                            <div class="wr-ctl-item">
+                                <span>控制策略</span><b>{{ sigStrategyHex }}</b>
+                            </div>
+                        </div>
                         <div class="wr-cols">
                             <!-- 左右各一相 -->
                             <div v-for="col in sigWarCols" :key="'wc'+col.phase" class="wr-col">
@@ -8100,38 +8135,6 @@
                                     <span><i class="lv0"></i>未量到</span>
                                 </div>
                                 <p v-if="sigWarMapNote" class="wr-map-note">{{ sigWarMapNote }}</p>
-                            </div>
-                            <!-- 數字從地圖上搬下來:地圖只表達位置與狀態,量測值放這裡 -->
-                            <div class="wr-camrow">
-                                <div v-for="c in sigWarMapCams" :key="'mc'+c.camera_id"
-                                     class="wr-camcell" :class="{off:!c.online}" :title="c.full">
-                                    <span class="wr-cdot" :class="'lv'+c.lv" :style="{background:c.color}"></span>
-                                    <b>{{ c.name }}</b>
-                                    <span class="wr-cph">分相 {{ c.phase_no }}</span>
-                                    <span class="wr-cv">佔有率 <i>{{ c.occ }}</i></span>
-                                    <span class="wr-cv" v-if="c.queue!=null">排隊 <i>{{ c.queue }}</i> m</span>
-                                </div>
-                            </div>
-                            <div class="xn-foot" v-if="sigLiveXn0 && sigLiveXn0.phase" style="justify-content:center;margin-top:8px">
-                                <span v-if="sigLiveXn0.control_mode" class="xn-chip xn-mode" :class="'sev-'+sigLiveXn0.control_mode.severity"><b>{{ sigLiveXn0.control_mode.label }}</b></span>
-                                <span class="xn-chip"><span class="k">分相</span><b>{{ sigLiveXn0.phase.sub_phase_id }}</b></span>
-                                <span class="xn-chip"><span class="k">步階</span><b>{{ sigLiveXn0.phase.step_id }}</b></span>
-                                <span v-if="xnStepSpecial(sigLiveXn0)" class="xn-chip xn-mode sev-warn"><span class="k">狀態</span><b>{{ sigLiveXn0.phase.step_desc }}</b></span>
-                            </div>
-                            <p v-else class="wr-empty">尚未收到燈態回報。</p>
-
-                            <!-- 🛑 2026-09-07 合併(使用者指出重複):這裡原本還有
-                                 「控制方」與「我方影子判定 + 判定理由」,但上方 hero 的
-                                 「控制方式」三行與閘門說明已經把同樣的東西講過一次 ——
-                                 同一頁講兩次,看的人得比對兩處才敢確定是同一件事。
-                                 只留 hero 沒有的兩項:時制計畫編號與控制策略碼。 -->
-                            <div class="wr-ctl">
-                                <div class="wr-ctl-item">
-                                    <span>時制計畫</span><b>{{ sigCtlPlanId }}</b>
-                                </div>
-                                <div class="wr-ctl-item">
-                                    <span>控制策略</span><b>{{ sigStrategyHex }}</b>
-                                </div>
                             </div>
                         </div>
 
