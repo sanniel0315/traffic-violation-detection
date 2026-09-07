@@ -7991,12 +7991,16 @@
                                                  不是每秒抓一張快照:快照是 1 fps 的靜態畫面、每張都要
                                                  後端重新編碼;原始串流是連續影像,而且 traffic-api
                                                  完全不參與編碼。go2rtc 拿不到那一路時才退回快照。 -->
-                                            <!-- 🛑 data-go2rtc-mode="mse":只走 MSE,不要讓播放器同時開
-                                                 WebRTC + MSE 兩條互搶(2026-09-07 實測的卡頓真因)。
-                                                 選 MSE 的依據:當時 WebRTC 四條全部 0 bytes,
-                                                 而獨立的 MSE 連線拿得到完整 1.03~1.14 Mbps。 -->
+                                            <!-- 🛑 釘死單一傳輸方式,不要讓播放器同時開 WebRTC + MSE
+                                                 兩條互搶(那是 2026-09-07 卡頓的第一個真因)。
+                                                 🛑 **選 webrtc**:釘死之後實測(每路確實只剩一條),
+                                                    webrtc 10 秒送出 1.53 MB(= 1.2 Mbps 滿速),
+                                                    而 mse 只有 0.35 MB(來源的 25%)甚至 0.00 ——
+                                                    瀏覽器端症狀就是「一直轉圈圈」。
+                                                 先前一度改成 mse 是我判斷錯誤:當時那次 10 秒取樣
+                                                 剛好 webrtc 全 0,樣本太少就下了結論。 -->
                                             <div v-if="warCamWs(cam.camera_id)" class="go2rtc-host wr-cam-live"
-                                                 :data-wrcam="cam.camera_id" data-go2rtc-mode="mse"
+                                                 :data-wrcam="cam.camera_id" data-go2rtc-mode="webrtc"
                                                  v-go2rtc="warCamWs(cam.camera_id)"></div>
                                             <img v-else :src="sigLiveSrc(cam.camera_id)" :alt="cam.name"
                                                  @error="sigLiveErr[cam.camera_id]=true"
