@@ -1784,6 +1784,44 @@ async def signal_heads_set(request: Request, _user=Depends(get_current_user)):
     return {"ok": True, "placed_count": len(saved), "total": len(SIGNAL_HEAD_PHASE)}
 
 
+@router.get("/control/dynamic", summary="動態控制總開關與降階狀態")
+async def dynamic_status(_user=Depends(get_current_user)):
+    ev = list(_dyn["events"])[-20:]
+    return {
+        "enabled": _dyn["enabled"],
+        "level": _dyn["level"],
+        "reason": _dyn["reason"],
+        "since": _dyn["since"],
+        "blocked": dynamic_blocked(),
+        "events": [{"ts": e["ts"], "from": e["from"], "to": e["to"], "reason": e["reason"]}
+                   for e in reversed(ev)],
+        "note": "L0 正常 / L1 降級控制 / L2 停止下發 / L3 全退出。"
+                "L2、L3 的動作相同:什麼都不做 —— 控制器的 5F10 看門狗到期會自己"
+                "回固定時制,不需要(也不該)在故障當下再送命令。",
+    }
+
+
+@router.post("/control/dynamic", summary="開關動態控制 / 手動設定降階級數")
+async def dynamic_set(request: Request, _user=Depends(get_current_user)):
+    """body: {"enabled": true} 或 {"level": "L2", "reason": "..."}
+
+    🛑 這支只改我方的把關狀態,**不對控制器送任何命令**。關閉動態控制之後,
+       控制器會在 5F10 EffectTime 到期時自己回到固定時制。
+    """
+    body = await request.json()
+    who = getattr(_user, "username", None) or str(_user)
+    if "enabled" in body:
+        _dyn["enabled"] = bool(body["enabled"])
+        add_log("warning", "動態控制總開關:%s(操作者 %s)"
+                % ("啟用" if _dyn["enabled"] else "關閉", who), "signal")
+        _dyn["events"].append({"ts": time.time(), "from": "-", "to": "-",
+                               "reason": "總開關 %s by %s"
+                                         % ("on" if _dyn["enabled"] else "off", who)})
+    if "level" in body:
+        enter_degraded(str(body["level"]), str(body.get("reason") or ("手動設定 by %s" % who)))
+    return await dynamic_status(_user)
+
+
 @router.get("/coverage", summary="TC3 命令覆蓋矩陣(規範 105 條 vs 實際抄到)")
 async def coverage(_user=Depends(get_current_user)):
     """規範全表 join 實際抄到的次數。
@@ -1889,6 +1927,49 @@ def _kind_of(cmd: int, device: int = 0x5F) -> str:
     return _kind_by_nibble(cmd)
 
 
+# ── 動態控制總開關 + 降階旗標 ────────────────────────────────────────────
+# 規範 (E) 要求「遠端開關」、(D) 要求「降階運轉」。兩者都必須落在**把關層**,
+# 不是介面層 —— 只擋按鈕的話,知道 API 的人照樣送得出去。
+#
+# 🛑 降階的動作刻意是「什麼都不做」:停止下發即可,控制器的 5F10 EffectTime
+#    看門狗到期就會自己回到內建固定時制(2026-09-07 實測:外部系統 10:20:48
+#    最後一筆 5F1C,10:25:48 控制器自行回到 0x01 定時控制)。
+#    故障當下最不該做的事,就是再送一則命令去「處理」故障 ——
+#    那要求「我方仍能正確下發」,而降階的前提正是「我方可能不能」。
+#    詳見 docs/降階與故障檢核_PLANNING.md
+DYNAMIC_CONTROL_DEFAULT = os.getenv("SIGNAL_TC3_DYNAMIC_CONTROL", "0") != "0"
+_dyn = {
+    "enabled": DYNAMIC_CONTROL_DEFAULT,   # 動態控制總開關(遠端可切)
+    "level": "L0",                        # L0 正常 / L1 降級 / L2 停止下發 / L3 全退出
+    "reason": "",
+    "since": None,
+    "events": deque(maxlen=200),          # 降階事件表:規範 (E)「故障情形」的資料來源
+}
+
+
+def enter_degraded(level: str, reason: str) -> None:
+    """進入降階。只做三件事,而且**不送任何 TC3 命令**。"""
+    if level not in ("L0", "L1", "L2", "L3"):
+        raise ValueError("level 只能是 L0~L3")
+    prev = _dyn["level"]
+    _dyn.update({"level": level, "reason": reason,
+                 "since": time.time() if level != prev else _dyn["since"]})
+    if level != prev:
+        _dyn["events"].append({"ts": time.time(), "from": prev, "to": level, "reason": reason})
+        add_log("warning" if level in ("L2", "L3") else "info",
+                "動態控制降階 %s → %s:%s" % (prev, level, reason), "signal")
+
+
+def dynamic_blocked() -> Optional[str]:
+    """現在能不能下發會改變運轉的命令。回原因字串表示不能。"""
+    if not _dyn["enabled"]:
+        return "動態控制總開關為關閉。要啟用請用 /control/dynamic 開啟(或設 SIGNAL_TC3_DYNAMIC_CONTROL=1)。"
+    if _dyn["level"] in ("L2", "L3"):
+        return "系統處於降階 %s(%s):停止下發,由控制器的看門狗回到固定時制。" % (
+            _dyn["level"], _dyn["reason"] or "未記錄原因")
+    return None
+
+
 def _control_guard(cmd: int, device: int = 0x5F) -> Optional[str]:
     """能不能送。回錯誤訊息表示不能,回 None 表示可以。"""
     if not CONTROL_ENABLED:
@@ -1901,6 +1982,12 @@ def _control_guard(cmd: int, device: int = 0x5F) -> Optional[str]:
         return (f"目前限制為「只准查詢」,{kind} 類被擋下。"
                 "查詢不改變控制器運轉;要開放設定類請設 "
                 "SIGNAL_TC3_CONTROL_QUERY_ONLY=0。")
+    # 🛑 查詢類不受總開關與降階影響 —— 查詢不改變控制器運轉,
+    #    而且降階時更需要靠查詢去看現場發生什麼事。
+    if kind != "查詢":
+        blocked = dynamic_blocked()
+        if blocked:
+            return blocked
     return None
 
 
