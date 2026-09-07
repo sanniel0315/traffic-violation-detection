@@ -2514,7 +2514,7 @@ async def control_prepare(body: dict, _user=Depends(get_current_user)):
             frame = build_frame(addr, seq, info)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        return _finish_prepare(frame, code, cmd, dev, addr, seq)
+        return _finish_prepare(frame, code, cmd, dev, addr, seq, by)
 
     try:
         params = bytes.fromhex(raw_hex) if raw_hex else b""
@@ -2532,10 +2532,10 @@ async def control_prepare(body: dict, _user=Depends(get_current_user)):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    return _finish_prepare(frame, code, cmd, dev, addr, seq)
+    return _finish_prepare(frame, code, cmd, dev, addr, seq, by)
 
 
-def _finish_prepare(frame, code, cmd, dev, addr, seq):
+def _finish_prepare(frame, code, cmd, dev, addr, seq, by=""):
     """產生 token 並回傳預覽。兩條參數路徑(結構化 / info_hex)共用。"""
     token = secrets.token_urlsafe(16)
     now = time.time()
