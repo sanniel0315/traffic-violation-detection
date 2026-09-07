@@ -263,12 +263,16 @@ CENTER_LISTEN_PORT = int(os.getenv("SIGNAL_TC3_CENTER_LISTEN_PORT", "1001") or 1
 #    中央又會顯示異常。
 #    flip14 這條路徑只留當退路,**不可以再當預設值用**。
 #    bit14 語意:controllerReady,1=就緒=正常,與多數 Error 旗標(1=故障)不同類。
-HW_STATUS_FIX = os.getenv("SIGNAL_TC3_FIX_HWSTATUS", "1") != "0"
+# 🛑 預設值 2026-09-07 由 flip14 改成 raw(純通透)。原本預設翻轉,靠現場的
+#    systemd drop-in(zz-hwstatus.conf)壓成 raw —— 但那表示只要那個檔案被清掉、
+#    或換一台機器部署,中央就會立刻又顯示硬體狀態異常。安全的預設值必須是
+#    「不竄改」,要翻轉才顯式設 SIGNAL_TC3_FIX_HWSTATUS=1。
+HW_STATUS_FIX = os.getenv("SIGNAL_TC3_FIX_HWSTATUS", "0") != "0"
 HW_STATUS_FIX_CODES = ("0F04", "0FC1")   # 帶 HardwareStatus 的訊息
 HW_STATUS_FIX_MASK = 0x4000              # 要翻的位元(bit14 信號驅動單元)
 # 對中央上傳 HardwareStatus 的模式,可執行期切換(不用重啟 daemon):
-#   raw = 不動(純通透,現場採用,中央顯示正常);
-#   flip14 = 只翻 bit14(程式預設值,但實證會害中央顯示異常,只留當退路);
+#   raw = 不動(純通透,**現在的預設值**,現場採用,中央顯示正常);
+#   flip14 = 只翻 bit14(實證會害中央顯示異常,只留當退路,要用得顯式設 env);
 #   zero = 全 0(硬體全報正常)
 #   force = 強制送指定的 16-bit 值(測試用:逐 bit 送、對照中央顯示哪項 → 對出位元表)
 _hw_center_mode = {"mode": os.getenv("SIGNAL_TC3_HWSTATUS_MODE",
@@ -1373,6 +1377,9 @@ async def frames(limit: int = 50, _user=Depends(get_current_user)):
 # 號誌設定各頁對應的「查詢碼 → 回報碼」。這些訊息 utc-tc3 都有 schema,
 # 所以解碼是免費的 —— 缺的只是把它們查回來並攤成表。
 # 🛑 一律唯讀:這裡只送查詢(cmd 0x40~0x4F 區段),不碰任何設定命令。
+# 設定項目「陳舊」門檻:超過這個時間沒再抄到,就不算現況(見 signal_config)。
+# 24 小時 —— 這些設定不是週期回報,只在主動查詢時才回一次。
+CONFIG_STALE_SEC = int(os.getenv("SIGNAL_TC3_CONFIG_STALE_SEC", "86400") or 86400)
 CONFIG_SECTIONS = [
     {"key": "strategy",   "title": "控制策略",       "query": "5F40", "reply": "5FC0", "page": "5-8"},
     {"key": "timing",     "title": "目前時制計畫",   "query": "5F48", "reply": "5FC8", "page": "5-43"},
@@ -1427,10 +1434,24 @@ async def signal_config(_user=Depends(get_current_user)):
                          "fields": _decode_fields(sec["reply"], fr["raw"])})
             if item["fields"] is None:
                 item["hint"] = "抄到了但 utc-tc3 沒有這則訊息的欄位定義,只能看原始框"
+        # 🛑 「收到過」不等於「現在是這樣」。這些設定多半只在我方主動查詢時才回一次,
+        #    有的上次抄到已經是兩星期前 —— 前端若只數 received,會把兩週前的時相排列
+        #    當成現況顯示。所以這裡一併給出鮮度,讓看板能分「今天的」與「陳舊的」。
+        item["age_sec"] = round(time.time() - item["ts"], 1) if item.get("ts") else None
+        item["stale"] = bool(item["age_sec"] is not None and item["age_sec"] > CONFIG_STALE_SEC)
         out.append(item)
+    fresh = sum(1 for x in out if x["received"] and not x["stale"])
     return {"sections": out,
+            "total": len(out),
+            "received_count": sum(1 for x in out if x["received"]),
+            "fresh_count": fresh,
+            "stale_count": sum(1 for x in out if x["received"] and x["stale"]),
+            "missing_count": sum(1 for x in out if not x["received"]),
+            "stale_after_sec": CONFIG_STALE_SEC,
             "note": "唯讀總覽。時間為我方最後一次收到該回報的時刻,不是控制器的當下值 —— "
-                    "要最新值請先送查詢。"}
+                    "要最新值請先送查詢。fresh_count 只計 %d 小時內抄到的;"
+                    "「收到過」不等於「現在是這樣」。"
+                    % (CONFIG_STALE_SEC // 3600)}
 
 
 # HardwareStatus(0F04/0FC1)16 位元對照。
@@ -1487,6 +1508,12 @@ HW_GROUPS = {
 }
 # 我方現場實證過的位元(其餘只顯示位元值,不做正常/異常判定)
 HW_VERIFIED_BITS = {13, 14}
+# 🛑 狀態指示位元:語意已實證,但它**不是健康旗標**,0/1 都不代表故障,
+#    永遠不計入 fault_count。
+#    2026-09-07 教訓:bit13 剛升為實證位元時沿用了「旗標(0=需注意)」的判法,
+#    結果控制器沒在外部接管(bit13=0,完全正常)就被判成「時制計畫 1 項異常」。
+#    這正是先前一直在防的假警報,只是這次是我方自己造成的。
+HW_STATE_BITS = {13}
 # 每一位的證據等級 —— 前端要能一眼看出哪些是實測、哪些只是抄協定
 HW_BIT_EVIDENCE = {
     2:  ("conflict", "十天亮 76 次、每次中位 18.6 秒自癒,與「計時器錯誤」矛盾;語意未明"),
@@ -1531,7 +1558,10 @@ async def device_status(_user=Depends(get_current_user)):
         #    但那一刻我方正在持續收訊框,通訊明明是通的。拿沒驗證過的極性
         #    去判狀態,產生的是假警報,比沒有這個欄位更糟。
         #    對方系統自己也標了 polarityPending「語意待確認」。
-        if verified:
+        if bit in HW_STATE_BITS:
+            # 狀態指示,不是健康旗標 —— 0/1 都不是異常(見 HW_STATE_BITS)
+            abnormal = None
+        elif verified:
             abnormal = on if is_error else (not on)
             if abnormal:
                 faults += 1
@@ -1544,7 +1574,8 @@ async def device_status(_user=Depends(get_current_user)):
             "evidence": ev_level, "evidence_why": ev_why,
             "raw": 1 if on else 0,
             "abnormal": abnormal,          # None = 極性未實證,不判定
-            "polarity": ("error" if is_error else "flag") if verified else "pending",
+            "polarity": ("state" if bit in HW_STATE_BITS
+                         else (("error" if is_error else "flag") if verified else "pending")),
             "verified": verified,
         })
     return {

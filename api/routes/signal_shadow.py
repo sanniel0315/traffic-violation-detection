@@ -1222,8 +1222,18 @@ async def shadow_plan(_user=Depends(get_current_user)):
         "terms": {
             "switch_gain": d.switch_gain, "keep_gain": d.keep_gain,
             "change_cost": d.change_cost,
-            "threshold": round(d.keep_gain + d.change_cost, 2),
-            "margin": round(d.switch_gain - d.keep_gain - d.change_cost, 2),
+            # 🛑 門檻與差距一定要用**同一個**門檻算。
+            #    2026-09-07 修:這兩行原本都用沒乘 keep_weight 的 keep_gain,
+            #    但下面的 **d.detail 會把 threshold 覆蓋成引擎算的加權值,
+            #    margin 卻沒有被覆蓋 → 畫面顯示「110.07 ≤ 門檻 3130.69,
+            #    差距 -937.29」,而 110.07-3130.69 其實是 -3020.62。
+            #    兩個數字互相矛盾,看的人無法判斷哪個才是決策依據。
+            #    引擎的真正門檻是 keep_gain×keep_weight + change_cost
+            #    (signal_decision_engine.py 的 weighted_keep),以它為準。
+            "threshold": d.detail.get("threshold",
+                                      round(d.keep_gain + d.change_cost, 2)),
+            "margin": round(d.switch_gain - float(
+                d.detail.get("threshold", d.keep_gain + d.change_cost)), 2),
             **d.detail,
         },
         "constants": {
@@ -1842,7 +1852,13 @@ def _paired_precise(rows: list, actual: list, interval: float = None) -> dict:
         last = samp[-1]
         margin = None
         if last[9] is not None and last[10] is not None and last[11] is not None:
-            margin = round(float(last[10]) + float(last[11]) - float(last[9]), 1)
+            # 🛑 裕度 = 門檻 − 紅側延滯,門檻要用**當時生效的** keep_weight。
+            #    2026-09-07 修:原本直接 keep_gain + change_cost,沒乘權重,
+            #    與引擎實際用的門檻(keep_gain×keep_weight + change_cost)不一致。
+            #    權重是 2026-09-06 才上線的(KEEP_WEIGHT_SINCE),在那之前的
+            #    log 是用 1.0 算出來的,**不可以拿現在的權重回頭套舊資料**。
+            kw = KEEP_WEIGHT if str(last[0])[:10] >= KEEP_WEIGHT_SINCE else 1.0
+            margin = round(float(last[10]) * kw + float(last[11]) - float(last[9]), 1)
         rq_last = last[8] if seg["phase"] == 1 else last[7]
         d = None
         waste = 0.0
