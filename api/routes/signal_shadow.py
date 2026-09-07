@@ -178,6 +178,46 @@ MAX_GREEN_SEC = float(os.getenv("SIGNAL_MAX_GREEN_SEC", "100") or 0)
 KEEP_WEIGHT = float(os.getenv("SIGNAL_KEEP_WEIGHT", "3.0") or 3.0)
 KEEP_WEIGHT_SINCE = "2026-09-06"   # 這之前的逐時/配對數字是 keep_weight=1.0,不可並列
 
+# ── 評估範圍 ───────────────────────────────────────────────────────────
+# 🛑 2026-09-07 改變定位:從「影子比對」變成「線上評估」。
+#
+#    舊做法:所有分析只撈 control_mode='external_dynamic' 的樣本 —— 因為當初
+#    的目的是「跟 OPAC 比誰的決策好」,對方不下決策時就沒得比。
+#    但外部系統從 09-07 10:20:48 之後就停了,路口跑控制器內建定時,結果是
+#    逐時 0 小時、配對 0 段、一致率 None、統計樣本 0 —— **整組評估停擺**。
+#
+#    新做法:評估**不再依賴對方在做決策**。我方演算法照樣全速運轉,拿它的
+#    建議去對照「實際綠燈長度」(來自控制器 5F03 的真實秒數),就能算出
+#    「我方會早切/晚切幾秒、那時候紅側有沒有車在等、浪費了幾秒」——
+#    這些指標對定時控制一樣成立,而且正是評估的重點。
+#
+#    🛑 但「一致率」不同:它問的是「兩個決策者同不同意」,拿去比一個
+#       根本沒在做決策的定時控制器沒有意義。所以寫入時 agree 仍然只在
+#       external_dynamic 期間才給值(見 _sample 的註解),這裡不動它。
+#
+#    🛑 舊的影子比對要留存且可辨識:回應一律附 by_mode,把 external_dynamic
+#       那段的樣本數獨立列出來,舊報告的數字才對得回去。
+EVAL_MODE_ALL = "all"                    # 全部控制模式(線上評估,預設)
+EVAL_MODE_EXTERNAL = "external_dynamic"  # 只看外部動態(等同舊的影子比對)
+
+
+def _mode_sql(mode: str) -> str:
+    """回 WHERE 片段(含前導 AND)。mode='all' 回空字串 = 不過濾。"""
+    return "" if (mode or EVAL_MODE_ALL) == EVAL_MODE_ALL \
+        else " AND control_mode='%s'" % EVAL_MODE_EXTERNAL
+
+
+def _by_mode(rows: list, idx: int) -> dict:
+    """把樣本依 control_mode 分組計數 —— 讓「哪些是舊影子比對的樣本」看得出來。"""
+    out: dict = {}
+    for r in rows:
+        try:
+            k = r[idx]
+        except (IndexError, TypeError):
+            k = None
+        out[k or "unknown"] = out.get(k or "unknown", 0) + 1
+    return out
+
 
 def _max_green(pp: dict) -> float:
     """該相的最大綠:有固定設定就用固定值,否則用時制表(再沒有就 210)。"""
@@ -1445,9 +1485,11 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
     try:
         conn = _db()
         rows = conn.execute(
-            "SELECT ts,green_phase,green_elapsed,forced,queue_m_1,queue_m_2 "
-            "FROM signal_shadow_log WHERE ts>=? AND ts<=? "
-            "AND control_mode='external_dynamic' ORDER BY ts",
+            # 🛑 線上評估:不再限定 external_dynamic。綠燈長度、切換次數、滯留
+            #    這些是「路口實際怎麼跑」的統計,跟誰在控無關 —— 限定外部動態
+            #    只會讓對方停控時整頁變成 0 樣本(2026-09-07 實際發生)。
+            "SELECT ts,green_phase,green_elapsed,forced,queue_m_1,queue_m_2,control_mode "
+            "FROM signal_shadow_log WHERE ts>=? AND ts<=? ORDER BY ts",
             (since_iso, until_iso)).fetchall()
         conn.close()
     except Exception as e:
@@ -2318,8 +2360,11 @@ def _hourly_compute(hour_iso: str) -> dict:
         conn = _db()
         rows = conn.execute(
             "SELECT ts,green_phase,green_elapsed,ours,actual,forced,clearance,queue_m_1,queue_m_2,"
-            "switch_gain,keep_gain,change_cost,agree "
-            "FROM signal_shadow_log WHERE ts>=? AND ts<? AND control_mode='external_dynamic' ORDER BY ts",
+            # 🛑 線上評估:不再限定 external_dynamic。agree 欄位在寫入時本來就
+            #    只有外部動態期間才給值,所以一致率不會被非決策期汙染;
+            #    而早切/晚切秒數這類成效指標,定時控制期間一樣算得出來。
+            "switch_gain,keep_gain,change_cost,agree,control_mode "
+            "FROM signal_shadow_log WHERE ts>=? AND ts<? ORDER BY ts",
             (since, until)).fetchall()
         conn.close()
     except Exception:
@@ -2465,6 +2510,9 @@ async def shadow_hourly(date: str = Query("", description="YYYY-MM-DD,空 = 今�
 async def shadow_paired(minutes: int = Query(180, ge=5, le=10080),
                         since: str = Query(""), until: str = Query(""),
                         include_runs: int = Query(0, ge=0, le=1),
+                        mode: str = Query(EVAL_MODE_ALL,
+                                          description="all=線上評估(全部控制模式,預設);"
+                                                      "external_dynamic=只看外部動態(舊的影子比對)"),
                         _user=Depends(get_current_user)):
     if since:
         since_iso, until_iso = since, (until or datetime.now().isoformat(timespec="seconds"))
@@ -2474,10 +2522,12 @@ async def shadow_paired(minutes: int = Query(180, ge=5, le=10080),
     try:
         conn = _db()
         rows = conn.execute(
+            # 🛑 control_mode 放在第 13 欄(index 12):_paired_precise 只用到
+            #    index 0~11,尾巴多一欄不影響它,但讓我們能算 by_mode。
             "SELECT ts,green_phase,green_elapsed,ours,actual,forced,clearance,queue_m_1,queue_m_2,"
-            "switch_gain,keep_gain,change_cost "
-            "FROM signal_shadow_log WHERE ts>=? AND ts<=? AND control_mode='external_dynamic' "
-            "ORDER BY ts", (since_iso, until_iso)).fetchall()
+            "switch_gain,keep_gain,change_cost,control_mode "
+            "FROM signal_shadow_log WHERE ts>=? AND ts<=?" + _mode_sql(mode) +
+            " ORDER BY ts", (since_iso, until_iso)).fetchall()
         conn.close()
     except Exception as e:
         return {"since": since_iso, "until": until_iso, "error": str(e), "runs_usable": 0}
@@ -2493,6 +2543,15 @@ async def shadow_paired(minutes: int = Query(180, ge=5, le=10080),
         out = _paired_runs([r[:9] for r in rows])
         out["source"] = "shadow_sampling_fallback"
     out["since"], out["until"] = since_iso, until_iso
+    # 🛑 舊的影子比對要留存且可辨識:攤開每種控制模式各有多少樣本,
+    #    舊報告(只算 external_dynamic)的數字才對得回去。
+    out["mode"] = mode or EVAL_MODE_ALL
+    out["by_mode"] = _by_mode(rows, 12)
+    out["mode_note"] = ("線上評估:不論路口由誰在控都納入。"
+                        "「一致率」仍只在外部動態期間有值(跟不做決策的定時控制器"
+                        "比同不同意沒有意義);早切/晚切秒數與浪費秒數則全模式都算。"
+                        if (mode or EVAL_MODE_ALL) == EVAL_MODE_ALL
+                        else "只看外部動態 —— 等同 2026-09-07 之前的影子比對口徑。")
     if not include_runs:
         out.pop("runs", None)
     return out
@@ -2527,10 +2586,10 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
     try:
         conn = _db()
         rows = conn.execute(
+            # 🛑 線上評估:不再限定 external_dynamic(見檔頭 EVAL_MODE_ALL 說明)
             "SELECT ts,green_phase,green_elapsed,queue_m_1,queue_m_2,"
-            "flow_vpm_1,flow_vpm_2,ours,actual,forced,clearance,reason "
-            "FROM signal_shadow_log WHERE ts>=? AND ts<=? "
-            "AND control_mode='external_dynamic' ORDER BY ts",
+            "flow_vpm_1,flow_vpm_2,ours,actual,forced,clearance,reason,control_mode "
+            "FROM signal_shadow_log WHERE ts>=? AND ts<=? ORDER BY ts",
             (since_iso, until_iso)).fetchall()
         conn.close()
     except Exception as e:

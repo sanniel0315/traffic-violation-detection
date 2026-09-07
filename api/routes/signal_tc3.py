@@ -2308,6 +2308,40 @@ async def timing_plans(_user=Depends(get_current_user)):
             "running_plan_id": running.get("plan_id") if running else None}
 
 
+@router.get("/timing-plans/baseline", summary="讀目前存下來的中心基準時制")
+async def timing_plans_get_baseline(_user=Depends(get_current_user)):
+    """讀已存的基準時制。唯讀,不查控制器也不下傳。
+
+    🛑 先前這條路徑只收 POST(存基準),想確認「基準到底存了什麼」只能去翻 DB,
+       比對頁也無從顯示基準的存檔時間 —— 這對「現場 vs 基準」的比對是必要資訊:
+       基準若是兩個月前存的,比對結果的意義完全不同。
+    """
+    items = []
+    try:
+        conn = _plan_baseline_db()
+        for pid, js, ts, user in conn.execute(
+                "SELECT plan_id,json,ts,user FROM signal_plan_baseline ORDER BY plan_id"):
+            try:
+                d = _json_ctl.loads(js)
+            except Exception:
+                d = {"plan_id": pid, "parse_error": True}
+            d["_saved_ts"] = ts
+            d["_saved_by"] = user
+            d["_saved_age_sec"] = round(time.time() - float(ts), 1) if ts else None
+            items.append(d)
+        conn.close()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"讀基準失敗: {exc}")
+    ages = [i["_saved_age_sec"] for i in items if i.get("_saved_age_sec") is not None]
+    return {"count": len(items), "items": items,
+            "oldest_age_sec": max(ages) if ages else None,
+            "newest_age_sec": min(ages) if ages else None,
+            "note": ("基準是我方存下來的快照,不是控制器的當下值。"
+                     "比對「現場 vs 基準」時要看存檔時間 —— 基準太舊,差異可能只是"
+                     "基準過期,不代表現場被改過。") if items else
+                    "還沒存過基準。到時制計畫比對頁查詢現場時制後,按『存為基準』。"}
+
+
 @router.post("/timing-plans/baseline", summary="把目前現場查到的時制計畫存為中心基準")
 async def timing_plans_set_baseline(_user=Depends(get_current_user)):
     """快照當下現場端 → 中心基準(只寫我們自己的 DB,不下傳控制器)。"""
