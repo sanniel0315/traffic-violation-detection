@@ -1259,8 +1259,67 @@ async def shadow_plan(_user=Depends(get_current_user)):
         "gates": gates,
         "action": d.action, "reason": d.reason,
         "would_send": False,
+        "control_evidence": _control_evidence(30),
         "note": "影子模式:本決策只記錄不下發,路口仍由現行控制方控制",
     }
+
+def _control_evidence(minutes: int = 30) -> dict:
+    """現在到底「誰在控、控多勤」—— 用證據而不是模式碼回答。
+
+    🛑 為什麼需要:策略位元(5FC0/5F00)只說控制器**宣告**的模式,而且 5F10 續約的
+       瞬間會出現 1 秒的跳動(實測 0x10 → 0x01 → 0x10)。UI 只顯示瞬時值時,
+       那一秒會被當成穩定狀態畫出來 —— 2026-09-07 10:25 現場就這樣顯示成
+       「定時控制」,實際上外部系統仍在下發。
+    🛑 真正能證明「有人在控」的是下發本身。我方抄錄看不到中心送出的訊框,
+       但控制器對每則收到的指令都回一個 0F80,酬載帶著被回覆的指令碼 ——
+       從那裡就數得出 5F1C(換相)與 5F10(續約)的實際頻率。
+    """
+    import sqlite3 as _sq
+    from api.routes.signal_tc3 import decode_frame as _decode_frame
+    out = {"minutes": minutes, "sends": {}, "strategy_stable": None,
+           "strategy_dominant": None, "strategy_samples": 0}
+    try:
+        conn = _sq.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=8)
+        cut = time.time() - minutes * 60
+        # ── 下發頻率:數 0F80 回覆裡的指令碼 ──
+        ts_by_code = {}
+        for ts, raw in conn.execute(
+                "SELECT ts,raw FROM signal_frames WHERE code='0F80' AND ts>? ORDER BY ts", (cut,)):
+            b = bytes.fromhex(str(raw).replace(" ", ""))
+            i = b.find(bytes([0x0F, 0x80]))
+            if i < 0 or len(b) < i + 4:
+                continue
+            ts_by_code.setdefault("%02X%02X" % (b[i + 2], b[i + 3]), []).append(ts)
+        for code, tss in ts_by_code.items():
+            gaps = sorted(round(tss[i + 1] - tss[i], 1) for i in range(len(tss) - 1))
+            out["sends"][code] = {
+                "count": len(tss),
+                "median_gap_sec": (gaps[len(gaps) // 2] if gaps else None),
+                "last_ts": max(tss),
+                "age_sec": round(time.time() - max(tss), 1),
+            }
+        # ── 策略位元的穩定度:同一視窗內最常見的值佔多少 ──
+        vals = []
+        for ts, raw in conn.execute(
+                "SELECT ts,raw FROM signal_frames WHERE code IN ('5FC0','5F00') AND ts>? ORDER BY ts", (cut,)):
+            try:
+                d = _decode_frame(bytes.fromhex(str(raw).replace(" ", ""))) or {}
+            except Exception:
+                continue
+            v = d.get("strategy")
+            if v is not None:
+                vals.append(int(v))
+        if vals:
+            from collections import Counter
+            top, n = Counter(vals).most_common(1)[0]
+            out["strategy_samples"] = len(vals)
+            out["strategy_dominant"] = top
+            out["strategy_stable"] = round(n / len(vals), 4)
+        conn.close()
+    except Exception as exc:
+        out["error"] = str(exc)[:120]
+    return out
+
 
 def _ts_gap(prev_iso: Optional[str], cur_iso: str) -> Optional[float]:
     """兩筆取樣的間隔秒數。解不出來回 None。"""
