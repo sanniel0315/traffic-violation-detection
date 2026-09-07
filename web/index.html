@@ -24490,6 +24490,16 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         //    (約 0.3 m/px)那 16 公尺剛好被圖示吃掉,兩座燈會疊在一起
         //    (2026-09-07 現場回報)。分相1 往軸線右側、分相2 往左側推開,
         //    再把同相的兩座燈沿軸線錯開,五座就都分得開。
+        // 分相 ↔ 方向槽(5F03 的 SignalStatus 索引)。
+        // 🛑 這組對應是**用實測資料算出來的**,不是配的:抓 3000 框 5F03,
+        //    看每個方向槽在各分相下的燈色分布 ——
+        //      分相1 綠燈:槽0 北、槽1 東北、槽4 南
+        //      分相2 綠燈:槽2 東、槽3 東南、槽5 西
+        //    兩組互斥、各 3 個方向,而且同一分相內三個方向燈色完全同步
+        //    (分布都是 26%/25%/25%),所以任取其一即可代表該分相的真實燈色。
+        // 🛑 為什麼要接:原本地圖的黃燈是用 clearance 旗標**推**的,
+        //    現在改用控制器直接回報的燈色 —— 推的會有誤差,回報的不會。
+        const SIG_PHASE_SLOT = {1: 0, 2: 2};
         const SIG_HEADS = [
             {id: 5, phase: 1, offset_m: 0,  side_m: 14,  label: '5'},
             {id: 3, phase: 1, offset_m: 45, side_m: 14,  label: '3'},
@@ -24535,6 +24545,17 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                        + '未定位的用示意位置排列,在路口圖上拖曳燈頭即可存下實際位置。');
                 ElMessage.success('燈 ' + id + ' 位置已存');
             } catch (e) { ElMessage.error('燈 ' + id + ' 存檔失敗'); }
+        };
+        // 位元對照 LIGHT_BITS(協定 P5-22):0 紅 / 1 黃 / 2 圓綠 / 3 左綠 / 4 直綠 / 5 右綠
+        // 🛑 判斷順序是黃 → 綠 → 紅:黃燈期間某些方向可能同時亮著行人紅(bit7),
+        //    先判綠會把黃燈畫成綠燈,那正是「清道中卻顯示放行」的誤導。
+        const sigLampFromStatus = (v) => {
+            const n = Number(v);
+            if (!isFinite(n)) return null;
+            if (n & 0x02) return 'amber';                     // bit1 黃
+            if (n & 0x3C) return 'green';                     // bit2~5 任一種綠
+            if (n & 0x01) return 'red';                       // bit0 紅
+            return null;                                       // 全滅:交給呼叫端退回推算
         };
         const drawWarMap = () => {
             if (!wrMap) return;
@@ -24647,8 +24668,17 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //    「現在不是那個狀態」的資訊。
                 //    用 divIcon 不用 circleMarker:SVG 才畫得出燈箱,
                 //    而且 CSS 動畫(亮燈呼吸、清道黃燈閃)可以直接掛在元素上。
-                const lampState = !isGreen ? 'red' : (d.clearance ? 'amber' : 'green');
-                const lampWord = isGreen ? (d.clearance ? '清道(黃)' : '綠燈') : '紅燈';
+                // 燈色優先用控制器回報的 SignalStatus(實測);拿不到才退回用分相推算。
+                let lampState = !isGreen ? 'red' : (d.clearance ? 'amber' : 'green');
+                let lampSrc = '推算';
+                const _xn = sigLiveXn0.value;
+                const _lights = (_xn && _xn.phase && _xn.phase.lights) || null;
+                const _slot = SIG_PHASE_SLOT[ph];
+                if (_lights && _slot != null && _lights[_slot]) {
+                    const _st = sigLampFromStatus(_lights[_slot].value);
+                    if (_st) { lampState = _st; lampSrc = _lights[_slot].dir + ' 實測'; }
+                }
+                const lampWord = {red: '紅燈', amber: '黃燈(清道)', green: '綠燈'}[lampState] || '—';
                 // 🛑 燈頭要畫成**真的號誌燈**(三燈燈箱),不是彩色圓點:圓點只能
                 //    表達顏色,看不出「這是號誌」;暗掉的兩燈本身就是
                 //    「現在不是那個狀態」的資訊。用 divIcon 才畫得出燈箱,
@@ -24681,6 +24711,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                                                 ux * off + nx * h.side_m,
                                                 uy * off + ny * h.side_m);
                     const tip = '號誌燈 ' + h.label + ' · 分相 ' + ph + ' ' + lampWord
+                              + '（燈色:' + lampSrc + '）'
                               + (saved ? '（實際位置）' : '（位置為示意,拖曳可定位）');
                     // 🛑 拖曳只搬地圖標註,不會動到號誌 —— 這是純顯示層的座標。
                     //    draggable 一定要在**建立時**給,Leaflet 的 marker 之後
