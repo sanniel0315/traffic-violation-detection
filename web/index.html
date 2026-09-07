@@ -3515,7 +3515,7 @@
         @keyframes xnLampIn { from{opacity:0;transform:scale(.6)} to{opacity:1;transform:scale(1)} } 50%{opacity:.45} }
         .xn-foot { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
         .xn-chip { display:flex; align-items:baseline; gap:5px; padding:4px 10px; border-radius:8px;
-                   background:#f1f5f9; border:1px solid var(--gov-border); font-size:13px; }
+                   background:#f1f5f9; border:1px solid var(--gov-border); font-size:var(--fs-small); }
         /* 控制模式標籤:誰在控制這個路口。severity 由後端 _control_mode() 給 */
         .xn-chip.xn-mode { font-weight: 700; }
         .xn-chip.xn-mode.sev-active { background: #dcfce7; color: #15803d; border-color: #86efac; }
@@ -3744,7 +3744,14 @@
         .wr-rel { display:flex; gap:18px; flex-wrap:wrap; margin:4px 0 12px; align-items:baseline;
                   font-size:var(--fs-small); color:var(--gov-muted); }
         .wr-rel b { font:600 var(--fs-t2) var(--font-mono); color:var(--gov-text); margin:0 3px; }
-        .wr-rel-run { font-size:var(--fs-micro); color:var(--gov-mute-2); }
+        /* 🛑「本段進行中」要會動:它表達的是「前次那個秒數還在累積」,
+           靜止的文字看不出這件事。用呼吸而不是閃爍 —— 閃爍是警示語彙,
+           而這只是狀態。 */
+        .wr-rel-run { font-size:var(--fs-small); color:var(--gov-ok); font-weight:600;
+                      animation:wrRunPulse 1.8s ease-in-out infinite; }
+        .wr-rel-run::before { content:'●'; margin-right:4px; font-size:.8em; }
+        @keyframes wrRunPulse { 0%,100%{ opacity:1; } 50%{ opacity:.4; } }
+        @media (prefers-reduced-motion: reduce) { .wr-rel-run { animation:none; } }
 
         .wr-cams { display:grid; gap:12px; grid-template-columns:repeat(2, 1fr); }
         @media (max-width: 560px) { .wr-cams { grid-template-columns:1fr; } }
@@ -3945,11 +3952,14 @@
                       padding:7px 10px; border:1px solid var(--gov-border);
                       border-radius:9px; background:var(--gov-surface); font-size:var(--fs-micro); }
         .wr-camcell.off { opacity:.5; border-style:dashed; }
-        .wr-camcell b { font:600 var(--fs-micro) var(--font-mono); color:var(--gov-text); flex:none; }
+        /* 🛑 字級與「控制權現況」的 chip 統一(2026-09-07 使用者):兩者並排在同一頁,
+           先前一個用 --fs-micro、一個寫死 13px,看起來像兩套設計。
+           統一走 --fs-small,數字仍用 mono 保持對齊。 */
+        .wr-camcell b { font:600 var(--fs-small) var(--font-mono); color:var(--gov-text); flex:none; }
         .wr-cdot { width:9px; height:9px; border-radius:50%; flex:none;
                    box-shadow:0 0 0 2px var(--gov-surface), 0 0 0 3px var(--gov-border); }
-        .wr-cph { color:var(--gov-mute-2); font-size:var(--fs-caption); flex:none; }
-        .wr-cv { margin-left:auto; color:var(--gov-muted); white-space:nowrap; }
+        .wr-cph { color:var(--gov-mute-2); font-size:var(--fs-small); flex:none; }
+        .wr-cv { margin-left:auto; color:var(--gov-muted); white-space:nowrap; font-size:var(--fs-small); }
         .wr-cv + .wr-cv { margin-left:10px; }
         .wr-cv i { font-style:normal; font-family:var(--font-mono); font-weight:600; color:var(--gov-text); }
         .wr-map-note { margin:6px 10px; font-size:var(--fs-caption); color:var(--gov-warn); }
