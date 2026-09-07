@@ -30,10 +30,14 @@ class CongestionDetector:
     #    30 秒」,而這種擦邊偵測是**閃爍出現**的,每次中斷就把計時歸零,永遠累積
     #    不到門檻。要從源頭擋掉,不能只靠事後抑制。
     DEFAULT_DETECT_CONF = float(os.getenv("CONGESTION_DETECT_CONF", "0.25"))
-    # 🛑 fallback 只在主偵測器「一台都沒抓到」時啟用,所以它必須也在雜訊之上。
-    #    舊值 0.05:空曠路面主偵測器抓不到 → 觸發 fallback → 標線必定被抓進來
-    #    → 空路照樣有佔用率。把主門檻拉高卻不動這裡,會讓誤報更明顯而不是消失。
-    DEFAULT_FALLBACK_CONF = float(os.getenv("CONGESTION_FALLBACK_CONF", "0.15"))
+    # 🛑 fallback 只在主偵測器「一台都沒抓到」時啟用 —— 也就是**空曠路面必定落到它**,
+    #    正是最容易把標線當成車的時候。所以它不能比雜訊低。
+    #    2026-09-07 量測 cam_3 箭頭標線的信心分佈(9017 幀、778 次偵測):
+    #      P50 0.136 / P75 0.156 / P90 0.173 / P95 0.181 / P99 0.218 / 最高 0.504
+    #    → 設 0.15 時箭頭約 25% 會過關(P75 就 0.156),實測空路仍反覆冒出假車;
+    #      設 0.22(高於 P99)才真正壓下去。舊值 0.05 更是全放行。
+    #    🛑 這條的下限要看「標線的信心分佈」,不是憑感覺挑小數字。
+    DEFAULT_FALLBACK_CONF = float(os.getenv("CONGESTION_FALLBACK_CONF", "0.22"))
     # 停等長度評估用：每種車輛佔用的等效路面長度（公尺）
     VEHICLE_EQUIVALENT_LENGTH_M = {
         'bicycle':     1.8,

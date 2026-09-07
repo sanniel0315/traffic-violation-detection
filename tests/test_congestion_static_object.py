@@ -171,8 +171,10 @@ def test_fallback_門檻也要在雜訊之上():
     """
     from detection.congestion_detector import CongestionDetector
 
-    assert CongestionDetector.DEFAULT_FALLBACK_CONF >= 0.15, (
-        "fallback 門檻低於 0.15 → 空曠路面會用標線湊出佔用率"
+    # cam_3 箭頭標線信心分佈(9017 幀/778 次):P95 0.181、P99 0.218。
+    # 低於 P99 就會在空路上反覆冒出假車(實測 0.15 時約 25% 過關)。
+    assert CongestionDetector.DEFAULT_FALLBACK_CONF >= 0.22, (
+        "fallback 門檻低於標線信心的 P99(0.218) → 空曠路面會用標線湊出佔用率"
     )
     assert (CongestionDetector.DEFAULT_FALLBACK_CONF
             <= CongestionDetector.DEFAULT_DETECT_CONF), "fallback 不該比主門檻嚴"
