@@ -8057,6 +8057,34 @@
                             </div>
                         </div>
 
+                        <!-- 🛑 2026-09-07 使用者最後決定:路口圖留在即時戰情。
+                             (中途曾搬到線上評估,同一天又搬回來 —— 以搬回來的為準。)
+                             Leaflet 在隱藏容器量不到尺寸,所以 initWarMap 與
+                             invalidateSize 必須跟著綁在 live 分頁。 -->
+                        <!-- 路口圖:真實幾何。相機放在實測 WGS84 座標(docs/相機分相對應表.md),
+                             進場道沿相機軸線畫、北為上。路段底色 = 該進場道兩台相機較差的壅塞等級,
+                             排隊帶從停止線往回長到實際排隊公尺數。燈色來自 5F03(經 /plan 的
+                             green_phase/clearance),不是自己推的。 -->
+                        <div class="wr-int">
+                            <div class="wr-sec-hd">路口燈態<span>系統地圖 · 燈態 5F03</span></div>
+                            <!-- 🛑 地圖用系統既有的:Leaflet + /web/tiles 離線圖磚(國土測繪中心),
+                                 相機座標取 cameras 清單裡使用者在地圖頁定好的 lat/lng,
+                                 不另外寫一份幾何。壅塞顏色、排隊帶、燈色疊在同一張地圖上。 -->
+                            <div class="wr-map-wrap">
+                                <div id="wrMap" class="wr-map"></div>
+                                <div class="wr-geo-count" v-if="sigLiveXn0">
+                                    <b :class="sigLiveRemainCls">{{ sigLiveRemainText }}</b>
+                                    <small v-if="sigLiveXn0.step_total_sec">/ {{ sigLiveXn0.step_total_sec }} s · 步階 {{ sigLiveXn0.phase?sigLiveXn0.phase.step_id:'—' }}</small>
+                                    <small v-else>步階 {{ sigLiveXn0.phase?sigLiveXn0.phase.step_id:'—' }}</small>
+                                </div>
+                                <div class="wr-geo-legend">
+                                    <span><i class="lv1"></i>暢通</span><span><i class="lv2"></i>中等</span>
+                                    <span><i class="lv3"></i>擁擠</span><span><i class="lv4"></i>嚴重壅塞</span>
+                                    <span><i class="lv0"></i>未量到</span>
+                                </div>
+                                <p v-if="sigWarMapNote" class="wr-map-note">{{ sigWarMapNote }}</p>
+                            </div>
+                        </div>
 
                     </div>
                 </div>
@@ -8066,39 +8094,6 @@
                      看的是「我方在哪些時刻會做出跟現行控制不同的決定,當時路口長什麼樣」。
                      純 SVG,不拉圖表庫;所有座標都在 computed 算好,模板不做比較運算。 -->
 
-                <!-- ══ 路口圖:移到線上評估(使用者決定)══
-                     🛑 它畫的是位置與壅塞色,屬於「看得懂發生什麼」的分析,
-                        不是戰情牆需要一眼掃到的即時控制狀態。
-                     🛑 Leaflet 在隱藏容器量不到尺寸 —— 初始化與 invalidateSize
-                        都跟著搬到 eval 分頁,不改的話地圖會是灰底或半張。 -->
-                <div v-if="page==='signal_hub'" v-show="signalTab==='eval'">
-                    <div class="wr">
-                            <!-- 路口圖:真實幾何。相機放在實測 WGS84 座標(docs/相機分相對應表.md),
-                                 進場道沿相機軸線畫、北為上。路段底色 = 該進場道兩台相機較差的壅塞等級,
-                                 排隊帶從停止線往回長到實際排隊公尺數。燈色來自 5F03(經 /plan 的
-                                 green_phase/clearance),不是自己推的。 -->
-                            <div class="wr-int">
-                                <div class="wr-sec-hd">路口燈態<span>系統地圖 · 燈態 5F03</span></div>
-                                <!-- 🛑 地圖用系統既有的:Leaflet + /web/tiles 離線圖磚(國土測繪中心),
-                                     相機座標取 cameras 清單裡使用者在地圖頁定好的 lat/lng,
-                                     不另外寫一份幾何。壅塞顏色、排隊帶、燈色疊在同一張地圖上。 -->
-                                <div class="wr-map-wrap">
-                                    <div id="wrMap" class="wr-map"></div>
-                                    <div class="wr-geo-count" v-if="sigLiveXn0">
-                                        <b :class="sigLiveRemainCls">{{ sigLiveRemainText }}</b>
-                                        <small v-if="sigLiveXn0.step_total_sec">/ {{ sigLiveXn0.step_total_sec }} s · 步階 {{ sigLiveXn0.phase?sigLiveXn0.phase.step_id:'—' }}</small>
-                                        <small v-else>步階 {{ sigLiveXn0.phase?sigLiveXn0.phase.step_id:'—' }}</small>
-                                    </div>
-                                    <div class="wr-geo-legend">
-                                        <span><i class="lv1"></i>暢通</span><span><i class="lv2"></i>中等</span>
-                                        <span><i class="lv3"></i>擁擠</span><span><i class="lv4"></i>嚴重壅塞</span>
-                                        <span><i class="lv0"></i>未量到</span>
-                                    </div>
-                                    <p v-if="sigWarMapNote" class="wr-map-note">{{ sigWarMapNote }}</p>
-                                </div>
-                            </div>
-                    </div>
-                </div>
                 <div v-if="page==='signal_hub'" v-show="signalTab==='eval'">
                     <div class="sig-tab-bar">
                         <span class="sig-tab-title">線上評估可視化</span>
@@ -23267,14 +23262,12 @@ const app=createApp({
                             loadSigConsole(); startSigConsoleTimer(); startSigLiveTimer();
                             loadSignalFrames(); if (!cameras.value.length) loadCameras();
                             loadWarVd(); startWarVdTimer();
-                            try { streamWantHeartbeat(); } catch (e) { } },  // 立刻預約 lite,別等 3 秒
+                            try { streamWantHeartbeat(); } catch (e) { }   // 立刻預約 lite,別等 3 秒
+                            setTimeout(initWarMap, 50); },
             // 合併後的分頁要把原本各自的載入器都帶上,少一個那一區就會空白。
             eval:   () => { loadViz(); startVizTimer(); loadVizHourly();
                             loadSigStats(); startSigStatTimer();
-                            loadSigAcceptance(); loadSigConsole();
-                            // 路口圖搬到這一頁了,地圖的初始化與相機座標也要跟著來
-                            if (!cameras.value.length) loadCameras();
-                            setTimeout(initWarMap, 50); },
+                            loadSigAcceptance(); loadSigConsole(); },
             device: () => { loadSignal(); startSignalTimer(); loadSigDevice();
                             loadSigConfig(); },
             lamp:   () => { loadSignal(); startSignalTimer(); loadSignalFrames(); },
@@ -23302,9 +23295,9 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             if (key === 'live') setTimeout(() => resumeAllGo2rtc(WAR_CAM_SEL), 120);
             else stopAllGo2rtc(WAR_CAM_SEL);
             // v-show 隱藏期間 Leaflet 量不到尺寸,切回來要重算。
-            // 🛑 路口圖 2026-09-07 搬到 eval 分頁,這裡的條件要跟著改 ——
-            //    還綁 live 的話切到 eval 看到的會是灰底或半張地圖。
-            if (key === 'eval' && wrMap) setTimeout(() => wrMap.invalidateSize(true), 60);
+            // 🛑 路口圖的分頁一天內搬了兩次,最後定在 live。這個條件必須跟著
+            //    地圖實際所在的分頁走 —— 綁錯的話切過去看到的是灰底或半張地圖。
+            if (key === 'live' && wrMap) setTimeout(() => wrMap.invalidateSize(true), 60);
             if (!sigTabLoaded[key]) {
                 sigTabLoaded[key] = true;
                 const fn = sigTabLoaders[key];
