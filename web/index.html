@@ -7797,7 +7797,7 @@
                                 </div>
                             </div>
                             <p v-else style="font-size:13px;color:#64748b;margin-top:10px">
-                                這段時間沒有可用樣本。影子模式需要抄錄器連線正常，且控制模式為外部動態才會納入。</p>
+                                這段時間沒有可用樣本。線上演算法比對需要抄錄器連線正常，且控制模式為外部動態才會納入。</p>
                         </div>
                     </div>
 
@@ -7893,13 +7893,21 @@
                      版面按分相分成左右兩欄 —— 上匝道(分相1/NE)、下匝道(分相2/WN),
                      每一欄各自帶自己那兩台相機、自己的放行統計、自己的狀態列。
                      中間放路口圖,兩欄的燈色跟路口圖是同一份 5F03 資料。
-                     🛑 影子模式的字樣一定要留著。畫面做得像在控制,更要講清楚
-                        我方只算不下發,否則來賓會誤以為路口已經由我們接管。 -->
+                     🛑 「未下發」一定要留著。畫面做得像在控制,更要講清楚我方只算不下發,
+                        否則來賓會誤以為路口已經由我們接管。
+                     🛑 2026-09-07 改名:「影子模式」→「線上演算法比對」。
+                        原本的「影子」意思是我方在旁邊偷看、不在線上;但中央中繼上線後,
+                        中央↔控制器的通訊**全部經由我方**,我們已經在線路上了,
+                        只是不下發控制命令。繼續叫「影子」會低估我方在系統中的位置。
+                        兩件事要分開講,不可以混成一個詞:
+                          · 通訊 —— 已接上(中央走我方)
+                          · 控制 —— 未下發(路口跑控制器內建時制) -->
                 <div v-if="page==='signal_hub'" v-show="signalTab==='live'">
                     <div class="wr">
                         <div class="wr-hd">
                             <span class="wr-led" :class="{off:sigStatus.stale}"><i></i>號誌機 {{ sigStatus.host }}</span>
-                            <span class="wr-led warn"><i></i>影子模式</span>
+                            <span class="wr-led ok" title="中央↔控制器的通訊全部經由我方中繼"><i></i>通訊已接上</span>
+                            <span class="wr-led warn" title="我方演算法全速運轉,但不送任何控制命令給號誌機"><i></i>未下發控制</span>
                             <span class="wr-hd-act">
                                 <el-switch v-model="sigLiveOn" size="small" active-text="即時影像" inline-prompt></el-switch>
                                 <!-- 匯出接既有端點:summary(分相彙整)/ timeline(逐秒時序),今日 00:00 起 -->
@@ -7916,7 +7924,7 @@
                         <div class="wr-decide" :class="sigWarHero.cls">
                             <div class="wr-decide-main">
                                 <div class="wr-pills">
-                                    <span class="wr-pill ok">影子模式</span>
+                                    <span class="wr-pill ok">線上演算法比對</span>
                                 </div>
                                 <!-- 控制方式:模式碼只是「宣告」,真正證明有人在控的是下發頻率。
                                      🛑 5F10 續約的瞬間策略位元會跳一秒(實測 0x10→0x01→0x10),
@@ -8341,7 +8349,7 @@
                                         </table>
                                     </div>
                                     <p v-else style="font-size:13px;color:#64748b;margin-top:10px">
-                                        這段時間沒有樣本。影子模式需要 SIGNAL_SHADOW_ENABLED=1 且抄錄器連線正常。</p>
+                                        這段時間沒有樣本。線上演算法比對需要 SIGNAL_SHADOW_ENABLED=1 且抄錄器連線正常。</p>
                                     <div v-if="sigShadowRecent.length" style="margin-top:10px;max-height:280px;overflow-y:auto;border:1px solid var(--gov-line,#e5e7eb);border-radius:6px">
                                         <div v-for="(r,ri) in sigShadowRecent" :key="'shr'+ri"
                                              style="display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;padding:6px 10px;border-bottom:1px solid var(--gov-line,#f1f5f9);font-size:13px">
