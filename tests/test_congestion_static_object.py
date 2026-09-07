@@ -178,3 +178,52 @@ def test_fallback_門檻也要在雜訊之上():
     )
     assert (CongestionDetector.DEFAULT_FALLBACK_CONF
             <= CongestionDetector.DEFAULT_DETECT_CONF), "fallback 不該比主門檻嚴"
+
+
+# ── 單車不算壅塞(2026-09-07 實測後定案)────────────────────────────────
+def _analyze_one(det, cls_name, occ_boxes):
+    """跑一次 analyze,回傳 level。occ_boxes 決定佔用率高低。"""
+    import numpy as np
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+    class _FakeDet:
+        def detect(self, f):
+            # 🛑 bbox 必須帶 width/height:analyze 的面積過濾讀的是這兩個鍵,
+            #    只給 x1/y1/x2/y2 會被算成面積 0 → 被最小面積門檻濾光。
+            return [{"bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                              "width": x2 - x1, "height": y2 - y1},
+                     "class_name": cls_name, "confidence": 0.9}
+                    for x1, y1, x2, y2 in occ_boxes]
+
+    det.detector = _FakeDet()
+    det.fallback_detector = None
+    res = None
+    for _ in range(6):          # 跑幾輪讓 tracker/停等判定穩定
+        res = det.analyze(frame, zones=None, camera_key="t_single",
+                          params={"stop_speed_px_per_sec": 0, "stop_min_frames": 2})
+    return res
+
+
+def test_單一小客車停著不算壅塞():
+    """cam_3 上匝道實測:ROI 94,101 px²,單一小客車依距離佔 10.2%~25.8%,
+    中等門檻 0.20 正好卡在中間 → 同一台車停近一點就「中等」、遠一點就「暢通」。
+    紅燈時一台小客車在匝道停等是正常現象,不是壅塞。"""
+    from detection.congestion_detector import CongestionDetector
+
+    det = CongestionDetector.__new__(CongestionDetector)
+    CongestionDetector.__init__(det, vehicle_detector=object())
+    # 一台佔畫面約 25% 的靜止小客車
+    big = [(200, 200, 840, 660)]
+    res = _analyze_one(det, "car", big)
+    assert res["level"] == "low", f"單一小客車不該判壅塞,實得 {res['level']}"
+
+
+def test_單一大貨車停著仍算壅塞():
+    """保留原設計:單一大貨/大客卡住前方 != 短暫路過,仍要升級。"""
+    from detection.congestion_detector import CongestionDetector
+
+    det = CongestionDetector.__new__(CongestionDetector)
+    CongestionDetector.__init__(det, vehicle_detector=object())
+    big = [(200, 200, 840, 660)]
+    res = _analyze_one(det, "heavy_truck", big)
+    assert res["level"] != "low", "單一大貨車卡住仍應判為壅塞"
