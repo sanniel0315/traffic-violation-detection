@@ -355,13 +355,16 @@ async def lifespan(app: FastAPI):
         push_route.start_poller()
     except Exception as _e:
         print(f"⚠️ push poller 啟動失敗: {_e}", flush=True)
-    # 動態號誌影子模式:我方決策全速運轉但只記錄不下發(bypass 前置驗證)。
-    # 🛑 不下發 —— 見 api/routes/signal_shadow.py 的 AST 測試把關。
-    #    預設關閉,要 SIGNAL_SHADOW_ENABLED=1 才跑。
+    # 動態號誌演算法:決策全速運轉,是否下發由 SIGNAL_SHADOW_ACTUATE 決定。
+    # 🛑 下發只有 _actuate 一條路 —— 見 tests/test_signal_shadow.py 的 AST 把關。
+    #    兩個開關互相獨立:ENABLED 決定「算不算」,ACTUATE 決定「送不送」,
+    #    兩個都預設關閉。
     try:
         if signal_shadow.SHADOW_ENABLED:
             signal_shadow.start_shadow()
-            print(f"🌓 號誌影子模式啟動(每 {signal_shadow.SHADOW_INTERVAL_SEC}s,只記錄不下發)",
+            print("🌓 號誌演算法啟動(每 %ss,%s)"
+                  % (signal_shadow.SHADOW_INTERVAL_SEC,
+                     "會下發 5F1C" if signal_shadow._act["enabled"] else "只記錄不下發"),
                   flush=True)
     except Exception as _e:
         print(f"⚠️ 號誌影子模式啟動失敗: {_e}", flush=True)

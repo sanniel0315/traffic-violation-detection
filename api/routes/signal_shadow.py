@@ -24,6 +24,7 @@ import json
 import sqlite3 as _sqlite3
 import threading
 import time
+from collections import deque
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -701,6 +702,110 @@ def _live_phase() -> Optional[dict]:
     return None
 
 
+# ── 實際下發:把決策變成命令 ──────────────────────────────────────────
+# 🛑 這是整個系統**唯一**會主動改變路口號誌的地方。所有把關都在這裡收斂,
+#    不要在別處另開第二條送出路徑。
+#
+# 送什麼:5F1C(SubPhaseID=0, StepID=0, EffectTime=0)= 協定的「跳下一步階」。
+#   🛑 不直接指定對向分相的綠燈步階 —— 那會**跳過清道**(行閃→行紅→黃→全紅)。
+#      「跳下一步階」讓控制器走它自己的步階序列,清道由控制器保證。
+#      我方要的本來就只是「提早結束這一段綠燈」,不是指定下一相怎麼跑。
+#
+# 不送的時候會怎樣:控制器照自己的時制繼續跑(2026-09-07 實測)。
+#   也就是說**每一道把關擋下來都是安全的**,失敗方向就是回到定時。
+ACTUATE_DEFAULT = os.getenv("SIGNAL_SHADOW_ACTUATE", "0") != "0"
+ACTUATE_MIN_GAP_SEC = float(os.getenv("SIGNAL_SHADOW_ACTUATE_GAP", "20") or 20)
+_act = {"enabled": ACTUATE_DEFAULT, "n": 0, "last_ts": 0.0, "last_seq": None,
+        "last_reason": "", "last_raw": "", "blocked": "", "last_error": "",
+        "events": deque(maxlen=100)}
+
+
+def _actuate(d, g_no: int, live: dict) -> None:
+    """引擎判 SWITCH → 送 5F1C。每一道把關的結果都寫進 _act['blocked'],
+    畫面上要看得出「這次為什麼沒送」,不能只是靜靜地不動作。
+
+    🛑 下發**必須跟 signal_daemon 要**,不可以自己 import signal_tc3 去送 ——
+       理由與 _live_phase() 同一條:連著 MiiNePort :1001 的 socket、控制策略
+       (_safety)、序號、送出紀錄全都在 traffic-signal 那個行程裡。
+       traffic-api 這個行程的 signal_tc3 是一份沒有連線、_safety 永遠是 None
+       的空殼 —— 直接呼叫它會「看起來有送、其實什麼都沒發生」。
+       走 daemon 的 prepare→send 還有一個好處:把關(_control_guard)、
+       操作紀錄持久化、訊框側錄全部沿用人工下發那一套,不會有第二套會漂移。
+    """
+    def stop(why):
+        _act["blocked"] = why
+        return None
+
+    if not _act["enabled"]:
+        return stop("演算法下發未啟用")
+    if d.action != "SWITCH":
+        return stop("")
+    # 1) 控制策略必須含 bit4 時相控制,否則控制器一定回 NAK
+    #    (2026-09-07 實測:沒有 bit4 時我方 5F1C 得到 ErrorCode=2)
+    #    control_mode=external_dynamic 就是 bit4 有設(見 signal_tc3._control_mode)。
+    if live.get("control_mode") != "external_dynamic":
+        return stop("控制策略未含時相控制(目前 %s),送了會被拒"
+                    % (live.get("control_mode") or "未知"))
+    # 2) 清道期間不送:控制器已經在換相了,再送一次會疊加成連跳兩步階
+    if live.get("clearance"):
+        return stop("清道中,不重複下命令")
+    # 3) 資料過期就不送 —— 看不到現在幾相幾秒的時候不可以動路口
+    if live.get("stale"):
+        return stop("抄錄資料過期,不下發")
+    # 4) 節流。🛑 沒有這道的話,每一次取樣判 SWITCH 就送一次 ——
+    #    控制器會被連續命令推著跑,綠燈可能短到不合理。
+    #    最小綠是引擎那一層的閘門,這裡是獨立於引擎的第二層。
+    now = time.time()
+    gap = now - _act["last_ts"]
+    if _act["last_ts"] and gap < ACTUATE_MIN_GAP_SEC:
+        return stop("節流中(距上次下發 %.0f 秒,需 %.0f 秒)" % (gap, ACTUATE_MIN_GAP_SEC))
+    # 5) 送出:prepare 取 token → send。daemon 端的 _control_guard 會再擋一次
+    #    (號控總開關 / 只准查詢 / 動態總開關 / 降階),被擋會回 403,原因照抄。
+    try:
+        tok = _daemon_post("/api/signal/control/prepare",
+                           {"code": "5F1C", "info_hex": "000000"})
+        token = (tok or {}).get("token")
+        if not token:
+            return stop("prepare 沒拿到 token")
+        res = _daemon_post("/api/signal/control/send", {"token": token})
+        sent = (res or {}).get("sent") or {}
+        raw = sent.get("raw") or ""
+        _act.update({"n": _act["n"] + 1, "last_ts": now, "last_seq": sent.get("seq"),
+                     "last_reason": d.reason or "", "last_raw": raw,
+                     "blocked": "", "last_error": ""})
+        _act["events"].append({"ts": now, "phase": g_no, "seq": sent.get("seq"),
+                               "reason": d.reason or "", "raw": raw})
+        add_log("info", "演算法下發 5F1C(提早結束分相 %d 綠燈):%s"
+                % (g_no, d.reason or ""), "signal")
+        print("[signal-shadow][下發] 5F1C seq=%s raw=%s reason=%s"
+              % (sent.get("seq"), raw, d.reason), flush=True)
+    except Exception as exc:
+        # 🛑 送不出去就是沒送,不要重試 —— 重試會在控制器忙的時候堆命令。
+        #    下一次取樣若還判 SWITCH 自然會再試一次。
+        _act["last_error"] = "%s: %s" % (type(exc).__name__, exc)
+        return stop(_act["last_error"])
+
+
+def _daemon_post(path: str, body: dict) -> dict:
+    """對 signal_daemon 送 POST。daemon 內部不驗登入(見 services/signal_daemon.py),
+    所以這裡不帶憑證;它只綁 127.0.0.1。403/409 的原因原樣帶出來給畫面顯示。"""
+    import json as _j
+    import urllib.error as _e
+    import urllib.request as _u
+    req = _u.Request(f"{SIGNAL_DAEMON_URL}{path}",
+                     data=_j.dumps(body).encode("utf-8"),
+                     headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with _u.urlopen(req, timeout=5) as r:
+            return _j.load(r)
+    except _e.HTTPError as err:
+        try:
+            detail = _j.load(err).get("detail")
+        except Exception:
+            detail = err.reason
+        raise RuntimeError("daemon %s: %s" % (err.code, detail))
+
+
 def _loop():
     """影子迴圈：取樣 → 算我方決策 → 與實際動作對照 → 落 DB。不下發。"""
     from detection.signal_decision_engine import ApproachState, decide
@@ -780,6 +885,10 @@ def _loop():
                 lost_time_sec=_lost_time_for(g_no),
                 keep_weight=KEEP_WEIGHT,
             )
+
+            # 🛑 先下發再寫這一筆 log —— 反過來的話這一筆決策的執行結果
+            #    會落到下一筆去,稽核時對不上。
+            _actuate(d, g_no, live)
 
             conn = _db()
             conn.execute(
@@ -1032,7 +1141,13 @@ async def shadow_status(limit: int = Query(50, ge=1, le=500),
         #    通訊已接上(中央↔控制器全部經由我方中繼),但控制未下發;
         #    而 OPAC 目前是停的,路口跑的是控制器內建時制。
         #    兩件事要分開講,混成一個詞會讓人誤判我方在系統中的位置。
-        "note": "線上演算法比對:通訊已接上(中央經由我方中繼),但我方不下發任何控制命令;路口目前跑控制器內建時制",
+        # 🛑 這句話會直接被拿去對外說明系統在做什麼,所以它必須跟著
+        #    下發開關走 —— 開著卻還寫「不下發」就是對稽核者謊報。
+        "note": ("線上演算法控制:通訊已接上(中央經由我方中繼),我方依決策下發 5F1C 提早結束綠燈"
+                 if _act["enabled"] else
+                 "線上演算法比對:通訊已接上(中央經由我方中繼),但我方不下發任何控制命令;路口目前跑控制器內建時制"),
+        "actuate": {"enabled": _act["enabled"], "sent": _act["n"],
+                    "blocked": _act["blocked"], "last_ts": _act["last_ts"] or None},
         **st,
         "agree_rate": round(sum(agree) / len(agree), 3) if agree else None,
         "recent": rows,
@@ -2209,6 +2324,41 @@ async def count_check(camera_id: int = Query(..., ge=1),
                    "現場 4 台 VD 移除後,AI 影像是唯一資料來源,"
                    "規格的 90% 準確度條款因此是必要條件不是加分項。")
     return out
+
+
+@router.get("/actuate", summary="演算法下發:現況與把關結果")
+async def actuate_status(_user=Depends(get_current_user)):
+    """看得到「有沒有在下發」「上一次送了什麼」「這一刻為什麼沒送」。
+    🛑 blocked 是空字串代表「引擎這一刻本來就判 KEEP」,不是被擋 —— 兩者不同,
+       畫面上不要混為一談。"""
+    ev = list(_act["events"])[-20:]
+    return {
+        "enabled": _act["enabled"],
+        "min_gap_sec": ACTUATE_MIN_GAP_SEC,
+        "sent": _act["n"],
+        "last_ts": _act["last_ts"] or None,
+        "last_seq": _act["last_seq"],
+        "last_reason": _act["last_reason"],
+        "last_raw": _act["last_raw"],
+        "blocked": _act["blocked"],
+        "last_error": _act["last_error"],
+        "events": [dict(e) for e in reversed(ev)],
+        "command": "5F1C(0,0,0)= 跳下一步階;清道由控制器自己走,我方只提早結束綠燈",
+        "note": "擋下來一律是安全的:不送 = 控制器照自己的時制跑。",
+    }
+
+
+@router.post("/actuate", summary="開關演算法下發")
+async def actuate_set(body: dict, _user=Depends(get_current_user)):
+    """🛑 這一支會讓演算法真的去改路口號誌。關掉是立即生效的(下一次取樣就不送)。
+    另外它只是最外層開關 —— 號控總開關、只准查詢、降階三道仍然各自有效。"""
+    want = bool(body.get("enabled"))
+    _act["enabled"] = want
+    if not want:
+        _act["blocked"] = "演算法下發未啟用"
+    add_log("warning" if want else "info",
+            "演算法下發已%s(操作者切換)" % ("啟用" if want else "關閉"), "signal")
+    return await actuate_status(_user)
 
 
 @router.get("/benchmark", summary="演算法驗收:我方 vs 公認基準(固定時制/Webster/感應/MaxPressure)")
