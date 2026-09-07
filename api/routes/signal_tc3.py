@@ -1206,9 +1206,59 @@ def _send_to_center(frame: bytes) -> bool:
 #
 # 🛑 非 pass 模式改走逐框轉發,代價是:解不出框的碎片(雜訊、半截封包)
 #    不會被轉發。pass 模式沒有這個問題。這是選擇攔截時要接受的取捨。
-DOWNLINK_POLICY = os.getenv("SIGNAL_TC3_DOWNLINK_POLICY", "pass")   # pass / log_only / hold_5f10
+# 政策:pass / log_only / hold_5f10 / reassert
+#
+# 🛑 reassert 是「中央自動保護機制」的誠實繞法(2026-09-07 使用者選 A):
+#    實測中央**每分鐘輪詢 5F40 查控制策略**,看到 0x10 就送 5F10 改回 0x01
+#    (21:12:00 那次:5F40 → 5FC0 回 0x10 → 中央 5F10 01 00,全程 0.3 秒)。
+#    reassert 的做法是:中央的命令**照常送達、照常被 ACK**,我方在其後
+#    重新宣告一次 5F10 0x10。
+#
+# 🛑 為什麼不改上傳:那條路只有一種走法 —— 在中央用 5F40 直接詢問時,
+#    把控制器的 5FC0 回答竄改成 0x01。那是對號誌主管機關**謊報運轉狀態**,
+#    出事時他們的判斷會建立在假資料上。本專案已因同樣理由拿掉 flip14、
+#    拒絕偽造 ACK,這裡一致。
+#    reassert 不隱瞞任何事:中央問什麼都據實轉答,只是它的覆蓋不會留住。
+DOWNLINK_POLICY = os.getenv("SIGNAL_TC3_DOWNLINK_POLICY", "pass")
+# 我方要維持的控制策略(bit4 時相控制)。reassert 只送這個值。
+REASSERT_STRATEGY = int(os.getenv("SIGNAL_TC3_REASSERT_STRATEGY", "16"))   # 0x10
+REASSERT_EFFECT = int(os.getenv("SIGNAL_TC3_REASSERT_EFFECT", "1"))
+_reassert = {"n": 0, "last": None, "last_error": ""}
 _downlink = {"seen": 0, "held": 0, "passed": 0, "last_held": None,
              "events": deque(maxlen=100)}
+
+
+def _do_reassert() -> None:
+    """重新宣告 5F10。🛑 延後 0.2 秒送 —— 讓中央那則先被控制器處理完,
+    否則兩則命令貼太近,控制器可能只處理其中一則。"""
+    try:
+        if not (_dyn.get("enabled") and _dyn.get("level") == "L0"):
+            return                      # 這 0.2 秒內被降階或關掉了就不要送
+        addr = _target_addr()
+        if addr is None:
+            _reassert["last_error"] = "沒有目標位址"
+            return
+        # 序號與側錄都沿用既有下發那一套,不另造一份 —— 兩套會漂移。
+        seq = (int(_seq_next.get("n", 0)) + 1) & 0xFF
+        info = bytes([0x5F, 0x10, REASSERT_STRATEGY & 0xFF, REASSERT_EFFECT & 0xFF])
+        frame = build_frame(addr, seq, info)
+        if _controller_send(frame):
+            _seq_next["n"] = seq
+            _reassert["n"] += 1
+            _reassert["last"] = time.time()
+            _reassert["last_error"] = ""
+            _enqueue_frame({"ts": time.time(), "src": "self", "code": "5F10",
+                            "seq": seq, "addr": addr, "len": len(frame),
+                            "cks_ok": True, "raw": frame.hex(" ").upper(),
+                            "user": "reassert"})
+            add_log("info", "下控重新宣告:中央把策略改回定時,我方重送 5F10 0x%02X"
+                    % REASSERT_STRATEGY, "signal")
+            print("[signal-tc3][控制] user=reassert code=5F10 seq=%d raw=%s"
+                  % (seq, frame.hex(" ").upper()), flush=True)
+        else:
+            _reassert["last_error"] = "送不出去(控制器未連線?)"
+    except Exception as exc:
+        _reassert["last_error"] = str(exc)
 
 
 def _downlink_allow(rec: Optional[dict]) -> bool:
@@ -1226,6 +1276,22 @@ def _downlink_allow(rec: Optional[dict]) -> bool:
             add_log("warning", "下控攔截:中央 5F10 未轉給控制器(我方持有控制權) raw=%s"
                     % (rec or {}).get("raw"), "signal")
             return False
+    if DOWNLINK_POLICY == "reassert" and code == "5F10":
+        # 🛑 只在我方確實持有控制權(總開關開、未降階)時才重新宣告。
+        #    平時中央的策略設定照過,不然等於把控制權從中央手上搶走。
+        if _dyn.get("enabled") and _dyn.get("level") == "L0":
+            # 從這一框的原始位元組取 ControlStrategy —— 直接找 5F10 再往後兩個。
+            strat = None
+            try:
+                _b = bytes.fromhex(str((rec or {}).get("raw") or "").replace(" ", ""))
+                _i = _b.find(bytes([0x5F, 0x10]))
+                if _i >= 0 and len(_b) > _i + 2:
+                    strat = _b[_i + 2]
+            except Exception:
+                strat = None
+            # 中央送的策略若已經包含 bit4,不必重新宣告 —— 它沒有在收走我方權限
+            if strat is not None and not (strat & 0x10):
+                threading.Timer(0.2, _do_reassert).start()
     if DOWNLINK_POLICY == "log_only" and code in ("5F10", "5F15", "5F18", "5F1C"):
         _downlink["events"].append({"ts": time.time(), "code": code,
                                     "action": "pass", "raw": (rec or {}).get("raw")})
@@ -1892,10 +1958,16 @@ async def downlink_status(_user=Depends(get_current_user)):
         "policy_options": {
             "pass": "原封轉發(預設)。與 2026-09-07 之前行為位元組級相同。",
             "log_only": "全部放行,但把中央的控制類命令(5F10/5F15/5F18/5F1C)記下來。",
+            "reassert": "中央的 5F10 照常送達、照常被 ACK,我方在 0.2 秒後重新宣告 "
+                        "5F10 0x10。🛑 不隱瞞任何事:中央用 5F40 問現況時仍據實轉答 —— "
+                        "它的覆蓋不會留住,但它看得到真實狀態。",
             "hold_5f10": "我方持有控制權時擋下中央的 5F10。"
                          "🛑 中央會因為收不到 ACK 而判定控制器通訊故障 —— "
                          "這是改變權責歸屬,不是技術選項,要與中央談好才用。",
         },
+        "reassert": {"count": _reassert["n"], "last": _reassert["last"],
+                     "strategy": REASSERT_STRATEGY, "effect_time": REASSERT_EFFECT,
+                     "last_error": _reassert["last_error"]},
         "seen": _downlink["seen"], "passed": _downlink["passed"],
         "held": _downlink["held"], "last_held": _downlink["last_held"],
         "events": [dict(e) for e in reversed(ev)],
