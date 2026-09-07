@@ -7912,6 +7912,16 @@
                                     <div class="ds-kpi-value">{{ sigStats.switch_count }}</div>
                                     <div class="ds-kpi-hint">所選區間之樣本計數，非累計值</div>
                                 </div>
+                                <!-- 🛑 規範 (E) 明列「調整次數」。它是**我方主動下發的
+                                     時制調整次數**,與左邊的「相位切換次數」是兩回事:
+                                     切換次數不管誰在控都會有,調整次數只有我方下發才增加。
+                                     接管前恆為 0 —— 那不是壞掉,是「只算不下發」的事實,
+                                     所以提示文字要把這件事講出來,不要讓人以為統計壞了。 -->
+                                <div class="ds-kpi-card">
+                                    <div class="ds-kpi-label">我方調整次數</div>
+                                    <div class="ds-kpi-value">{{ sigStats.adjust_count==null?'—':sigStats.adjust_count }}</div>
+                                    <div class="ds-kpi-hint">{{ sigStats.adjust_count?('下發碼 '+Object.keys(sigStats.adjust_by_code||{}).join('、')):'尚未下發任何控制命令（線上評估中）' }}</div>
+                                </div>
                                 <div class="ds-kpi-card" :class="sigStats.forced_count?'warn':''">
                                     <div class="ds-kpi-label">強制切換次數</div>
                                     <div class="ds-kpi-value">{{ sigStats.forced_count }}</div>
@@ -7966,7 +7976,7 @@
                                             <th class="sc-th-dir">方向</th>
                                             <th class="sc-num">段數</th>
                                             <th class="sc-num">綠燈平均<span class="sc-th-unit">秒</span></th>
-                                            <th class="sc-num">標準差<span class="sc-th-unit">秒</span></th>
+                                            <th class="sc-num" title="規範 (E) 明列要能產出變異數;標準差是它的平方根,兩個都列">變異數</th><th class="sc-num">標準差<span class="sc-th-unit">秒</span></th>
                                             <th class="sc-num">觀測範圍<span class="sc-th-unit">秒</span></th>
                                             <th class="sc-num">時制上下限<span class="sc-th-unit">秒</span></th>
                                             <th class="sc-num">低於最小綠</th>
@@ -7981,6 +7991,7 @@
                                             <td class="sc-num">{{ b.n }}</td>
                                             <td class="sc-num">{{ sigStatNum(b.avg_estimated) }}
                                                 <span class="sc-sub">量到 {{ sigStatNum(b.avg) }}</span></td>
+                                            <td class="sc-num">{{ sigStatNum(b.variance) }}</td>
                                             <td class="sc-num">{{ sigStatNum(b.stddev) }}</td>
                                             <td class="sc-num">{{ sigStatNum(b.min_observed) }} – {{ sigStatNum(b.max_observed) }}</td>
                                             <td class="sc-num">{{ sigStatNum(b.min_green_sec) }} – {{ sigStatNum(b.max_green_sec) }}</td>

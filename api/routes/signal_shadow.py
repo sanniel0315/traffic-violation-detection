@@ -1486,6 +1486,11 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
            "samples": 0, "runs": 0, "switch_count": None,
            "forced_count": None, "forced_ratio": None,
            "by_direction": [], "trend": [], "trend_total": 0,
+           # 規範 (E) 明列要能產出「調整次數」。這是**我方主動下發的時制調整
+           # 次數**,與 switch_count(現場實際換相次數)是兩回事:
+           #   switch_count 不管誰在控都會有;adjust_count 只有我方下發才會增加。
+           # 🛑 接管前它恆為 0,那不是壞掉 —— 是「我方只算不下發」的事實。
+           "adjust_count": 0, "adjust_by_code": {},
            "exit_queue_m": None, "exit_queue_vehicles": None,
            "vehicles_per_green_sec": None,
            "dropped_unobserved": 0, "runs_used": 0,
@@ -1494,6 +1499,24 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
                    "綠燈長度是區間量測:真值落在 [green_sec, green_sec+取樣週期)。"
                    "below_min_green 以上界判定,且排除接在斷點之後或段內有斷點的段,"
                    "所以它只計入『確定低於最小綠』的次數;不確定的計入 uncertain_truncated"}
+    # 我方下發的調整次數(規範 E)。來源是抄錄庫裡 src='self' 的下發框 ——
+    # 我們自己送出去的每一則都會被側錄,所以這個數字有原始框可回溯。
+    try:
+        _c = _sq.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=8)
+        _a, _b = (datetime.fromisoformat(since_iso).timestamp(),
+                  datetime.fromisoformat(until_iso).timestamp())
+        for _code, _n in _c.execute(
+                "SELECT code,COUNT(*) FROM signal_frames "
+                "WHERE src='self' AND ts>=? AND ts<=? AND code IN ('5F1C','5F15','5F18','5F10') "
+                "GROUP BY code", (_a, _b)):
+            out["adjust_by_code"][_code] = _n
+        # 🛑 5F10 是控制策略續約,不算一次「時制調整」—— 它只是維持既有授權,
+        #    算進去會讓調整次數暴增(每分鐘一次)而且失去意義。
+        out["adjust_count"] = sum(n for c, n in out["adjust_by_code"].items() if c != "5F10")
+        _c.close()
+    except Exception:
+        pass
+
     try:
         conn = _db()
         rows = conn.execute(
