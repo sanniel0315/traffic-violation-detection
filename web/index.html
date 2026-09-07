@@ -3664,35 +3664,90 @@
         .wr-headline { margin:0 0 12px; font-size:var(--fs-hero); line-height:1.1; font-weight:900; color:var(--gov-text);
                        letter-spacing:-.015em; text-wrap:balance; }
         @media (max-width:700px) { .wr-headline { font-size:var(--fs-t3); } }
-        /* 控制預估:一段區間,不是倒數 */
-        .wr-fc { margin:10px 0 2px; padding:10px 12px; border-radius:8px;
-                 background:var(--gov-surface-2, #f5f7fa); border:1px solid var(--gov-border, #e3e8ef); }
-        .wr-fc-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-        .wr-fc-head b { font-size:var(--fs-body); color:var(--gov-text); }
-        .wr-fc-sub { font-size:var(--fs-caption); color:var(--gov-muted); }
-        .wr-fc-dot { width:9px; height:9px; border-radius:50%; flex:0 0 auto; background:#b0b7c3; }
-        .wr-fc-dot.go   { background:#2f9e44; box-shadow:0 0 0 0 rgba(47,158,68,.6); animation:fcPulse 1.4s infinite; }
-        .wr-fc-dot.run  { background:#1971c2; }
+        /* ── 控制預估:本次綠燈的時間軸 ──────────────────────────────
+           🛑 動畫在這裡是**狀態的一部分**,不是裝飾。四個 phase 各有各的動:
+             wait    保護期  → 現在位置的游標穩定推進,窗口不動(還不能換相)
+             open    可換相  → 窗口斜紋流動,表示「隨時可能」
+             fire    下發中  → 整條軸閃一下 + 狀態點脈動
+             blocked 被擋    → 橘色,窗口不流動(不會發生)
+           把「可換相窗口」畫成一段而不是一個點,是這張圖唯一的重點:
+           何時真的換相取決於車流,誰都算不出來,畫成倒數就是騙人。 */
+        .wr-fc { margin:12px 0 4px; padding:12px 14px; border-radius:10px;
+                 background:var(--gov-surface-2, #f5f7fa);
+                 border:1px solid var(--gov-border, #e3e8ef);
+                 transition:border-color .3s ease, background .3s ease; }
+        .wr-fc.is-fire { border-color:#8fd3a4; background:#f1fbf4; animation:fcFire .6s ease-out; }
+        .wr-fc.is-blocked { border-color:#f0c9a8; background:#fdf6f0; }
+        @keyframes fcFire { 0% { box-shadow:0 0 0 0 rgba(47,158,68,.35); }
+                            100% { box-shadow:0 0 0 12px rgba(47,158,68,0); } }
+
+        .wr-fc-top { display:flex; align-items:center; gap:9px; }
+        .wr-fc-title { font-size:var(--fs-body); font-weight:700; color:var(--gov-text);
+                       flex:1 1 auto; min-width:0;
+                       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .wr-fc-dot { width:10px; height:10px; border-radius:50%; flex:none; background:#b0b7c3; }
+        .wr-fc-dot.go   { background:#2f9e44; animation:fcPulse 1.2s infinite; }
+        .wr-fc-dot.run  { background:#1971c2; animation:fcPulse 2.6s infinite; }
         .wr-fc-dot.warn { background:#e8590c; }
         .wr-fc-dot.idle { background:#b0b7c3; }
-        @keyframes fcPulse { 70% { box-shadow:0 0 0 7px rgba(47,158,68,0); }
-                             100% { box-shadow:0 0 0 0 rgba(47,158,68,0); } }
-        @media (prefers-reduced-motion: reduce) { .wr-fc-dot.go { animation:none; } }
-        .wr-fc-bar { position:relative; height:10px; margin:9px 0 6px; border-radius:5px;
-                     background:var(--gov-border, #e3e8ef); overflow:hidden; }
-        .wr-fc-bar i { position:absolute; top:0; bottom:0; display:block; }
-        .wr-fc-bar .fc-done { left:0; background:#1971c2; border-radius:5px 0 0 5px; }
-        .wr-fc-bar .fc-win  { background:repeating-linear-gradient(135deg,
-                              rgba(47,158,68,.35) 0 6px, rgba(47,158,68,.12) 6px 12px); }
-        .wr-fc-bar u { position:absolute; top:-2px; bottom:-2px; width:2px;
-                       background:#2f9e44; text-decoration:none; }
-        .wr-fc-legend, .wr-fc-rows { display:flex; flex-wrap:wrap; gap:4px 16px;
-                       font-size:var(--fs-caption); color:var(--gov-text); }
-        .wr-fc-rows { margin-top:4px; }
-        .wr-fc-legend em, .wr-fc-rows em { font-style:normal; color:var(--gov-muted); margin-right:5px; }
-        .wr-fc-block { margin-top:6px; font-size:var(--fs-caption); }
-        .wr-fc-block .k { color:var(--gov-muted); margin-right:6px; }
-        .wr-fc-block b { color:#e8590c; font-weight:600; }
+        @keyframes fcPulse { 0% { box-shadow:0 0 0 0 currentColor; opacity:1; }
+                             70% { box-shadow:0 0 0 7px rgba(0,0,0,0); opacity:.75; }
+                             100% { box-shadow:0 0 0 0 rgba(0,0,0,0); opacity:1; } }
+        /* 這一格是「本次判斷」—— 值班的人第一眼要看到的就是它 */
+        .wr-fc-act { flex:none; padding:3px 11px; border-radius:99px;
+                     font:700 var(--fs-small) var(--font-sans);
+                     background:#e7ecf3; color:#41546b; }
+        .wr-fc-act.go   { background:#2f9e44; color:#fff; }
+        .wr-fc-act.warn { background:#e8590c; color:#fff; }
+        .wr-fc-act.run  { background:#e3edf9; color:#14539a; }
+        .wr-fc-sub { margin:6px 0 0; font-size:var(--fs-small); color:var(--gov-muted); }
+
+        .wr-fc-axis { position:relative; height:14px; margin:11px 0 0;
+                      border-radius:7px; background:#dfe4ec; overflow:hidden; }
+        .wr-fc-axis i { position:absolute; top:0; bottom:0; display:block; }
+        .wr-fc-axis .fc-done { left:0; background:linear-gradient(90deg,#3b82c4,#1971c2);
+                               border-radius:7px 0 0 7px; transition:width .9s linear; }
+        .wr-fc-axis .fc-win { background-image:repeating-linear-gradient(115deg,
+                                 rgba(47,158,68,.42) 0 8px, rgba(47,158,68,.13) 8px 16px);
+                              background-size:22.6px 100%;
+                              transition:left .9s linear, width .9s linear; }
+        /* 可換相窗口在「真的可以換相」時才流動 —— 保護期內它是靜止的,
+           因為那段時間換相不可能發生。 */
+        .wr-fc.is-open .fc-win { animation:fcFlow 1.1s linear infinite; }
+        .wr-fc-axis u { position:absolute; top:-3px; bottom:-3px; text-decoration:none; }
+        .wr-fc-axis .fc-min { width:2px; background:#8a5d00; opacity:.55; }
+        .wr-fc-axis .fc-now { width:3px; background:#0d3d70; border-radius:2px;
+                              box-shadow:0 0 0 2px rgba(255,255,255,.85);
+                              transition:left .9s linear; }
+        @keyframes fcFlow { to { background-position:22.6px 0; } }
+
+        .wr-fc-scale { position:relative; height:15px; margin-top:3px;
+                       font-size:var(--fs-caption); color:var(--gov-mute-2); }
+        .wr-fc-scale span { position:absolute; white-space:nowrap; }
+        .wr-fc-scale .s0 { left:0; }
+        .wr-fc-scale .sx { right:0; }
+        .wr-fc-scale .sm { transform:translateX(-50%); color:#8a5d00; }
+
+        .wr-fc-stats { display:flex; flex-wrap:wrap; gap:6px 20px; margin-top:9px; }
+        .fc-st { display:flex; align-items:baseline; gap:6px; }
+        .fc-st em { font-style:normal; font-size:var(--fs-caption); color:var(--gov-mute-2); }
+        .fc-st b { font:700 var(--fs-t2) var(--font-mono); color:var(--gov-text); line-height:1.1; }
+        .fc-st b i { font-style:normal; font-size:var(--fs-caption); font-weight:500;
+                     color:var(--gov-mute-2); margin-left:2px; }
+        .fc-st b.t { font-size:var(--fs-small); font-weight:600; }
+        .fc-st b.ok { color:#2f9e44; font-size:var(--fs-small); }
+        /* 倒數是**精確**的(最小綠/節流都是時鐘),所以給它跳動的重音;
+           其他數字不跳 —— 會跳的就是算得準的,這是刻意的視覺約定。 */
+        .fc-st b.cd { color:#8a5d00; animation:fcTick 1s steps(1) infinite; }
+        @keyframes fcTick { 0%,60% { opacity:1; } 61%,100% { opacity:.55; } }
+
+        .wr-fc-why { margin-top:8px; padding-top:8px; border-top:1px dashed var(--gov-border);
+                     font-size:var(--fs-caption); color:var(--gov-muted); }
+        .wr-fc-why .k { color:var(--gov-mute-2); margin-right:6px; }
+        @media (prefers-reduced-motion: reduce) {
+            .wr-fc, .wr-fc-dot, .fc-win, .fc-done, .fc-now, .fc-st b.cd {
+                animation:none !important; transition:none !important; }
+        }
         /* 決策依據明細:預設收合的折疊區 */
         .wr-detail { margin-top:14px; border:1px solid var(--gov-border); border-radius:12px;
                      background:var(--gov-surface); }
@@ -8138,17 +8193,19 @@
                         否則來賓會誤以為路口已經由我們接管。
                      🛑 2026-09-07 改名:「影子模式」→「線上演算法比對」。
                         原本的「影子」意思是我方在旁邊偷看、不在線上;但中央中繼上線後,
-                        中央↔控制器的通訊**全部經由我方**,我們已經在線路上了,
-                        只是不下發控制命令。繼續叫「影子」會低估我方在系統中的位置。
+                        中央↔控制器的通訊**全部經由我方**,我們已經在線路上了。
                         兩件事要分開講,不可以混成一個詞:
-                          · 通訊 —— 已接上(中央走我方)
-                          · 控制 —— 未下發(路口跑控制器內建時制) -->
+                          · 通訊 —— 已接上(中央走我方),這個是固定的
+                          · 控制 —— 隨時在變,不可以寫死
+                        🛑 2026-09-07:控制那顆燈原本寫死「未下發控制」。演算法接上
+                           下發之後那句就是錯的 —— 現場看到「動態號誌控制中」卻同時
+                           顯示「未下發控制」。改成跟著 sigLedCtl 走。 -->
                 <div v-if="page==='signal_hub'" v-show="signalTab==='live'">
                     <div class="wr">
                         <div class="wr-hd">
                             <span class="wr-led" :class="{off:sigStatus.stale}"><i></i>號誌機 {{ sigStatus.host }}</span>
                             <span class="wr-led ok" title="中央↔控制器的通訊全部經由我方中繼"><i></i>通訊已接上</span>
-                            <span class="wr-led warn" title="我方演算法全速運轉,但不送任何控制命令給號誌機"><i></i>未下發控制</span>
+                            <span class="wr-led" :class="sigLedCtl.cls" :title="sigLedCtl.tip"><i></i>{{ sigLedCtl.text }}</span>
                             <span class="wr-hd-act">
                                 <el-switch v-model="sigLiveOn" size="small" active-text="即時影像" inline-prompt></el-switch>
                                 <!-- 匯出接既有端點:summary(分相彙整)/ timeline(逐秒時序),今日 00:00 起 -->
@@ -8241,29 +8298,47 @@
                                      節流、最大綠),中間何時換相取決於車流 —— 不可預估。
                                      所以這裡畫的是一段**區間**,不是一個假裝精確的倒數。
                                      把不確定的東西顯示成確定的秒數,是這個畫面最容易犯的錯。 -->
-                                <div class="wr-fc" v-if="sigFc.on">
-                                    <div class="wr-fc-head">
+                                <div class="wr-fc" :class="'is-'+sigFc.phase" v-if="sigFc.on">
+                                    <div class="wr-fc-top">
                                         <span class="wr-fc-dot" :class="sigFc.cls"></span>
-                                        <b>{{ sigFc.title }}</b>
-                                        <span class="wr-fc-sub">{{ sigFc.text }}</span>
+                                        <b class="wr-fc-title">{{ sigFc.title }}</b>
+                                        <span class="wr-fc-act" :class="sigFc.cls">{{ sigFc.big }}</span>
                                     </div>
-                                    <div class="wr-fc-bar" :title="sigFc.barTip">
-                                        <i class="fc-done" :style="{width:sigFc.wDone}"></i>
+                                    <div class="wr-fc-sub">{{ sigFc.sub }}</div>
+
+                                    <!-- 🛑 這條軸是「本次綠燈」,不是倒數條:
+                                         · 藍色實心 = 已亮(每秒推進)
+                                         · 到最小綠為止是保護期,期間不可能換相
+                                         · 斜紋段 = 可換相窗口,何時換相取決於車流 —— 不做單點預測
+                                         · 右端 = 最大綠,到了強制換相
+                                         把不確定的那一段畫成窗口而不是一個點,是這張圖唯一的重點。 -->
+                                    <div class="wr-fc-axis" :title="sigFc.note">
                                         <i class="fc-win" :style="{left:sigFc.wA,width:sigFc.wWin}"></i>
-                                        <u class="fc-mark" :style="{left:sigFc.wA}"></u>
+                                        <i class="fc-done" :style="{width:sigFc.wDone}"></i>
+                                        <u class="fc-min" :style="{left:sigFc.wMin}"></u>
+                                        <u class="fc-now" :style="{left:sigFc.wDone}"></u>
                                     </div>
-                                    <div class="wr-fc-legend">
-                                        <span><em>已亮</em>{{ sigFc.elapsed }}s</span>
-                                        <span><em>最早換相</em>+{{ sigFc.earliest }}s</span>
-                                        <span><em>最晚(最大綠)</em>+{{ sigFc.latest }}s</span>
+                                    <div class="wr-fc-scale">
+                                        <span class="s0">0</span>
+                                        <span class="sm" :style="{left:sigFc.wMin}">最小綠 {{ sigFc.minG }}s</span>
+                                        <span class="sx">最大綠 {{ sigFc.maxG }}s</span>
                                     </div>
-                                    <div class="wr-fc-rows">
-                                        <span><em>本次判斷</em>{{ sigFc.action }}</span>
-                                        <span><em>已下發</em>{{ sigFc.sent }} 次</span>
-                                        <span><em>上次下發</em>{{ sigFc.lastText }}</span>
+
+                                    <div class="wr-fc-stats">
+                                        <span class="fc-st"><em>已亮</em><b>{{ sigFc.elapsed }}<i>s</i></b></span>
+                                        <span class="fc-st" v-if="sigFc.countdown">
+                                            <em>{{ sigFc.gate }}解除</em>
+                                            <b class="cd">{{ sigFc.countdown }}<i>s</i></b>
+                                        </span>
+                                        <span class="fc-st" v-else>
+                                            <em>可換相</em><b class="ok">窗口內</b>
+                                        </span>
+                                        <span class="fc-st"><em>強制換相</em><b>{{ sigFc.latest }}<i>s</i></b></span>
+                                        <span class="fc-st"><em>已下發</em><b>{{ sigFc.sent }}<i>次</i></b></span>
+                                        <span class="fc-st"><em>上次</em><b class="t">{{ sigFc.lastText }}</b></span>
                                     </div>
-                                    <div class="wr-fc-block" v-if="sigFc.blocked">
-                                        <span class="k">目前擋因</span><b>{{ sigFc.blocked }}</b>
+                                    <div class="wr-fc-why" v-if="sigFc.reason">
+                                        <span class="k">依據</span>{{ sigFc.reason }}
                                     </div>
                                 </div>
                                 <div class="xn-foot">
@@ -24313,40 +24388,81 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         // 🛑 四種狀態要分得開,混在一起看的人會誤判現在到底會不會動路口:
         //    立即下發 / 引擎判換相但被擋 / 等時鐘(最小綠或節流) / 等車流。
         const sigFc = computed(() => {
-            const f = (sigPlan.value || {}).forecast;
-            const a = (sigPlan.value || {}).actuate || {};
+            const P = sigPlan.value || {};
+            const f = P.forecast;
+            const a = P.actuate || {};
             if (!f) return {on: false};
-            const el = Number(sigPlan.value.green_elapsed_sec || 0);
-            const total = Math.max(Number(f.est_green_total_max_sec || 0), el + 1);
-            const pct = (v) => (Math.min(100, Math.max(0, v / total * 100))).toFixed(1) + '%';
-            const aPos = el + Number(f.earliest_switch_sec || 0);
-            const TITLE = {
-                certain: '演算法正在下發',
-                blocked: '演算法判換相,被安全閘門擋下',
-                bounded: a.enabled ? '演算法運轉中 · 等待換相條件' : '演算法只比對,未下發',
-            };
-            const CLS = {certain: 'go', blocked: 'warn', bounded: a.enabled ? 'run' : 'idle'};
+
+            // 🛑 每秒推進,但只推進**時鐘**算得出來的部分。
+            //    /plan 每幾秒才回一次,直接顯示它的 green_elapsed 會一格一格跳;
+            //    這裡用 plan 的時戳內插到現在。sigLiveTick 每秒變一次,
+            //    這個 computed 讀了它就會每秒重算。
+            const tick = sigLiveTick.value;               // 依賴:驅動每秒重算
+            let el = Number(P.green_elapsed_sec || 0);
+            const base = Date.parse(P.ts || '');
+            if (isFinite(base)) {
+                const drift = (Date.now() - base) / 1000;
+                // 🛑 只補正常範圍的漂移。分頁切回來、電腦睡醒會得到很大的差值,
+                //    那時候寧可顯示 plan 的原值等下一次輪詢,也不要畫出假的 300 秒。
+                if (drift >= 0 && drift < 15) el += drift;
+            }
+            const minG = Number((P.plan || {}).min_green_sec || 0);
+            const maxG = Number((P.plan || {}).max_green_sec || 0);
+            el = Math.min(el, maxG || el);
+
+            // 三個界線,全部是時鐘:最小綠、節流、最大綠
+            const minRemain = Math.max(0, minG - el);
+            const thrRemain = Math.max(0, Number(f.throttle_remain_sec || 0)
+                                          - (isFinite(base) ? (Date.now() - base) / 1000 : 0));
+            const earliest = Math.max(minRemain, thrRemain);
+            const latest = Math.max(0, maxG - el);
+            const total = Math.max(maxG, el + 1);
+            const pct = (v) => (Math.min(100, Math.max(0, v / total * 100))).toFixed(2) + '%';
+
+            // 🛑 倒數只給「最早可換相」——那是時鐘,精確。
+            //    「何時真的換相」取決於車流,不做單點預測,畫成一段窗口。
+            const gateName = (minRemain > 0) ? '最小綠' : (thrRemain > 0 ? '節流' : '');
+            let phase, title, cls, big, sub;
+            if (f.action === 'SWITCH' && !f.blocked) {
+                phase = 'fire';  cls = 'go';
+                title = '正在下發換相命令';
+                big = '換相'; sub = P.reason || f.text;
+            } else if (f.blocked) {
+                phase = 'blocked'; cls = 'warn';
+                title = '判定換相,被安全閘門擋下';
+                big = '換相(未送出)'; sub = f.blocked;
+            } else if (earliest > 0) {
+                phase = 'wait'; cls = a.enabled ? 'run' : 'idle';
+                title = a.enabled ? '演算法運轉中 · 綠燈保護期' : '演算法只比對,未下發';
+                big = '維持'; sub = gateName + '保護中,' + Math.ceil(earliest) + ' 秒後才可換相';
+            } else {
+                phase = 'open'; cls = a.enabled ? 'run' : 'idle';
+                title = a.enabled ? '演算法運轉中 · 可換相窗口' : '演算法只比對,未下發';
+                big = '維持'; sub = '隨時可換相,依車流判斷;' + Math.ceil(latest) + ' 秒後強制換相';
+            }
+
             let last = '尚未下發';
             if (a.last_ts) {
-                const s = Math.round(Date.now() / 1000 - a.last_ts);
-                last = (s < 90) ? (s + ' 秒前') : (Math.round(s / 60) + ' 分鐘前');
+                const n = Math.round(Date.now() / 1000 - a.last_ts);
+                last = (n < 90) ? (n + ' 秒前') : (Math.round(n / 60) + ' 分鐘前');
             }
             return {
-                on: true,
-                cls: CLS[f.certainty] || 'idle',
-                title: TITLE[f.certainty] || '演算法狀態未知',
-                text: f.text,
-                action: f.action === 'SWITCH' ? '換相' : '維持',
+                on: true, phase: phase, cls: cls, title: title, big: big, sub: sub,
+                enabled: !!a.enabled,
                 elapsed: el.toFixed(0),
-                earliest: Number(f.earliest_switch_sec || 0).toFixed(0),
-                latest: Number(f.latest_switch_sec || 0).toFixed(0),
+                countdown: Math.ceil(earliest),           // 精確倒數(只有時鐘)
+                gate: gateName,
+                latest: Math.ceil(latest),
+                minG: Math.round(minG), maxG: Math.round(maxG),
+                sent: a.sent || 0, lastText: last,
                 blocked: f.blocked || '',
-                sent: a.sent || 0,
-                lastText: last,
+                reason: P.reason || '',
+                // 幾何:已亮 / 保護期終點 / 可換相窗口
                 wDone: pct(el),
-                wA: pct(aPos),
-                wWin: pct(total - aPos),
-                barTip: f.note,
+                wMin: pct(minG),
+                wA: pct(el + earliest),
+                wWin: pct(total - (el + earliest)),
+                note: f.note,
             };
         });
         const sigCtlModeText=computed(()=>
@@ -25231,6 +25347,26 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             const w = sigCtlWay.value;
             const CLS = {ours: 'ours', ext: 'warn', idle: 'ok'};
             return {text: w.who, cls: CLS[w.whoCls] || 'ok'};
+        });
+        // 頁首那顆「控制」燈。🛑 與控制權現況卡片用**同一個**判斷來源
+        //    (sigCtlWay.whoCls),不可以另寫一套 —— 同一頁上兩處講不同的話,
+        //    看的人不知道該信哪一個。
+        const sigLedCtl = computed(() => {
+            const w = sigCtlWay.value || {};
+            if (w.whoCls === 'ours') {
+                const sending = (sigFc.value || {}).sent > 0;
+                return {
+                    cls: 'ok',
+                    text: sending ? '我方演算法控制中' : '我方持有授權',
+                    tip: w.send || '我方正在下發控制命令給號誌機',
+                };
+            }
+            if (w.whoCls === 'ext') {
+                return {cls: 'warn', text: '外部系統下發中',
+                        tip: '有人在下發,但不是我方 —— ' + (w.send || '')};
+            }
+            return {cls: 'warn', text: '未下發控制',
+                    tip: '路口在跑控制器內建時制,我方與外部都沒有下發'};
         });
         const sigWarFrames = computed(() =>
             (sigFrames.value || []).filter((f) => String(f.code || '').toUpperCase() === '5F03')
@@ -26361,7 +26497,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
