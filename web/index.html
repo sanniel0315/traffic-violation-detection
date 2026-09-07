@@ -19462,24 +19462,6 @@ const app=createApp({
                     if(monitorZoomVisible.value && monitorZoomCamera.value){ preOrder(monitorZoomCamera.value); }
                     else { (sortedCameras.value||[]).forEach(preOrder); }
                 }
-                // 🛑 lofi 也要預約,理由跟上面的 lite 完全一樣,而且更嚴重:
-                //    lofi 走 HLS(hls.js 直連),連 WS proxy 都不經過 —— proxy 那條
-                //    自動需求登記在這裡完全不存在,不預約就永遠不會有 producer。
-                //    2026-09-07 現場症狀:開「遠端省流」選疊加,四塊磚全黑,而 go2rtc
-                //    對空殼串流不回錯誤碼,前端看起來一切正常。
-                //    🛑 不要改用 ANNOTATED_STREAM_LOFI_ALWAYS=1 解:那會讓 lite+lofi
-                //    共 8 條編碼器常駐,加上 annotated 隨看隨起就撞穿硬體編碼通道上限,
-                //    實測 cam_5/lite 陷入 crash loop(5 分鐘重生 93 次,其他台各 1 次)。
-                //    預約是 on-demand 的,只有真的在看遠端疊加時才佔通道。
-                if(remoteSaver.value){
-                    const preOrderLofi=(cam)=>{
-                        if(!cam || resolveCameraStreamMode(cam)!=='overlay')return;
-                        const n=go2rtcLofiName(cam);
-                        if(n && go2rtcLive.value.has(n))srcs.add(n);
-                    };
-                    if(monitorZoomVisible.value && monitorZoomCamera.value){ preOrderLofi(monitorZoomCamera.value); }
-                    else { (sortedCameras.value||[]).forEach(preOrderLofi); }
-                }
                 if(srcs.size){
                     fetch('/api/go2rtc/want',{method:'POST',credentials:'include',
                         headers:{'Content-Type':'application/json'},body:JSON.stringify({srcs:[...srcs]})}).catch(()=>{});
