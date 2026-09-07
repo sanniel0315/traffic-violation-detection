@@ -3225,6 +3225,23 @@
         .card { background: var(--gov-surface); border-radius: 8px; border: 1px solid var(--gov-border); box-shadow: 0 1px 2px rgba(16,24,40,0.04); margin-bottom: 16px; }
         .card-header { padding: 12px 16px; border-bottom: 1px solid var(--gov-border); font-weight: 700; color: var(--gov-text); display: flex; justify-content: space-between; align-items: center; background: var(--gov-surface-2); }
         .card-body { padding: 16px; }
+        /* ── 卡片收折 ──────────────────────────────────────────────
+           點卡片標題列就收折。標題列裡的按鈕/開關/下拉不受影響(見 JS 的排除清單)。
+           🛑 只在有 .card-header 的卡片啟用,而且是點「標題列的空白處」——
+              標題列常常放著 el-switch、匯出鈕,誤觸會很惱人。 */
+        .card > .card-header.ch-fold { cursor: pointer; user-select: none; }
+        .card > .card-header.ch-fold::after {
+            content: ''; flex: none; width: 8px; height: 8px; margin-left: 8px;
+            border-right: 2px solid var(--gov-muted); border-bottom: 2px solid var(--gov-muted);
+            transform: rotate(45deg) translateY(-2px); transition: transform .18s ease;
+        }
+        .card.is-folded > .card-header.ch-fold::after { transform: rotate(-45deg) translateY(2px); }
+        .card.is-folded > .card-header { border-bottom: none; }
+        .card.is-folded > .card-body,
+        .card.is-folded > .analysis-setting-tip { display: none !important; }
+        @media (prefers-reduced-motion: reduce) {
+            .card > .card-header.ch-fold::after { transition: none; }
+        }
         .data-table {
             width: 100%;
             border-collapse: separate;
@@ -19251,6 +19268,71 @@ const app=createApp({
         };
         const previewUsesVideo=computed(()=>false);
         const isPageVisible=()=>typeof document==='undefined' || document.visibilityState!=='hidden';
+
+        // ── 卡片收折 ────────────────────────────────────────────────────
+        // 使用者:「很多卡片都要有收折功能」。
+        // 🛑 不逐張改模板 —— 這份檔案是 in-DOM template,動幾十處標籤的風險
+        //    遠大於效益(歷史上 div 不平衡讓整頁變 raw mustache 過兩次)。
+        //    改成執行期加工:找出有 .card-header 的卡片,標題列掛可點樣式,
+        //    用事件委派處理點擊。模板一行都不動,新加的卡片自動就有這個能力。
+        // 🛑 標題列常放 el-switch / 匯出鈕 / 下拉 —— 點到那些不可以收折,
+        //    所以有排除清單。
+        const CARD_FOLD_KEY = 'tvd_folded_cards';
+        const cardFolded = new Set();
+        try {
+            const raw = localStorage.getItem(CARD_FOLD_KEY);
+            if (raw) JSON.parse(raw).forEach((k) => cardFolded.add(k));
+        } catch (e) { /* 隱私模式/停用儲存:收折照樣可用,只是不記住 */ }
+        const cardFoldKey = (header) => {
+            // 用標題文字當鍵。取前 48 字避免把整段說明也吃進來。
+            const t = (header.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 48);
+            return t || null;
+        };
+        const saveCardFold = () => {
+            try { localStorage.setItem(CARD_FOLD_KEY, JSON.stringify([...cardFolded])); }
+            catch (e) { /* 存不了就只在這次有效 */ }
+        };
+        // 把可收折樣式套到目前畫面上的卡片,並還原記住的收折狀態。
+        const applyCardFold = () => {
+            document.querySelectorAll('.card > .card-header').forEach((h) => {
+                if (!h.classList.contains('ch-fold')) h.classList.add('ch-fold');
+                const k = cardFoldKey(h);
+                if (k && cardFolded.has(k)) h.parentElement.classList.add('is-folded');
+            });
+        };
+        const FOLD_SKIP = 'button,a,input,select,textarea,label,svg use,' +
+                          '.el-switch,.el-select,.el-input,.el-button,.el-radio,.el-checkbox,' +
+                          '.el-date-editor,.el-input-number,.el-tag';
+        if (typeof document !== 'undefined') {
+            document.addEventListener('click', (ev) => {
+                const h = ev.target && ev.target.closest && ev.target.closest('.card > .card-header');
+                if (!h) return;
+                if (ev.target.closest(FOLD_SKIP)) return;   // 點到標題列裡的控制項:不收折
+                const card = h.parentElement;
+                const k = cardFoldKey(h);
+                const folded = card.classList.toggle('is-folded');
+                if (k) { folded ? cardFolded.add(k) : cardFolded.delete(k); saveCardFold(); }
+            });
+            // 🛑 卡片是 v-if/v-for 動態長出來的,掛載時套一次不夠 —— 換分頁、
+            //    資料載回來都會產生新卡片。用 MutationObserver 補,並且 debounce:
+            //    每秒鐘畫面更新很多次(倒數秒數),不 debounce 會空轉。
+            let foldTimer = null;
+            const scheduleFold = () => {
+                if (foldTimer) return;
+                foldTimer = setTimeout(() => { foldTimer = null; applyCardFold(); }, 200);
+            };
+            const foldObserverStart = () => {
+                const root = document.getElementById('app');
+                if (!root) { setTimeout(foldObserverStart, 300); return; }
+                applyCardFold();
+                new MutationObserver(scheduleFold).observe(root, {childList: true, subtree: true});
+            };
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', foldObserverStart);
+            } else {
+                setTimeout(foldObserverStart, 300);
+            }
+        }
         // ── 瀏覽器連線預算 ────────────────────────────────────────────────
         // HTTP/1.1 對同一 origin 最多 6 條並行連線 (Chrome / Edge / Firefox 皆同)。
         // 每路 MJPEG (multipart/x-mixed-replace) 是長連線，會「永久佔住」一條，
