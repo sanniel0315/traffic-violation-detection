@@ -56,7 +56,11 @@ if [ -n "$(git status --porcelain)" ]; then
 $(git status --short | head -10)"
 fi
 LOCAL=$(git rev-parse HEAD)
-info "本機 HEAD = $(git log --format='%h %s' -1)"
+# 🛑 bundle 的尖端一定要給**分支名**不能給 SHA —— 給 SHA 的話 bundle 裡沒有
+#    任何 ref,git 會回 "Refusing to create empty bundle"(實際踩過)。
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+[ "$BRANCH" = "HEAD" ] && die "目前是 detached HEAD,請先切到分支再部署。"
+info "本機 HEAD = $(git log --format='%h %s' -1)  (分支 $BRANCH)"
 
 # ── 2) 連線與遠端狀態 ─────────────────────────────────────────────
 say "現場連線"
@@ -109,7 +113,7 @@ fi
 say "打包並傳送"
 BUNDLE=$(mktemp -t deploy.XXXXXX.bundle)
 trap 'rm -f "$BUNDLE"' EXIT
-git bundle create "$BUNDLE" "$REMOTE..$LOCAL" >/dev/null 2>&1
+git bundle create "$BUNDLE" "$REMOTE..$BRANCH" >/dev/null
 info "bundle $(wc -c < "$BUNDLE") bytes"
 scp "${SSH_OPTS[@]}" -q "$BUNDLE" "$USER_AT@$HOST:/tmp/deploy.bundle"
 info "已送達 $HOST:/tmp/deploy.bundle"
@@ -117,7 +121,7 @@ info "已送達 $HOST:/tmp/deploy.bundle"
 # ── 5) 在現場套用 ─────────────────────────────────────────────────
 say "現場套用"
 ssh "${SSH_OPTS[@]}" "$USER_AT@$HOST" \
-    "REMOTE_DIR='$REMOTE_DIR' RESTART_SIGNAL=$RESTART_SIGNAL RESTART_IO=$RESTART_IO bash -s" <<'REMOTE_SCRIPT'
+    "REMOTE_DIR='$REMOTE_DIR' BRANCH='$BRANCH' RESTART_SIGNAL=$RESTART_SIGNAL RESTART_IO=$RESTART_IO bash -s" <<'REMOTE_SCRIPT'
 set -euo pipefail
 cd "$REMOTE_DIR"
 BEFORE=$(git rev-parse --short HEAD)
@@ -128,7 +132,7 @@ if [ -f scripts/deploy_keep_runtime_config.sh ]; then
   KEEP=$(bash scripts/deploy_keep_runtime_config.sh save)
 fi
 
-git fetch /tmp/deploy.bundle main:refs/remotes/origin/main -f
+git fetch /tmp/deploy.bundle "$BRANCH:refs/remotes/origin/main" -f
 git reset --hard origin/main
 
 if [ -n "$KEEP" ]; then
