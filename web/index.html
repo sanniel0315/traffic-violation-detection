@@ -3851,10 +3851,6 @@
         .sig-head-wrap { background:none; border:none; }
         .sig-head { position:relative; }
         .sig-head svg { display:block; overflow:visible; }
-        .sig-head .sh-no { position:absolute; left:50%; top:-7px; transform:translateX(-50%);
-                           font:700 10px var(--font-mono); color:#ffffff; background:#232830;
-                           border-radius:99px; padding:0 5px; line-height:14px;
-                           border:1px solid rgba(255,255,255,.75); }
         .sig-head .sh-box { fill:#232830; stroke:#ffffff; stroke-width:1.6; }
         .sig-head circle { fill:#39404a; transition:fill .25s ease; }
         .sig-head.red   .sh-r { fill:#e8463a; filter:drop-shadow(0 0 5px rgba(232,70,58,.95)); }
@@ -24505,18 +24501,21 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //    表達顏色,看不出「這是號誌」;暗掉的兩燈本身就是
                 //    「現在不是那個狀態」的資訊。用 divIcon 才畫得出燈箱,
                 //    CSS 動畫(綠燈呼吸、清道黃燈閃)也才掛得上去。
-                const lampIcon = (st, label) => L.divIcon({
-                    className: 'sig-head-wrap', iconSize: [22, 52],
-                    // 🛑 錨點指到燈箱**底部中央** —— 燈頭是立在路面上的,
-                    //    用中心對齊會讓燈箱有一半沉進路面,位置看起來就是錯的。
-                    iconAnchor: [11, 52],
+                // 🛑 橫式燈箱(使用者決定):現場是橫式三燈,圖上跟著橫放才對得起來。
+                //    橫式在地圖上也比直式省高度,五座燈排在一起不會擋到路口幾何。
+                //    不標燈號 —— 編號只有維護在意,戰情牆要看的是燈色。
+                const lampIcon = (st) => L.divIcon({
+                    className: 'sig-head-wrap', iconSize: [46, 22],
+                    // 錨點在燈箱正中央:橫式燈是掛在桿上的,不是立在路面上,
+                    // 用底部對齊反而會讓它整個浮到位置上方。
+                    iconAnchor: [23, 11],
                     html: '<div class="sig-head ' + st + '">'
-                        + '<svg viewBox="0 0 22 46" width="22" height="46" aria-hidden="true">'
-                        + '<rect x="1.2" y="1.2" width="19.6" height="43.6" rx="5" class="sh-box"/>'
+                        + '<svg viewBox="0 0 46 22" width="46" height="22" aria-hidden="true">'
+                        + '<rect x="1.2" y="1.2" width="43.6" height="19.6" rx="5" class="sh-box"/>'
                         + '<circle cx="11" cy="11" r="5.6" class="sh-r"/>'
-                        + '<circle cx="11" cy="23" r="5.6" class="sh-a"/>'
-                        + '<circle cx="11" cy="35" r="5.6" class="sh-g"/>'
-                        + '</svg><b class="sh-no">' + label + '</b></div>',
+                        + '<circle cx="23" cy="11" r="5.6" class="sh-a"/>'
+                        + '<circle cx="35" cy="11" r="5.6" class="sh-g"/>'
+                        + '</svg></div>',
                 });
                 SIG_HEADS.filter((h) => h.phase === ph).forEach((h) => {
                     // 沿進場道軸線往上游 offset_m,再側移 side_m(避免互相重疊)
@@ -24526,9 +24525,9 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                     const tip = '號誌燈 ' + h.label + ' · 分相 ' + ph + ' ' + lampWord
                               + '（位置為示意,待現場提供實際座標）';
                     upsert('lamp', 'h' + h.id,
-                           () => L.marker(HP, {icon: lampIcon(lampState, h.label), keyboard: false})
+                           () => L.marker(HP, {icon: lampIcon(lampState), keyboard: false})
                                   .bindTooltip(tip, {permanent: false}),
-                           (l) => { l.setLatLng(HP); l.setIcon(lampIcon(lampState, h.label));
+                           (l) => { l.setLatLng(HP); l.setIcon(lampIcon(lampState));
                                     l.setTooltipContent(tip); });
                     fitPts.push([HP[0], HP[1]]);
                 });
