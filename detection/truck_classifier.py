@@ -46,7 +46,20 @@ def get_truck_cls_model_path() -> str:
 
 # 細分類的最小框短邊(px)。低於此值直接判定「判不出來」,不送 GPU。
 # 0 = 不啟用(全部都送,舊行為)。
+# 🛑 2026-09-07 實測:把門檻從 48 拉到 200(涵蓋率剩 52%),小貨 F1 仍是 75~77%
+#    —— 小框不是小貨判錯的原因,別再想用這個門檻換準確度。
 MIN_CROP_PX = int(os.getenv("TRUCK_CLS_MIN_CROP_PX", "48") or 0)
+
+# ── 大小貨車判定工作點(2026-09-07 留半驗證後定案)────────────────────────
+# 仲裁覆寫的最低信心:仲裁模型判大貨的機率要高於此值才推翻主模型的小貨判定。
+# 舊行為等同 0.0(只要 argmax 是大貨就推翻,不管多沒把握)→ 誤殺真小貨。
+# 留出驗證:小貨 F1 67.1%→74.1%、大小貨巨平均 recall 78.0%→84.2%,整體也從
+# 94.9% 升到 95.4% —— 兩邊同時變好,不是取捨。
+ARBITER_MIN_CONF = float(os.getenv("TRUCK_CLS_ARBITER_MIN_CONF", "0.99"))
+# 主模型判定前把 light 機率乘上這個倍率(>1 = 較願意判小貨)。
+# 現行判定偏保守(小貨 precision 82.6% 遠高於 recall 71.4%),不在最佳工作點。
+# 留出驗證 alpha=2.0 再多拿 +1.9pp 小貨 F1、+2.6pp 巨平均 recall。
+LIGHT_BIAS = float(os.getenv("TRUCK_CLS_LIGHT_BIAS", "2.0"))
 
 
 class TruckClassifier:
@@ -183,14 +196,17 @@ class TruckClassifier:
             return self._default_result()
 
         if self.primary is not None:
-            # 主模型先判
-            class_name, top1_conf = self._infer(self.primary, self.primary_names, crop, "truck_cls")
+            # 主模型先判(light 機率乘 LIGHT_BIAS 後才取 argmax,見上方工作點說明)
+            class_name, top1_conf = self._infer(self.primary, self.primary_names, crop, "truck_cls",
+                                                light_bias=LIGHT_BIAS)
             # 🛑 只有主模型判「小貨」時才叫仲裁 —— 這是把成本從 5.4% 壓到 0.9% 的關鍵。
             #    主模型判其他三類時實測都比現行模型好,不需要也不該去問第二顆。
             if class_name == "light_truck":
                 arb_name, arb_conf = self._infer(
                     self.model, self.class_names, crop, "truck_cls_arbiter")
-                if arb_name == "heavy_truck":
+                # 🛑 仲裁要「夠有把握」才推翻。低信心也推翻會誤殺真小貨:
+                #    留出驗證小貨 F1 67.1%→74.1%,且整體準確度同時上升。
+                if arb_name == "heavy_truck" and arb_conf >= ARBITER_MIN_CONF:
                     class_name, top1_conf = arb_name, arb_conf
         else:
             class_name, top1_conf = self._infer(self.model, self.class_names, crop, "truck_cls")
