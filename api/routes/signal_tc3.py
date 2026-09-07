@@ -1664,7 +1664,20 @@ CONFIG_STALE_SEC = int(os.getenv("SIGNAL_TC3_CONFIG_STALE_SEC", "86400") or 8640
 CONFIG_SECTIONS = [
     {"key": "strategy",   "title": "控制策略",       "query": "5F40", "reply": "5FC0", "page": "5-8"},
     {"key": "timing",     "title": "目前時制計畫",   "query": "5F48", "reply": "5FC8", "page": "5-43"},
-    {"key": "phase_order", "title": "時相排列",      "query": "5F42", "reply": "5FC2", "page": "5-21"},
+    # 🛑 2026-09-08 更正:這一格的標題本來寫「時相排列」,但 5F42/5FC2 是
+    #    **特殊日車道調撥**(utc-tc3 的命令名就是這樣)。現場看到的
+    #    DirectIn/DirectOut/ClearTime/FlashGreen/ReverseTimeType 正是車道調撥
+    #    的欄位,標成時相排列會讓人以為那是分相順序 —— 兩件完全不同的事。
+    #    真正的「時相步階排列」是 5F2F/5F5F/5FDF(選配項,見下)。
+    {"key": "reverse_special", "title": "特殊日車道調撥", "query": "5F42", "reply": "5FC2", "page": "5-21"},
+    {"key": "reverse_normal", "title": "一般日車道調撥", "query": "5F41", "reply": "5FC1", "page": "5-14"},
+    # 🛑 時相步階排列是驗收條文明列的項目,但這台控制器**拒收**這則查詢:
+    #    歷史上送過 16 次,每次都回 0F81 ErrorCode=1(參數 PhaseOrder=0 符合
+    #    規範範圍 0~255,而且 5F03 回報的 phase_order 就是 0)。
+    #    它是 level O 選配項,廠商可以不實作 —— 但 ErrorCode=1 的確切語意
+    #    規範裡沒有依據,要向廠商確認是「不支援」還是別的原因,不要自行認定。
+    {"key": "step_order", "title": "時相步階排列(控制器拒收,待廠商確認)",
+     "query": "5F5F", "reply": "5FDF", "page": "5-70"},
     {"key": "day_type",   "title": "一般日時段型態", "query": "5F46", "reply": "5FC6", "page": "5-36"},
     {"key": "special_day", "title": "特殊日時段型態", "query": "5F47", "reply": "5FC7", "page": "5-40"},
     {"key": "actuated",   "title": "觸動控制組態",   "query": "5F49", "reply": "5FC9", "page": "5-47"},
