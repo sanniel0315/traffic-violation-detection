@@ -25362,6 +25362,27 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         const sigWarMapNote = ref('');
         const WR_LV_COLOR = {0: '#b8c4d4', 1: '#1f9d55', 2: '#d9a400', 3: '#e8842b', 4: '#c43a31'};
         const wrLvRank = (l) => ({low: 1, medium: 2, high: 3, critical: 4}[String(l || '').toLowerCase()] || 0);
+        // 🛑 2026-09-08 現場回報「地圖的路況反了:下匝道在塞、上匝道沒車,圖上相反」。
+        //    查證後決策資料是對的(實測 分相1 11.5m / 分相2 37.5m),錯的是**著色來源**:
+        //    線段顏色原本取自相機的壅塞等級 level,而 level 來自壅塞分數
+        //    = max(佔有率, 排隊分數) 的**移動平均** —— 尖峰時路況變化快,
+        //    移動平均會落後好幾分鐘,於是顏色顯示的是幾分鐘前的狀態,
+        //    跟旁邊即時的排隊帶互相矛盾。
+        //    🛑 而且相機 2(NE-1)的壅塞偵測 ROI **同時涵蓋上匝道與下匝道**
+        //       (「上高速公路前平面道路」+「下高速公路後平面道路」),
+        //       下匝道一塞就會把分相 1 的 level 拉高 —— 上匝道那條線因此被染紅。
+        //       那是現場 ROI 設定的問題,不是程式能自行決定要不要改的。
+        //    改用「排隊佔儲車空間的比例」著色:即時、與排隊帶同源、與決策同源,
+        //    三者不會再互相矛盾。相機自己的壅塞等級保留在量測卡與 tooltip。
+        // 🛑 這是**顯示用**的分級門檻,不是壅塞判級演算法的門檻,兩者不可混用。
+        const wrLvFromQueue = (q, storage) => {
+            const r = (Number(storage) || 0) ? (Number(q) || 0) / Number(storage) : 0;
+            if (r <= 0) return 0;
+            if (r < 0.10) return 1;
+            if (r < 0.30) return 2;
+            if (r < 0.60) return 3;
+            return 4;
+        };
         // 公尺 ↔ 經緯度(站點在北緯 23°,等距近似夠用)
         const WR_MLAT = 110900, WR_MLON = 102500;
         const wrOffset = (lat, lng, dxm, dym) => [lat + dym / WR_MLAT, lng + dxm / WR_MLON];
@@ -25509,10 +25530,13 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 let ux = (upCam.lng - stopCam.lng) * WR_MLON, uy = (upCam.lat - stopCam.lat) * WR_MLAT;
                 if (upCam === stopCam) { ux = (stopCam.lng - center[1]) * WR_MLON; uy = (stopCam.lat - center[0]) * WR_MLAT; }
                 const L0 = Math.hypot(ux, uy) || 1; ux /= L0; uy /= L0;
-                let lv = 0, q = 0;
-                list.forEach((c) => { lv = Math.max(lv, wrLvRank(c.level)); q = Math.max(q, Number(c.queue_m) || 0); });
+                let camLv = 0, q = 0;
+                list.forEach((c) => { camLv = Math.max(camLv, wrLvRank(c.level)); q = Math.max(q, Number(c.queue_m) || 0); });
                 const storage = Number((sides[ph] || {}).storage_m) || (ph === 1 ? 210 : 600);
                 const segLen = Math.min(storage, ph === 1 ? 160 : 220);
+                // 著色依即時排隊佔儲車比例(見 wrLvFromQueue 的說明),不用滯後的
+                // 壅塞分數移動平均;camLv 留給 tooltip 對照,兩個數字都看得到。
+                const lv = wrLvFromQueue(q, storage);
                 const color = WR_LV_COLOR[lv];
                 const A = [stopCam.lat, stopCam.lng];
                 const B = wrOffset(stopCam.lat, stopCam.lng, ux * segLen, uy * segLen);
@@ -25563,10 +25587,20 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                                         .trim() + ' ' + flowCls); });
                 // 實測排隊帶:亮色、不做動畫(它是長度不是流動)。量不到就移除,
                 // 不要留一條長度 0 的線在圖上。
+                // 🛑 tooltip 把兩個等級並列:圖上的顏色是依即時排隊算的,
+                //    相機自己的壅塞等級是分數移動平均(會滯後,而且分相 1 的
+                //    NE-1 相機 ROI 涵蓋下匝道)。兩個數字不一致是正常的,
+                //    但看的人有權知道差在哪 —— 藏起來只會讓人以為圖畫錯了。
+                const LVW = ['無', '順暢', '尚可', '壅塞', '嚴重壅塞'];
+                const segTip = '分相 ' + ph + ' · 排隊 ' + q.toFixed(1) + ' m / 儲車 '
+                             + storage + ' m（' + LVW[lv] + '）'
+                             + '<br>相機壅塞等級 ' + LVW[camLv] + '（壅塞分數移動平均，會滯後）';
+                if (wrLayers.seg[ph]) wrLayers.seg[ph].bindTooltip(segTip, {sticky: true});
                 if (q > 0) {
                     upsert('qfill', ph, () => L.polyline([A, Q], {color: color, weight: 11, opacity: .95,
                                                                   lineCap: 'butt', className: 'wr-qfill'}),
                            (l) => { l.setLatLngs([A, Q]); l.setStyle({color: color}); });
+                    if (wrLayers.qfill[ph]) wrLayers.qfill[ph].bindTooltip(segTip, {sticky: true});
                 } else if (wrLayers.qfill[ph]) {
                     try { wrMap.removeLayer(wrLayers.qfill[ph]); } catch (e) { }
                     delete wrLayers.qfill[ph];
