@@ -750,9 +750,79 @@ _fault = {
     # kind -> {"since": ts, "detail": str}  已確認、正在降階中的
     "active": {},
     "clear_since": None,
-    "send_fails": 0, "logic_fails": 0,
+    "send_fails": 0, "logic_fails": 0, "nack_fails": 0,
+    "last_error": "",
     "events": deque(maxlen=200),
 }
+
+
+ACK_WAIT_SEC = float(os.getenv("SIGNAL_ACK_WAIT_SEC", "5") or 5)
+
+
+def _ack_of_last_send() -> Optional[bool]:
+    """我方上一則 5F1C 有沒有被控制器接受。True 接受 / False 被拒 / None 還不知道。
+
+    🛑 不能用 seq 配對。實測 0F80 的 seq 全是 1(控制器自己的計數),不是回我方
+       送出的 seq —— 先前看到「同一則命令收到 9 個 ACK」也是這個原因,那其實是
+       控制器每 2 秒重送同一個 seq 的回覆。
+       改用「0F80/0F81 酬載帶的指令碼 + 時間鄰近」判定。
+    🛑 這個判定的前提是同一時間只有我方在送 5F1C。若外部系統也在送,配對會混淆 ——
+       目前 hold_5f10 只擋中央的 5F10,不擋 5F1C,所以這是已知限制,不是精確配對。
+       它的用途是「連續多次都沒被接受就降階」,不是逐則稽核。
+    🛑 為什麼要看 ACK 而不是只看「送得出去」:5F1C 的 NAK 率實測 42%
+       (11,006 / 26,222)。送出成功不等於被接受,只看送出會讓我方以為在控制,
+       實際上控制器一則都沒吃 —— 那正是條文說的「指令傳輸錯誤導致動態控制
+       策略無法有效運作」。
+    """
+    last = _act.get("last_ts") or 0
+    if not last:
+        return None
+    now = time.time()
+    if now - last < 1.0:
+        return None                     # 太早,控制器還沒回
+    try:
+        conn = _sqlite3.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=5)
+        rows = list(conn.execute(
+            "SELECT code,raw FROM signal_frames WHERE ts>=? AND ts<=? "
+            "AND code IN ('0F80','0F81') ORDER BY ts",
+            (last, last + ACK_WAIT_SEC)))
+        conn.close()
+    except Exception:
+        return None                     # 查不到就不下判斷,不要因為 DB 忙就降階
+    for code, raw in rows:
+        try:
+            b = bytes.fromhex(str(raw).replace(" ", ""))
+        except Exception:
+            continue
+        i = b.find(bytes([0x0F, 0x80 if code == "0F80" else 0x81]))
+        if i < 0 or len(b) < i + 4:
+            continue
+        if b[i + 2] == 0x5F and b[i + 3] == 0x1C:
+            return code == "0F80"
+    # 等夠久了還沒看到任何回覆 → 視為沒被接受
+    return False if (now - last) > ACK_WAIT_SEC else None
+
+
+def _degrade_persist(level: str, reason: str, kind: str = "") -> None:
+    """降階事件寫進 DB。
+
+    🛑 記憶體 deque 重啟就沒了,而驗收要查的正是「什麼時候降階、多久、為什麼」。
+       這是條文「可於系統介面查詢…故障情形等相關統計資料」的資料來源。
+    """
+    try:
+        conn = _db()
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS signal_degrade_log("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, epoch REAL,"
+            "level TEXT, kind TEXT, reason TEXT)")
+        conn.execute(
+            "INSERT INTO signal_degrade_log(ts,epoch,level,kind,reason) VALUES(?,?,?,?,?)",
+            (datetime.now().isoformat(timespec="seconds"), time.time(),
+             level, kind, reason[:300]))
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        _fault["last_error"] = "降階事件寫入失敗: %s" % exc
 
 
 def _fault_note(kind: str, on: bool, detail: str = "") -> None:
@@ -791,10 +861,22 @@ def _fault_check(live: Optional[dict], m1: Optional[dict], m2: Optional[dict]) -
     else:
         _fault_note("detector", False)
 
-    # (2) 指令傳輸錯誤:連續多次下發失敗
-    if _fault["send_fails"] >= FAULT_SEND_FAILS:
-        _fault_note("transmit", True, "連續 %d 次下發失敗:%s"
-                    % (_fault["send_fails"], _act.get("last_error") or ""))
+    # (2) 指令傳輸錯誤 —— 兩種都算:送不出去、以及送出後控制器沒接受。
+    #     🛑 只看「送得出去」是不夠的:5F1C 的 NAK 率實測 42%,
+    #        送出成功不等於被接受(見 _ack_of_last_send 的說明)。
+    ack = _ack_of_last_send()
+    if ack is False:
+        _fault["nack_fails"] += 1
+        _act["last_ack"] = "未被接受"
+    elif ack is True:
+        _fault["nack_fails"] = 0
+        _act["last_ack"] = "已接受"
+    fails = max(_fault["send_fails"], _fault["nack_fails"])
+    if fails >= FAULT_SEND_FAILS:
+        why = ("連續 %d 次下發送不出去:%s" % (_fault["send_fails"], _act.get("last_error") or "")
+               if _fault["send_fails"] >= FAULT_SEND_FAILS
+               else "連續 %d 次下發未被控制器接受(無 ACK 或 NAK)" % _fault["nack_fails"])
+        _fault_note("transmit", True, why)
     else:
         _fault_note("transmit", False)
 
@@ -815,11 +897,16 @@ def _fault_check(live: Optional[dict], m1: Optional[dict], m2: Optional[dict]) -
         _fault["clear_since"] = None
         detail = "%s:%s(持續逾 %.0f 秒確認)" % (
             FAULT_KINDS[kind], info["detail"], FAULT_HOLD_SEC)
+        # 🛑 L2 與 L3 的**動作完全相同**(什麼都不做),分級是為了讓看的人知道
+        #    我方還剩多少能力:L2 是「看得到但不控」,L3 是「連看都看不到」。
+        #    抄錄拿不到燈態就是 L3 —— 那時我方連路口現在幾相幾秒都不知道。
+        level = "L3" if (kind == "detector" and "燈態" in info.get("detail", "")) else "L2"
         _fault["events"].append({"ts": now, "kind": kind, "action": "降階",
                                  "detail": detail})
         # 🛑 L2 = 停止下發。續約也走同一道守衛,所以會一併停 ——
         #    授權在一分鐘內過期,控制器自己回到固定時制計畫。
-        T.enter_degraded("L2", detail)
+        T.enter_degraded(level, detail)
+        _degrade_persist(level, detail, kind)
         add_log("error", "故障檢核:%s → 停止下發,號誌回復固定時制" % detail, "signal")
         try:
             push_alert("號誌動態控制降階", detail, level="critical")
@@ -842,6 +929,7 @@ def _fault_check(live: Optional[dict], m1: Optional[dict], m2: Optional[dict]) -
             if dyn.get("level") == "L2" and any(
                     FAULT_KINDS[k] in (dyn.get("reason") or "") for k in FAULT_KINDS):
                 T.enter_degraded("L0", "故障已排除(%s),恢復動態控制" % kinds)
+                _degrade_persist("L0", "故障已排除(%s)" % kinds, "clear")
             add_log("info", "故障檢核:%s 已排除逾 %.0f 秒,恢復動態控制"
                     % (kinds, FAULT_CLEAR_SEC), "signal")
     elif _fault["pending"]:
