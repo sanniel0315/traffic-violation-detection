@@ -1276,36 +1276,62 @@ def _do_reassert() -> None:
         _reassert["last_error"] = str(exc)
 
 
+def _frame_strategy(rec: Optional[dict]) -> Optional[int]:
+    """從中央這一框的原始位元組取出 ControlStrategy(5F10 後面第一個位元組)。
+
+    🛑 hold_5f10 與 reassert 都要判「中央這則有沒有收走我方 bit4」,
+       共用同一份解析 —— 兩份各寫一次,哪天格式變了只會改到一邊。
+       解不出來回 None,呼叫端一律當成「不確定」而保守放行。
+    """
+    try:
+        b = bytes.fromhex(str((rec or {}).get("raw") or "").replace(" ", ""))
+        i = b.find(bytes([0x5F, 0x10]))
+        if i >= 0 and len(b) > i + 2:
+            return b[i + 2]
+    except Exception:
+        pass
+    return None
+
+
+def _takes_our_authority(rec: Optional[dict]) -> bool:
+    """中央這則 5F10 是不是在收走我方的時相控制(bit4)。
+
+    🛑 解不出策略值時回 False(放行)。看不懂的東西不該替中央決定要不要送 ——
+       擋錯了中央會收不到 ACK 而判定控制器通訊故障,代價比放行大。
+    """
+    strat = _frame_strategy(rec)
+    return strat is not None and not (strat & 0x10)
+
+
 def _downlink_allow(rec: Optional[dict]) -> bool:
     """中央這一框要不要轉給控制器。回 True 轉、False 擋(並記帳)。"""
     _downlink["seen"] += 1
     code = (rec or {}).get("code")
     if _downlink_policy["v"] == "hold_5f10" and code == "5F10":
-        # 🛑 只在我方正持有控制權(總開關開、未降階)時才擋。
-        #    平時中央的策略設定照過 —— 否則等於把路口控制權從中央手上拿走。
-        if _dyn.get("enabled") and _dyn.get("level") == "L0":
+        # 🛑 兩個條件都要成立才擋,少一個都不行:
+        #    (a) 我方正持有控制權(總開關開、未降階)—— 否則等於把路口從中央手上拿走
+        #    (b) 這一則確實在收走我方 bit4 —— 中央其他的策略設定照過。
+        #        2026-09-07 使用者:「這樣一直改來改去不可,這幾週都是 BYPASS」。
+        #        改來改去指的是 reassert 造成的 0x01↔0x10 來回跳。改成直接擋,
+        #        但只擋那一則,不是擋掉中央對這個路口的所有策略設定。
+        # 🛑 擋下的那一則中央收不到 0F80 ACK,中央端可能顯示為通訊逾時/故障。
+        #    這是已知代價,使用者已在現場與中央確認過採用此模式。
+        #    我方不偽造 ACK —— 那是對中央謊報。
+        if (_dyn.get("enabled") and _dyn.get("level") == "L0"
+                and _takes_our_authority(rec)):
             _downlink["held"] += 1
             _downlink["last_held"] = time.time()
             _downlink["events"].append({"ts": time.time(), "code": code,
                                         "action": "held", "raw": (rec or {}).get("raw")})
-            add_log("warning", "下控攔截:中央 5F10 未轉給控制器(我方持有控制權) raw=%s"
+            add_log("warning", "下控攔截:中央 5F10 要收回時相控制,未轉給控制器 raw=%s"
                     % (rec or {}).get("raw"), "signal")
             return False
     if _downlink_policy["v"] == "reassert" and code == "5F10":
         # 🛑 只在我方確實持有控制權(總開關開、未降階)時才重新宣告。
         #    平時中央的策略設定照過,不然等於把控制權從中央手上搶走。
         if _dyn.get("enabled") and _dyn.get("level") == "L0":
-            # 從這一框的原始位元組取 ControlStrategy —— 直接找 5F10 再往後兩個。
-            strat = None
-            try:
-                _b = bytes.fromhex(str((rec or {}).get("raw") or "").replace(" ", ""))
-                _i = _b.find(bytes([0x5F, 0x10]))
-                if _i >= 0 and len(_b) > _i + 2:
-                    strat = _b[_i + 2]
-            except Exception:
-                strat = None
             # 中央送的策略若已經包含 bit4,不必重新宣告 —— 它沒有在收走我方權限
-            if strat is not None and not (strat & 0x10):
+            if _takes_our_authority(rec):
                 # 🛑 延遲不能太短。2026-09-07 實測:中央 5F10 在 .320 送達、
                 #    .456 才被 ACK,而控制器的 5F00 策略通知要到 .645/.705 才發出
                 #    —— 我方在 .521 重新宣告時控制器還在處理上一則,那一則被丟掉

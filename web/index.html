@@ -3753,6 +3753,8 @@
         .wr-sw { display:flex; flex-wrap:wrap; gap:8px 18px; margin:2px 0 10px; }
         .wr-sw-i { display:flex; align-items:center; gap:8px; }
         .wr-sw-i em { font-style:normal; font-size:var(--fs-caption); color:var(--gov-muted); }
+        .wr-sw-i em.warn { color:var(--gov-warn, #e8590c); font-weight:600; }
+        .wr-sw-k { font-size:var(--fs-caption); color:var(--gov-mute-2); }
         .wr-ctlway { display:flex; flex-direction:column; gap:3px; margin:6px 0 12px;
                      padding:8px 12px; border-left:3px solid var(--gov-border-strong);
                      background:var(--gov-bg-soft,#f1f5f9); border-radius:0 8px 8px 0; }
@@ -3999,22 +4001,37 @@
                   box-shadow:0 1px 3px rgba(20,35,60,.18); white-space:nowrap; }
         .wr-tip::before { display:none; }
         /* 地圖下方的相機狀態列 */
-        .wr-camrow { display:grid; gap:7px; margin-top:9px;
-                     grid-template-columns:repeat(auto-fit, minmax(215px, 1fr)); }
-        .wr-camcell { display:flex; align-items:center; gap:7px; min-width:0;
-                      padding:7px 10px; border:1px solid var(--gov-border);
-                      border-radius:9px; background:var(--gov-surface); font-size:var(--fs-micro); }
+        .wr-camrow { display:grid; gap:8px; margin-top:9px;
+                     grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); }
+        /* 🛑 2026-09-07 使用者指定 14px(--fs-body)。原本擠成一橫列、字 11px,
+           站在戰情牆前要湊近才讀得到。改成兩段:上排身分(名稱/分相)、
+           下排量測(佔有率/排隊),量測那兩列的標籤、棒、數字三欄各自對齊,
+           四張卡並排時同一個欄位落在同一條垂直線。 */
+        .wr-camcell { display:flex; flex-direction:column; gap:5px; min-width:0;
+                      padding:9px 11px; border:1px solid var(--gov-border);
+                      border-radius:9px; background:var(--gov-surface);
+                      font-size:var(--fs-body);
+                      transition:border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
+        .wr-camcell:hover { border-color:var(--gov-primary, #1971c2);
+                            box-shadow:0 2px 10px rgba(16,24,40,.10); transform:translateY(-1px); }
         .wr-camcell.off { opacity:.5; border-style:dashed; }
-        /* 🛑 字級與「控制權現況」的 chip 統一(2026-09-07 使用者):兩者並排在同一頁,
-           先前一個用 --fs-micro、一個寫死 13px,看起來像兩套設計。
-           統一走 --fs-small,數字仍用 mono 保持對齊。 */
-        .wr-camcell b { font:600 var(--fs-small) var(--font-mono); color:var(--gov-text); flex:none; }
+        .wr-camcell.off:hover { transform:none; box-shadow:none; }
+        .wr-cc-hd { display:flex; align-items:center; gap:7px; min-width:0; }
+        .wr-camcell b { font:600 var(--fs-body) var(--font-mono); color:var(--gov-text); flex:none; }
         .wr-cdot { width:9px; height:9px; border-radius:50%; flex:none;
                    box-shadow:0 0 0 2px var(--gov-surface), 0 0 0 3px var(--gov-border); }
-        .wr-cph { color:var(--gov-mute-2); font-size:var(--fs-small); flex:none; }
-        .wr-cv { margin-left:auto; color:var(--gov-muted); white-space:nowrap; font-size:var(--fs-small); }
-        .wr-cv + .wr-cv { margin-left:10px; }
-        .wr-cv i { font-style:normal; font-family:var(--font-mono); font-weight:600; color:var(--gov-text); }
+        .wr-cph { color:var(--gov-mute-2); font-size:var(--fs-small); flex:none; margin-left:auto; }
+        /* 量測列:標籤固定寬 → 棒吃剩餘 → 數字靠右。三欄對齊才掃得快。 */
+        .wr-cc-m { display:flex; align-items:center; gap:9px; min-width:0; }
+        .wr-cc-m .k { flex:0 0 46px; color:var(--gov-muted); font-size:var(--fs-small); }
+        .wr-cc-m b { flex:none; min-width:56px; text-align:right;
+                     animation:wrPop .45s ease-out; }
+        /* hover 時把棒加粗一點:滑到哪一列,哪一列的量測被強調 */
+        .wr-camcell:hover .wr-bar.sm { height:6px; }
+        .wr-bar.sm { transition:height .18s ease; }
+        @media (prefers-reduced-motion: reduce) {
+            .wr-camcell, .wr-camcell:hover, .wr-cc-m b { transition:none; animation:none; transform:none; }
+        }
         .wr-map-note { margin:6px 10px; font-size:var(--fs-caption); color:var(--gov-warn); }
         .wr-geo-count { position:absolute; right:10px; top:9px; text-align:right; z-index:500;
                         background:rgba(255,255,255,.92); padding:6px 12px; border-radius:var(--r-card); border:1px solid var(--gov-border); }
@@ -8155,13 +8172,23 @@
                                         <em :title="'🛑 這個開關是記憶體狀態,traffic-signal 重啟(含每次部署)會回到關閉 —— 那是刻意的 fail-safe:重啟後不會自己開始下發。'">{{ sigDyn.level && sigDyn.level!=='L0' ? ('降階 '+sigDyn.level) : (sigDynOn?'我方可下發':'我方不下發(重啟後預設)') }}</em>
                                     </span>
                                     <span class="wr-sw-i">
-                                        <!-- 🛑 總開關關閉時「維持授權」是**死的** —— reassert 的守衛規定
-                                             只有總開關開且未降階才重新宣告。不 disable 的話畫面看起來
-                                             啟用了、實際完全不作用,那比沒有這個開關更糟。 -->
-                                        <el-switch v-model="sigKeepAuth" size="small" :loading="sigDynBusy"
-                                                   :disabled="!sigDynOn"
-                                                   @change="sigSetPolicy" active-text="維持授權" inline-prompt></el-switch>
-                                        <em>{{ !sigDynOn ? '需先啟用動態控制' : (sigKeepAuth ? ('已重新宣告 '+(sigDl.reassert&&sigDl.reassert.count||0)+' 次') : '中央改回定時就留住') }}</em>
+                                        <!-- 🛑 三種都是**死的**如果總開關沒開 —— 三個政策的守衛都規定
+                                             只有總開關開且未降階才作用。不 disable 的話畫面看起來
+                                             啟用了、實際完全不作用,那比沒有這個控制項更糟。
+                                             🛑 「攔下」會讓中央收不到那一則的 ACK,中央端可能顯示通訊
+                                             逾時。這是已知代價,不是 bug —— 我方不偽造 ACK。 -->
+                                        <span class="wr-sw-k">中央改回定時時</span>
+                                        <el-radio-group v-model="sigDlPolicy" size="small"
+                                                        :disabled="!sigDynOn || sigDynBusy"
+                                                        @change="sigSetPolicy">
+                                            <!-- 🛑 用 label= 不用 value= —— 本檔載入的 Element Plus
+                                                 其他 radio-button 全都用 label,新版才支援 value。
+                                                 混用會在舊版變成選不動的按鈕。 -->
+                                            <el-radio-button label="pass">不介入</el-radio-button>
+                                            <el-radio-button label="reassert">重新宣告</el-radio-button>
+                                            <el-radio-button label="hold_5f10">攔下</el-radio-button>
+                                        </el-radio-group>
+                                        <em :class="{warn:sigDlPolicy==='hold_5f10'}">{{ sigDlText }}</em>
                                     </span>
                                     <span class="wr-sw-i">
                                         <!-- 🛑 這個開關開了之後,演算法會**自己**決定何時提早結束綠燈並
@@ -8267,11 +8294,26 @@
                         <div class="wr-camrow">
                             <div v-for="c in sigWarMapCams" :key="'mc'+c.camera_id"
                                  class="wr-camcell" :class="{off:!c.online}" :title="c.full">
-                                <span class="wr-cdot" :class="'lv'+c.lv" :style="{background:c.color}"></span>
-                                <b>{{ c.name }}</b>
-                                <span class="wr-cph">分相 {{ c.phase_no }}</span>
-                                <span class="wr-cv">佔有率 <i>{{ c.occ }}</i></span>
-                                <span class="wr-cv" v-if="c.queue!=null">排隊 <i>{{ c.queue }}</i> m</span>
+                                <div class="wr-cc-hd">
+                                    <span class="wr-cdot" :class="'lv'+c.lv" :style="{background:c.color}"></span>
+                                    <b>{{ c.name }}</b>
+                                    <span class="wr-cph">分相 {{ c.phase_no }}</span>
+                                </div>
+                                <!-- 🛑 動畫是資料驅動的,不是裝飾(與相機量測磚同一套做法):
+                                     · 量測棒的寬度用 CSS transition,值變了是「滑過去」不是跳過去,
+                                       所以看得出往哪個方向在動。
+                                     · 數字用 :key 綁值 —— 值一變元素就重掛,wrPop 跑一次閃一下。
+                                       沒變的那格不會閃,所以「剛剛動的是哪一個」看得出來。 -->
+                                <div class="wr-cc-m" :title="c.occTip">
+                                    <span class="k">佔有率</span>
+                                    <span class="wr-bar sm"><i :class="c.occCls" :style="{width:c.occW}"></i></span>
+                                    <b :key="'o'+c.occ">{{ c.occ }}</b>
+                                </div>
+                                <div class="wr-cc-m" v-if="c.queue!=null" :title="c.qTip">
+                                    <span class="k">排隊</span>
+                                    <span class="wr-bar sm"><i class="q" :style="{width:c.qW}"></i></span>
+                                    <b :key="'q'+c.queue">{{ c.queue }} m</b>
+                                </div>
                             </div>
                         </div>
                         <!-- 🛑 2026-09-07 使用者:燈態(分相/步階)與時制計畫、控制策略
@@ -24965,6 +25007,13 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 color: WR_LV_COLOR[wrLvRank(c.level)],
                 occ: (c.occupancy == null) ? '—' : (Number(c.occupancy) * 100).toFixed(0) + '%',
                 queue: (c.queue_m == null) ? null : Number(c.queue_m).toFixed(1),
+                // 量測棒:寬度與顏色沿用戰情牆同一組函式,不另寫一份門檻 ——
+                // 兩份門檻會漂移,同一個數字在兩處會顯示成不同顏色。
+                occCls: sigMeterCls(c.occupancy),
+                occW: sigPctW(c.occupancy),
+                qW: sigQueueW(c.queue_m, c.phase_no),
+                occTip: '佔有率:車輛覆蓋 ROI 的比例(不是判級用的壅塞分數)',
+                qTip: '排隊長度;棒長相對於該分相的儲車空間',
             })).sort((a, b) => (a.phase_no - b.phase_no) || (a.camera_id - b.camera_id));
         });
         let warVdTimer = null;
@@ -25007,7 +25056,18 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         const sigDyn = ref({});
         const sigDl = ref({});
         const sigDynOn = ref(false);
-        const sigKeepAuth = ref(false);
+        const sigDlPolicy = ref('pass');
+        // 🛑 這行字要說出**這個模式現在做了什麼**,不是重述模式名稱。
+        //    操作者要能從這裡判斷「中央那邊會看到什麼」。
+        const sigDlText = computed(() => {
+            if (!sigDynOn.value) return '需先啟用動態控制';
+            const d = sigDl.value || {};
+            if (sigDlPolicy.value === 'reassert')
+                return '已重新宣告 ' + ((d.reassert && d.reassert.count) || 0) + ' 次(策略會來回跳)';
+            if (sigDlPolicy.value === 'hold_5f10')
+                return '已攔下 ' + (d.held || 0) + ' 則 · 中央該則收不到 ACK';
+            return '中央改回定時就留住';
+        });
         const sigDynBusy = ref(false);
         const sigAct = ref({});
         const sigActOn = ref(false);
@@ -25030,7 +25090,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                     fetch('/api/signal/shadow/actuate', {credentials: 'include'}),
                 ]);
                 if (a.ok) { sigDyn.value = await a.json(); sigDynOn.value = !!sigDyn.value.enabled; }
-                if (b.ok) { sigDl.value = await b.json(); sigKeepAuth.value = (sigDl.value.policy === 'reassert'); }
+                if (b.ok) { sigDl.value = await b.json(); sigDlPolicy.value = sigDl.value.policy || 'pass'; }
                 if (c.ok) { sigAct.value = await c.json(); sigActOn.value = !!sigAct.value.enabled; }
             } catch (e) { /* 讀不到就維持上次的顯示 */ }
         };
@@ -25064,18 +25124,26 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 ElMessage.error('切換失敗'); sigDynOn.value = !v;
             } finally { sigDynBusy.value = false; await loadSigDyn(); }
         };
+        const DL_MSG = {
+            pass: '不介入:中央改回定時就留住',
+            reassert: '中央改回定時後 1.2 秒重新宣告(策略會來回跳)',
+            hold_5f10: '攔下中央收回時相控制的那一則 —— 中央該則收不到 ACK,可能顯示通訊逾時',
+        };
         const sigSetPolicy = async (v) => {
+            const prev = (sigDl.value || {}).policy || 'pass';
             sigDynBusy.value = true;
             try {
                 const r = await fetch('/api/signal/downlink', {
                     method: 'POST', credentials: 'include',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({policy: v ? 'reassert' : 'pass'}),
+                    body: JSON.stringify({policy: v}),
                 });
                 if (!r.ok) throw new Error(r.status);
-                ElMessage.success(v ? '中央改回定時後會重新宣告' : '已停止重新宣告,中央的覆蓋會留住');
+                ElMessage[v === 'hold_5f10' ? 'warning' : 'success'](DL_MSG[v] || v);
             } catch (e) {
-                ElMessage.error('切換失敗'); sigKeepAuth.value = !v;
+                // 🛑 切換失敗要撥回**後端回報的**上一個值,不是布林反向 ——
+                //    三選一沒有「反向」可言,猜錯會讓畫面顯示成沒生效的模式。
+                ElMessage.error('切換失敗'); sigDlPolicy.value = prev;
             } finally { sigDynBusy.value = false; await loadSigDyn(); }
         };
         const sigCtlWay = computed(() => {
@@ -26240,7 +26308,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigDyn,sigDl,sigDynOn,sigKeepAuth,sigDynBusy,sigSetDyn,sigSetPolicy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
