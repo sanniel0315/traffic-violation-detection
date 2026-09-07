@@ -1089,6 +1089,47 @@ def _should_suppress_to_center(code: Optional[str]) -> bool:
     return True
 
 
+# ── 機箱門開啟:上傳中央 ────────────────────────────────────────────────
+# 🛑 2026-09-07 使用者決定:我方電子鎖的門一開,上傳中央的 HardwareStatus 就要
+#    把 bit9(機箱門開啟)設起來。理由:號誌機自己的 bit9 對不上現場(機箱開著
+#    它仍為 0),而我方有門磁 + 把手 + 鑰匙三個感測,分得出前門/後門 ——
+#    中央要看到「有人開箱」,靠得住的來源是我方的鎖不是號誌機。
+#
+# 🛑 這是**修改轉發給中央的資料**,與今天稍早撤掉的 flip14 性質不同:
+#    flip14 是憑推測翻一個位元(結果害中央顯示異常);這一次是拿**實測到的
+#    門磁狀態**補一個號誌機沒報出來的事實,而且只會把位元從 0 設成 1,
+#    不會清掉控制器自己報的任何位元。
+# 🛑 只加不減:控制器若自己報 bit9=1,我們不會把它蓋掉。
+CABINET_BIT = 9
+CABINET_UPLOAD = os.getenv("SIGNAL_TC3_CABINET_TO_CENTER", "1") != "0"
+_cab_cache = {"open": False, "ts": 0.0, "err": ""}
+
+
+def _cabinet_open() -> bool:
+    """我方電子鎖是否有門開著。3 秒快取 —— 0F04/0FC1 大約每分鐘一框,
+    但續約/查詢突發時可能連來好幾框,不要每框都去問 IO daemon。"""
+    now = time.time()
+    if now - _cab_cache["ts"] < 3.0:
+        return bool(_cab_cache["open"])
+    opened = False
+    try:
+        from api.routes.lock import lock_status as _lock_status
+        lk = _lock_status() or {}
+        if lk.get("enabled"):
+            for one in (lk.get("locks") or []):
+                dr = (one.get("status") or {}).get("door") or {}
+                # 🛑 只有明確回報 closed=False 才算開 —— 讀不到(None)不能當成開,
+                #    否則鎖一離線就會對中央謊報機箱被打開。
+                if dr.get("closed") is False:
+                    opened = True
+        _cab_cache["err"] = ""
+    except Exception as exc:
+        _cab_cache["err"] = str(exc)      # 取不到就維持上一次的判斷,不亂報
+        return bool(_cab_cache["open"])
+    _cab_cache.update({"open": opened, "ts": now})
+    return opened
+
+
 def _forward_controller_frame_to_center(frame: bytes, rec: dict) -> None:
     """把控制器的一個完整框轉給中央(透明中繼的上行)。
     🛑 例外1:我方自我查詢的回報,不轉中央(SELF_PROBE_SUPPRESS)。
@@ -1099,7 +1140,10 @@ def _forward_controller_frame_to_center(frame: bytes, rec: dict) -> None:
         return
     out = frame
     _mode = _hw_center_mode["mode"]     # flip14(翻bit14) / zero(全0) / raw(不動)
-    if (_mode != "raw" and rec.get("cks_ok")
+    # 🛑 機箱門開啟要上傳,raw 模式也要處理 —— 所以這裡不能只看 _mode != "raw"。
+    _cab = (CABINET_UPLOAD and rec.get("code") in HW_STATUS_FIX_CODES
+            and _cabinet_open())
+    if ((_mode != "raw" or _cab) and rec.get("cks_ok")
             and rec.get("code") in HW_STATUS_FIX_CODES
             and isinstance(rec.get("addr"), int) and isinstance(rec.get("seq"), int)):
         try:
@@ -1110,8 +1154,12 @@ def _forward_controller_frame_to_center(frame: bytes, rec: dict) -> None:
                     hs = 0
                 elif _mode == "force":
                     hs = _hw_center_mode.get("value", 0) & 0xFFFF
+                elif _mode == "raw":
+                    hs = raw_hs               # 純通透,下面只可能再補機箱位元
                 else:
                     hs = raw_hs ^ HW_STATUS_FIX_MASK
+                if _cab:
+                    hs |= (1 << CABINET_BIT)  # 只加不減:不蓋掉控制器自己報的位元
                 rec["sent_hw"] = hs           # 記下實際送中央的校正值(給通訊紀錄顯示「收→送」)
                 info = info[:2] + bytes(((hs >> 8) & 0xFF, hs & 0xFF)) + info[4:]
                 out = build_frame(rec["addr"], rec["seq"], info)
@@ -1507,20 +1555,44 @@ HW_GROUPS = {
     "ioCabinet": "I/O / 機箱",
 }
 # 我方現場實證過的位元(其餘只顯示位元值,不做正常/異常判定)
-HW_VERIFIED_BITS = {13, 14}
+# 🛑 2026-09-07 使用者確認:16 個位元的名稱**已與中央系統畫面逐位元對照過**
+#    (force 模式逐位送、看中央顯示哪一項亮)。所以名稱不再是「抄 /sig 前端字串」,
+#    而是「與中央一致」——這一條驗證的是**對應關係**。
+#
+# 🛑 但它驗的是「中央怎麼解讀這些位元」,不等於「控制器在故障時真的會把該位設 1」。
+#    多數位元十天內從未為 1,那是因為現場沒有發生過那些故障,不是因為位元壞掉。
+#    對照過之後可以拿來判故障:錯誤類位元為 0 就是無異常,這一點與觀測一致。
+HW_VERIFIED_BITS = set(range(16))
 # 🛑 狀態指示位元:語意已實證,但它**不是健康旗標**,0/1 都不代表故障,
 #    永遠不計入 fault_count。
 #    2026-09-07 教訓:bit13 剛升為實證位元時沿用了「旗標(0=需注意)」的判法,
 #    結果控制器沒在外部接管(bit13=0,完全正常)就被判成「時制計畫 1 項異常」。
 #    這正是先前一直在防的假警報,只是這次是我方自己造成的。
 HW_STATE_BITS = {13}
+# 🛑 這幾位「對應關係雖已對照,但極性仍不判定」——判下去會與現場觀測矛盾:
+#    bit8 通訊連線:抄來的表把它當狀態旗標(0=沒連上=異常),但十天來我方持續
+#    收得到訊框、通訊明明是通的,而它**一直是 0**。若照旗標判會天天報
+#    「通訊連線 異常」。真正的可能是它其實是錯誤類(1=通訊異常),
+#    但那是我方的推論、不是中央畫面對照到的結果,所以不判定,只顯示位元值。
+#    要定案:現場拔一次號誌機的通訊線,看這一位會不會變 1。
+#    bit9 機箱門開啟:2026-09-07 使用者指出「機箱現在應該是開啟」,而這一位是 0
+#    —— 對不上。而且機箱狀態**以我方電子鎖的前後門為準**(使用者決定):
+#    我們自己有門磁與把手感測,比號誌機的單一位元細(分得出前門/後門、
+#    上鎖/門磁/鑰匙)。這一位只顯示不判定,判定看下面的 cabinet 區塊。
+HW_UNJUDGED_BITS = {8, 9}
 # 每一位的證據等級 —— 前端要能一眼看出哪些是實測、哪些只是抄協定
 HW_BIT_EVIDENCE = {
     2:  ("conflict", "十天亮 76 次、每次中位 18.6 秒自癒,與「計時器錯誤」矛盾;語意未明"),
-    13: ("measured", "與控制策略 bit4(時相控制)一致率 95.8%,不一致全為回報延遲"),
+    8:  ("center", "名稱已與中央畫面對照;但極性未定 —— 通訊正常時它一直是 0,"
+                   "照抄來的旗標判會天天誤報,故不判定"),
+    9:  ("conflict", "現場機箱開啟時這一位仍為 0,對不上;機箱狀態改以我方電子鎖的"
+                   "前後門感測為準(見回應的 cabinet 區塊)"),
+    13: ("measured", "與控制策略 bit4(時相控制)一致率 95.8%,不一致全為回報延遲;"
+                     "狀態指示不是故障旗標"),
     14: ("measured", "45,843 筆全部為 1,控制器正常運轉;1=就緒"),
 }
-HW_EVIDENCE_DEFAULT = ("spec", "協定 4-36 建議名稱;十天 45,843 筆從未為 1,未被證實也未被推翻")
+HW_EVIDENCE_DEFAULT = ("center", "名稱經與中央系統畫面逐位元對照確認(2026-09-07);"
+                                 "十天 45,843 筆未曾為 1 = 現場未發生該故障")
 
 
 @router.get("/device-status", summary="設備狀態(HardwareStatus 16 位元逐項)")
@@ -1561,6 +1633,10 @@ async def device_status(_user=Depends(get_current_user)):
         if bit in HW_STATE_BITS:
             # 狀態指示,不是健康旗標 —— 0/1 都不是異常(見 HW_STATE_BITS)
             abnormal = None
+        elif bit in HW_UNJUDGED_BITS:
+            # 對應關係已對照但極性仍未定,判下去會與觀測矛盾(見 HW_UNJUDGED_BITS)
+            abnormal = None
+            pending += 1
         elif verified:
             abnormal = on if is_error else (not on)
             if abnormal:
@@ -1575,12 +1651,41 @@ async def device_status(_user=Depends(get_current_user)):
             "raw": 1 if on else 0,
             "abnormal": abnormal,          # None = 極性未實證,不判定
             "polarity": ("state" if bit in HW_STATE_BITS
-                         else (("error" if is_error else "flag") if verified else "pending")),
+                         else ("pending" if bit in HW_UNJUDGED_BITS
+                               else (("error" if is_error else "flag") if verified else "pending"))),
             "verified": verified,
         })
+    # ── 機箱狀態:以我方電子鎖的前後門為準(2026-09-07 使用者決定)──────
+    # 🛑 不用號誌機的 bit9:現場機箱開啟時它仍為 0,對不上。我方自己有門磁、
+    #    把手、鑰匙三個感測,而且分得出前門/後門 —— 比一個單一位元細,也是
+    #    我們能自己驗證的。
+    cabinet = {"source": "電子鎖門磁(前門/後門)", "available": False, "doors": [],
+               "any_open": None, "note": ""}
+    try:
+        from api.routes.lock import lock_status as _lock_status
+        lk = _lock_status() or {}
+        doors = []
+        for one in (lk.get("locks") or []):
+            st = one.get("status") or {}
+            dr, hd = st.get("door") or {}, st.get("handle") or {}
+            closed = dr.get("closed")
+            doors.append({"name": one.get("name") or ("位址 %s" % one.get("addr")),
+                          "connected": bool(one.get("connected")),
+                          "closed": closed, "door_label": dr.get("label"),
+                          "locked": hd.get("in_place"), "handle_label": hd.get("label")})
+        cabinet["doors"] = doors
+        cabinet["available"] = bool(doors) and bool(lk.get("enabled"))
+        opens = [d for d in doors if d["closed"] is False]
+        cabinet["any_open"] = (len(opens) > 0) if doors else None
+        cabinet["note"] = (("機箱開啟:" + "、".join(d["name"] for d in opens)) if opens
+                           else ("前後門均關閉" if doors else "尚未取得電子鎖狀態"))
+    except Exception as exc:
+        cabinet["note"] = "電子鎖狀態取得失敗: %s" % exc
+
     return {
         "available": True,
         "ts": ts,
+        "cabinet": cabinet,
         "value": v, "value_hex": f"0x{v:04X}",
         "value_bin": format(v, "016b"),
         "sent_to_center": hw.get("sent"), "sent_hex": hw.get("sent_hex"),
@@ -1588,7 +1693,12 @@ async def device_status(_user=Depends(get_current_user)):
         "pending_count": pending,           # 極性待確認、不做判定的位元數
         "groups": [{"key": g, "title": HW_GROUPS[g], "items": grouped.get(g, [])}
                    for g in HW_GROUPS if grouped.get(g)],
-        "note": "bit13(外部時相控制進行中)與 bit14(控制器就緒)經我方現場實證,"
+        "note": "16 位元的名稱已與中央系統畫面逐位元對照確認(2026-09-07),"
+                "錯誤類位元為 0 即無異常。bit2 實測與名稱矛盾、bit8 極性未定,"
+                "這兩位只顯示位元值不做判定。bit13 是狀態指示不是故障旗標。"
+                "🛑 對照驗的是「中央怎麼解讀這些位元」,不等於「控制器故障時真的會設 1」——"
+                "多數位元十天內從未為 1,是因為現場沒發生過那些故障。"
+                "舊註記:"
                 "fault_count 只計入這兩位。bit2 實測與抄來的名稱矛盾、語意未明。"
                 "其餘 13 位十天內從未為 1,名稱來自協定 4-36 的**建議值** —— "
                 "協定原文明訂各位元「為建議及參考內容,主辦機關可依需求修訂」,"
