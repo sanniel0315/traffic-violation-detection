@@ -3842,6 +3842,14 @@
         .fl-reason { font-size:var(--fs-caption); color:var(--gov-muted); }
         .fl-none { text-align:center; color:var(--gov-muted); font-size:var(--fs-small); }
         @media (prefers-reduced-motion: reduce) { .fl-dot { animation:none; } }
+        /* 地圖上的匝道常駐標籤:哪條是上匝道、哪條是下匝道,不要讓人用猜的 */
+        .wr-seg-label { background:rgba(255,255,255,.94); border:1px solid var(--gov-border);
+                        border-radius:7px; padding:4px 9px; box-shadow:0 1px 4px rgba(16,24,40,.14);
+                        font-size:var(--fs-caption); color:var(--gov-text); white-space:nowrap; }
+        .wr-seg-label b { font-size:var(--fs-small); }
+        .wr-seg-label i { font-style:normal; color:#a11c1c; font-weight:600; }
+        .wr-seg-label.pri { border-color:#e8a3a3; }
+        .wr-seg-label::before { display:none; }   /* 不要 Leaflet 預設的小箭頭 */
         /* 決策依據明細:預設收合的折疊區 */
         .wr-detail { margin-top:14px; border:1px solid var(--gov-border); border-radius:12px;
                      background:var(--gov-surface); }
@@ -25588,15 +25596,36 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //    NE-1 相機 ROI 涵蓋下匝道)。兩個數字不一致是正常的,
                 //    但看的人有權知道差在哪 —— 藏起來只會讓人以為圖畫錯了。
                 const LVW = ['無', '順暢', '尚可', '壅塞', '嚴重壅塞'];
-                const segTip = '分相 ' + ph + ' · 排隊 ' + q.toFixed(1) + ' m / 儲車 '
-                             + storage + ' m（' + LVW[lv] + '）'
-                             + '<br>相機壅塞等級 ' + LVW[camLv] + '（壅塞分數移動平均，會滯後）';
-                if (wrLayers.seg[ph]) wrLayers.seg[ph].bindTooltip(segTip, {sticky: true});
+                // 🛑 2026-09-08 現場連續回報「上下匝道的動態顯示是反的」。查證後
+                //    相機↔分相、決策資料、顏色三者都是對的 —— 問題是圖上**沒有字**,
+                //    只有兩條顏色不同的線,看的人只能憑位置猜哪條是上匝道。
+                //    猜錯就會覺得「顏色反了」。加上常駐標籤,哪條是哪條不再靠猜。
+                //    名稱取自後端 phase_role(分相1=上匝道 210m、分相2=下匝道 600m),
+                //    不在前端另外寫死一份對應 —— 兩份會漂移。
+                const rampName = (sides[ph] || {}).ramp || ('分相 ' + ph);
+                const isPri = !!(sides[ph] || {}).priority;
+                const segLabel = '<b>' + rampName + '</b>（分相 ' + ph + '）'
+                               + (isPri ? ' <i>主線保護</i>' : '')
+                               + '<br>排隊 ' + q.toFixed(1) + ' m · ' + LVW[lv];
+                const segTip = rampName + '（分相 ' + ph + '）'
+                             + '<br>排隊 ' + q.toFixed(1) + ' m / 儲車 ' + storage + ' m'
+                             + '<br>壅塞等級 ' + LVW[camLv] + '（分數移動平均，會滯後）';
+                if (wrLayers.seg[ph]) {
+                    // 常駐標籤說「這是哪條路」,滑鼠停留才給細節 —— 兩者分開,
+                    // 常駐的那個要短,否則兩條標籤會在小地圖上疊在一起。
+                    wrLayers.seg[ph].unbindTooltip();
+                    wrLayers.seg[ph].bindTooltip(segLabel, {
+                        permanent: true, direction: 'center', opacity: .95,
+                        className: 'wr-seg-label' + (isPri ? ' pri' : '')});
+                }
                 if (q > 0) {
                     upsert('qfill', ph, () => L.polyline([A, Q], {color: color, weight: 11, opacity: .95,
                                                                   lineCap: 'butt', className: 'wr-qfill'}),
                            (l) => { l.setLatLngs([A, Q]); l.setStyle({color: color}); });
-                    if (wrLayers.qfill[ph]) wrLayers.qfill[ph].bindTooltip(segTip, {sticky: true});
+                    if (wrLayers.qfill[ph]) {
+                        wrLayers.qfill[ph].unbindTooltip();
+                        wrLayers.qfill[ph].bindTooltip(segTip, {sticky: true});
+                    }
                 } else if (wrLayers.qfill[ph]) {
                     try { wrMap.removeLayer(wrLayers.qfill[ph]); } catch (e) { }
                     delete wrLayers.qfill[ph];
