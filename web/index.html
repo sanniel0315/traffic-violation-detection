@@ -5704,6 +5704,10 @@
             <div v-if="isAdmin" class="menu-section-title">號誌控制</div>
             <div v-if="hasPerm('signal')" class="menu-item" :class="{active:page==='signal_hub'}" @click="page='signal_hub';openSigHub()"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>動態號誌控制</span></div>
             <div v-if="isAdmin" class="menu-section-title">系統</div>
+            <!-- 🛑 驗收作業放在「系統」群組不放號誌控制:它是**內部人員管理用**的
+                 交代文件(規格逐條對照、接管路線圖 L1~L5),不是現場操作要看的東西。
+                 混在號誌控制的分頁裡,現場每次切分頁都會經過它。 -->
+            <div v-if="isAdmin" class="menu-item" :class="{active:page==='acceptance'}" @click="page='acceptance';loadSigAcceptance();loadSigConsole()"><svg class="nav-icon"><use href="#i-check"/></svg><span>驗收作業</span></div>
             <div v-if="isAdmin" class="menu-item" :class="{active:page==='push_settings'}" @click="page='push_settings';loadPushDevices()"><svg class="nav-icon"><use href="#i-alert"/></svg><span>告警通知</span></div>
             </div><!-- /sidebar-menu-area -->
 
@@ -7623,7 +7627,9 @@
                 <!-- ══ 驗收清單 ══
                      每一項都是打端點實際量出來的,不是宣稱。
                      量不到回 unknown,不當成通過 —— 缺資料和通過是兩件事。 -->
-                <div v-if="page==='signal_hub'" v-show="signalTab==='accept'">
+                <!-- 🛑 內部人員管理用:側欄項目是 isAdmin,頁面本身也要擋 ——
+                     只擋選單的話,知道網址的人照樣打得開。 -->
+                <div v-if="page==='acceptance' && isAdmin">
                     <div class="sig-tab-bar">
                         <span class="sig-tab-title">驗收清單</span>
                         <el-button size="small" plain @click="loadSigAcceptance"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>重新量測</el-button>
@@ -8222,7 +8228,7 @@
 
                 <div v-if="page==='signal_hub'" v-show="signalTab==='eval'">
                     <div class="sig-tab-bar">
-                        <span class="sig-tab-title">線上評估可視化</span>
+                        <span class="sig-tab-title">綠燈時序與判切可視化</span>
                         <el-select v-model="vzMins" size="small" style="width:130px" @change="loadViz">
                             <el-option :value="15" label="最近 15 分鐘"></el-option>
                             <el-option :value="60" label="最近 1 小時"></el-option>
@@ -8384,7 +8390,7 @@
                         「控制」與「即時演變狀態」)。演算法規格、判定天平、接管路線圖
                         都不是即時資訊 —— 要驗算的人來這一頁,戰情牆不必被它們佔版面。
                         外層保留 .wr 容器:這幾張卡的深色樣式是掛在 .wr 底下的。 -->
-                <div v-if="page==='signal_hub'" v-show="signalTab==='eval'">
+                <div v-if="page==='acceptance' && isAdmin">
                     <div class="wr">
                         <!-- 決策依據明細:預設收合。即時畫面要乾淨,但驗收要驗算 ——
                              收在這裡兩邊都成立(原「決策盤」分頁的四張卡)。 -->
@@ -14175,6 +14181,7 @@ const app=createApp({
             hwmonitor:           'i-activity',
             nport:               'i-server',
             signal:              'i-zap',
+            acceptance:          'i-check',
         }[page.value] || 'i-dot'));
         const cameraPageHero=computed(()=>({
             cameras:               {num:'04 / CAMERA OPERATIONS',  sub:'攝影機新增 / 編輯、RTSP 來源、ROI 區域與偵測啟停管理'},
@@ -23383,8 +23390,7 @@ const app=createApp({
         //    舊分頁鍵一律用 SIG_TAB_ALIAS 導過去,舊連結不會壞。
         const sigTabs = ref([
             {key: 'live',   label: '即時戰情',   icon: 'i-activity'},
-            {key: 'eval',   label: '線上評估',   icon: 'i-bar'},
-            {key: 'accept', label: '驗收清單',   icon: 'i-check'},
+            {key: 'eval',   label: '運作統計',   icon: 'i-bar'},
             {key: 'lamp',   label: '號誌燈態',   icon: 'i-zap'},
             {key: 'device', label: '設備與設定', icon: 'i-list'},
             {key: 'frames', label: '通訊紀錄',   icon: 'i-zap'},
@@ -23403,7 +23409,6 @@ const app=createApp({
             //    兩件事的讀者與時機都不同,混在一頁會互相稀釋。
             eval:   () => { loadViz(); startVizTimer(); loadVizHourly();
                             loadSigStats(); startSigStatTimer(); loadSigConsole(); },
-            accept: () => loadSigAcceptance(),
             device: () => { loadSignal(); startSignalTimer(); loadSigDevice();
                             loadSigConfig(); },
             lamp:   () => { loadSignal(); startSignalTimer(); loadSignalFrames(); },
@@ -24416,12 +24421,17 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         //    等現場提供 5 座燈的實際經緯度,把 lat/lng 填進來就會變成實測位置。
         // 🛑 offset_m 是沿進場道軸線、距停止線的公尺數(往上游為正),
         //    side_m 是垂直軸線的側移(正 = 軸線右側),只用來讓燈不互相重疊。
+        // 🛑 側移要**兩相反向**:分相1 的停等相機(NE-2)與分相2 的(WN-2)實際只
+        //    相距 16 公尺,而橫式燈箱圖示有 46px 寬 —— 在自動框定的縮放下
+        //    (約 0.3 m/px)那 16 公尺剛好被圖示吃掉,兩座燈會疊在一起
+        //    (2026-09-07 現場回報)。分相1 往軸線右側、分相2 往左側推開,
+        //    再把同相的兩座燈沿軸線錯開,五座就都分得開。
         const SIG_HEADS = [
-            {id: 5, phase: 1, offset_m: 0,   side_m: 6,  label: '5'},
-            {id: 3, phase: 1, offset_m: 55,  side_m: 6,  label: '3'},
-            {id: 4, phase: 2, offset_m: 0,   side_m: 6,  label: '4'},
-            {id: 2, phase: 2, offset_m: 60,  side_m: 6,  label: '2'},
-            {id: 1, phase: 2, offset_m: 150, side_m: 6,  label: '1'},
+            {id: 5, phase: 1, offset_m: 0,   side_m: 14,  label: '5'},
+            {id: 3, phase: 1, offset_m: 60,  side_m: 14,  label: '3'},
+            {id: 4, phase: 2, offset_m: 0,   side_m: -14, label: '4'},
+            {id: 2, phase: 2, offset_m: 70,  side_m: -14, label: '2'},
+            {id: 1, phase: 2, offset_m: 155, side_m: -14, label: '1'},
         ];
         const drawWarMap = () => {
             if (!wrMap) return;
