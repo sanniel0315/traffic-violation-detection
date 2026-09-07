@@ -278,8 +278,20 @@ class CongestionDetector:
             self._raw_zero_streak[_zero_key] = 0
         _force_low = self._raw_zero_streak.get(_zero_key, 0) >= 2
 
+        large_vehicle_count = sum(
+            1 for v in tracked_vehicles
+            if v.get('class_name') in self.LARGE_VEHICLE_CLASSES
+        )
         # 全域 level：車輛數 >=2 走原邏輯；單車例外：停著且 occupancy 達 medium 以上仍升 level
         # （單一大車卡住前方 ≠ 「短暫路過」，仍應視為壅塞）
+        # 🛑 單車例外限定「大車」。2026-09-07 在 cam_3 上匝道前停等區實測:
+        #    ROI 面積 94,101 px²,而單一小客車 bbox 依距離是 9,600~24,235 px²
+        #    → 佔用率 10.2%~25.8%,中等門檻 0.20 正好卡在這個區間中間。
+        #    結果同樣一台車,停得離鏡頭近就是「中等」、遠就是「暢通」——
+        #    判級取決於它剛好停在哪,而不是路況。實測樣本:車1停1 occ 0.12、0.17,
+        #    使用者截圖那次 0.23 → 中等。
+        #    紅燈時一台小客車在匝道停等是正常現象,不是壅塞;但單一大貨/大客
+        #    卡住前方仍要算,所以保留大車那條路。
         if _force_low:
             level = 'low'
         elif len(tracked_vehicles) >= 2:
@@ -289,7 +301,8 @@ class CongestionDetector:
                 else 'medium' if smoothed >= medium_t
                 else 'low'
             )
-        elif len(tracked_vehicles) == 1 and stopped_count >= 1 and smoothed >= medium_t:
+        elif (len(tracked_vehicles) == 1 and stopped_count >= 1 and smoothed >= medium_t
+              and large_vehicle_count >= 1):
             level = (
                 'critical' if smoothed >= critical_t
                 else 'high' if smoothed >= high_t
@@ -298,10 +311,6 @@ class CongestionDetector:
         else:
             level = 'low'
 
-        large_vehicle_count = sum(
-            1 for v in tracked_vehicles
-            if v.get('class_name') in self.LARGE_VEHICLE_CLASSES
-        )
         level, _cap_reason = self._cap_level(
             level,
             vehicle_count=len(tracked_vehicles),
