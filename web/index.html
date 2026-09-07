@@ -8104,41 +8104,26 @@
                             </div>
                             <p v-else class="wr-empty">尚未收到燈態回報。</p>
 
-                            <!-- 控制方 + 我方判定,靠著路口圖放,看圖的同時知道誰在控制 -->
+                            <!-- 🛑 2026-09-07 合併(使用者指出重複):這裡原本還有
+                                 「控制方」與「我方影子判定 + 判定理由」,但上方 hero 的
+                                 「控制方式」三行與閘門說明已經把同樣的東西講過一次 ——
+                                 同一頁講兩次,看的人得比對兩處才敢確定是同一件事。
+                                 只留 hero 沒有的兩項:時制計畫編號與控制策略碼。 -->
                             <div class="wr-ctl">
-                                <div class="wr-ctl-item">
-                                    <span>控制方</span><b :title="sigCtlModeNote">{{ sigCtlModeText }}</b>
-                                </div>
                                 <div class="wr-ctl-item">
                                     <span>時制計畫</span><b>{{ sigCtlPlanId }}</b>
                                 </div>
                                 <div class="wr-ctl-item">
                                     <span>控制策略</span><b>{{ sigStrategyHex }}</b>
                                 </div>
-                                <div class="wr-ctl-item" :class="sigPlan.action==='SWITCH'?'sw':'kp'">
-                                    <span>我方影子判定</span>
-                                    <b>{{ !sigPlan.available?'—':(sigPlan.action==='SWITCH'?'應換相':'續綠') }}</b>
-                                </div>
                             </div>
-                            <div class="wr-why" v-if="sigPlan.available">{{ sigPlan.reason }}</div>
                         </div>
 
                         <!-- 原始訊框:證明畫面上每個數字都有來源 -->
-                        <div class="wr-log">
-                            <div class="wr-sec-hd">原始訊框<span>5F03</span></div>
-                            <div class="wr-log-body">
-                                <div v-for="(f,fi) in sigWarFrames" :key="'wf'+fi" class="wr-log-row">
-                                    <span class="wr-log-d"><i :class="sigWarFrameDesc(f).cls">{{ sigWarFrameDesc(f).tag }}</i> {{ sigWarFrameDesc(f).text }}</span>
-                                    <span class="wr-log-ts">[{{ sigFrameTimeFull(f.ts) }}] <span class="wr-log-code">SEQ: {{ f.seq==null?'—':f.seq }} | 指令: {{ f.code }}</span></span>
-                                    <span class="wr-log-raw">RAW: {{ f.raw }}</span>
-                                </div>
-                                <p v-if="!sigWarFrames.length" class="wr-empty">尚無訊框。</p>
-                            </div>
-                        </div>
                         <!-- 決策依據明細:預設收合。即時畫面要乾淨,但驗收要驗算 ——
                              收在這裡兩邊都成立(原「決策盤」分頁的四張卡)。 -->
                         <details class="wr-detail" :open="sigDetailOpen">
-                            <summary>決策依據明細 · 演算法規格、影子比對、接管路線圖</summary>
+                            <summary>決策依據明細 · 演算法規格、線上評估、接管路線圖</summary>
                             <div class="wr-detail-body">
                     <div class="card" v-if="sigPlan.available">
                                 <div class="card-header">
@@ -8293,7 +8278,7 @@
 
                             <div class="card">
                                 <div class="card-header">
-                                    <span><svg class="text-icon"><use href="#i-zap"/></svg>影子決策比對(我方演算法 vs 現行控制)</span>
+                                    <span><svg class="text-icon"><use href="#i-zap"/></svg>線上評估(我方演算法 vs 現行控制)</span>
                                     <div style="display:flex;gap:8px;align-items:center">
                                         <el-tag size="small" :type="sigShadow.running?'success':'info'">{{ sigShadow.running?'運轉中':'未啟動' }}</el-tag>
                                         <el-select v-model="sigShadowMins" size="small" style="width:110px" @change="loadSigShadow">
@@ -8380,13 +8365,30 @@
                                         <el-tag size="small" :type="st.state==='done'?'success':(st.state==='doing'?'warning':'info')">{{ st.state==='done'?'已完成':(st.state==='doing'?'進行中':'未開始') }}</el-tag>
                                     </div>
                                     <div class="analysis-setting-tip" style="margin-top:10px">
-                                        🛑 <b>L5 的前置條件缺一不可</b>:①影子一致率連續數日 95% 以上且差異可解釋
+                                        🛑 <b>L5 的前置條件缺一不可</b>:①一致率連續數日 95% 以上且差異可解釋
                                         ②下發通道驗證過(目前 SIGNAL_TC3_CONTROL 未開,另有 QUERY_ONLY 雙保險)
                                         ③接管安全機制對齊(死人開關續約、資料失聯降級、min/max green 硬邊界)
                                         ④中心端停用 OPAC,避免兩邊搶控制權。
                                     </div>
                                 </div>
                             </div>
+                            </div>
+                        </details>
+                        <!-- 🛑 2026-09-07 使用者要求:與「決策依據明細」對調位置,
+                             並且原始訊框也要能收折。原始訊框是佐證用的(證明畫面上每個
+                             數字都有來源),平常不必占版面;決策依據明細才是要先看到的,
+                             所以它排在前面。 -->
+                        <details class="wr-detail wr-log-wrap">
+                            <summary>原始訊框 · 5F03(佐證:畫面每個數字的來源)</summary>
+                            <div class="wr-log">
+                                <div class="wr-log-body">
+                                    <div v-for="(f,fi) in sigWarFrames" :key="'wf'+fi" class="wr-log-row">
+                                        <span class="wr-log-d"><i :class="sigWarFrameDesc(f).cls">{{ sigWarFrameDesc(f).tag }}</i> {{ sigWarFrameDesc(f).text }}</span>
+                                        <span class="wr-log-ts">[{{ sigFrameTimeFull(f.ts) }}] <span class="wr-log-code">SEQ: {{ f.seq==null?'—':f.seq }} | 指令: {{ f.code }}</span></span>
+                                        <span class="wr-log-raw">RAW: {{ f.raw }}</span>
+                                    </div>
+                                    <p v-if="!sigWarFrames.length" class="wr-empty">尚無訊框。</p>
+                                </div>
                             </div>
                         </details>
                     </div>
@@ -8398,7 +8400,7 @@
                      純 SVG,不拉圖表庫;所有座標都在 computed 算好,模板不做比較運算。 -->
                 <div v-if="page==='signal_hub'" v-show="signalTab==='viz'">
                     <div class="sig-tab-bar">
-                        <span class="sig-tab-title">影子演算控制可視化</span>
+                        <span class="sig-tab-title">線上評估可視化</span>
                         <el-select v-model="vzMins" size="small" style="width:130px" @change="loadViz">
                             <el-option :value="15" label="最近 15 分鐘"></el-option>
                             <el-option :value="60" label="最近 1 小時"></el-option>
@@ -8411,7 +8413,7 @@
                     </div>
 
                     <div class="ds-kpi-grid" v-if="vzPaired.runs_usable" style="margin-bottom:14px">
-                        <div class="ds-kpi-card"><div class="ds-kpi-label">綠燈段</div><div class="ds-kpi-value">{{ vzPaired.runs_usable }}</div><div class="ds-kpi-hint">{{ vzPaired.source==='controller_5F03'?'控制器 5F03 秒數':'影子取樣(退回)' }}</div></div>
+                        <div class="ds-kpi-card"><div class="ds-kpi-label">綠燈段</div><div class="ds-kpi-value">{{ vzPaired.runs_usable }}</div><div class="ds-kpi-hint">{{ vzPaired.source==='controller_5F03'?'控制器 5F03 秒數':'取樣重建(退回)' }}</div></div>
                         <div class="ds-kpi-card warn"><div class="ds-kpi-label">我方會早切</div><div class="ds-kpi-value">{{ vzPaired.earlier }}</div><div class="ds-kpi-hint">其中紅側有車 {{ vzPaired.earlier_meaningful }} · 平均早 {{ vzNum(vzPaired.delta_meaningful&&vzPaired.delta_meaningful.avg) }} 秒</div></div>
                         <div class="ds-kpi-card"><div class="ds-kpi-label">同時 / 續綠 / 晚切</div><div class="ds-kpi-value ds-kpi-value--text">{{ vzPaired.same }} / {{ vzPaired.hold }} / {{ vzPaired.later }}</div><div class="ds-kpi-hint">同時 = ±5 秒容忍;晚切必須 0</div></div>
                         <div class="ds-kpi-card ok"><div class="ds-kpi-label">有代價空放</div><div class="ds-kpi-value">{{ vzNum(vzPaired.waste_sec_total,0) }}<span style="font-size:14px;margin-left:4px">秒</span></div><div class="ds-kpi-hint">紅側有車時,我方判切到實際換相之間</div></div>
@@ -8423,7 +8425,7 @@
                             <span style="font-size:12px;color:var(--gov-muted)">{{ vzRangeText }}</span>
                         </div>
                         <div class="card-body">
-                            <div v-if="!vzData.available" class="analysis-setting-tip">{{ vzData.error||'這段時間沒有影子資料。' }}</div>
+                            <div v-if="!vzData.available" class="analysis-setting-tip">{{ vzData.error||'這段時間沒有評估資料。' }}</div>
                             <div v-else class="vz-wrap" @mousemove="vzHover" @mouseleave="vzCursor=null" ref="vzWrapEl">
                                 <!-- 🛑 用 :view-box.camel 不是 :viewBox —— inline template 的屬性名會被 HTML parser
                                      轉小寫,SVG 的 viewBox 區分大小寫,寫成 :viewBox 會整個失效:
@@ -13210,10 +13212,55 @@ const vHls={
     updated(el,binding){ if(binding.value!==binding.oldValue)attachHls(el,binding.value); },
     unmounted(el){ if(el.__hls){try{el.__hls.destroy();}catch(_){}el.__hls=null;} el.innerHTML=''; },
 };
+// 🛑 主動拆掉一路串流(關連線、留住網址以便之後接回來)。
+//    2026-09-07 現場實測:go2rtc 上累積了大量殭屍消費者 —— cam_4_lite 一台
+//    就掛了 5 條(同一台 PC、不同來源埠),各吃 1.2 Mbps。成因有兩個:
+//      (a) 戰情頁用的是 v-show 不是 v-if,切到別的分頁時元件**沒有卸載**,
+//          unmounted 不會觸發,四條串流照跑。
+//      (b) 分頁重整/關閉時舊 session 沒有被明確關掉。
+//    在已經掉包的線路上(現場實測 WebRTC 丟包 24~68%),多餘的串流會直接
+//    惡化畫質 —— 使用者看到的「霧霧的」就是丟包造成的拖影糊塊。
+const detachGo2rtc=(el)=>{
+    if(el.__go2rtcWatch){ clearInterval(el.__go2rtcWatch); el.__go2rtcWatch=null; }
+    // 移除 <video-stream> 會觸發它的 disconnectedCallback → 關 WebSocket/PeerConnection。
+    // 不要只清 innerHTML 之外就算了,那樣連線可能還掛在 go2rtc 上。
+    el.querySelectorAll('video-stream').forEach((n)=>{ try{ n.remove(); }catch(_){} });
+    el.innerHTML='';
+    el.__go2rtcDetached=true;      // 記住是我們主動停的,回來時要接回去
+};
+// 全頁停止 / 恢復。給「切走分頁」與「瀏覽器分頁隱藏」兩種情況共用。
+// 🛑 sel 一定要能限定範圍:切「號誌分頁」時只該停戰情那四路(data-wrcam),
+//    不能連 NVR/LPR 頁的播放器一起關掉。只有整個瀏覽器分頁隱藏時才全停。
+const stopAllGo2rtc=(sel)=>{
+    document.querySelectorAll(sel||'.go2rtc-host').forEach((el)=>{
+        if(el.__go2rtcUrl && !el.__go2rtcDetached) detachGo2rtc(el);
+    });
+};
+const resumeAllGo2rtc=(sel)=>{
+    document.querySelectorAll(sel||'.go2rtc-host').forEach((el)=>{
+        if(el.__go2rtcDetached && el.__go2rtcUrl){
+            el.__go2rtcDetached=false;
+            attachGo2rtc(el, el.__go2rtcUrl);
+        }
+    });
+};
+const WAR_CAM_SEL='.go2rtc-host[data-wrcam]';
+// 分頁被切到背景就停,回來再接 —— 背景分頁的影像沒有人在看,
+// 卻照樣佔著消費者名額與頻寬。
+if(typeof document!=='undefined'){
+    document.addEventListener('visibilitychange',()=>{
+        if(document.visibilityState==='hidden') stopAllGo2rtc();
+        else setTimeout(()=>resumeAllGo2rtc(),150);
+    });
+    // 關閉/重整前明確斷線,不要留給伺服器自己逾時回收。
+    // 🛑 傳函式參考會把 Event 物件當成 selector 丟進 querySelectorAll → 拋錯,
+    //    要包一層。
+    window.addEventListener('pagehide', ()=>stopAllGo2rtc());
+}
 const vGo2rtc={
-    mounted(el,binding){ attachGo2rtc(el,binding.value); },
-    updated(el,binding){ if(binding.value!==binding.oldValue)attachGo2rtc(el,binding.value); },
-    unmounted(el){ if(el.__go2rtcWatch){clearInterval(el.__go2rtcWatch);el.__go2rtcWatch=null;} el.innerHTML=''; }
+    mounted(el,binding){ el.__go2rtcDetached=false; attachGo2rtc(el,binding.value); },
+    updated(el,binding){ if(binding.value!==binding.oldValue){ el.__go2rtcDetached=false; attachGo2rtc(el,binding.value); } },
+    unmounted(el){ detachGo2rtc(el); el.__go2rtcUrl=null; }
 };
 
 const app=createApp({
@@ -23141,7 +23188,7 @@ const app=createApp({
         const sigTabs = ref([
             {key: 'live',   label: '即時戰情', icon: 'i-activity'},
             {key: 'light',  label: '燈態與設備', icon: 'i-zap'},
-            {key: 'viz',    label: '影子可視化', icon: 'i-activity'},
+            {key: 'viz',    label: '線上評估', icon: 'i-activity'},
             {key: 'config', label: '設定',     icon: 'i-list'},
             {key: 'stats',  label: '運作統計', icon: 'i-bar'},
             {key: 'accept', label: '驗收',     icon: 'i-check'},
@@ -23173,6 +23220,11 @@ const app=createApp({
                 key = SIG_TAB_ALIAS[key];
             }
             signalTab.value = key;
+            // 🛑 戰情用 v-show 不是 v-if —— 切走時元件不會卸載,unmounted 不觸發,
+            //    四條相機串流會在背景繼續跑,在 go2rtc 上累積成殭屍消費者
+            //    (2026-09-07 實測 cam_4_lite 一台掛了 5 條)。切走就主動停,切回再接。
+            if (key === 'live') setTimeout(() => resumeAllGo2rtc(WAR_CAM_SEL), 120);
+            else stopAllGo2rtc(WAR_CAM_SEL);
             // v-show 隱藏期間 Leaflet 量不到尺寸,切回來要重算
             if (key === 'live' && wrMap) setTimeout(() => wrMap.invalidateSize(true), 60);
             if (!sigTabLoaded[key]) {
@@ -23792,7 +23844,7 @@ const app=createApp({
              desc:'策略變更做成事件流,控制權被奪回時第一時間知道,不必進中心端'},
             {id:'L3', state:'done',  title:'排隊與配時對照',
              desc:'我方量測的排隊/流量與控制器實際分相、秒數並排,驗證動態控制成效'},
-            {id:'L4', state:'doing', title:'影子決策引擎',
+            {id:'L4', state:'doing', title:'線上評估引擎',
              desc:'與現行控制同步運算、只記錄不下發,逐筆比對並累積一致率 —— 零風險驗證我方演算法'},
             {id:'L5', state:'todo',  title:'接管控制(bypass OPAC)',
              desc:'我方送 5F10 接管 + 每 60 秒續約,逐步階下 5F1C。需前置條件全數達成'},
@@ -24067,11 +24119,16 @@ const app=createApp({
             if (wrMap || typeof L === 'undefined') return;
             const el = document.getElementById('wrMap');
             if (!el || el.clientHeight < 40) { setTimeout(initWarMap, 200); return; }
-            wrMap = L.map('wrMap', {zoomControl: false, attributionControl: false})
-                     .setView(MAP_SITE_CENTER, MAP_SITE_ZOOM + 1);
+            // 🛑 戰情地圖固定不給操作(使用者決定):它是狀態顯示不是導覽地圖。
+            //    戰情牆常年掛著沒人看管,一被拖走或縮到別的地方就再也回不到路口,
+            //    畫面等於失效。關掉拖曳/滾輪/雙擊/觸控縮放/鍵盤,並固定在路口。
+            wrMap = L.map('wrMap', {
+                zoomControl: false, attributionControl: false,
+                dragging: false, scrollWheelZoom: false, doubleClickZoom: false,
+                touchZoom: false, boxZoom: false, keyboard: false, tap: false,
+            }).setView(MAP_SITE_CENTER, MAP_SITE_ZOOM + 2);   // +2:再放大一級,路口填滿版面
             L.tileLayer('/web/tiles/{z}/{x}/{y}.jpg', {minZoom: MAP_MIN_ZOOM, maxZoom: MAP_MAX_ZOOM,
                                                         errorTileUrl: MAP_BLANK_TILE}).addTo(wrMap);
-            L.control.zoom({position: 'bottomright'}).addTo(wrMap);
             drawWarMap();
             setTimeout(() => wrMap && wrMap.invalidateSize(true), 120);
         };
