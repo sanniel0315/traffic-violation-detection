@@ -472,9 +472,26 @@ class AnnotatedStreamer:
                 #    0.0~0.4 Mbps 且忽有忽無(2026-08-19 在 87 實測)。
                 f"mpegtsmux ! fdsink"
             )
+            # 🛑 補回色彩範圍標記,否則畫面會「霧霧的」(2026-09-07 現場回報)。
+            #    我們餵給 NVENC 的是 cv2.COLOR_BGR2YUV_I420 轉出來的 YUV ——
+            #    OpenCV 這個轉換是**全範圍**(0~255)且用 BT.601 係數。
+            #    但 nvv4l2h264enc 不會寫 VUI,ffprobe 看到的是
+            #      color_range=unknown / color_space=unknown
+            #    播放器碰到沒標記的 H.264 一律當成**有限範圍**(16~235)解讀,
+            #    把 0~255 的資料再拉伸一次 → 黑色被抬成灰色、整片發白。
+            #    實測:來源 cam_5 是 color_range=pc,我們轉出來的 cam_5_lite 是 unknown。
+            #
+            #    用 h264_metadata 這個 bitstream filter 只改 SPS 的 VUI 欄位,
+            #    **不重新編碼**(維持 -c copy),等於零成本。
+            #    標成 BT.601(6)而不是 BT.709 —— 要跟 OpenCV 實際用的係數一致,
+            #    標錯矩陣會讓顏色偏掉,那是另一種錯,不是把問題修好。
+            #    🛑 只有系統 ffmpeg 有 h264_metadata,Jetson 版的沒有;
+            #       這裡呼叫的是 PATH 上的 ffmpeg(= /usr/bin/ffmpeg),有這個 bsf。
+            _vui = ("h264_metadata=video_full_range_flag=1"
+                    ":colour_primaries=6:transfer_characteristics=6:matrix_coefficients=6")
             ff = (
                 f"ffmpeg -hide_banner -loglevel error -f mpegts -i - "
-                f"-c copy -f rtsp -rtsp_transport tcp {rtsp_url}"
+                f"-c copy -bsf:v {_vui} -f rtsp -rtsp_transport tcp {rtsp_url}"
             )
             cmd = ["sh", "-c", f"{gst} | {ff}"]
         else:
@@ -493,6 +510,11 @@ class AnnotatedStreamer:
             "-bufsize", brate,
             "-g", str(fps * 2),
             "-pix_fmt", "yuv420p",
+            # 🛑 軟體路徑也要把色彩標記寫進 VUI(同硬體路徑的理由:沒標記的話
+            #    播放器自己猜,猜錯就是發白)。這條路徑是 ffmpeg 自己從 bgr24
+            #    轉 yuv420p,swscale 預設輸出**有限範圍**,所以標 tv 而不是 pc。
+            "-color_range", "tv", "-colorspace", "smpte170m",
+            "-color_primaries", "smpte170m", "-color_trc", "smpte170m",
             "-f", "rtsp", "-rtsp_transport", "tcp",
             rtsp_url,
             ]
