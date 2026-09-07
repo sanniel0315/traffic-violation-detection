@@ -1437,6 +1437,13 @@
 
         /* ───── 登入介面 v3: 多層 ambient 底圖 + 浮 orb 光暈 + grain + grid + corner mark ───── */
         .login-page {
+            /* 🛑 2026-09-08 現場:session 過期後登入頁確實有渲染,卻被「事件組合圖
+               全圖」那層 position:fixed z-index:9000 的黑底蓋死 —— 使用者看到一張
+               全螢幕的圖,沒辦法登入,也不知道要點哪裡關掉。
+               登入頁被任何東西蓋住都是不可接受的:它是唯一能讓人恢復操作的畫面。
+               所以給它比所有 overlay 都高的層級,當作最後一道保險 ——
+               就算日後又有人加了新的全螢幕 overlay 忘了處理,也不會把人鎖在外面。 */
+            z-index: 10000;
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -18750,6 +18757,21 @@ const app=createApp({
         const selectedPlateIsInferred=ref(false);  // true 代表是 ±2min LPR 推測的可能別車,UI 標 (推測) tag
         const selectedSnapshotsLoading=ref(false);
         const compositeZoomVisible=ref(false);  // 點 composite 開全圖 modal
+        // 🛑 登入狀態一旦失效(登出、token 過期),把所有**全螢幕**的浮層關掉。
+        //    2026-09-08 現場:session 過期後登入頁有渲染,卻被「事件組合圖全圖」
+        //    那層 z-index:9000 的黑底蓋死,使用者看到一張全螢幕的圖沒辦法登入。
+        //    只靠 .login-page 的 z-index 也能看到登入框,但底下那些浮層還在:
+        //    圖片會因為 401 一直重試,而且一登入回來又蓋回去。
+        //    🛑 這個 watch 一定要放在它讀的 ref **全部宣告完之後** ——
+        //       watch 會立即求值 source,放前面就是 CLAUDE.md 記過的 TDZ 白畫面。
+        //    新增全螢幕浮層時把它加進這裡,這是唯一集中處理的地方。
+        watch(isAuthenticated, (ok) => {
+            if (ok) return;
+            compositeZoomVisible.value = false;
+            showDetailModal.value = false;
+            lprSnapshotModal.value = false;
+            assistantZoomImg.value = null;
+        });
         const SNAPSHOT_LABELS=[
             {tag:'before', label:'事件前 (t-2s)'},
             {tag:'mid_a',  label:'中段 (t-0.5s)'},
@@ -24247,8 +24269,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 if (!hasObj) return '[' + v.map(sigCfgScalar).join(', ') + ']';
                 return v.map((x, i) => '#' + (i + 1) + '  ' + (
                     (x !== null && typeof x === 'object') ? sigCfgObj(x) : sigCfgScalar(x)
-                )).join('
-');
+                )).join(String.fromCharCode(10));
             }
             if (typeof v === 'object') return sigCfgObj(v);
             return sigCfgScalar(v);
