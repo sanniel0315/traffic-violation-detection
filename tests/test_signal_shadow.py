@@ -132,8 +132,10 @@ def test_actuate_sends_next_step_and_throttles(monkeypatch):
     monkeypatch.setitem(m._act, "n", 0)
 
     m._actuate(_D(), 1, LIVE_OK)
+    # 🛑 by=algorithm 是稽核標籤:演算法與人工走同一支下發端點,沒有它
+    #    signal_frames 裡兩者長得一模一樣,驗收就答不出「這幾次是誰送的」。
     assert calls[0] == ("/api/signal/control/prepare",
-                        {"code": "5F1C", "info_hex": "000000"})
+                        {"code": "5F1C", "info_hex": "000000", "by": "algorithm"})
     assert calls[1][0] == "/api/signal/control/send"
     assert m._act["n"] == 1
 

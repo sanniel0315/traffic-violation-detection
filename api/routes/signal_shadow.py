@@ -822,7 +822,8 @@ def _actuate(d, g_no: int, live: dict) -> None:
     #    (號控總開關 / 只准查詢 / 動態總開關 / 降階),被擋會回 403,原因照抄。
     try:
         tok = _daemon_post("/api/signal/control/prepare",
-                           {"code": "5F1C", "info_hex": "000000"})
+                           {"code": "5F1C", "info_hex": "000000",
+                            "by": "algorithm"})
         token = (tok or {}).get("token")
         if not token:
             return stop("prepare 沒拿到 token")
@@ -834,6 +835,10 @@ def _actuate(d, g_no: int, live: dict) -> None:
                      "blocked": "", "last_error": ""})
         _act["events"].append({"ts": now, "phase": g_no, "seq": sent.get("seq"),
                                "reason": d.reason or "", "raw": raw})
+        # 🛑 這裡**不**自己再側錄一份訊框:daemon 的 control/send 已經寫進
+        #    signal_frames(src=self, user=algorithm(...))。在 traffic-api 這個
+        #    行程呼叫 signal_tc3._enqueue_frame 只會寫進一份沒人讀的記憶體
+        #    deque —— 看起來有紀錄、其實不存在,那比沒有更糟。
         add_log("info", "演算法下發 5F1C(提早結束分相 %d 綠燈):%s"
                 % (g_no, d.reason or ""), "signal")
         print("[signal-shadow][下發] 5F1C seq=%s raw=%s reason=%s"
@@ -1530,7 +1535,7 @@ def _control_evidence(minutes: int = 30) -> dict:
     """
     import sqlite3 as _sq
     from api.routes.signal_tc3 import decode_frame as _decode_frame
-    out = {"minutes": minutes, "sends": {}, "strategy_stable": None,
+    out = {"minutes": minutes, "sends": {}, "ours": {}, "strategy_stable": None,
            "strategy_dominant": None, "strategy_samples": 0}
     try:
         conn = _sq.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=8)
@@ -1552,6 +1557,28 @@ def _control_evidence(minutes: int = 30) -> dict:
                 "last_ts": max(tss),
                 "age_sec": round(time.time() - max(tss), 1),
             }
+        # ── 我方自己送出的(精確):src='self' 是我方寫進去的,不必從 ACK 反推 ──
+        # 🛑 為什麼要分開算:0F80 只說「控制器收到並回覆了一則」,不說是誰送的。
+        #    我方開始下發之後,再把 ACK 全部歸給「外部系統」就是錯的 ——
+        #    2026-09-07 現場就看到卡片寫「外部系統正在下發控制」,實際上
+        #    正在下發的是我方演算法。
+        # 🛑 而且 ACK 數不可以拿來減:實測同一則命令會收到多個相同的 0F80
+        #    (23:43:54/56/58 三個 seq 相同的 0F80 5F1C)。用「ACK 總數 − 我方
+        #    送出數」去推外部次數會得到假數字。所以兩邊各報各的來源,不相減。
+        for code, user, n, last in conn.execute(
+                "SELECT code,user,count(*),max(ts) FROM signal_frames "
+                "WHERE src='self' AND ts>? GROUP BY code,user", (cut,)):
+            u = str(user or "")
+            who = "algorithm" if u.startswith("algorithm") else (
+                "renew" if u == "renew" or u == "reassert" else "manual")
+            slot = out["ours"].setdefault(who, {"count": 0, "by_code": {},
+                                                "last_ts": None})
+            slot["count"] += n
+            slot["by_code"][code] = slot["by_code"].get(code, 0) + n
+            if slot["last_ts"] is None or last > slot["last_ts"]:
+                slot["last_ts"] = last
+        for slot in out["ours"].values():
+            slot["age_sec"] = round(time.time() - slot["last_ts"], 1) if slot["last_ts"] else None
         # ── 策略位元的穩定度:同一視窗內最常見的值佔多少 ──
         vals = []
         for ts, raw in conn.execute(

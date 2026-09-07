@@ -2324,6 +2324,16 @@ async def control_prepare(body: dict, _user=Depends(get_current_user)):
     if why:
         raise HTTPException(status_code=403, detail=why)
 
+    # 🛑 by 是「誰要送這一則」的標籤,給稽核用。演算法下發走的是 daemon 的
+    #    prepare→send(見 signal_shadow._actuate),與人工下發同一支端點,
+    #    不加標籤的話兩者在 signal_frames 裡長得一模一樣 —— 驗收時就答不出
+    #    「這 N 次換相是演算法送的還是人按的」。
+    # 🛑 它是**呼叫端自稱**的,不是通過驗證的身分:daemon 內部不驗登入,
+    #    web 的請求也是經由同一個 proxy 進來。所以紀錄同時寫下自稱來源與實際
+    #    登入者(algorithm(signal-daemon)),兩個都留。要證明某則確實是演算法
+    #    送的,靠三份獨立紀錄時間對得上:決策列、訊框、控制器的 0F80。
+    by = str((body or {}).get("by") or "").strip()[:24]
+
     # 兩種給參數的方式:
     #   values = {...}  結構化 → 用 utc-tc3 的 encoder 照 schema 組(前端表單走這條)
     #   info_hex        原始十六進位 → 手動指定(進階/schema 不可用時的後路)
@@ -2402,7 +2412,8 @@ def _finish_prepare(frame, code, cmd, dev, addr, seq):
     now = time.time()
     for k in [k for k, v in _pending.items() if now - v["ts"] > _PREPARE_TTL]:
         _pending.pop(k, None)
-    _pending[token] = {"ts": now, "frame": frame, "code": code, "seq": seq, "addr": addr}
+    _pending[token] = {"ts": now, "frame": frame, "code": code, "seq": seq,
+                       "addr": addr, "by": by}
     return {
         "token": token,
         "expires_in": _PREPARE_TTL,
@@ -2437,6 +2448,9 @@ async def control_send(body: dict, _user=Depends(get_current_user)):
         raise HTTPException(status_code=409, detail="號誌通道目前沒有連線,無法送出。")
 
     user = getattr(_user, "username", None) or str(_user)
+    # 自稱來源 + 實際登入者,兩個都留 —— 只留一個事後無法交叉查核。
+    if item.get("by"):
+        user = "%s(%s)" % (item["by"], user)
     rec = {
         "ts": time.time(),
         "user": user,
