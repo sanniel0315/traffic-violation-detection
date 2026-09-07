@@ -3229,6 +3229,18 @@
            點卡片標題列就收折。標題列裡的按鈕/開關/下拉不受影響(見 JS 的排除清單)。
            🛑 只在有 .card-header 的卡片啟用,而且是點「標題列的空白處」——
               標題列常常放著 el-switch、匯出鈕,誤觸會很惱人。 */
+        /* 🛑 2026-09-07 現場回報「狀態顯示要對齊,完全沒整理」。
+           成因:.card-header 是 justify-content:space-between 且通常有三個
+           flex 項目(標題 / 狀態群 / 收折箭頭)—— space-between 會把**中間**
+           那個丟到正中央,所以狀態標籤的 x 位置隨標題長度浮動,每張卡都不一樣。
+           改成「標題吃掉剩餘空間、其餘一律靠右」:所有卡片的狀態右緣與箭頭
+           就會落在同一條垂直線上。標題過長改成截字,不換行 —— 換行會讓每列
+           高度不一,收折成清單時看起來更亂。 */
+        .card > .card-header > :first-child {
+            flex: 1 1 auto; min-width: 0;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .card > .card-header > :not(:first-child) { flex: 0 0 auto; }
         .card > .card-header.ch-fold { cursor: pointer; user-select: none; }
         .card > .card-header.ch-fold::after {
             content: ''; flex: none; width: 8px; height: 8px; margin-left: 8px;
@@ -3241,13 +3253,25 @@
            篩選框、開關)全都還留著,一排排堆在一起比展開還雜。
            收折時把**互動元件**藏起來,狀態標籤留著當摘要 ——
            那正是收折後唯一該看的東西:這張卡現在正不正常。 */
-        .card.is-folded > .card-header { border-bottom: none; padding-top: 9px; padding-bottom: 9px; }
+        /* 🛑 收折後每一列等高:標題有沒有狀態標籤會差 6~8px,一整排收起來
+           就會高高低低。固定最小高度,清單才讀得下去。 */
+        .card.is-folded > .card-header {
+            border-bottom: none; padding-top: 9px; padding-bottom: 9px;
+            min-height: 42px; box-sizing: border-box;
+        }
         /* 🛑 收折後只留**第一個**狀態標籤。2026-09-07 現場回報「每個卡片超亂」——
            按鈕已經藏掉了,但多顆 tag 還排在一起:即時燈態 3 顆、命令覆蓋矩陣 3 顆、
            號控下傳 3 顆,收起來就變成一長排彩色標籤,比展開還雜。
            第一顆通常就是最重要的狀態(已連線/已抄到/通道已連線),其餘是細節,
            要看就展開。 */
         .card.is-folded > .card-header .el-tag ~ .el-tag { display: none !important; }
+        /* 🛑 收折後,只裝按鈕/輸入框的那一組(查詢紀錄、時制計畫)整組都被藏了,
+           但外層 wrapper 還在,留下一段空的 gap,收折列看起來歪一塊。
+           沒有狀態標籤的 wrapper 整個收掉。
+           (:has 不支援的舊瀏覽器會整條規則失效 → 退回目前行為,不會壞版) */
+        .card.is-folded > .card-header > :not(:first-child):not(:has(.el-tag)) {
+            display: none !important;
+        }
         .card.is-folded > .card-header .el-button,
         .card.is-folded > .card-header .el-switch,
         .card.is-folded > .card-header .el-input,
