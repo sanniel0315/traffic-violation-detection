@@ -8099,7 +8099,6 @@
                                 <span v-if="sigLiveXn0.control_mode" class="xn-chip xn-mode" :class="'sev-'+sigLiveXn0.control_mode.severity"><b>{{ sigLiveXn0.control_mode.label }}</b></span>
                                 <span class="xn-chip"><span class="k">分相</span><b>{{ sigLiveXn0.phase.sub_phase_id }}</b></span>
                                 <span class="xn-chip"><span class="k">步階</span><b>{{ sigLiveXn0.phase.step_id }}</b></span>
-                                <span v-if="sigLiveXn0.phase_elapsed_sec!=null" class="xn-chip"><span class="k">已亮</span><b>{{ Math.round(sigLiveXn0.phase_elapsed_sec) }}</b><span class="k">s</span></span>
                                 <span v-if="xnStepSpecial(sigLiveXn0)" class="xn-chip xn-mode sev-warn"><span class="k">狀態</span><b>{{ sigLiveXn0.phase.step_desc }}</b></span>
                             </div>
                             <p v-else class="wr-empty">尚未收到燈態回報。</p>
@@ -24076,8 +24075,11 @@ const app=createApp({
                               : [{t: '清道 剩 '}, {t: String(remain), num: true}, {t: ' 秒'}];
                     liveCls = 'amber';
                 } else if (isGreen) {
-                    liveParts = [{t: '已亮 '}, {t: (sec == null ? '–' : String(Math.round(sec))), num: true}, {t: ' 秒'}];
-                    if (remain != null) liveParts.push({t: ' · 剩 '}, {t: String(remain), num: true}, {t: ' 秒'});
+                    // 🛑 不顯示「已亮 N 秒」的累積值(使用者決定):戰情要看的是
+                    //    「接下來會怎樣」,不是「已經過了多久」。倒數才是即時演變,
+                    //    累積秒數只是一個一直在長的數字,佔位置又不影響判斷。
+                    liveParts = (remain == null) ? [{t: '綠燈放行中'}]
+                              : [{t: '剩 '}, {t: String(remain), num: true}, {t: ' 秒'}];
                     liveCls = (remain != null && remain <= 5) ? 'hot' : 'green';
                 } else {
                     liveParts = (remain == null) ? [{t: '紅燈等待中'}]
