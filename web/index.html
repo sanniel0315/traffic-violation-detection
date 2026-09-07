@@ -7933,44 +7933,6 @@
                             </span>
                         </div>
 
-                        <!-- ══ hero:一眼看到我方演算法現在建議什麼,以及依據的算式 ══
-                             2026-09-07 瘦身:拿掉「趨勢」(沒說是什麼的趨勢)、回堵風險環
-                             (使用者說過風險值不重要,而且幾乎恆為低)、CCTV 磚(與下方每台
-                             相機的狀態重複)、影像診斷鈕(它要解的問題已經解掉)。
-                             留下的兩樣就是這頁存在的理由:建議動作,以及算式。 -->
-                        <div class="wr-decide" :class="sigWarHero.cls">
-                            <div class="wr-decide-main">
-                                <div class="wr-pills">
-                                    <span class="wr-pill ok">線上演算法比對</span>
-                                </div>
-                                <!-- 控制方式:模式碼只是「宣告」,真正證明有人在控的是下發頻率。
-                                     🛑 5F10 續約的瞬間策略位元會跳一秒(實測 0x10→0x01→0x10),
-                                        只顯示瞬時值會把那一秒畫成穩定狀態 —— 2026-09-07 10:25
-                                        現場就顯示成「定時控制」,實際上外部系統仍在下發。
-                                        所以這裡三行都要有:宣告、實際下發、穩定度。 -->
-                                <div class="wr-ctlway">
-                                    <div class="wr-ctlway-row">
-                                        <span class="k">控制方式</span>
-                                        <b :title="sigCtlModeNote">{{ sigCtlWay.mode }}</b>
-                                    </div>
-                                    <div class="wr-ctlway-row">
-                                        <span class="k">下發中</span>
-                                        <b :class="sigCtlWay.sendCls">{{ sigCtlWay.send }}</b>
-                                    </div>
-                                    <div class="wr-ctlway-row">
-                                        <span class="k">穩定度</span>
-                                        <b>{{ sigCtlWay.stable }}</b>
-                                    </div>
-                                </div>
-                                <h2 class="wr-headline">{{ sigWarHero.headline }}</h2>
-                                <p class="wr-quote">
-                                    <span class="wr-basis-gate">{{ sigWarBasis.gate }}</span>
-                                    <span class="wr-basis-eq"><template v-for="(b, i) in sigWarBasis.parts"
-                                        :key="'bp'+i"><b v-if="b.num">{{ b.t }}</b><i v-else>{{ b.t }}</i></template></span>
-                                    <span class="wr-basis-say">{{ sigWarBasis.say }}</span>
-                                </p>
-                            </div>
-                        </div>
 
                         <div class="card">
                             <div class="card-header">
@@ -24384,83 +24346,6 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             return {tag: green ? '綠燈' : '清道', cls: green ? 'ok' : 'clr',
                     text: '[分相 ' + ph + '] ' + (green ? '綠燈放行中' : '黃燈、全紅清道中') + (sec != null ? ' (剩 ' + sec + ' 秒)' : '')};
         };
-        // 決策 hero:把引擎的 KEEP/SWITCH 翻成操作的人看得懂的一句話
-        const sigWarHero = computed(() => {
-            const d = sigPlan.value || {};
-            const g = d.green_phase, name = g === 1 ? '上匝道' : '下匝道', other = g === 1 ? '下匝道' : '上匝道';
-            if (!d.available) return {cls: '', headline: '尚無資料', why: d.reason || '等待抄錄器回報。'};
-            const t = d.terms || {};
-            if (d.clearance) return {cls: 'clr', headline: '清道中，等待換相', why: '清道（黃燈、全紅）期間控制器已 committed，不做比對。'};
-            if (d.action === 'SWITCH') return {cls: 'sw', headline: '切換至' + other + '放行',
-                why: '紅側延滯 ' + t.switch_gain + ' > 綠側價值 ' + t.keep_gain + ' + 換相成本 ' + t.change_cost + '。' + other + '等待延滯已超過' + name + '續綠的價值。'};
-            return {cls: '', headline: '延長綠燈時間',
-                why: '紅側延滯 ' + t.switch_gain + ' ≤ 綠側價值 ' + t.keep_gain + ' + 換相成本 ' + t.change_cost + '。' + name + '仍有車在放行，換相不划算。'};
-        });
-        // 底部原始訊框:只留燈態回報(5F03),那才是畫面上秒數與燈色的來源。
-        // 全部訊框混在一起會被查詢回報洗版,看不出跟畫面的對應。
-        // 決策依據:把「憑什麼這樣判」攤開。三段 —— 決定於哪一道閘門、實際算式、白話。
-        // 🛑 舊版只印 switch_gain / keep_gain / change_cost,但引擎比較的是
-        //    **加權後**的 keep_gain(× keep_weight),所以畫面上那個不等式根本不成立
-        //    (現場回報「完全沒清楚依據」)。這裡改成印真正參與比較的數字,
-        //    並把權重、門檻、差距、單位全部寫出來,讓人可以自己驗算。
-        // 🛑 數字包 <b>(mono)、文字包 <i>(sans):中文套 mono 會掉到替代字型。
-        // 控制方式三行。資料來自 /plan 的 control_evidence(近 30 分鐘的 0F80 回覆統計)。
-        const sigCtlWay = computed(() => {
-            const d = sigPlan.value || {};
-            const ev = d.control_evidence || {};
-            const sends = ev.sends || {};
-            const c1c = sends['5F1C'], c10 = sends['5F10'];
-            let send = '無下發 —— 路口在跑控制器內建時制', cls = 'idle';
-            if (c1c || c10) {
-                const bits = [];
-                if (c1c) bits.push('5F1C 換相 ' + c1c.count + ' 次'
-                                   + (c1c.median_gap_sec ? '(每 ' + Math.round(c1c.median_gap_sec) + ' 秒)' : ''));
-                if (c10) bits.push('5F10 續約 ' + c10.count + ' 次'
-                                   + (c10.median_gap_sec ? '(每 ' + Math.round(c10.median_gap_sec) + ' 秒)' : ''));
-                // 🛑 最近一次下發距今多久 —— 只看次數會把「五分鐘前停了」看成還在控
-                const age = Math.min(c1c ? c1c.age_sec : 1e9, c10 ? c10.age_sec : 1e9);
-                bits.push('最近 ' + Math.round(age) + ' 秒前');
-                send = bits.join(' · ');
-                cls = age <= 90 ? 'live' : 'stale';
-            }
-            const st = ev.strategy_stable, n = ev.strategy_samples || 0;
-            const stable = (st == null) ? '—'
-                : (Math.round(st * 1000) / 10) + '% 的回報為同一模式（' + n + ' 筆 / 近 '
-                  + (ev.minutes || 30) + ' 分鐘）';
-            return {mode: sigCtlModeText.value, send: send, sendCls: cls, stable: stable};
-        });
-        const sigWarBasis = computed(() => {
-            const d = sigPlan.value || {};
-            const t = d.terms || {};
-            const gates = d.gates || [];
-            const hit = gates.find((g) => g.hit);
-            const gname = hit ? ('第 ' + hit.order + ' 道閘門 · ' + hit.name) : '尚未取得閘門';
-            if (!d.available) return {gate: '', parts: [], say: d.reason || '等待抄錄器回報。'};
-            if (d.clearance) return {gate: gname, parts: [],
-                say: '清道（黃燈、全紅）期間控制器已 committed，這段不做比對。'};
-            const g = d.green_phase, name = g === 1 ? '上匝道' : '下匝道',
-                  other = g === 1 ? '下匝道' : '上匝道';
-            const n = (v) => (v == null ? '—' : Number(v).toFixed(2));
-            // 只有第 4 道閘門是算式決定的;前三道是安全閘門,印算式反而誤導
-            if (!hit || hit.order !== 4) {
-                return {gate: gname, parts: [], say: d.reason || ''};
-            }
-            const parts = [
-                {t: other + '等待延滯 '}, {t: n(t.switch_gain), num: true}, {t: ' 車·秒'},
-                {t: (d.action === 'SWITCH' ? '  ＞  ' : '  ≤  ')},
-                {t: '門檻 '}, {t: n(t.threshold), num: true}, {t: ' 車·秒'},
-                {t: '（' + name + '續綠價值 '}, {t: n(t.keep_gain), num: true},
-                {t: ' × 權重 '}, {t: n(t.keep_weight), num: true},
-                {t: ' ＝ '}, {t: n(t.keep_gain_weighted), num: true},
-                {t: '，＋換相成本 '}, {t: n(t.change_cost), num: true}, {t: '）'},
-            ];
-            const margin = Number(t.margin);
-            const say = (d.action === 'SWITCH'
-                ? '差距 ' + n(t.margin) + ' 車·秒：' + other + '已經等到值得付換相成本。'
-                : '差距 ' + n(t.margin) + ' 車·秒：' + name + '仍有車在放行，換相不划算。')
-                + '　換相成本 = 損失時間² × 飽和流，車·秒是「車數 × 秒數」的延滯單位。';
-            return {gate: gname, parts: parts, say: say};
-        });
         const sigWarFrames = computed(() =>
             (sigFrames.value || []).filter((f) => String(f.code || '').toUpperCase() === '5F03')
                                    .slice(0, 12));
@@ -25578,7 +25463,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigWarExportUrl,sigWarFrameDesc,sigWarHero,sigWarBasis,sigCtlWay,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeType,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
