@@ -19111,7 +19111,14 @@ const app=createApp({
         // 遠端省流變體:同解析度、10fps/350k。遠端(web/app)開此開關就走這條,
         // 塞得進 4G 窄上行;現場不開,照舊看高幀高碼的 annotated。
         const go2rtcLofiName=(camera)=>camera?.id?`cam_${camera.id}_lofi`:'';
-        const hasGo2rtcLofi=(camera)=>go2rtcLive.value.has(go2rtcLofiName(camera));
+        // 🛑 跟 lite 同一道防護:要「真的有 publisher」,不能只看名字在不在清單裡。
+        //    2026-09-07 現場回報「選疊加都沒轉出來」:遠端省流+疊加會走 lofi 的 HLS,
+        //    但 lofi 是 on-demand 而需求登記表只由 WS proxy 維護 —— HLS 走 hls.js
+        //    直連,不經 WS proxy,需求永遠登記不上,推流器不會起(LOFI_ALWAYS=0 時)。
+        //    go2rtc 對這種空殼串流不回錯誤碼,前端看起來一切正常但畫面全黑。
+        //    改看 producer 後,沒推流就自動 fall through 回 MJPEG live-overlay(實測可用);
+        //    哪天後端把 lofi 常駐起來(LOFI_ALWAYS=1),這裡會自動改用,不必再改。
+        const hasGo2rtcLofi=(camera)=>go2rtcProducing.value.has(go2rtcLofiName(camera));
         // 使用者手動開關(每台瀏覽器記住):比頻寬自動偵測可靠(偵測會被自己的串流汙染)。
         const remoteSaver=ref(localStorage.getItem('remoteSaver')==='1');
         const toggleRemoteSaver=(v)=>{
