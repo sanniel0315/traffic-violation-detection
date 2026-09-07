@@ -1223,14 +1223,15 @@ DOWNLINK_POLICY = os.getenv("SIGNAL_TC3_DOWNLINK_POLICY", "pass")
 # 我方要維持的控制策略(bit4 時相控制)。reassert 只送這個值。
 REASSERT_STRATEGY = int(os.getenv("SIGNAL_TC3_REASSERT_STRATEGY", "16"))   # 0x10
 REASSERT_EFFECT = int(os.getenv("SIGNAL_TC3_REASSERT_EFFECT", "1"))
+REASSERT_DELAY = float(os.getenv("SIGNAL_TC3_REASSERT_DELAY", "1.2"))
 _reassert = {"n": 0, "last": None, "last_error": ""}
 _downlink = {"seen": 0, "held": 0, "passed": 0, "last_held": None,
              "events": deque(maxlen=100)}
 
 
 def _do_reassert() -> None:
-    """重新宣告 5F10。🛑 延後 0.2 秒送 —— 讓中央那則先被控制器處理完,
-    否則兩則命令貼太近,控制器可能只處理其中一則。"""
+    """重新宣告 5F10。🛑 要等中央那一輪完整結束再送 —— 貼太近的話控制器
+    還在處理上一則,我方這則會被丟掉(實測 0.2 秒不夠,連 0F80 都沒有)。"""
     try:
         if not (_dyn.get("enabled") and _dyn.get("level") == "L0"):
             return                      # 這 0.2 秒內被降階或關掉了就不要送
@@ -1291,7 +1292,11 @@ def _downlink_allow(rec: Optional[dict]) -> bool:
                 strat = None
             # 中央送的策略若已經包含 bit4,不必重新宣告 —— 它沒有在收走我方權限
             if strat is not None and not (strat & 0x10):
-                threading.Timer(0.2, _do_reassert).start()
+                # 🛑 延遲不能太短。2026-09-07 實測:中央 5F10 在 .320 送達、
+                #    .456 才被 ACK,而控制器的 5F00 策略通知要到 .645/.705 才發出
+                #    —— 我方在 .521 重新宣告時控制器還在處理上一則,那一則被丟掉
+                #    (沒有 0F80)。改成 1.2 秒,等控制器把整輪處理完再送。
+                threading.Timer(REASSERT_DELAY, _do_reassert).start()
     if DOWNLINK_POLICY == "log_only" and code in ("5F10", "5F15", "5F18", "5F1C"):
         _downlink["events"].append({"ts": time.time(), "code": code,
                                     "action": "pass", "raw": (rec or {}).get("raw")})
