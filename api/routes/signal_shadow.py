@@ -1861,6 +1861,37 @@ def _actual_runs_from_frames(since_iso: str, until_iso: str) -> Optional[list]:
     return out
 
 
+def _sample_power(runs: list) -> dict:
+    """這批綠燈段有沒有鑑別力 —— 紅側有沒有車在等。
+
+    🛑 「我方零早切」只有在**紅側有車**的時候才是結論;紅側沒車時它是廢話。
+       報表與看板必須能分辨這兩者,否則會把「沒有需求」講成「演算法有效」。
+    """
+    n = len(runs)
+    with_red = [r for r in runs if r.get("red_waiting")]
+    qs = [float(r["red_queue_at_switch"]) for r in runs
+          if r.get("red_queue_at_switch") is not None]
+    ratio = round(len(with_red) / n, 3) if n else None
+    if not n:
+        verdict, why = "no_data", "沒有可用的綠燈段。"
+    elif not with_red:
+        verdict, why = ("none",
+                        "這批樣本紅側**完全沒有車在等** —— 「零早切」是理所當然的,"
+                        "不具鑑別力,不可以拿來當成效證據。")
+    elif ratio is not None and ratio < 0.3:
+        verdict, why = ("weak",
+                        "只有 %.0f%% 的綠燈段紅側有車在等,樣本偏弱,"
+                        "結論要保守。" % (ratio * 100))
+    else:
+        verdict, why = ("ok",
+                        "%.0f%% 的綠燈段紅側有車在等,這批樣本問得出"
+                        "「該不該提早換相」。" % (ratio * 100))
+    return {"runs": n, "runs_red_waiting": len(with_red), "red_waiting_ratio": ratio,
+            "red_queue_avg_m": round(sum(qs) / len(qs), 1) if qs else None,
+            "red_queue_max_m": round(max(qs), 1) if qs else None,
+            "verdict": verdict, "note": why}
+
+
 def _paired_precise(rows: list, actual: list, interval: float = None) -> dict:
     """精確配對:綠燈段來自控制器框(_actual_runs_from_frames),
     我方判斷來自影子 log。每段找落在 [start, green_end] 內第一筆 SWITCH。
@@ -1950,6 +1981,16 @@ def _paired_precise(rows: list, actual: list, interval: float = None) -> dict:
         "delta_all": stat([r["delta_sec"] for r in usable if r["delta_sec"] is not None]),
         "delta_meaningful": stat([r["delta_sec"] for r in meaningful]),
         "waste_sec_total": round(sum(r["waste_sec"] for r in usable), 1),
+        # 🛑 樣本鑑別力 —— 沒有這個,「零早切」會被誤讀成成效。
+        #    2026-09-07 使用者質疑:畫面顯示「17 段全部續綠、零早切、零空放」,
+        #    看起來像「我方完全同意現行控制」,但那有三種完全不同的解釋:
+        #      ① 現行控制這段時間剛好夠用
+        #      ② 車流太少,任何演算法都不會想換相
+        #      ③ 我方演算法在定時控制下判不出差異
+        #    光看計數分不出來。判準是**紅側到底有沒有車在等**:
+        #    紅側幾乎沒車 → 零早切理所當然,這段資料沒有鑑別力,不可以拿來當成效證據;
+        #    紅側有車卻仍零早切 → 那才是真結論(現行控制在有需求時也沒有明顯浪費)。
+        "sample_power": _sample_power(usable),
         "hold_compare": {
             "runs": len(hold),
             "margin_at_switch": stat(hold_margin),
