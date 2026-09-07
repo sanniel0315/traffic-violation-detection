@@ -7991,8 +7991,13 @@
                                                  不是每秒抓一張快照:快照是 1 fps 的靜態畫面、每張都要
                                                  後端重新編碼;原始串流是連續影像,而且 traffic-api
                                                  完全不參與編碼。go2rtc 拿不到那一路時才退回快照。 -->
+                                            <!-- 🛑 data-go2rtc-mode="mse":只走 MSE,不要讓播放器同時開
+                                                 WebRTC + MSE 兩條互搶(2026-09-07 實測的卡頓真因)。
+                                                 選 MSE 的依據:當時 WebRTC 四條全部 0 bytes,
+                                                 而獨立的 MSE 連線拿得到完整 1.03~1.14 Mbps。 -->
                                             <div v-if="warCamWs(cam.camera_id)" class="go2rtc-host wr-cam-live"
-                                                 :data-wrcam="cam.camera_id" v-go2rtc="warCamWs(cam.camera_id)"></div>
+                                                 :data-wrcam="cam.camera_id" data-go2rtc-mode="mse"
+                                                 v-go2rtc="warCamWs(cam.camera_id)"></div>
                                             <img v-else :src="sigLiveSrc(cam.camera_id)" :alt="cam.name"
                                                  @error="sigLiveErr[cam.camera_id]=true"
                                                  @load="onWarCamLoad($event, cam.camera_id)">
@@ -13032,6 +13037,17 @@ const attachGo2rtc=(el,url)=>{
         for (let i = 1; i < nodes.length; i++) nodes[i].remove();
         let node = nodes[0];
         if(!node){ node=document.createElement('video-stream'); el.appendChild(node); }
+        // 🛑 釘死傳輸方式(容器加 data-go2rtc-mode)。
+        //    預設 mode 是 'webrtc,mse,hls,mjpeg',實測會變成**兩條並存**:
+        //    2026-09-07 現場量到同一個瀏覽器對每台相機同時掛 webrtc + mse,四台八條;
+        //    webrtc 那四條 10 秒送出 0 bytes(死連線卻佔著消費者位置),
+        //    mse 兩條只拿到來源的 1/3、另兩條掛 0 —— 就是註解裡記過的
+        //    「兩條同時連進來會踩到競態,兩邊都只收到第一個片段」。
+        //    同一時刻我從本機開一條獨立 MSE 連線接同樣那兩路,拿得到完整
+        //    1.03~1.14 Mbps —— 證明來源與編碼器都沒問題,問題在同時兩條。
+        //    🛑 mode 必須在指派 src **之前**設好,VideoRTC 是連線時才讀它。
+        const _m = el.getAttribute && el.getAttribute('data-go2rtc-mode');
+        if(_m) node.mode = _m;
         if(node.__go2rtcSrc !== el.__go2rtcUrl){
             // 🛑 換串流一定要重建元素,不能只改 src。
             //    疊加與原始現在都是同一個 <video-stream>(只差 WS 網址),
@@ -13075,6 +13091,8 @@ const _armGo2rtcWatch=(el)=>{
         if(old)old.remove();
         const node=document.createElement('video-stream');
         el.appendChild(node);
+        const _m=el.getAttribute && el.getAttribute('data-go2rtc-mode');
+        if(_m) node.mode=_m;          // 重建也要釘住,否則重連又變成兩條並存
         node.__go2rtcSrc=el.__go2rtcUrl;
         node.src=el.__go2rtcUrl;
         clampGo2rtcPlaybackRate(node);
