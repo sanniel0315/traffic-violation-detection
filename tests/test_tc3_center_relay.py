@@ -165,8 +165,54 @@ def test_hardwarestatus_bit14_flip_to_center():
     print("test_hardwarestatus_bit14_flip_to_center: PASS")
 
 
+def test_cabinet_open_sets_bit9_to_center(monkeypatch):
+    """🛑 我方電子鎖的門一開,上傳中央的 HardwareStatus 必須把 bit9 設起來。
+
+    號誌機自己的 bit9 對不上現場(機箱開著它仍為 0),中央要看到「有人開箱」
+    只能靠我方的門磁。這條測試釘住三件事:
+      · 門開 → bit9 = 1
+      · 只加不減 → 控制器原本報的位元(這裡是 bit14)不能被蓋掉
+      · 門關 → 不加任何東西(raw 模式應原封轉發)
+    """
+    import socket as _s
+    info = bytes([0x0F, 0x04, 0x40, 0x00])          # HardwareStatus = 0x4000(bit14)
+    frame = S.build_frame(0xFFFF, 0x63, info)
+    rec = S.decode_frame(frame)
+    old_mode = dict(S._hw_center_mode)
+    S._hw_center_mode["mode"] = "raw"
+
+    def _send_once():
+        ours, far = _s.socketpair()
+        far.settimeout(2)
+        S._center_sock_ref["sock"] = ours
+        try:
+            S._forward_controller_frame_to_center(frame, dict(rec))
+            return far.recv(1024)
+        finally:
+            S._close_center()
+            far.close()
+
+    try:
+        # 門開
+        S._cab_cache.update({"open": True, "ts": 9e9})
+        got = _send_once()
+        out = S.decode_frame(got)
+        assert out and out.get("cks_ok"), "補完 bit9 的框 CKS 不合法"
+        hs = (S._unstuff(got[7:-3])[2] << 8) | S._unstuff(got[7:-3])[3]
+        assert hs & (1 << 9), "門開了但 bit9 沒被設起來"
+        assert hs & (1 << 14), "只加不減:控制器原本的 bit14 被蓋掉了"
+
+        # 門關 → raw 應原封轉發
+        S._cab_cache.update({"open": False, "ts": 9e9})
+        assert _send_once() == frame, "門關著卻改了轉發內容"
+    finally:
+        S._hw_center_mode.update(old_mode)
+        S._cab_cache.update({"open": False, "ts": 0.0})
+
+
 if __name__ == "__main__":
     test_center_relay_bidirectional_and_inject()
     test_hardwarestatus_raw_is_default()
     test_hardwarestatus_bit14_flip_to_center()
+    test_cabinet_open_sets_bit9_to_center(None)
     print("ALL PASS")

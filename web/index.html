@@ -3236,7 +3236,21 @@
             transform: rotate(45deg) translateY(-2px); transition: transform .18s ease;
         }
         .card.is-folded > .card-header.ch-fold::after { transform: rotate(-45deg) translateY(2px); }
-        .card.is-folded > .card-header { border-bottom: none; }
+        /* 🛑 收折後只留「標題 + 狀態」。2026-09-07 現場回報「收折起來有夠亂」——
+           收折的目的是把細節收走,但標題列的操作元件(重新載入、全部展開、
+           篩選框、開關)全都還留著,一排排堆在一起比展開還雜。
+           收折時把**互動元件**藏起來,狀態標籤留著當摘要 ——
+           那正是收折後唯一該看的東西:這張卡現在正不正常。 */
+        .card.is-folded > .card-header { border-bottom: none; padding-top: 9px; padding-bottom: 9px; }
+        .card.is-folded > .card-header .el-button,
+        .card.is-folded > .card-header .el-switch,
+        .card.is-folded > .card-header .el-input,
+        .card.is-folded > .card-header .el-select,
+        .card.is-folded > .card-header .el-date-editor,
+        .card.is-folded > .card-header input,
+        .card.is-folded > .card-header button { display: none !important; }
+        /* 收折時卡片之間靠近一點,一眼看得完整份清單 */
+        .card.is-folded { margin-bottom: 6px; }
         .card.is-folded > .card-body,
         .card.is-folded > .analysis-setting-tip { display: none !important; }
         @media (prefers-reduced-motion: reduce) {
