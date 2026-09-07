@@ -251,16 +251,22 @@ if _conn.get("center_relay") is None:
     _conn["center_relay"] = CENTER_RELAY_ENABLED
 CENTER_LISTEN_HOST = os.getenv("SIGNAL_TC3_CENTER_LISTEN_HOST", "0.0.0.0")
 CENTER_LISTEN_PORT = int(os.getenv("SIGNAL_TC3_CENTER_LISTEN_PORT", "1001") or 1001)
-# 🛑 bit14 的極性與其他位元不同:它是 controllerReady(控制器就緒),1=就緒=正常,
-#    而多數位元是 Error 旗標(1=故障)。先前註解說「廠商說明寫反」——
-#    2026-09-04 對照 /sig 的位元表後確認:不是寫反,是語意本來就不同類。
-#    中央照寫反的說明會把 0x4000(正常)誤顯示「故障」。我們在轉給中央前翻 bit14,
-#    補償中央的反向解讀,讓中央顯示正確。預設開,可用 env 關(=純通透)。
+# 🛑 2026-09-07 現場實證:中央不看 bit14 —— 翻與不翻,中央都顯示正常。
+#    08-28 00:45~09:30  送 0x0000(flip14 翻掉 bit14)  1130 筆  中央正常
+#    09-07 13:0x        送 0x4000(raw 原封轉發)                中央正常
+#    所以「翻 bit14 補償中央反向解讀」這個理由不成立(它是根據協定推測寫的,
+#    當時中央還沒真的接上來驗證過)。現場已改用 raw,並寫進 systemd drop-in
+#    zz-hwstatus.conf(SIGNAL_TC3_HWSTATUS_MODE=raw)讓它撐過重啟。
+#    保留 flip14 這條路徑只為了留退路,不再是建議值 ——
+#    中繼竄改轉發資料本身就是風險:送出去的值與控制器實際回報不符,出事無法對帳。
+#    bit14 語意本身仍成立:它是 controllerReady,1=就緒=正常,
+#    與多數 Error 旗標(1=故障)不同類。
 HW_STATUS_FIX = os.getenv("SIGNAL_TC3_FIX_HWSTATUS", "1") != "0"
 HW_STATUS_FIX_CODES = ("0F04", "0FC1")   # 帶 HardwareStatus 的訊息
 HW_STATUS_FIX_MASK = 0x4000              # 要翻的位元(bit14 信號驅動單元)
 # 對中央上傳 HardwareStatus 的模式,可執行期切換(不用重啟 daemon):
-#   flip14 = 只翻 bit14(補償廠商寫反,預設);zero = 全 0(硬體全報正常);raw = 不動(純通透)
+#   raw = 不動(純通透,現場採用);flip14 = 只翻 bit14(程式預設,已證實不必要);
+#   zero = 全 0(硬體全報正常)
 #   force = 強制送指定的 16-bit 值(測試用:逐 bit 送、對照中央顯示哪項 → 對出位元表)
 _hw_center_mode = {"mode": os.getenv("SIGNAL_TC3_HWSTATUS_MODE",
                                      "flip14" if HW_STATUS_FIX else "raw"),
