@@ -1219,7 +1219,10 @@ def _send_to_center(frame: bytes) -> bool:
 #    出事時他們的判斷會建立在假資料上。本專案已因同樣理由拿掉 flip14、
 #    拒絕偽造 ACK,這裡一致。
 #    reassert 不隱瞞任何事:中央問什麼都據實轉答,只是它的覆蓋不會留住。
-DOWNLINK_POLICY = os.getenv("SIGNAL_TC3_DOWNLINK_POLICY", "pass")
+# 🛑 執行期可切(畫面上有開關)。env 只當初值 —— 先前寫成模組常數,
+#    畫面切了要重啟才生效,等於開關是假的。
+_downlink_policy = {"v": os.getenv("SIGNAL_TC3_DOWNLINK_POLICY", "pass")}
+DOWNLINK_POLICIES = ("pass", "log_only", "reassert", "hold_5f10")
 # 我方要維持的控制策略(bit4 時相控制)。reassert 只送這個值。
 REASSERT_STRATEGY = int(os.getenv("SIGNAL_TC3_REASSERT_STRATEGY", "16"))   # 0x10
 REASSERT_EFFECT = int(os.getenv("SIGNAL_TC3_REASSERT_EFFECT", "1"))
@@ -1266,7 +1269,7 @@ def _downlink_allow(rec: Optional[dict]) -> bool:
     """中央這一框要不要轉給控制器。回 True 轉、False 擋(並記帳)。"""
     _downlink["seen"] += 1
     code = (rec or {}).get("code")
-    if DOWNLINK_POLICY == "hold_5f10" and code == "5F10":
+    if _downlink_policy["v"] == "hold_5f10" and code == "5F10":
         # 🛑 只在我方正持有控制權(總開關開、未降階)時才擋。
         #    平時中央的策略設定照過 —— 否則等於把路口控制權從中央手上拿走。
         if _dyn.get("enabled") and _dyn.get("level") == "L0":
@@ -1277,7 +1280,7 @@ def _downlink_allow(rec: Optional[dict]) -> bool:
             add_log("warning", "下控攔截:中央 5F10 未轉給控制器(我方持有控制權) raw=%s"
                     % (rec or {}).get("raw"), "signal")
             return False
-    if DOWNLINK_POLICY == "reassert" and code == "5F10":
+    if _downlink_policy["v"] == "reassert" and code == "5F10":
         # 🛑 只在我方確實持有控制權(總開關開、未降階)時才重新宣告。
         #    平時中央的策略設定照過,不然等於把控制權從中央手上搶走。
         if _dyn.get("enabled") and _dyn.get("level") == "L0":
@@ -1297,7 +1300,7 @@ def _downlink_allow(rec: Optional[dict]) -> bool:
                 #    —— 我方在 .521 重新宣告時控制器還在處理上一則,那一則被丟掉
                 #    (沒有 0F80)。改成 1.2 秒,等控制器把整輪處理完再送。
                 threading.Timer(REASSERT_DELAY, _do_reassert).start()
-    if DOWNLINK_POLICY == "log_only" and code in ("5F10", "5F15", "5F18", "5F1C"):
+    if _downlink_policy["v"] == "log_only" and code in ("5F10", "5F15", "5F18", "5F1C"):
         _downlink["events"].append({"ts": time.time(), "code": code,
                                     "action": "pass", "raw": (rec or {}).get("raw")})
     _downlink["passed"] += 1
@@ -1359,7 +1362,7 @@ def _center_relay_loop() -> None:
                 # 🛑 log_only 也走原封轉發 —— 它只是記帳,不該為了記帳就承擔
                 #    「解不出的碎片不轉發」這個風險。只有真的要攔(hold_*)
                 #    才有理由改走逐框路徑。
-                if DOWNLINK_POLICY != "hold_5f10":
+                if _downlink_policy["v"] != "hold_5f10":
                     _controller_send(d)
                 _center_state["from_center_bytes"] += len(d)
                 # 側錄中央下傳的 frame(設定/查詢),標 src=center
@@ -1380,10 +1383,10 @@ def _center_relay_loop() -> None:
                     rec = decode_frame(frame)
                     # 🛑 非 pass 模式的轉發在這裡做。解不出來的框(rec is None)
                     #    一律放行 —— 我們看不懂的東西不該替中央決定要不要送。
-                    if DOWNLINK_POLICY == "hold_5f10":
+                    if _downlink_policy["v"] == "hold_5f10":
                         if _downlink_allow(rec):
                             _controller_send(frame)
-                    elif DOWNLINK_POLICY != "pass":
+                    elif _downlink_policy["v"] != "pass":
                         # 🛑 log_only / reassert 都走這裡:轉發已在上面原封做過,
                         #    這一呼叫只為了記帳與觸發(reassert 的重新宣告)。
                         #    2026-09-07 踩過:這裡原本寫死 == "log_only",
@@ -1964,7 +1967,7 @@ async def downlink_status(_user=Depends(get_current_user)):
     """下控與上傳是兩條獨立的路,這一支只講下控。上傳看 /device-status 的 sent_hex。"""
     ev = list(_downlink["events"])[-20:]
     return {
-        "policy": DOWNLINK_POLICY,
+        "policy": _downlink_policy["v"],
         "policy_options": {
             "pass": "原封轉發(預設)。與 2026-09-07 之前行為位元組級相同。",
             "log_only": "全部放行,但把中央的控制類命令(5F10/5F15/5F18/5F1C)記下來。",
@@ -1984,6 +1987,27 @@ async def downlink_status(_user=Depends(get_current_user)):
         "note": "預設 pass:一個位元組都不動。切換政策要改 "
                 "SIGNAL_TC3_DOWNLINK_POLICY 並重啟 traffic-signal。",
     }
+
+
+@router.post("/downlink", summary="切換下控政策(執行期生效)")
+async def downlink_set(request: Request, _user=Depends(get_current_user)):
+    """body: {"policy": "pass" | "log_only" | "reassert" | "hold_5f10"}
+
+    🛑 只改我方的轉發政策,不對控制器送任何命令。切成 pass 之後,中央的
+       覆蓋就會留住 —— 這是「不行就切回來」的那條退路。
+    """
+    body = await request.json()
+    v = str((body or {}).get("policy") or "").strip()
+    if v not in DOWNLINK_POLICIES:
+        raise HTTPException(status_code=400,
+                            detail="policy 只能是 %s" % "、".join(DOWNLINK_POLICIES))
+    old = _downlink_policy["v"]
+    _downlink_policy["v"] = v
+    who = getattr(_user, "username", None) or str(_user)
+    add_log("warning", "下控政策切換:%s → %s(操作者 %s)" % (old, v, who), "signal")
+    _downlink["events"].append({"ts": time.time(), "code": "-", "action": "policy",
+                                "raw": "%s → %s by %s" % (old, v, who)})
+    return await downlink_status(_user)
 
 
 @router.get("/coverage", summary="TC3 命令覆蓋矩陣(規範 105 條 vs 實際抄到)")

@@ -142,7 +142,7 @@ def test_reassert只在持有控制權時作用(tc3, monkeypatch):
     否則等於把路口控制權從中央手上搶走,那是權責問題不是技術選項。
     """
     calls = []
-    monkeypatch.setattr(tc3, "DOWNLINK_POLICY", "reassert")
+    monkeypatch.setitem(tc3._downlink_policy, "v", "reassert")
     monkeypatch.setattr(tc3.threading, "Timer",
                         lambda delay, fn: type("T", (), {"start": lambda s: calls.append(delay)})())
     rec = {"code": "5F10", "raw": "AA BB 21 FF FF 00 0E 5F 10 01 00 AA CC 16"}   # 中央送 0x01
