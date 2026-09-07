@@ -3806,6 +3806,42 @@
         .tp-fr .k { flex:0 0 68px; font-size:var(--fs-small); color:var(--gov-muted); }
         .tp-fr b { font-family:var(--font-mono); }
         @media (prefers-reduced-motion: reduce) { .tp-qbtn { transition:none; } }
+        /* ── 降階與故障 ────────────────────────────────────────────
+           🛑 三類故障各一張卡,不合成一個「異常」燈 —— 條文問的就是是哪一種。
+           三種狀態的顏色要分得開:正常(綠) / 觀察中(橘) / 已確認降階(紅)。
+           「觀察中」特別重要:它代表現在正在發生但還沒到降階門檻,
+           值班的人這時候就該去看,而不是等降階了才知道。 */
+        .fl-grid { display:grid; gap:10px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); }
+        .fl-card { padding:11px 13px; border:1px solid var(--gov-border); border-radius:10px;
+                   background:var(--gov-surface); }
+        .fl-card.ok   { border-color:#bfe5cc; background:#f4fbf6; }
+        .fl-card.warn { border-color:#f0c9a8; background:#fdf7f0; }
+        .fl-card.bad  { border-color:#e8a3a3; background:#fdf2f2; }
+        .fl-hd { display:flex; align-items:center; gap:8px; }
+        .fl-hd b { font-size:var(--fs-body); color:var(--gov-text); }
+        .fl-dot { width:9px; height:9px; border-radius:50%; flex:none; background:#b0b7c3; }
+        .fl-dot.ok { background:#2f9e44; }
+        .fl-dot.warn { background:#e8590c; animation:flPulse 1.4s ease-in-out infinite; }
+        .fl-dot.bad { background:#c92a2a; animation:flPulse .9s ease-in-out infinite; }
+        @keyframes flPulse { 50% { opacity:.35; } }
+        .fl-state { margin-left:auto; font-size:var(--fs-caption); color:var(--gov-muted);
+                    font-family:var(--font-mono); }
+        .fl-detail { margin-top:6px; font-size:var(--fs-small); color:var(--gov-text); }
+        .fl-rule { margin-top:4px; font-size:var(--fs-caption); color:var(--gov-mute-2); }
+        .fl-fallback { margin-top:11px; padding-top:10px; border-top:1px dashed var(--gov-border);
+                       font-size:var(--fs-small); }
+        .fl-fallback .k { display:block; font-size:var(--fs-caption); color:var(--gov-mute-2);
+                          margin-bottom:3px; }
+        .fl-fallback b { font-weight:500; color:var(--gov-text); }
+        .fl-lv { display:inline-block; padding:1px 8px; border-radius:99px;
+                 font:600 var(--fs-caption) var(--font-mono); background:#e7ecf3; color:#41546b; }
+        .fl-lv.lv-L1 { background:#fdf3d6; color:#7a5a00; }
+        .fl-lv.lv-L2 { background:#fdeee0; color:#8a4b00; }
+        .fl-lv.lv-L3 { background:#fde7e7; color:#a11c1c; }
+        .fl-lv.lv-L0 { background:#e6f4ea; color:#1f7a34; }
+        .fl-reason { font-size:var(--fs-caption); color:var(--gov-muted); }
+        .fl-none { text-align:center; color:var(--gov-muted); font-size:var(--fs-small); }
+        @media (prefers-reduced-motion: reduce) { .fl-dot { animation:none; } }
         /* 決策依據明細:預設收合的折疊區 */
         .wr-detail { margin-top:14px; border:1px solid var(--gov-border); border-radius:12px;
                      background:var(--gov-surface); }
@@ -8181,6 +8217,85 @@
                 <!-- ══ 運作統計 ══
                      從影子取樣重建每一次綠燈的實際長度再統計。所有指標查無樣本
                      一律留空,不以 0 代表統計值。 -->
+                <!-- ══ 降階與故障 ═══════════════════════════════════════
+                     驗收條文:「應具備故障檢核機制…並可於系統介面查詢或產出
+                     運作狀態…及故障情形等相關統計資料」。
+                     🛑 三類故障是條文明列的:偵測器故障 / 運算邏輯錯誤 /
+                        指令傳輸錯誤。畫面要分開顯示,不可以合成一個「異常」燈,
+                        因為條文問的就是「是哪一種」。
+                     🛑 「回復固定時制」不是靠送命令達成,是靠**不送**:降階會一併
+                        停掉授權續約,時相控制授權一分鐘內過期,控制器自己回到
+                        內建時制。這句話要寫在畫面上 —— 驗收一定會問。 -->
+                <div v-if="page==='signal_hub'" v-show="signalTab==='eval'">
+                    <div class="sig-tab-bar">
+                        <span class="sig-tab-title">降階與故障</span>
+                        <el-tag size="small" :type="sigFault.healthy?'success':'danger'">
+                            {{ sigFault.healthy ? '運轉正常' : ('降階中 '+(sigFaultLevel||'')) }}
+                        </el-tag>
+                        <el-tag size="small" type="info">近 24 小時降階 {{ sigDeg.count||0 }} 次</el-tag>
+                        <el-button size="small" plain :loading="sigFaultLoading" @click="loadSigFaults">重新載入</el-button>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-alert"/></svg>故障檢核（三類，條文明列）</span>
+                            <el-tag size="small" type="info">確認門檻 {{ sigFaultTh.hold_sec }} 秒</el-tag>
+                        </div>
+                        <div class="card-body">
+                            <div class="fl-grid">
+                                <div v-for="k in sigFaultKinds" :key="'fk'+k.key"
+                                     class="fl-card" :class="k.cls">
+                                    <div class="fl-hd">
+                                        <span class="fl-dot" :class="k.cls"></span>
+                                        <b>{{ k.label }}</b>
+                                        <span class="fl-state">{{ k.state }}</span>
+                                    </div>
+                                    <div class="fl-detail">{{ k.detail }}</div>
+                                    <div class="fl-rule">{{ k.rule }}</div>
+                                </div>
+                            </div>
+                            <div class="fl-fallback">
+                                <span class="k">故障時怎麼回固定時制</span>
+                                <b>{{ sigFault.fallback || '—' }}</b>
+                            </div>
+                            <div class="fl-fallback">
+                                <span class="k">故障如何回報中心</span>
+                                <b>{{ sigFaultCenter }}</b>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>降階歷史（近 24 小時）</span>
+                            <el-tag size="small" :type="sigDeg.degraded_sec?'warning':'success'">
+                                累計降階 {{ sigDegText }}
+                            </el-tag>
+                        </div>
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">
+                                🛑 這是持久化紀錄，服務重啟後仍查得到。最後一段若「仍在降階中」，
+                                持續時間顯示「進行中」而不是 0 秒 —— 那是兩件不同的事。
+                            </div>
+                            <table class="data-table">
+                                <thead><tr><th>開始</th><th>級數</th><th>類別</th><th>持續</th><th>原因</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="(sp,si) in (sigDeg.spans||[])" :key="'sp'+si">
+                                        <td>{{ sp.start_ts }}</td>
+                                        <td><span class="fl-lv" :class="'lv-'+sp.level">{{ sp.level }}</span></td>
+                                        <td>{{ sigFaultKindName(sp.kind) }}</td>
+                                        <td>{{ sigDegDur(sp) }}</td>
+                                        <td class="fl-reason">{{ sp.reason }}</td>
+                                    </tr>
+                                    <tr v-if="!(sigDeg.spans||[]).length">
+                                        <td colspan="5" class="fl-none">近 24 小時沒有降階事件。</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <div v-if="page==='signal_hub'" v-show="signalTab==='eval'">
                     <div class="sig-tab-bar">
                         <span class="sig-tab-title">運作統計</span>
@@ -24067,6 +24182,74 @@ const app=createApp({
                 ElMessage.error('儲存失敗');
             } finally { sigTpBusy.value = false; }
         };
+        // ── 降階與故障 ──────────────────────────────────────────────
+        // 🛑 三類故障要分開顯示,不可以合成一個「異常」燈 —— 條文問的就是
+        //    「是偵測器故障、運算邏輯錯誤、還是指令傳輸錯誤」。
+        const sigFault = ref({});
+        const sigDeg = ref({});
+        const sigFaultLoading = ref(false);
+        const loadSigFaults = async () => {
+            sigFaultLoading.value = true;
+            try {
+                const [a, b] = await Promise.all([
+                    fetch('/api/signal/shadow/faults', {credentials: 'include'}),
+                    fetch('/api/signal/shadow/degrade-log?hours=24', {credentials: 'include'}),
+                ]);
+                if (a.ok) sigFault.value = await a.json();
+                if (b.ok) sigDeg.value = await b.json();
+            } catch (e) { /* 讀不到就維持上次顯示,不要清空成假的「正常」 */ }
+            finally { sigFaultLoading.value = false; }
+        };
+        const sigFaultLevel = computed(() => ((sigFault.value || {}).degrade || {}).level || '');
+        const sigFaultTh = computed(() => (sigFault.value || {}).thresholds || {});
+        const sigFaultKindName = (k) => ((sigFault.value || {}).kinds || {})[k]
+                                        || (k === 'clear' ? '復歸' : (k || '—'));
+        // 三種狀態分得開:已確認(降階中) / 觀察中(還沒撐過門檻) / 正常。
+        // 🛑 「觀察中」一定要看得到 —— 它代表現在正在發生某件事但還沒到降階門檻,
+        //    值班的人這時候就該去看,而不是等降階了才知道。
+        const sigFaultKinds = computed(() => {
+            const f = sigFault.value || {};
+            const kinds = f.kinds || {detector: '偵測器故障', logic: '運算邏輯錯誤',
+                                      transmit: '指令傳輸錯誤'};
+            const byKind = {};
+            (f.active || []).forEach((r) => { byKind[r.kind] = {r: r, on: true}; });
+            (f.pending || []).forEach((r) => { if (!byKind[r.kind]) byKind[r.kind] = {r: r, on: false}; });
+            const th = f.thresholds || {};
+            const RULE = {
+                detector: '兩相量測都取不到,或燈態取不到/過期',
+                logic: '決策迴圈連續 ' + (th.logic_fails || '—') + ' 輪拋例外',
+                transmit: '連續 ' + (th.send_fails || '—') + ' 次送不出去,或送出後未被控制器接受',
+            };
+            return Object.keys(kinds).map((k) => {
+                const hit = byKind[k];
+                if (!hit) return {key: k, label: kinds[k], cls: 'ok', state: '正常',
+                                  detail: '—', rule: RULE[k] || ''};
+                const secs = Math.round(hit.r.elapsed_sec || 0);
+                return {
+                    key: k, label: kinds[k],
+                    cls: hit.on ? 'bad' : 'warn',
+                    state: hit.on ? '已確認 · 降階中' : ('觀察中 ' + secs + 's / '
+                                                        + (th.hold_sec || '—') + 's'),
+                    detail: hit.r.detail || '—',
+                    rule: RULE[k] || '',
+                };
+            });
+        });
+        const sigFaultCenter = computed(() => {
+            const c = (sigFault.value || {}).center_report;
+            if (!c) return '—';
+            return typeof c === 'string' ? c : (c.channel + ' — ' + c.how);
+        });
+        const sigDegDur = (sp) => {
+            if (sp.duration_sec == null) return '進行中';
+            const n = sp.duration_sec;
+            return (n < 90) ? (Math.round(n) + ' 秒') : (Math.round(n / 60) + ' 分鐘');
+        };
+        const sigDegText = computed(() => {
+            const n = (sigDeg.value || {}).degraded_sec;
+            if (!n) return '0 秒';
+            return (n < 90) ? (Math.round(n) + ' 秒') : (Math.round(n / 60) + ' 分鐘');
+        });
         const sigTabs = ref([
             {key: 'live',   label: '即時戰情',   icon: 'i-activity'},
             {key: 'eval',   label: '運作統計',   icon: 'i-bar'},
@@ -24086,7 +24269,7 @@ const app=createApp({
             // 🛑 驗收清單 2026-09-07 拆成獨立分頁(使用者:驗收清單跟運作統計分開)——
             //    驗收是「對規格逐條交代」,運作統計是「這段時間跑得怎樣」,
             //    兩件事的讀者與時機都不同,混在一頁會互相稀釋。
-            eval:   () => { loadViz(); startVizTimer(); loadVizHourly();
+            eval:   () => { loadSigFaults(); loadViz(); startVizTimer(); loadVizHourly();
                             loadSigStats(); startSigStatTimer(); loadSigConsole(); },
             device: () => { loadSignal(); startSignalTimer(); loadSigDevice();
                             loadSigConfig(); loadSigTp(); },
@@ -26876,7 +27059,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNamed,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigFaultLoading,loadSigFaults,sigFaultLevel,sigFaultTh,sigFaultKinds,sigFaultKindName,sigFaultCenter,sigDegDur,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNamed,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }

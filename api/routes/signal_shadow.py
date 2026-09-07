@@ -2778,6 +2778,69 @@ async def fault_status(_user=Depends(get_current_user)):
     }
 
 
+@router.get("/degrade-log", summary="降階與故障歷史(驗收要查的「故障情形」)")
+async def degrade_log(hours: int = Query(24, ge=1, le=720),
+                      _user=Depends(get_current_user)):
+    """降階/復歸事件的歷史,以及每一段降階持續多久。
+
+    🛑 這是**持久化**的紀錄(signal_degrade_log),不是記憶體 deque ——
+       重啟後仍查得到。驗收問「什麼時候故障、多久、期間號誌跑什麼」,
+       答案要在這裡,而不是「服務重啟就沒了」。
+    """
+    cut = time.time() - hours * 3600
+    rows = []
+    try:
+        conn = _db()
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS signal_degrade_log("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, epoch REAL,"
+            "level TEXT, kind TEXT, reason TEXT)")
+        cur = conn.execute(
+            "SELECT ts,epoch,level,kind,reason FROM signal_degrade_log "
+            "WHERE epoch>? ORDER BY epoch DESC LIMIT 500", (cut,))
+        rows = [{"ts": r[0], "epoch": r[1], "level": r[2], "kind": r[3],
+                 "reason": r[4]} for r in cur.fetchall()]
+        conn.close()
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:160], "rows": []}
+
+    # 把「降階 → 復歸」配成一段一段,算出每段持續多久
+    # 🛑 最後一段若還沒復歸,duration 給 None 而不是算到現在 ——
+    #    那是「仍在降階中」,不是一段已結束的區間,兩者不可混為一談。
+    spans, open_span = [], None
+    for r in reversed(rows):                      # 由舊到新
+        if r["level"] == "L0":
+            if open_span:
+                open_span["end"] = r["epoch"]
+                open_span["duration_sec"] = round(r["epoch"] - open_span["start"], 1)
+                open_span["cleared_by"] = r["reason"]
+                spans.append(open_span)
+                open_span = None
+        else:
+            if open_span:                          # 降階中又升級(L2→L3)
+                open_span["level"] = r["level"]
+                open_span["reason"] = r["reason"]
+            else:
+                open_span = {"start": r["epoch"], "start_ts": r["ts"],
+                             "level": r["level"], "kind": r["kind"],
+                             "reason": r["reason"], "end": None,
+                             "duration_sec": None, "cleared_by": ""}
+    if open_span:
+        spans.append(open_span)                    # 仍在降階中,duration 維持 None
+    spans.reverse()
+
+    total = sum(sp["duration_sec"] or 0 for sp in spans)
+    return {
+        "available": True, "hours": hours,
+        "rows": rows, "spans": spans,
+        "count": len(spans),
+        "ongoing": bool(spans and spans[0].get("end") is None),
+        "degraded_sec": round(total, 1),
+        "degraded_ratio": round(total / (hours * 3600), 5) if hours else None,
+        "note": "spans 的最後一段若 duration 為 null,代表仍在降階中,不是零秒。",
+    }
+
+
 @router.get("/actuate", summary="演算法下發:現況與把關結果")
 async def actuate_status(_user=Depends(get_current_user)):
     """看得到「有沒有在下發」「上一次送了什麼」「這一刻為什麼沒送」。
