@@ -1186,6 +1186,53 @@ def _send_to_center(frame: bytes) -> bool:
         return False
 
 
+# ── 下控(中央→控制器)政策 ────────────────────────────────────────────
+# 2026-09-07 使用者要求「下控跟上傳分開,預設不攔」。
+# 背景:我方送 5F10 取得時相控制授權(21:11:58,控制器 ACK、策略變 0x10),
+# 中央在兩秒後送 5F10 把策略改回 0x01(21:12:00)。此事已由使用者通報中央。
+#
+# 兩個方向從此各有各的政策點,不再混在一起:
+#   上傳 控制器→中央  _forward_controller_frame_to_center()
+#   下控 中央→控制器  _center_to_controller_policy()   ← 這一支
+#
+# 🛑 預設 pass,而且 pass 這條路徑**完全不經過逐框判斷** —— 原封 _controller_send
+#    整個 chunk,與 2026-09-07 之前的行為位元組級相同。要改政策才會走逐框路徑。
+#
+# 🛑 攔截中央命令是**改變權責歸屬**,不是技術選項。兩種攔法都有代價:
+#    · 靜靜丟掉 → 控制器不會回 ACK → 中央會判定控制器通訊故障
+#      (今天早上才因為類似情況讓現場顯示通訊故障,不要重演)
+#    · 偽造 ACK → 對中央謊報,不做
+#    所以 hold_5f10 只在**我方確實持有控制權**時擋,而且每一筆都寫 log。
+#
+# 🛑 非 pass 模式改走逐框轉發,代價是:解不出框的碎片(雜訊、半截封包)
+#    不會被轉發。pass 模式沒有這個問題。這是選擇攔截時要接受的取捨。
+DOWNLINK_POLICY = os.getenv("SIGNAL_TC3_DOWNLINK_POLICY", "pass")   # pass / log_only / hold_5f10
+_downlink = {"seen": 0, "held": 0, "passed": 0, "last_held": None,
+             "events": deque(maxlen=100)}
+
+
+def _downlink_allow(rec: Optional[dict]) -> bool:
+    """中央這一框要不要轉給控制器。回 True 轉、False 擋(並記帳)。"""
+    _downlink["seen"] += 1
+    code = (rec or {}).get("code")
+    if DOWNLINK_POLICY == "hold_5f10" and code == "5F10":
+        # 🛑 只在我方正持有控制權(總開關開、未降階)時才擋。
+        #    平時中央的策略設定照過 —— 否則等於把路口控制權從中央手上拿走。
+        if _dyn.get("enabled") and _dyn.get("level") == "L0":
+            _downlink["held"] += 1
+            _downlink["last_held"] = time.time()
+            _downlink["events"].append({"ts": time.time(), "code": code,
+                                        "action": "held", "raw": (rec or {}).get("raw")})
+            add_log("warning", "下控攔截:中央 5F10 未轉給控制器(我方持有控制權) raw=%s"
+                    % (rec or {}).get("raw"), "signal")
+            return False
+    if DOWNLINK_POLICY == "log_only" and code in ("5F10", "5F15", "5F18", "5F1C"):
+        _downlink["events"].append({"ts": time.time(), "code": code,
+                                    "action": "pass", "raw": (rec or {}).get("raw")})
+    _downlink["passed"] += 1
+    return True
+
+
 def _center_relay_loop() -> None:
     """中央電腦透明中繼 server。中央連進來 → 讀它的下傳原封轉給控制器,同時側錄。
     控制器→中央方向由 _recorder_loop 的 _tee_to_center 負責。"""
@@ -1234,8 +1281,12 @@ def _center_relay_loop() -> None:
                     continue
                 if not d:
                     break
-                # 中央→控制器:原封轉發(佔據那條)。控制器沒連上就丟棄(透明:等同源斷)。
-                _controller_send(d)
+                # 🛑 下控與上傳分開(2026-09-07)。
+                #    pass 模式:原封轉發整個 chunk,與先前位元組級相同 ——
+                #    不進逐框判斷,避免為了一個預設關閉的功能改動熱路徑。
+                #    其他模式:下面逐框判斷後才轉,代價是解不出的碎片不轉發。
+                if DOWNLINK_POLICY == "pass":
+                    _controller_send(d)
                 _center_state["from_center_bytes"] += len(d)
                 # 側錄中央下傳的 frame(設定/查詢),標 src=center
                 buf += d
@@ -1253,6 +1304,11 @@ def _center_relay_loop() -> None:
                     frame = buf[i:j + 3]
                     buf = buf[j + 3:]
                     rec = decode_frame(frame)
+                    # 🛑 非 pass 模式的轉發在這裡做。解不出來的框(rec is None)
+                    #    一律放行 —— 我們看不懂的東西不該替中央決定要不要送。
+                    if DOWNLINK_POLICY != "pass":
+                        if _downlink_allow(rec):
+                            _controller_send(frame)
                     if rec is None:
                         continue
                     rec["src"] = "center"       # 來源:中央下傳(下行)
@@ -1820,6 +1876,27 @@ async def dynamic_set(request: Request, _user=Depends(get_current_user)):
     if "level" in body:
         enter_degraded(str(body["level"]), str(body.get("reason") or ("手動設定 by %s" % who)))
     return await dynamic_status(_user)
+
+
+@router.get("/downlink", summary="下控(中央→控制器)政策與稽核")
+async def downlink_status(_user=Depends(get_current_user)):
+    """下控與上傳是兩條獨立的路,這一支只講下控。上傳看 /device-status 的 sent_hex。"""
+    ev = list(_downlink["events"])[-20:]
+    return {
+        "policy": DOWNLINK_POLICY,
+        "policy_options": {
+            "pass": "原封轉發(預設)。與 2026-09-07 之前行為位元組級相同。",
+            "log_only": "全部放行,但把中央的控制類命令(5F10/5F15/5F18/5F1C)記下來。",
+            "hold_5f10": "我方持有控制權時擋下中央的 5F10。"
+                         "🛑 中央會因為收不到 ACK 而判定控制器通訊故障 —— "
+                         "這是改變權責歸屬,不是技術選項,要與中央談好才用。",
+        },
+        "seen": _downlink["seen"], "passed": _downlink["passed"],
+        "held": _downlink["held"], "last_held": _downlink["last_held"],
+        "events": [dict(e) for e in reversed(ev)],
+        "note": "預設 pass:一個位元組都不動。切換政策要改 "
+                "SIGNAL_TC3_DOWNLINK_POLICY 並重啟 traffic-signal。",
+    }
 
 
 @router.get("/coverage", summary="TC3 命令覆蓋矩陣(規範 105 條 vs 實際抄到)")
