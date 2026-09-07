@@ -172,3 +172,28 @@ def test_reassert只在持有控制權時作用(tc3, monkeypatch):
         assert not calls, "中央沒有收走 bit4,不該重新宣告"
     finally:
         tc3._dyn.update(old)
+
+
+def test_確認手動時自動降階L2(tc3, monkeypatch):
+    """🛑 規範 (G):員警手動時我方要完全讓開。
+
+    掛在「已確認」的手動上,不是原始位元 —— 5F10 續約瞬間策略會閃過 05H,
+    用原始位元判會每小時假降階十次(2026-09-03 教訓)。
+    """
+    old_dyn, old_safety = dict(tc3._dyn), dict(tc3._safety)
+    try:
+        tc3._dyn.update({"enabled": True, "level": "L0", "reason": ""})
+        # 確認手動 → L2
+        tc3.enter_degraded("L2", "偵測到手動介入(定時控制+路口手動),我方停止下發")
+        assert tc3._dyn["level"] == "L2"
+        assert tc3.dynamic_blocked(), "降階後仍放行設定類"
+        assert tc3._control_guard(0x1C) and "降階" in tc3._control_guard(0x1C)
+        # 查詢類在降階時仍要能用 —— 降階時更需要看現場
+        assert tc3._control_guard(0x45) is None
+        # 手動解除 → 回 L0
+        tc3.enter_degraded("L0", "手動已解除")
+        assert tc3._dyn["level"] == "L0"
+        assert tc3.dynamic_blocked() is None
+    finally:
+        tc3._dyn.update(old_dyn)
+        tc3._safety.update(old_safety)

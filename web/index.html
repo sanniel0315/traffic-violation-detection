@@ -8076,6 +8076,27 @@
                                      講過同一件事,而且那裡有白話說明與可信度註記,
                                      標題重複一次只是雜訊。 -->
                                 <span><svg class="text-icon"><use href="#i-alert"/></svg>控制權現況</span>
+                                <!-- 🛑 開關放**標題列**不放內文:卡片可以被收折,
+                                     收折後 card-body 整個隱藏 —— 而這兩個是隨時可能要
+                                     緊急關掉的開關,收起來就找不到是不可接受的。
+                                     標題列不受收折影響,收著也看得到、切得動。
+                                     (收折的排除清單有 .el-switch,點開關不會誤觸收折) -->
+                                <div class="wr-sw">
+                                    <span class="wr-sw-i">
+                                        <el-switch v-model="sigDynOn" size="small" :loading="sigDynBusy"
+                                                   @change="sigSetDyn" active-text="動態控制" inline-prompt></el-switch>
+                                        <em :title="'🛑 這個開關是記憶體狀態,traffic-signal 重啟(含每次部署)會回到關閉 —— 那是刻意的 fail-safe:重啟後不會自己開始下發。'">{{ sigDyn.level && sigDyn.level!=='L0' ? ('降階 '+sigDyn.level) : (sigDynOn?'我方可下發':'我方不下發(重啟後預設)') }}</em>
+                                    </span>
+                                    <span class="wr-sw-i">
+                                        <!-- 🛑 總開關關閉時「維持授權」是**死的** —— reassert 的守衛規定
+                                             只有總開關開且未降階才重新宣告。不 disable 的話畫面看起來
+                                             啟用了、實際完全不作用,那比沒有這個開關更糟。 -->
+                                        <el-switch v-model="sigKeepAuth" size="small" :loading="sigDynBusy"
+                                                   :disabled="!sigDynOn"
+                                                   @change="sigSetPolicy" active-text="維持授權" inline-prompt></el-switch>
+                                        <em>{{ !sigDynOn ? '需先啟用動態控制' : (sigKeepAuth ? ('已重新宣告 '+(sigDl.reassert&&sigDl.reassert.count||0)+' 次') : '中央改回定時就留住') }}</em>
+                                    </span>
+                                </div>
                             </div>
                             <div class="card-body">
                                 <!-- 🛑 2026-09-07 重做:這張卡叫「控制權現況」,就必須自己回答
@@ -8094,22 +8115,6 @@
                                      中央看到的一切都是真的 —— 它的命令照常送達、照常被 ACK,
                                      用 5F40 問現況時我方也據實轉答,只是它的覆蓋留不住。
                                      這是等中央改好授權設定前的權宜措施,不行就把「維持授權」關掉。 -->
-                                <div class="wr-sw">
-                                    <span class="wr-sw-i">
-                                        <el-switch v-model="sigDynOn" size="small" :loading="sigDynBusy"
-                                                   @change="sigSetDyn" active-text="動態控制" inline-prompt></el-switch>
-                                        <em :title="'🛑 這個開關是記憶體狀態,traffic-signal 重啟(含每次部署)會回到關閉 —— 那是刻意的 fail-safe:重啟後不會自己開始下發。'">{{ sigDyn.level && sigDyn.level!=='L0' ? ('降階 '+sigDyn.level) : (sigDynOn?'我方可下發':'我方不下發(重啟後預設)') }}</em>
-                                    </span>
-                                    <span class="wr-sw-i">
-                                        <!-- 🛑 總開關關閉時「維持授權」是**死的** —— reassert 的守衛規定
-                                             只有總開關開且未降階才重新宣告。不 disable 的話畫面看起來
-                                             啟用了、實際完全不作用,那比沒有這個開關更糟。 -->
-                                        <el-switch v-model="sigKeepAuth" size="small" :loading="sigDynBusy"
-                                                   :disabled="!sigDynOn"
-                                                   @change="sigSetPolicy" active-text="維持授權" inline-prompt></el-switch>
-                                        <em>{{ !sigDynOn ? '需先啟用動態控制' : (sigKeepAuth ? ('已重新宣告 '+(sigDl.reassert&&sigDl.reassert.count||0)+' 次') : '中央改回定時就留住') }}</em>
-                                    </span>
-                                </div>
                                 <div class="wr-ctlway">
                                     <div class="wr-ctlway-row">
                                         <span class="k">宣告</span>
