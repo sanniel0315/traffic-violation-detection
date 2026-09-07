@@ -720,6 +720,134 @@ _act = {"enabled": ACTUATE_DEFAULT, "n": 0, "last_ts": 0.0, "last_seq": None,
         "events": deque(maxlen=100)}
 
 
+# ── 故障檢核(驗收條文:偵測器故障 / 運算邏輯錯誤 / 指令傳輸錯誤)──────
+# 條文要求:「當偵測器發生故障、運算邏輯錯誤或指令傳輸錯誤導致動態控制策略
+# 無法有效運作時,號誌策略須回復為固定時制計畫並將故障訊息回傳中心」。
+#
+# 🛑 「回復為固定時制」我方**不送任何切換命令**去達成 —— 而是停止續約。
+#    時相控制授權 EffectTime=1 分鐘,不續就會自己過期,控制器回到內建時制
+#    (2026-09-07 23:25→23:26 實測)。這比主動送一則「請回定時」可靠:
+#    連線斷掉、行程掛掉、整台機器沒電,失敗方向都一樣是回到固定時制,
+#    不依賴「故障當下還能成功送出一則命令」這個前提。
+#    enter_degraded 到 L2 會同時擋掉下發與續約(兩者都過 dynamic 守衛)。
+#
+# 🛑 每一種故障都要「持續一段時間」才算數,不是一有就降階 ——
+#    相機掉一幀、一次逾時都會發生。抖動就降階會讓系統整天在升降之間跳,
+#    比不降階更糟(2026-09-03 手動誤判每小時十次假警報的教訓)。
+FAULT_HOLD_SEC = float(os.getenv("SIGNAL_FAULT_HOLD_SEC", "60") or 60)
+FAULT_CLEAR_SEC = float(os.getenv("SIGNAL_FAULT_CLEAR_SEC", "120") or 120)
+FAULT_SEND_FAILS = int(os.getenv("SIGNAL_FAULT_SEND_FAILS", "3") or 3)
+FAULT_LOGIC_FAILS = int(os.getenv("SIGNAL_FAULT_LOGIC_FAILS", "3") or 3)
+
+FAULT_KINDS = {
+    "detector": "偵測器故障",
+    "logic": "運算邏輯錯誤",
+    "transmit": "指令傳輸錯誤",
+}
+_fault = {
+    # kind -> {"since": ts, "detail": str}  目前正在發生(尚未確認)的
+    "pending": {},
+    # kind -> {"since": ts, "detail": str}  已確認、正在降階中的
+    "active": {},
+    "clear_since": None,
+    "send_fails": 0, "logic_fails": 0,
+    "events": deque(maxlen=200),
+}
+
+
+def _fault_note(kind: str, on: bool, detail: str = "") -> None:
+    """記一次故障狀態變化。on=True 表示現在有這個故障。
+
+    🛑 只在「有→沒有」或「沒有→有」時記事件,不是每次取樣都記 ——
+       每 5 秒一筆會把日誌洗掉,真正的狀態變化就找不到了。
+    """
+    now = time.time()
+    pend = _fault["pending"]
+    if on:
+        if kind not in pend:
+            pend[kind] = {"since": now, "detail": detail}
+        else:
+            pend[kind]["detail"] = detail
+    else:
+        pend.pop(kind, None)
+
+
+def _fault_check(live: Optional[dict], m1: Optional[dict], m2: Optional[dict]) -> None:
+    """把三類故障的判定與降階/復歸收在同一個地方。
+
+    🛑 降階與復歸都要有**明確的事件紀錄**,驗收要查「什麼時候故障、
+       什麼時候恢復、期間號誌跑什麼」。
+    """
+    from api.routes import signal_tc3 as T
+    now = time.time()
+
+    # (1) 偵測器故障:兩相的量測**都**拿不到。
+    #     🛑 只有一相拿不到不算故障 —— 引擎對缺值有自己的處理(當 0 看待),
+    #        而且單相故障時另一相的資料仍有決策價值。兩相都沒有才是真的瞎了。
+    def blind(m):
+        return (not m) or (m.get("queue_m") is None and m.get("flow_vpm") is None)
+    if blind(m1) and blind(m2):
+        _fault_note("detector", True, "分相 1、2 的排隊與流量都取不到")
+    else:
+        _fault_note("detector", False)
+
+    # (2) 指令傳輸錯誤:連續多次下發失敗
+    if _fault["send_fails"] >= FAULT_SEND_FAILS:
+        _fault_note("transmit", True, "連續 %d 次下發失敗:%s"
+                    % (_fault["send_fails"], _act.get("last_error") or ""))
+    else:
+        _fault_note("transmit", False)
+
+    # (3) 運算邏輯錯誤:決策迴圈連續多次拋例外
+    if _fault["logic_fails"] >= FAULT_LOGIC_FAILS:
+        _fault_note("logic", True, "決策迴圈連續 %d 次例外:%s"
+                    % (_fault["logic_fails"], _stats.get("last_error") or ""))
+    else:
+        _fault_note("logic", False)
+
+    # ── 掛起中的故障撐過確認時間 → 降階 ──
+    for kind, info in list(_fault["pending"].items()):
+        if kind in _fault["active"]:
+            continue
+        if now - info["since"] < FAULT_HOLD_SEC:
+            continue
+        _fault["active"][kind] = dict(info)
+        _fault["clear_since"] = None
+        detail = "%s:%s(持續逾 %.0f 秒確認)" % (
+            FAULT_KINDS[kind], info["detail"], FAULT_HOLD_SEC)
+        _fault["events"].append({"ts": now, "kind": kind, "action": "降階",
+                                 "detail": detail})
+        # 🛑 L2 = 停止下發。續約也走同一道守衛,所以會一併停 ——
+        #    授權在一分鐘內過期,控制器自己回到固定時制計畫。
+        T.enter_degraded("L2", detail)
+        add_log("error", "故障檢核:%s → 停止下發,號誌回復固定時制" % detail, "signal")
+        try:
+            push_alert("號誌動態控制降階", detail, level="critical")
+        except Exception:
+            pass
+
+    # ── 全部故障都消失且穩定夠久 → 復歸 ──
+    if _fault["active"] and not _fault["pending"]:
+        if _fault["clear_since"] is None:
+            _fault["clear_since"] = now
+        elif now - _fault["clear_since"] >= FAULT_CLEAR_SEC:
+            kinds = "、".join(FAULT_KINDS[k] for k in _fault["active"])
+            _fault["active"].clear()
+            _fault["clear_since"] = None
+            _fault["events"].append({"ts": now, "kind": "clear", "action": "復歸",
+                                     "detail": "%s 已排除" % kinds})
+            # 🛑 只解除**故障造成的**降階。手動介入等其他原因造成的 L2 不動 ——
+            #    否則故障復歸會順手把別的保護也關掉。
+            dyn = T._dyn
+            if dyn.get("level") == "L2" and any(
+                    FAULT_KINDS[k] in (dyn.get("reason") or "") for k in FAULT_KINDS):
+                T.enter_degraded("L0", "故障已排除(%s),恢復動態控制" % kinds)
+            add_log("info", "故障檢核:%s 已排除逾 %.0f 秒,恢復動態控制"
+                    % (kinds, FAULT_CLEAR_SEC), "signal")
+    elif _fault["pending"]:
+        _fault["clear_since"] = None
+
+
 def _actuate_gates(live: dict, now: float) -> Optional[str]:
     """這一刻能不能下發。回原因字串表示不能,回 None 表示可以。
 
@@ -833,6 +961,7 @@ def _actuate(d, g_no: int, live: dict) -> None:
         _act.update({"n": _act["n"] + 1, "last_ts": now, "last_seq": sent.get("seq"),
                      "last_reason": d.reason or "", "last_raw": raw,
                      "blocked": "", "last_error": ""})
+        _fault["send_fails"] = 0         # 成功一次就重算,判的是「連續」失敗
         _act["events"].append({"ts": now, "phase": g_no, "seq": sent.get("seq"),
                                "reason": d.reason or "", "raw": raw})
         # 🛑 這裡**不**自己再側錄一份訊框:daemon 的 control/send 已經寫進
@@ -847,6 +976,7 @@ def _actuate(d, g_no: int, live: dict) -> None:
         # 🛑 送不出去就是沒送,不要重試 —— 重試會在控制器忙的時候堆命令。
         #    下一次取樣若還判 SWITCH 自然會再試一次。
         _act["last_error"] = "%s: %s" % (type(exc).__name__, exc)
+        _fault["send_fails"] += 1        # 連續失敗會被判成「指令傳輸錯誤」
         return stop(_act["last_error"])
 
 
@@ -883,6 +1013,11 @@ def _loop():
         try:
             live = _live_phase()
             if live is None:
+                # 🛑 這條路徑以前是靜靜跳過。抄錄長時間拿不到燈態 = 我方
+                #    根本看不到路口,屬於條文的「偵測器故障」,必須降階,
+                #    不能一邊看不見一邊繼續持有控制權。
+                _fault_note("detector", True, "取不到燈態(traffic-signal 未連線?)")
+                _fault_check(None, None, None)
                 _stop.wait(SHADOW_INTERVAL_SEC)
                 continue
             # 🛑 抄錄斷線時 latest 會凍結在最後一幀,sub_phase_id 不再變,
@@ -892,6 +1027,10 @@ def _loop():
                 with _lock:
                     _stats["skipped_stale"] = _stats.get("skipped_stale", 0) + 1
                 prev_phase = None       # 重連後不要拿斷線前的分相當基準
+                # 燈態凍結在最後一幀 —— 與拿不到同樣是看不見路口。
+                _fault_note("detector", True, "燈態資料過期 %.0f 秒"
+                            % float(live.get("age_sec") or 0))
+                _fault_check(live, None, None)
                 _stop.wait(SHADOW_INTERVAL_SEC)
                 continue
             cur_phase = live["sub_phase_id"]
@@ -916,6 +1055,9 @@ def _loop():
 
             m1 = _phase_measure(1)
             m2 = _phase_measure(2)
+            # 🛑 故障檢核放在**下發之前** —— 先確認現在有沒有資格控,再談要不要切。
+            #    順序反了的話,故障那一輪還是會送出一則命令。
+            _fault_check(live, m1, m2)
             q1, q2 = m1["queue_m"], m2["queue_m"]
             f1, f2 = m1["flow_vpm"], m2["flow_vpm"]
             # 綠燈側 = 當下分相；紅燈側 = 另一相
@@ -996,9 +1138,15 @@ def _loop():
                 _stats["samples"] += 1
                 _stats["last_at"] = datetime.now().isoformat(timespec="seconds")
                 _stats["last_error"] = ""
+            _fault["logic_fails"] = 0    # 跑完整輪就重算,判的是「連續」失敗
         except Exception as e:
             with _lock:
                 _stats["last_error"] = str(e)
+            # 🛑 條文的「運算邏輯錯誤」。單次例外不算 —— 一次 DB busy、
+            #    一次查表 miss 都會拋。連續多輪才代表決策真的跑不動了。
+            #    這裡不能再呼叫 _fault_check(它自己也可能是拋例外的來源),
+            #    留給下一輪正常路徑去判定與降階。
+            _fault["logic_fails"] += 1
         # 逐時評估:整點過 2 分算前一小時(輕量,大多數輪次直接 return)
         try:
             _hourly_tick()
@@ -2424,6 +2572,110 @@ async def count_check(camera_id: int = Query(..., ge=1),
                    "現場 4 台 VD 移除後,AI 影像是唯一資料來源,"
                    "規格的 90% 準確度條款因此是必要條件不是加分項。")
     return out
+
+
+@router.get("/faults", summary="故障檢核:現況、歷史與降階紀錄")
+async def fault_status(_user=Depends(get_current_user)):
+    """驗收條文的「故障情形」查詢入口。
+
+    三類故障各自獨立判定,任何一類確認成立就停止下發與續約 ——
+    時相控制授權在一分鐘內過期,控制器自己回到固定時制計畫。
+    🛑 「回復固定時制」不是靠我方送命令達成的,是靠**不送**。連線斷、行程掛、
+       機器沒電,失敗方向都一樣,不依賴故障當下還能成功送出一則命令。
+    """
+    from api.routes import signal_tc3 as T
+    now = time.time()
+
+    def rows(src, confirmed):
+        out = []
+        for k, v in src.items():
+            out.append({
+                "kind": k, "label": FAULT_KINDS.get(k, k),
+                "detail": v.get("detail", ""),
+                "since": v.get("since"),
+                "elapsed_sec": round(now - v["since"], 1) if v.get("since") else None,
+                "confirmed": confirmed,
+            })
+        return out
+
+    active = rows(_fault["active"], True)
+    pending = [r for r in rows(_fault["pending"], False)
+               if r["kind"] not in _fault["active"]]
+    ev = list(_fault["events"])[-30:]
+    return {
+        "healthy": not active,
+        "active": active,
+        "pending": pending,          # 正在發生但還沒撐過確認時間
+        "kinds": FAULT_KINDS,
+        "thresholds": {
+            "hold_sec": FAULT_HOLD_SEC,
+            "clear_sec": FAULT_CLEAR_SEC,
+            "send_fails": FAULT_SEND_FAILS,
+            "logic_fails": FAULT_LOGIC_FAILS,
+        },
+        "counters": {"send_fails": _fault["send_fails"],
+                     "logic_fails": _fault["logic_fails"]},
+        "degrade": {"level": T._dyn.get("level"),
+                    "reason": T._dyn.get("reason"),
+                    "since": T._dyn.get("since")},
+        "events": [dict(e) for e in reversed(ev)],
+        "fallback": "確認故障 → 停止下發與續約 → 授權 1 分鐘內過期 → "
+                    "控制器回復固定時制計畫(2026-09-07 實測)",
+        "center_report": "故障訊息回傳中心尚未實作 —— TC3 的硬體狀態位元描述的是"
+                         "**控制器**的狀態,不是我方分析器的。要回傳我方故障必須先與"
+                         "中心約定用哪個欄位或哪條通道,不可自行挪用既有位元(那會讓"
+                         "中心把我方故障誤讀成號誌機故障)。",
+    }
+
+
+@router.get("/faults", summary="故障檢核:現況、歷史與降階紀錄")
+async def fault_status(_user=Depends(get_current_user)):
+    """驗收條文的「故障情形」查詢入口。
+
+    三類故障各自獨立判定,任何一類確認成立就停止下發與續約 ——
+    時相控制授權在一分鐘內過期,控制器自己回到固定時制計畫。
+    🛑 「回復固定時制」不是靠我方送命令達成的,是靠**不送**。連線斷、行程掛、
+       機器沒電,失敗方向都一樣,不依賴故障當下還能成功送出一則命令。
+    """
+    from api.routes import signal_tc3 as T
+    now = time.time()
+
+    def rows(src, confirmed):
+        out = []
+        for k, v in src.items():
+            out.append({
+                "kind": k, "label": FAULT_KINDS.get(k, k),
+                "detail": v.get("detail", ""),
+                "since": v.get("since"),
+                "elapsed_sec": round(now - v["since"], 1) if v.get("since") else None,
+                "confirmed": confirmed,
+            })
+        return out
+
+    active = rows(_fault["active"], True)
+    pending = [r for r in rows(_fault["pending"], False)
+               if r["kind"] not in _fault["active"]]
+    ev = list(_fault["events"])[-30:]
+    return {
+        "healthy": not active,
+        "active": active,
+        "pending": pending,          # 正在發生但還沒撐過確認時間
+        "kinds": FAULT_KINDS,
+        "thresholds": {"hold_sec": FAULT_HOLD_SEC, "clear_sec": FAULT_CLEAR_SEC,
+                       "send_fails": FAULT_SEND_FAILS,
+                       "logic_fails": FAULT_LOGIC_FAILS},
+        "counters": {"send_fails": _fault["send_fails"],
+                     "logic_fails": _fault["logic_fails"]},
+        "degrade": {"level": T._dyn.get("level"), "reason": T._dyn.get("reason"),
+                    "since": T._dyn.get("since")},
+        "events": [dict(e) for e in reversed(ev)],
+        "fallback": "確認故障 → 停止下發與續約 → 授權 1 分鐘內過期 → "
+                    "控制器回復固定時制計畫(2026-09-07 實測)",
+        "center_report": "故障訊息回傳中心尚未實作 —— TC3 的硬體狀態位元描述的是"
+                         "**控制器**的狀態,不是我方分析器的。要回傳我方故障必須先與"
+                         "中心約定用哪個欄位或哪條通道,不可自行挪用既有位元"
+                         "(那會讓中心把我方故障誤讀成號誌機故障)。",
+    }
 
 
 @router.get("/actuate", summary="演算法下發:現況與把關結果")

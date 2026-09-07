@@ -3748,6 +3748,57 @@
             .wr-fc, .wr-fc-dot, .fc-win, .fc-done, .fc-now, .fc-st b.cd {
                 animation:none !important; transition:none !important; }
         }
+        /* ── 時制計畫控制 ────────────────────────────────────────── */
+        .tp-now { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px 26px; }
+        .tp-now-id { display:flex; align-items:baseline; gap:8px; }
+        .tp-now-id em, .tp-now-k em { font-style:normal; font-size:var(--fs-caption);
+                                      color:var(--gov-mute-2); }
+        .tp-now-id b { font:700 var(--fs-t1) var(--font-mono); color:var(--gov-text); }
+        .tp-now-k { display:flex; align-items:baseline; gap:6px; }
+        .tp-now-k b { font:700 var(--fs-t2) var(--font-mono); color:var(--gov-text); }
+        .tp-now-k i { font-style:normal; font-size:var(--fs-caption); color:var(--gov-mute-2); }
+        .tp-note { margin:10px 0 0; font-size:var(--fs-caption); color:var(--gov-muted); }
+        .tp-empty { margin:8px 0 0; font-size:var(--fs-small); color:var(--gov-muted); }
+        /* 用途分類的顏色。🛑 VIP 特勤刻意用最強烈的紅 —— 它是唯一「按下去
+           代表現場有狀況」的按鈕,不可以跟一般時制長得一樣。 */
+        .tp-badge { display:inline-block; padding:2px 9px; border-radius:99px;
+                    font-size:var(--fs-caption); font-weight:600;
+                    background:#e7ecf3; color:#41546b; }
+        .tp-badge.p-vip     { background:#fde7e7; color:#a11c1c; }
+        .tp-badge.p-peak    { background:#fdeee0; color:#8a4b00; }
+        .tp-badge.p-offpeak { background:#e6f4ea; color:#1f7a34; }
+        .tp-badge.p-holiday { background:#eae6fb; color:#4b2fa1; }
+        .tp-badge.p-event   { background:#fdf3d6; color:#7a5a00; }
+        .tp-badge.unnamed   { background:transparent; color:var(--gov-mute-2); font-weight:400; }
+
+        .tp-quick { display:grid; gap:10px; margin-top:10px;
+                    grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); }
+        .tp-qbtn { display:flex; flex-direction:column; align-items:flex-start; gap:3px;
+                   padding:11px 13px; border:1px solid var(--gov-border); border-radius:10px;
+                   background:var(--gov-surface); cursor:pointer; text-align:left;
+                   transition:border-color .18s, box-shadow .18s, transform .18s; }
+        .tp-qbtn:hover:not(:disabled) { border-color:var(--gov-primary,#1971c2);
+                                        box-shadow:0 2px 10px rgba(16,24,40,.10);
+                                        transform:translateY(-1px); }
+        .tp-qbtn:disabled { opacity:.55; cursor:not-allowed; }
+        .tp-qbtn.on { border-color:#2f9e44; background:#f2fbf5; }
+        .tp-qbtn.p-vip { border-color:#e8a3a3; }
+        .tp-qbtn.p-vip .tp-qn { color:#a11c1c; }
+        .tp-qn { font:700 var(--fs-body) var(--font-sans); color:var(--gov-text); }
+        .tp-qi { font-size:var(--fs-caption); color:var(--gov-mute-2);
+                 font-family:var(--font-mono); }
+
+        .tp-tb .num { font-family:var(--font-mono); text-align:right; }
+        .tp-tb tr.on { background:#f2fbf5; }
+        .tp-id { font-family:var(--font-mono); }
+        .tp-run { margin-left:7px; padding:1px 7px; border-radius:99px;
+                  font-size:var(--fs-caption); background:#2f9e44; color:#fff; }
+        .tp-ops { display:flex; gap:6px; }
+        .tp-form { display:flex; flex-direction:column; gap:11px; }
+        .tp-fr { display:flex; align-items:center; gap:10px; }
+        .tp-fr .k { flex:0 0 68px; font-size:var(--fs-small); color:var(--gov-muted); }
+        .tp-fr b { font-family:var(--font-mono); }
+        @media (prefers-reduced-motion: reduce) { .tp-qbtn { transition:none; } }
         /* 決策依據明細:預設收合的折疊區 */
         .wr-detail { margin-top:14px; border:1px solid var(--gov-border); border-radius:12px;
                      background:var(--gov-surface); }
@@ -7894,6 +7945,132 @@
 
                 <!-- 設備狀態併入「燈態與設備」分頁:兩者都是控制器硬體層的東西,
                      分兩個分頁只是讓人多點一次(2026-09-07 融合)。 -->
+                <!-- ══ 時制計畫控制 ══════════════════════════════════════
+                     🛑 TC3 的時制計畫**只有編號沒有名稱**(5FC5/5FC8 都只回 PlanID)。
+                        「哪一個是 VIP 特勤」在控制器裡查不到,只有機關自己知道,
+                        所以由使用者標記(驗收條文:可視機關需求調整)。
+                     🛑 絕對不用「週期短、綠燈偏袒某一側」去猜哪個是特勤 ——
+                        計畫 23 是 40/60 很像特勤,但那只是猜測;猜錯的代價是
+                        有人按下「特勤」卻切到別的計畫。
+                     🛑 切換用 5F18(PlanID)。送出成功 ≠ 已生效 ——
+                        以控制器 5FC8 回報的目前計畫為準,畫面上兩個分開顯示。 -->
+                <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
+                    <div class="sig-tab-bar">
+                        <span class="sig-tab-title">時制計畫控制</span>
+                        <el-tag size="small" :type="sigTp.running_plan_id?'success':'info'">
+                            {{ sigTp.running_plan_id ? ('執行中 計畫 '+sigTp.running_plan_id) : '尚未取得' }}
+                        </el-tag>
+                        <el-button size="small" plain :loading="sigTpLoading" @click="loadSigTp">重新載入</el-button>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>目前執行中</span>
+                            <el-tag size="small" :type="sigTpAgeType">{{ sigTpAgeText }}</el-tag>
+                        </div>
+                        <div class="card-body">
+                            <div class="tp-now">
+                                <div class="tp-now-id">
+                                    <em>計畫</em><b>{{ sigTpNow.id }}</b>
+                                    <span class="tp-badge" :class="'p-'+sigTpNow.purpose"
+                                          v-if="sigTpNow.name">{{ sigTpNow.name }}</span>
+                                    <span class="tp-badge unnamed" v-else>未命名</span>
+                                </div>
+                                <div class="tp-now-k"><em>週期</em><b>{{ sigTpNow.cycle }}</b><i>s</i></div>
+                                <div class="tp-now-k"><em>時差</em><b>{{ sigTpNow.offset }}</b><i>s</i></div>
+                                <div class="tp-now-k" v-for="g in sigTpNow.greens" :key="'g'+g.idx">
+                                    <em>分相 {{ g.idx }} 綠燈</em><b>{{ g.green }}</b><i>s</i>
+                                </div>
+                            </div>
+                            <p class="tp-note">{{ sigTpNow.note }}</p>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-zap"/></svg>快速切換</span>
+                            <el-tag size="small" type="info">已命名 {{ sigTpNamed.length }} 個</el-tag>
+                        </div>
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">
+                                🛑 切換會**立刻改變路口運轉**。送出後請看上方「目前執行中」是否
+                                真的變成該計畫 —— 送出成功不等於已生效。
+                            </div>
+                            <div class="tp-quick" v-if="sigTpNamed.length">
+                                <button v-for="q in sigTpNamed" :key="'q'+q.id"
+                                        class="tp-qbtn" :class="['p-'+q.purpose,{on:q.id===sigTp.running_plan_id}]"
+                                        :disabled="sigTpBusy" @click="sigTpRun(q.id)">
+                                    <span class="tp-qn">{{ q.name }}</span>
+                                    <span class="tp-qi">計畫 {{ q.id }} · 週期 {{ q.cycle }}s</span>
+                                </button>
+                            </div>
+                            <p v-else class="tp-empty">
+                                還沒有命名任何計畫。在下面的清單把常用的計畫(平日尖峰、離峰、
+                                <b>VIP 特勤</b>…)命名之後,這裡就會出現一鍵切換的按鈕。
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>全部時制計畫</span>
+                            <el-switch v-model="sigTpRealOnly" size="small" active-text="只看已設定" inline-prompt></el-switch>
+                        </div>
+                        <div class="card-body">
+                            <div class="analysis-setting-tip">
+                                控制器共 40 個計畫槽,多數是**空殼**(週期 10、綠燈 10/5 的預設值,
+                                代表沒設定過)。預設只列出真的有內容的。
+                            </div>
+                            <table class="data-table tp-tb">
+                                <thead><tr>
+                                    <th>計畫</th><th>用途名稱</th><th>週期</th><th>綠燈</th>
+                                    <th>最小綠</th><th>操作</th>
+                                </tr></thead>
+                                <tbody>
+                                    <tr v-for="r in sigTpRows" :key="'tp'+r.id" :class="{on:r.id===sigTp.running_plan_id}">
+                                        <td><b class="tp-id">{{ r.id }}</b>
+                                            <span class="tp-run" v-if="r.id===sigTp.running_plan_id">執行中</span></td>
+                                        <td>
+                                            <span class="tp-badge" :class="'p-'+r.purpose" v-if="r.name">{{ r.name }}</span>
+                                            <span class="tp-badge unnamed" v-else>—</span>
+                                        </td>
+                                        <td class="num">{{ r.cycle }}</td>
+                                        <td class="num">{{ r.greenText }}</td>
+                                        <td class="num">{{ r.minText }}</td>
+                                        <td class="tp-ops">
+                                            <el-button size="small" plain @click="sigTpEditOpen(r)">命名</el-button>
+                                            <el-button size="small" type="primary" plain
+                                                       :disabled="sigTpBusy || r.id===sigTp.running_plan_id"
+                                                       @click="sigTpRun(r.id)">切換</el-button>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="!sigTpRows.length"><td colspan="6" class="tp-empty">尚未抄到任何時制計畫。</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <el-dialog v-model="sigTpEdit.open" title="時制計畫命名" width="440px">
+                        <div class="tp-form">
+                            <div class="tp-fr"><span class="k">計畫編號</span><b>{{ sigTpEdit.id }}</b></div>
+                            <div class="tp-fr"><span class="k">用途名稱</span>
+                                <el-input v-model="sigTpEdit.name" size="small" maxlength="24"
+                                          placeholder="例:平日尖峰 / VIP 特勤"></el-input></div>
+                            <div class="tp-fr"><span class="k">分類</span>
+                                <el-select v-model="sigTpEdit.purpose" size="small" style="width:150px">
+                                    <el-option v-for="o in SIG_TP_PURPOSES" :key="o.v" :label="o.t" :value="o.v"></el-option>
+                                </el-select></div>
+                            <div class="tp-fr"><span class="k">備註</span>
+                                <el-input v-model="sigTpEdit.note" size="small" maxlength="80"></el-input></div>
+                            <p class="tp-note">名稱留空並儲存,等於清除這個計畫的命名。</p>
+                        </div>
+                        <template #footer>
+                            <el-button size="small" @click="sigTpEdit.open=false">取消</el-button>
+                            <el-button size="small" type="primary" :loading="sigTpBusy" @click="sigTpSaveLabel">儲存</el-button>
+                        </template>
+                    </el-dialog>
+                </div>
+
                 <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
                     <div class="sig-tab-bar">
                         <span class="sig-tab-title">設備狀態</span>
@@ -23721,6 +23898,153 @@ const app=createApp({
         //      設備與設定 設備與參數是什麼          ← 設備狀態+號誌設定+燈態
         //      通訊紀錄  封包層級的證據            ← 原始訊框+TC3 通訊紀錄
         //    舊分頁鍵一律用 SIG_TAB_ALIAS 導過去,舊連結不會壞。
+        // ── 時制計畫控制 ────────────────────────────────────────────
+        // 🛑 名稱刻意用 sigTp* 前綴。這一頁已經有一個 sigPlan(決策盤的
+        //    「時制參數」),兩者不同東西:sigPlan 是演算法在用的參數快照,
+        //    sigTp 是控制器裡的 40 個時制計畫槽。同名會讓後來的人改錯地方。
+        const SIG_TP_PURPOSES = [
+            {v: 'normal',  t: '一般'},
+            {v: 'peak',    t: '尖峰'},
+            {v: 'offpeak', t: '離峰'},
+            {v: 'holiday', t: '假日'},
+            {v: 'vip',     t: 'VIP 特勤'},
+            {v: 'event',   t: '事件疏導'},
+            {v: 'other',   t: '其他'},
+        ];
+        const sigTp = ref({});
+        const sigTpLabels = ref({});
+        const sigTpLoading = ref(false);
+        const sigTpBusy = ref(false);
+        const sigTpRealOnly = ref(true);
+        const sigTpEdit = ref({open: false, id: null, name: '', purpose: 'normal', note: ''});
+
+        // 🛑 空殼判定:控制器 40 個槽位沒設定過的長這樣(週期 10、綠燈 10/5)。
+        //    把它們全列出來會讓真正可用的 12 個淹沒在 40 列裡。
+        //    用「週期 <= 10」判,不用綠燈值 —— 綠燈可能剛好被設成 10。
+        const sigTpIsReal = (r) => Number(r.cycle || 0) > 10;
+        const sigTpLabelOf = (id) => (sigTpLabels.value || {})[String(id)] || {};
+
+        const sigTpRows = computed(() => {
+            const src = (sigTp.value || {}).field || [];
+            return src.filter((r) => !sigTpRealOnly.value || sigTpIsReal(r))
+                      .map((r) => {
+                const ph = r.phases || [];
+                const lb = sigTpLabelOf(r.plan_id);
+                const join = (k) => ph.map((x) => (x[k] == null ? '—' : x[k])).join(' / ');
+                return {
+                    id: r.plan_id, cycle: r.cycle == null ? '—' : r.cycle,
+                    greenText: join('green'), minText: join('min_green'),
+                    name: lb.name || '', purpose: lb.purpose || 'other',
+                };
+            });
+        });
+
+        // 快速切換只列**已命名而且真的有內容**的計畫。
+        // 🛑 未命名的不放快速鍵:一排「計畫 22 / 計畫 23」按鈕看不出按下去會發生
+        //    什麼事,那正是誤操作的來源。要出現在這裡就先命名。
+        const sigTpNamed = computed(() => {
+            const src = (sigTp.value || {}).field || [];
+            const out = [];
+            src.forEach((r) => {
+                const lb = sigTpLabelOf(r.plan_id);
+                if (!lb.name || !sigTpIsReal(r)) return;
+                out.push({id: r.plan_id, name: lb.name, purpose: lb.purpose || 'other',
+                          cycle: r.cycle});
+            });
+            // VIP 特勤排最前面 —— 要用到它的時候通常很急
+            const rank = (p) => (p === 'vip' ? 0 : 1);
+            return out.sort((a, b) => rank(a.purpose) - rank(b.purpose) || a.id - b.id);
+        });
+
+        const sigTpNow = computed(() => {
+            const d = sigTp.value || {};
+            const id = d.running_plan_id;
+            const run = d.running || {};
+            const rec = ((d.field || []).find((r) => r.plan_id === id)) || {};
+            const lb = sigTpLabelOf(id);
+            return {
+                id: (id == null) ? '—' : id,
+                name: lb.name || '', purpose: lb.purpose || 'other',
+                cycle: (run.cycle != null ? run.cycle : (rec.cycle != null ? rec.cycle : '—')),
+                offset: (run.offset != null ? run.offset : (rec.offset != null ? rec.offset : '—')),
+                greens: (rec.phases || []).map((x) => ({idx: x.idx, green: x.green == null ? '—' : x.green})),
+                // 🛑 這一行要說清楚資料是控制器回報的,不是我方設定的值。
+                note: '以控制器 5FC8 回報為準(每次查詢或主動回報時更新)。',
+            };
+        });
+        const sigTpAgeText = computed(() => {
+            const a = ((sigTp.value || {}).running || {}).age_sec;
+            if (a == null) return '尚無回報';
+            return (a < 90) ? (Math.round(a) + ' 秒前回報') : (Math.round(a / 60) + ' 分鐘前回報');
+        });
+        const sigTpAgeType = computed(() => {
+            const a = ((sigTp.value || {}).running || {}).age_sec;
+            if (a == null) return 'info';
+            return (a <= 120) ? 'success' : 'warning';
+        });
+
+        const loadSigTp = async () => {
+            sigTpLoading.value = true;
+            try {
+                const [a, b] = await Promise.all([
+                    fetch('/api/signal/timing-plans', {credentials: 'include'}),
+                    fetch('/api/signal/timing-plans/labels', {credentials: 'include'}),
+                ]);
+                if (a.ok) sigTp.value = await a.json();
+                if (b.ok) sigTpLabels.value = (await b.json()).labels || {};
+            } catch (e) {
+                ElMessage.error('時制計畫載入失敗');
+            } finally { sigTpLoading.value = false; }
+        };
+
+        const sigTpRun = async (id) => {
+            const lb = sigTpLabelOf(id);
+            const who = lb.name ? (lb.name + '(計畫 ' + id + ')') : ('計畫 ' + id);
+            // 🛑 一定要二次確認。這一鍵會立刻改變路口運轉,沒有 undo ——
+            //    誤觸的代價是現場號誌換成別的時制。
+            try {
+                await ElMessageBox.confirm(
+                    '將把號誌控制器切換到「' + who + '」,會立刻改變路口運轉。確定嗎?',
+                    '切換時制計畫', {type: 'warning', confirmButtonText: '切換', cancelButtonText: '取消'});
+            } catch (e) { return; }
+            sigTpBusy.value = true;
+            try {
+                const r = await fetch('/api/signal/timing-plans/run', {
+                    method: 'POST', credentials: 'include',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({plan_id: id}),
+                });
+                const j = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(j.detail || r.status);
+                ElMessage.success('已送出切換 ' + who + ' —— 請確認上方「目前執行中」是否變更');
+            } catch (e) {
+                ElMessage.error('切換失敗:' + (e.message || e));
+            } finally { sigTpBusy.value = false; await loadSigTp(); }
+        };
+
+        const sigTpEditOpen = (r) => {
+            const lb = sigTpLabelOf(r.id);
+            sigTpEdit.value = {open: true, id: r.id, name: lb.name || '',
+                               purpose: lb.purpose || 'normal', note: lb.note || ''};
+        };
+        const sigTpSaveLabel = async () => {
+            const e = sigTpEdit.value;
+            sigTpBusy.value = true;
+            try {
+                const r = await fetch('/api/signal/timing-plans/labels', {
+                    method: 'POST', credentials: 'include',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({plan_id: e.id, name: e.name,
+                                          purpose: e.purpose, note: e.note}),
+                });
+                if (!r.ok) throw new Error(r.status);
+                sigTpLabels.value = (await r.json()).labels || {};
+                sigTpEdit.value.open = false;
+                ElMessage.success(e.name ? '已命名' : '已清除命名');
+            } catch (err) {
+                ElMessage.error('儲存失敗');
+            } finally { sigTpBusy.value = false; }
+        };
         const sigTabs = ref([
             {key: 'live',   label: '即時戰情',   icon: 'i-activity'},
             {key: 'eval',   label: '運作統計',   icon: 'i-bar'},
@@ -23743,7 +24067,7 @@ const app=createApp({
             eval:   () => { loadViz(); startVizTimer(); loadVizHourly();
                             loadSigStats(); startSigStatTimer(); loadSigConsole(); },
             device: () => { loadSignal(); startSignalTimer(); loadSigDevice();
-                            loadSigConfig(); },
+                            loadSigConfig(); loadSigTp(); },
             lamp:   () => { loadSignal(); startSignalTimer(); loadSignalFrames(); },
             frames: () => { loadSignalFrames(); loadSigConsole(); },
         };
@@ -24496,7 +24820,13 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             //    留著舊的 'signal_control' 會讓計時器永遠不觸發(決策盤不再更新);
             //    只比父頁又會讓使用者切到別的 tab 時仍在背景輪詢。
             sigCtlTimer=setInterval(()=>{
-                if(page.value==='signal_hub'&&signalTab.value==='plan') loadSigPlan();
+                // 🛑 2026-09-08:這裡原本比對 'plan',但分頁改版後根本沒有這個 key
+                //    (現在是 live/eval/lamp/device/frames)—— 條件永遠不成立,
+                //    sigPlan 只在切進分頁那一刻載入一次就再也不更新。
+                //    後果不只是數字舊:路口圖的重畫是掛在 watch(sigPlan) 上的,
+                //    所以地圖的號誌燈也跟著凍結,現場看到「實際綠燈、圖上紅燈」。
+                //    決策盤已併入「即時戰情」,條件跟著改成 live。
+                if(page.value==='signal_hub'&&signalTab.value==='live') loadSigPlan();
             }, 5000);
         };
         const sigShadow=ref({});
@@ -25119,6 +25449,17 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         };
         // 資料更新就重畫;地圖物件 upsert,不會累積
         watch(() => sigPlan.value, () => { if (wrMap) drawWarMap(); });
+        // 🛑 地圖上的號誌燈色是從 sigLiveXn0(5F03,每秒更新)取的,
+        //    但重畫原本只掛在 sigPlan 上 —— 兩者輪詢週期不同,燈色必然落後。
+        //    燈態一變就重畫,圖上的燈才會跟現場同步。
+        watch(() => {
+            const xn = sigLiveXn0.value;
+            if (!xn) return '';
+            // 只看會影響畫面的部分(分相 + 各方向燈色),避免 age_sec 每秒變動
+            // 造成整張圖每秒重畫 —— 那會讓拖曳中的燈頭被重建。
+            return String((xn.phase || {}).sub_phase_id) + '|'
+                 + ((xn.phase || {}).lights || []).map((l) => l.value).join(',');
+        }, () => { if (wrMap) drawWarMap(); });
         // 匯出:接既有端點,今日 00:00 起到現在
         // 地圖下方的相機狀態列。顏色跟地圖上的圓點同一套判級色,才對得起來。
         const sigWarMapCams = computed(() => {
@@ -25537,7 +25878,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 // 🛑 父子結構後 page 是 'signal_hub';留著舊名稱會讓倒數永遠不跳,
                 //    畫面看起來正常但秒數凍住。切到別的 tab 也不該繼續倒數。
                 if(page.value!=='signal_hub'
-                   ||(signalTab.value!=='light'&&signalTab.value!=='live')
+                   ||(signalTab.value!=='lamp'&&signalTab.value!=='live')
                    ||!isPageVisible())return;
                 const m=sigRemain.value;
                 Object.keys(m).forEach(k=>{ if(m[k]>0)m[k]=m[k]-1; });
@@ -25856,7 +26197,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             let _sigTick=0;
             sigTimer=setInterval(()=>{
                 if(page.value!=='signal_hub'
-                   || (signalTab.value!=='light'&&signalTab.value!=='live')
+                   || (signalTab.value!=='lamp'&&signalTab.value!=='live')
                    || !isPageVisible())return;
                 loadSignal();
                 _sigTick++;
@@ -26484,7 +26825,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNamed,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
