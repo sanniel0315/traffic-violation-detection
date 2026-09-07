@@ -745,3 +745,46 @@ def test_saturation_window_is_seven_days():
     from api.routes import signal_shadow as S
     assert S.SAT_WINDOW_HOURS == 168.0
     assert S.SAT_MIN_SATURATED_SEC == 8.0
+
+
+def test_auth_renew_only_when_dynamic_on(monkeypatch):
+    """🛑 授權續約只在動態控制開著且 L0 時送。
+
+    關掉總開關就不再續 —— 不送任何「歸還」命令,授權自己會在一分鐘內過期,
+    控制器回到定時。這是最重要的 fail-safe,不可以被續約執行緒繞過。
+    2026-09-07 實測:EffectTime=1 就是 1 分鐘(中央的覆蓋全被擋掉時看得乾淨,
+    23:25:00 策略 10H → 23:26:00 自己變回 01H,期間沒有任何中央命令通過)。
+    """
+    from api.routes import signal_tc3 as T
+
+    sent = []
+    monkeypatch.setattr(T, "_controller_send", lambda b: sent.append(b) or True)
+    monkeypatch.setattr(T, "_target_addr", lambda: 1)
+    monkeypatch.setattr(T, "_enqueue_frame", lambda rec: None)
+    monkeypatch.setitem(T._safety, "strategy", 0x01)
+
+    monkeypatch.setitem(T._dyn, "enabled", False)
+    T._do_reassert(kind="續約")
+    assert sent == [], "總開關關閉時不可送出續約"
+
+    monkeypatch.setitem(T._dyn, "enabled", True)
+    monkeypatch.setitem(T._dyn, "level", "L2")
+    T._do_reassert(kind="續約")
+    assert sent == [], "降階時不可送出續約"
+
+    monkeypatch.setitem(T._dyn, "level", "L0")
+    T._do_reassert(kind="續約")
+    assert len(sent) == 1
+    # 內容:5F10 + 策略 0x10(時相控制) + EffectTime
+    assert bytes([0x5F, 0x10, T.REASSERT_STRATEGY, T.REASSERT_EFFECT]) in sent[0]
+
+
+def test_auth_renew_period_shorter_than_effect_time():
+    """🛑 續約週期必須短於授權有效期,否則每分鐘都會出現一段空窗。
+
+    而且刻意**不**把 EffectTime 設很大:授權會過期正是 fail-safe ——
+    服務掛掉/網路斷/使用者關開關,控制器最多一分鐘後自己回到定時。
+    """
+    from api.routes import signal_tc3 as T
+    assert T.REASSERT_EFFECT == 1, "EffectTime 不應被放大,那會拆掉 fail-safe"
+    assert T.AUTH_RENEW_SEC < 60, "續約週期要短於 EffectTime 的 1 分鐘"
