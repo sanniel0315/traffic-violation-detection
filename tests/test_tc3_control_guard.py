@@ -133,3 +133,42 @@ def test_位址推得規則(tc3, monkeypatch):
     assert tc3._target_addr() is None            # 沒設定也沒抄到 → 不要亂猜
     tc3._frames.append({"addr": 0x1230})
     assert tc3._target_addr() == 0x1230          # 用抄到的
+
+
+def test_reassert只在持有控制權時作用(tc3, monkeypatch):
+    """🛑 reassert 是繞過中央自動保護,但不可以無條件生效。
+
+    只有在「總開關開 + 未降階」時才重新宣告 —— 平時中央的策略設定照過,
+    否則等於把路口控制權從中央手上搶走,那是權責問題不是技術選項。
+    """
+    calls = []
+    monkeypatch.setattr(tc3, "DOWNLINK_POLICY", "reassert")
+    monkeypatch.setattr(tc3.threading, "Timer",
+                        lambda delay, fn: type("T", (), {"start": lambda s: calls.append(delay)})())
+    rec = {"code": "5F10", "raw": "AA BB 21 FF FF 00 0E 5F 10 01 00 AA CC 16"}   # 中央送 0x01
+    old = dict(tc3._dyn)
+    try:
+        # 沒持有控制權 → 不重新宣告
+        tc3._dyn.update({"enabled": False, "level": "L0"})
+        tc3._downlink_allow(dict(rec))
+        assert not calls, "沒持有控制權卻重新宣告了"
+
+        # 持有控制權 + 中央收走 bit4 → 重新宣告
+        tc3._dyn.update({"enabled": True, "level": "L0"})
+        tc3._downlink_allow(dict(rec))
+        assert calls, "持有控制權卻沒有重新宣告"
+
+        # 降階中 → 不重新宣告(降階的動作就是什麼都不做)
+        calls.clear()
+        tc3._dyn.update({"enabled": True, "level": "L2"})
+        tc3._downlink_allow(dict(rec))
+        assert not calls, "降階中卻重新宣告了"
+
+        # 中央送的策略已含 bit4 → 沒在收走權限,不必重新宣告
+        calls.clear()
+        tc3._dyn.update({"enabled": True, "level": "L0"})
+        tc3._downlink_allow({"code": "5F10",
+                             "raw": "AA BB 21 FF FF 00 0E 5F 10 10 01 AA CC 16"})
+        assert not calls, "中央沒有收走 bit4,不該重新宣告"
+    finally:
+        tc3._dyn.update(old)
