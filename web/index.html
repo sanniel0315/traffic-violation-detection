@@ -3778,6 +3778,32 @@
         .wr-rel-k { flex:none; font-style:normal; padding:1px 7px; border-radius:99px;
                     font-size:var(--fs-caption); color:var(--gov-mute-2);
                     border:1px solid var(--gov-border); }
+        /* ── 相機量測卡 ────────────────────────────────────────────
+           標籤在上、數字大而等寬、單位小 —— 戰情牆幾公尺外掃一眼就定位。
+           🛑 數值變動時那一格閃一下(wrPop):模板用 :key 綁值,值一變元素重掛,
+              動畫就跑一次。沒變的格子不會閃,所以「剛剛哪個數字動了」看得出來。
+              這是資料驅動的動畫,不是定時閃爍的裝飾。 */
+        .wr-cam-hd { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; padding:9px 12px 4px; }
+        .wr-cam-hd b { color:var(--gov-primary); font-weight:700; }
+        .wr-cam-site { font-size:var(--fs-caption); color:var(--gov-mute-2); }
+        .wr-cam-lv { font-size:var(--fs-caption); padding:1px 8px; border-radius:99px;
+                     color:#fff; background:#8a94a3; }
+        .wr-cam-lv.lv1 { background:#2f9e4f; } .wr-cam-lv.lv2 { background:#d9a400; }
+        .wr-cam-lv.lv3 { background:#e8842b; } .wr-cam-lv.lv4 { background:#d94a3d; }
+        .wr-cam-t { margin-left:auto; font:500 10.5px var(--font-mono); color:var(--gov-mute-2); }
+        .wr-mx { display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; padding:2px 12px 8px; }
+        @media (max-width: 520px) { .wr-mx { grid-template-columns:repeat(2, 1fr); } }
+        .wr-mx-i { display:flex; flex-direction:column; gap:2px; min-width:0; }
+        .wr-mx-i .k { font-size:var(--fs-caption); color:var(--gov-mute-2); white-space:nowrap; }
+        .wr-mx-i .v { font:700 var(--fs-t2) var(--font-mono); color:var(--gov-text);
+                      line-height:1.15; animation:wrPop .45s ease-out; }
+        .wr-mx-i .v.hot { color:var(--gov-warn); }
+        .wr-mx-i i { font-style:normal; font-size:var(--fs-caption); color:var(--gov-mute-2); }
+        .wr-cam-veh { padding:0 12px 9px; font-size:var(--fs-caption); color:var(--gov-muted); }
+        .wr-cam-veh i { font-style:normal; font:600 var(--fs-mono-num) var(--font-mono); color:var(--gov-text); }
+        @keyframes wrPop { 0% { background:rgba(255,214,102,.55); }
+                           100% { background:transparent; } }
+        @media (prefers-reduced-motion: reduce) { .wr-mx-i .v { animation:none; } }
         .wr-cam-off { margin:0; padding:14px 12px; text-align:center; font-size:var(--fs-caption);
                       color:var(--gov-muted); background:var(--gov-surface-2);
                       border-top:1px solid var(--gov-border); }
@@ -3828,6 +3854,9 @@
            排隊帶的虛線往路口方向流動,**速度由判級決定**:
            順暢跑得快、壅塞幾乎停住。看圖的人不用讀數字就知道哪一側在動。 */
         .wr-seg { stroke-dasharray:1 0; }
+        /* 實測排隊帶:實線亮色,不做動畫 —— 它表達的是長度,不是流動。
+           會動的是它下面那條通行帶。 */
+        .wr-qfill { stroke-dasharray:1 0; }
         .wr-flow { stroke-dasharray:14 9; stroke-linecap:butt;
                    animation:wrFlow linear infinite; }
         .wr-flow.lv0 { animation:none; opacity:.5; }        /* 未量到:不動 */
@@ -8118,45 +8147,50 @@
                                 <div class="wr-cams">
                                     <figure v-for="cam in col.cams" :key="'wcam'+cam.camera_id"
                                             class="wr-cam" :class="{green:col.isGreen, off:!cam.online}">
-                                        <div class="wr-cam-meta" :title="sigCamFullName(cam.camera_id)">
-                                            <b>{{ cam.name }} · {{ cam.site }}</b>
-                                            <!-- 車流資料(原本由現場 VD 提供,VD 2026-09-06 移除後改由本系統的
-                                                 相機偵測產生)。刻意**不掛 VD 字樣** —— 使用者:放在 CCTV 標誌旁,
-                                                 不用放 VD 偵測器勳章。這裡只放 /plan 沒有的兩項:車種分流與平均車速,
-                                                 流量/佔有率/排隊已經在下一行。 -->
-                                            <template v-if="sigVd[cam.camera_id]">
-                                                <span class="wr-vd">小 <i>{{ sigVd[cam.camera_id].small }}</i>
-                                                    · 大 <i>{{ sigVd[cam.camera_id].large }}</i> 輛</span>
-                                                <span class="wr-vd-t">{{ sigVd[cam.camera_id].at }}</span>
-                                            </template>
-                                            <span>流量: <i>{{ sigWarNum(cam.flow_vpm) }}</i> 輛/分</span><em class="wr-sep">|</em>
-                                            <!-- 🛑 這兩個是不同的數,先前只顯示後者卻標成「佔有率」,
-                                                 現場看到「佔有率 85.5% 但路上沒車」(2026-09-07)。
-                                                 congestion_detector 的 occupancy 欄位其實是
-                                                 max(佔有率, 排隊分數) 的 10 筆移動平均 = **壅塞分數**,
-                                                 raw_occupancy 才是車輛實際覆蓋 ROI 的比例。
-                                                 判級用的是壅塞分數,所以兩個都要顯示:
-                                                 佔有率回答「路上有多少車」,壅塞分數解釋「為什麼判這一級」。 -->
-                                            <span>佔有率: <i>{{ sigWarPct(cam.raw_occupancy) }}</i></span>
-                                            <em class="wr-sep">|</em>
-                                            <span title="判級用的分數 = max(佔有率, 排隊分數) 的移動平均,不是佔有率本身">壅塞分數: <i :class="{hot:sigWarHot(cam.occupancy)}">{{ sigWarPct(cam.occupancy) }}</i></span>
-                                            <template v-if="cam.queue_m!=null"><em class="wr-sep">|</em><span>排隊: <i>{{ sigWarNum(cam.queue_m) }}</i> m</span></template>
+                                        <!-- ══ 相機量測卡 ══
+                                             🛑 原本是一長串「流量: x | 佔有率: y | 壅塞分數: z | 排隊: w」,
+                                                在戰情牆上要逐字讀才找得到想看的那個數。改成量測磚:
+                                                標籤在上、數字大而等寬、單位小,幾公尺外掃一眼就定位。
+                                             🛑 動畫是資料驅動的,不是裝飾:數字用 :key 綁值,值一變
+                                                元素就重掛 → CSS 動畫跑一次 → 那一格閃一下。
+                                                沒變的格子不會閃,所以「哪個數字剛剛動了」看得出來。 -->
+                                        <div class="wr-cam-hd" :title="sigCamFullName(cam.camera_id)">
+                                            <b>{{ cam.name }}</b>
+                                            <span class="wr-cam-site">{{ cam.site }}</span>
+                                            <span class="wr-cam-lv" :class="'lv'+sigLvRank(cam.level)"
+                                                  v-if="cam.level_name">{{ cam.level_name }}</span>
+                                            <span class="wr-cam-t" v-if="sigVd[cam.camera_id]">{{ sigVd[cam.camera_id].at }}</span>
                                         </div>
-                                        <!-- 🛑 兩條量測棒:佔有率與排隊。寬度是真實比例,不是裝飾 ——
-                                             佔有率直接用百分比;排隊用「實測公尺 / 該分相儲車長度」
-                                             (分相1 上匝道 210 m、分相2 主線 600 m,見演算法規格)。
-                                             有了長度感,「26 m」跟「180 m」在牆上幾公尺外也分得出來。 -->
-                                        <div class="wr-meter">
-                                            <span class="wr-meter-row">
-                                                <em>佔有</em>
+                                        <div class="wr-mx">
+                                            <div class="wr-mx-i">
+                                                <span class="k">流量</span>
+                                                <b class="v" :key="'f'+cam.flow_vpm">{{ sigWarNum(cam.flow_vpm) }}</b><i>輛/分</i>
+                                            </div>
+                                            <!-- 🛑 佔有率與壅塞分數是**不同的數**:前者是車輛覆蓋 ROI 的比例,
+                                                 後者是 max(佔有率, 排隊分數) 的移動平均、判級用的就是它。
+                                                 先前只顯示後者卻標成「佔有率」,現場看到「85.5% 但路上沒車」。 -->
+                                            <div class="wr-mx-i">
+                                                <span class="k">佔有率</span>
+                                                <b class="v" :key="'o'+cam.raw_occupancy">{{ sigWarPct(cam.raw_occupancy) }}</b>
                                                 <span class="wr-bar sm"><i :class="sigMeterCls(cam.raw_occupancy)"
                                                       :style="{width: sigPctW(cam.raw_occupancy)}"></i></span>
-                                            </span>
-                                            <span class="wr-meter-row" v-if="cam.queue_m!=null">
-                                                <em>排隊</em>
+                                            </div>
+                                            <div class="wr-mx-i" title="判級用的分數 = max(佔有率, 排隊分數) 的移動平均,不是佔有率本身">
+                                                <span class="k">壅塞分數</span>
+                                                <b class="v" :class="{hot:sigWarHot(cam.occupancy)}" :key="'c'+cam.occupancy">{{ sigWarPct(cam.occupancy) }}</b>
+                                                <span class="wr-bar sm"><i :class="sigMeterCls(cam.occupancy)"
+                                                      :style="{width: sigPctW(cam.occupancy)}"></i></span>
+                                            </div>
+                                            <div class="wr-mx-i" v-if="cam.queue_m!=null">
+                                                <span class="k">排隊</span>
+                                                <b class="v" :key="'q'+cam.queue_m">{{ sigWarNum(cam.queue_m) }}</b><i>m</i>
                                                 <span class="wr-bar sm"><i class="q"
                                                       :style="{width: sigQueueW(cam.queue_m, cam.phase_no)}"></i></span>
-                                            </span>
+                                            </div>
+                                        </div>
+                                        <div class="wr-cam-veh" v-if="sigVd[cam.camera_id]">
+                                            近 5 分鐘 小車 <i>{{ sigVd[cam.camera_id].small }}</i>
+                                            · 大車 <i>{{ sigVd[cam.camera_id].large }}</i> 輛
                                         </div>
                                         <!-- 🛑 純原始畫面,**不疊任何東西**(使用者 2026-09-06:「原始影像沒 roi」)。
                                              走 go2rtc 的共用基礎串流 cam_N,traffic-api 完全不參與編碼。 -->
@@ -24282,6 +24316,8 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         // 一欄 = 一個分相:自己的兩台相機、自己的放行統計、自己的狀態列。
         // 量測棒的寬度與顏色。🛑 佔有率的欄位是 0~1 的比例,不是百分比 ——
         //    直接當百分比用會讓所有棒子都貼在 1% 動不了。
+        // 壅塞等級文字 → 0~4。地圖那支 wrLvRank 在 setup 之外拿不到,這裡另給一個。
+        const sigLvRank = (l) => ({low: 1, medium: 2, high: 3, critical: 4}[String(l || '').toLowerCase()] || 0);
         const sigPctW = (v) => {
             const n = Number(v);
             if (!isFinite(n)) return '0%';
@@ -24388,7 +24424,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         // ── 戰情地圖:重用系統 Leaflet 離線圖磚,相機座標取地圖頁設定的 lat/lng ──
         let wrMap = null;
         let wrFitSig = '';        // 上次框過的點集合簽章(見 drawWarMap 的 fitBounds)
-        const wrLayers = {seg: {}, queue: {}, cam: {}, lamp: {}};
+        const wrLayers = {seg: {}, queue: {}, qfill: {}, cam: {}, lamp: {}};
         const sigWarMapNote = ref('');
         const WR_LV_COLOR = {0: '#b8c4d4', 1: '#1f9d55', 2: '#d9a400', 3: '#e8842b', 4: '#c43a31'};
         const wrLvRank = (l) => ({low: 1, medium: 2, high: 3, critical: 4}[String(l || '').toLowerCase()] || 0);
@@ -24553,11 +24589,16 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //    綠燈時改畫到整段末端當「通行帶」:車正在通過這一段,
                 //    這是實測的 —— 該分相是綠燈、且相機量到車。
                 //    紅燈時仍然只畫到排隊末端,那才是停等的實際長度。
-                const hasVeh = byPhase[ph].some((c) => Number(c.vehicle_count) > 0);
-                const bandEnd = (isGreen && !d.clearance && hasVeh && q <= 0) ? B : Q;
-                upsert('queue', ph, () => L.polyline([A, bandEnd], {color: color, weight: 11, opacity: .95,
+                // 🛑 2026-09-07 使用者:「地圖動畫為什麼只有一條?」——因為這條帶子
+                //    畫的是**排隊長度**,紅燈那一相排隊量到 0 就長度 0、整條看不見,
+                //    只剩綠燈那條。改成兩層,兩相永遠都畫得出來:
+                //      通行帶  [A,B] 整段進場道,動畫表達「車在動還是停」(燈態決定)
+                //      排隊帶  [A,Q] 只有實測到排隊才畫,亮色疊上去表示實際長度
+                //    這樣「有沒有車在動」與「停了多長」是兩個獨立的視覺訊息,
+                //    不會因為其中一個是 0 就整條消失。
+                upsert('queue', ph, () => L.polyline([A, B], {color: color, weight: 11, opacity: .45,
                                                              lineCap: 'butt', className: flowCls}),
-                       (l) => { l.setLatLngs([A, bandEnd]); l.setStyle({color: color});
+                       (l) => { l.setLatLngs([A, B]); l.setStyle({color: color});
                                 const el = l.getElement();
                                 // 🛑 只抽掉**我們自己的** class 再補上 —— 整個覆蓋會把
                                 //    Leaflet 的 leaflet-interactive 洗掉,滑鼠事件就失效。
@@ -24565,6 +24606,16 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                                     (el.getAttribute('class') || '')
                                         .replace(/(wr-flow|lv[0-4]|fl-stop|fl-clear|fl-go)/g, '')
                                         .trim() + ' ' + flowCls); });
+                // 實測排隊帶:亮色、不做動畫(它是長度不是流動)。量不到就移除,
+                // 不要留一條長度 0 的線在圖上。
+                if (q > 0) {
+                    upsert('qfill', ph, () => L.polyline([A, Q], {color: color, weight: 11, opacity: .95,
+                                                                  lineCap: 'butt', className: 'wr-qfill'}),
+                           (l) => { l.setLatLngs([A, Q]); l.setStyle({color: color}); });
+                } else if (wrLayers.qfill[ph]) {
+                    try { wrMap.removeLayer(wrLayers.qfill[ph]); } catch (e) { }
+                    delete wrLayers.qfill[ph];
+                }
                 // 燈頭:停止線旁
                 const nx = -uy, ny = ux;
                 const P = wrOffset(stopCam.lat, stopCam.lng, -ux * 4 + nx * 6, -uy * 4 + ny * 6);
@@ -25868,7 +25919,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
