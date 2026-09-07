@@ -122,7 +122,7 @@ class _LockState:
 
     __slots__ = ("addr", "name", "connected", "status", "err", "prev_action", "prev_states",
                  "door_open_since", "door_alarmed", "offline_since", "offline_alarmed",
-                 "next_probe")
+                 "next_probe", "fail_streak")
 
     def __init__(self, addr: int, name: str = ""):
         self.addr = addr
@@ -137,10 +137,19 @@ class _LockState:
         self.door_alarmed = False
         self.offline_since: Optional[float] = None
         self.offline_alarmed = False
+        # 🛑 連續失敗次數。單次讀取失敗不可以當成斷線 ——
+        #    刷卡當下鎖在驅動馬達,常來不及回應其中一次讀取,舊版一失敗就
+        #    connected=False → 罰退避 5 秒(_LOCK_RETRY_SEC) → 剛好跨過
+        #    _detect_offline 的 5 秒門檻 → 每次刷卡都記一筆「恢復連線」。
+        #    實測 45 次恢復連線中 38% 就發生在同一顆鎖刷卡後 60 秒內。
+        self.fail_streak = 0
 
 
 _DOOR_OPEN_ALARM_SEC = float(os.getenv("LOCK_DOOR_ALARM_SEC", "30"))  # 箱門開超過 N 秒觸發告警
 _LOCK_RETRY_SEC = float(os.getenv("LOCK_RETRY_SEC", "5"))  # 讀不到的鎖隔多久才重試(見 _lock_loop 退避說明)
+# 連續讀取失敗幾次才判定斷線。1 = 舊行為(單次失敗即斷線),會讓刷卡時的瞬間無回應
+# 被 5 秒退避放大成一次完整離線事件。輪詢約每秒一輪,3 次 ≈ 3 秒才判離線。
+_LOCK_FAIL_STREAK = int(os.getenv("LOCK_FAIL_STREAK", "3"))
 _LOCK_OFFLINE_ALARM_SEC = float(os.getenv("LOCK_OFFLINE_ALARM_SEC", "60"))  # 斷電/失聯超過 N 秒觸發警報(斷電期間鑰匙機械開門記不到,至少留斷電時段紀錄供查核)
 
 
@@ -845,9 +854,16 @@ class IOService:
             }
             lk.connected = True
             lk.err = ""
+            lk.fail_streak = 0
         except Exception as e:
-            lk.connected = False
+            # 🛑 去抖動:連續失敗到門檻才算斷線。單次失敗就標離線會被 _lock_loop 的
+            #    5 秒退避放大成必然跨過 5 秒離線門檻 —— 刷卡當下鎖在驅動馬達來不及
+            #    回應,就會變成「每刷一次卡就斷線一次」。真正沒接的鎖會連續失敗,
+            #    照樣在 _LOCK_FAIL_STREAK 次後被判離線,退避機制不受影響。
+            lk.fail_streak += 1
             lk.err = str(e)
+            if lk.fail_streak >= _LOCK_FAIL_STREAK:
+                lk.connected = False
 
     def _fire_lock_event(self, lk: "_LockState", event_type: str, label: str,
                          action_code=None, card_no=None) -> None:
@@ -953,6 +969,7 @@ class IOService:
                         rec = self._read_lock_swipe_record(lk.addr)
                         lk.connected = True
                         lk.err = ""
+                        lk.fail_streak = 0   # 讀成功 → 清空連續失敗計數
                         if rec:
                             action = rec["way"]
                             base = _LOCK_ACTION_NAMES.get(rec["way"], f"方式{rec['way']}")
@@ -971,13 +988,17 @@ class IOService:
                         action = self._lock_read(_LOCK_REG_ACTION, addr=lk.addr)[0]
                         lk.connected = True
                         lk.err = ""
+                        lk.fail_streak = 0   # 讀成功 → 清空連續失敗計數
                         if self._is_real_action(action) and not self._is_real_action(lk.prev_action):
                             self._fire_lock_event(
                                 lk, "swipe", _LOCK_ACTION_NAMES.get(action, f"未知({action})"), action)
                         lk.prev_action = action
                 except Exception as e:
-                    lk.connected = False
+                    # 同 _poll_lock_states:連續失敗到門檻才算斷線(見 _LOCK_FAIL_STREAK)
+                    lk.fail_streak += 1
                     lk.err = str(e)
+                    if lk.fail_streak >= _LOCK_FAIL_STREAK:
+                        lk.connected = False
                 if tick % 7 == 0:
                     if lk.connected:
                         self._poll_lock_states(lk, action)
