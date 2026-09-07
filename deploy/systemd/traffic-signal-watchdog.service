@@ -1,0 +1,17 @@
+# 動態號誌看門狗 —— 每 10 分鐘確認演算法是否真的在控制,異常推播。
+# 🛑 它只觀察與通報,不會自己動控制。看門狗自己去「修」路口是最危險的設計:
+#    故障當下最不該做的事就是再送一則命令。要不要恢復由人決定。
+[Unit]
+Description=Traffic signal algorithm watchdog (observe & alert only)
+After=traffic-signal.service traffic-api.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/traffic-violation-detection
+Environment=SIGNAL_WATCHDOG_ROOT=/home/ubuntu/traffic-violation-detection
+# --quiet:正常時不輸出,journal 只會留下異常那幾次,查起來才有意義
+ExecStart=/usr/bin/python3 scripts/signal_watchdog.py --quiet
+# 🛑 檢查失敗(exit 1)代表「發現異常」,不是這支程式壞了 —— 不要讓 systemd
+#    把它標成 failed 而觸發別的重啟邏輯。異常本身已經推播了。
+SuccessExitStatus=0 1
