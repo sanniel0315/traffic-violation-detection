@@ -3771,6 +3771,9 @@
             .wr-bar > i { transition:none; }
             .wr-state.green .lv-lamp { animation:none; }
         }
+        .wr-rel-k { flex:none; font-style:normal; padding:1px 7px; border-radius:99px;
+                    font-size:var(--fs-caption); color:var(--gov-mute-2);
+                    border:1px solid var(--gov-border); }
         .wr-cam-off { margin:0; padding:14px 12px; text-align:center; font-size:var(--fs-caption);
                       color:var(--gov-muted); background:var(--gov-surface-2);
                       border-top:1px solid var(--gov-border); }
@@ -8064,7 +8067,11 @@
                                     <span class="wr-col-sub">分相 {{ col.phase }} · {{ col.zone }}</span>
                                 </div>
                                 <div class="wr-rel">
-
+                                    <!-- 🛑 標明來源:這是**現場實際控制**今天的放行統計
+                                         (控制器 5F03 回報的綠燈相位),**不是我方演算法的計數**。
+                                         我方只算不下發,不會產生任何放行 —— 不標的話很容易
+                                         被讀成「我們今天放行了 303 次」。 -->
+                                    <em class="wr-rel-k" title="來源:控制器 5F03 回報的綠燈相位;我方只算不下發,不產生放行">現場實際放行</em>
                                     <span>累計 <b>{{ col.rel.total_sec==null?'—':col.rel.total_sec }}</b> 秒</span><i class="wr-sep">|</i>
                                     <span>次數 <b>{{ col.rel.count==null?'—':col.rel.count }}</b> 次</span><i class="wr-sep">|</i>
                                     <span>前次 <b>{{ col.rel.last_sec==null?'—':col.rel.last_sec }}</b> 秒</span>
