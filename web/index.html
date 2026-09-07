@@ -24318,7 +24318,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 if (clearing) { stateText = '清道過渡'; stateCls = 'amber'; lampCls = 'a'; }
                 else if (isGreen) { stateText = '綠燈放行中'; stateCls = 'green'; lampCls = 'g'; }
                 const sec = isGreen ? d.green_elapsed_sec : null;
-                // 即時秒數:綠側顯示「已亮 / 剩」,紅側顯示「約還要多久換相」。
+                // 即時秒數:三種狀態統一講「約 N 秒後換相」(見下方 tail())。
                 // 🛑 倒數的來源是控制器每秒回報的 5F03(sigRemain 逐秒遞減),
                 //    不是我方推算的 —— 綠燈可能被延長,所以紅側那個數字標「約」。
                 //    d.green_elapsed_sec 是我方觀測到的已亮秒數(5 秒取樣),
@@ -24333,21 +24333,25 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 // 🛑 中文用 sans、數字用 mono:整段套 mono 的話,中文會掉到 mono 字族的
                 //    替代字型,跟全站的 Noto Sans TC 對不起來(現場回報「字體沒統一」)。
                 //    所以拆成 parts,num=true 的才包 <b>(mono)。
+                // 🛑 三種狀態的倒數用**同一句型**:「約 N 秒後換相」。
+                //    2026-09-07 使用者回報:紅側寫「約 17 秒後換相」、綠側只寫
+                //    「剩 14 秒」,同一個數字兩種講法,看的人要自己推敲綠側那個
+                //    「剩」到底剩什麼。兩欄並排時句型不一致就是雜訊。
+                //    數字來源本來就是同一個(5F03 的步階剩餘秒),講法自然該一致。
+                //    「約」保留:動態控制下綠燈可能被延長,倒數不是保證值。
+                const tail = (n) => [{t: '約 '}, {t: String(n), num: true}, {t: ' 秒後換相'}];
                 let liveParts = [], liveCls = '';
                 if (clearing) {
-                    liveParts = (remain == null) ? [{t: '清道中'}]
-                              : [{t: '清道 剩 '}, {t: String(remain), num: true}, {t: ' 秒'}];
+                    liveParts = (remain == null) ? [{t: '清道中'}] : [{t: '清道 · '}].concat(tail(remain));
                     liveCls = 'amber';
                 } else if (isGreen) {
                     // 🛑 不顯示「已亮 N 秒」的累積值(使用者決定):戰情要看的是
                     //    「接下來會怎樣」,不是「已經過了多久」。倒數才是即時演變,
                     //    累積秒數只是一個一直在長的數字,佔位置又不影響判斷。
-                    liveParts = (remain == null) ? [{t: '綠燈放行中'}]
-                              : [{t: '剩 '}, {t: String(remain), num: true}, {t: ' 秒'}];
+                    liveParts = (remain == null) ? [{t: '綠燈放行中'}] : tail(remain);
                     liveCls = (remain != null && remain <= 5) ? 'hot' : 'green';
                 } else {
-                    liveParts = (remain == null) ? [{t: '紅燈等待中'}]
-                              : [{t: '約 '}, {t: String(remain), num: true}, {t: ' 秒後換相'}];
+                    liveParts = (remain == null) ? [{t: '紅燈等待中'}] : tail(remain);
                     liveCls = 'red';
                 }
                 // 🛑 倒數進度條要的是「剩餘 / 這一步階的總長」。總長來自 5F03 的
