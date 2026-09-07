@@ -62,7 +62,7 @@ def test_full_tier_with_ab_paired_and_tdx():
     from detection.signal_report_md import render
     md = render(_report("full"), _paired(), _paired(), {"a_label": "舊參數", "b_label": "新參數"})
     for s in ("完整報告", "進階指標", "統計檢定", "Cohen's d", "分時段", "決策配對",
-              "| 平均延滯 | 4.61 | 4.00 | -0.61 |", "small", "| A | 293 | 14（有車 14） | 9 | 270 | 0 | -16.1 | 225 | 179.7 | 33% | 控制器 5F03 秒數 |",
+              "| 平均延滯 | 4.61 | 4.00 | -0.61 |", "small", "| A | 293 | 14（有車 14） | 9 | 270 | 0 | -16.1 | 225 | 179.7 | 33% | — | 控制器 5F03 秒數 |",
               "118.0", "P1", "舊參數", "新參數"):
         assert s in md, s
     # A/B 差值欄:B−A
