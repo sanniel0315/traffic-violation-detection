@@ -1,7 +1,10 @@
-"""影子模式:只記錄不下發 + 切換偵測正確性。
+"""演算法運轉:下發路徑唯一且層層把關 + 切換偵測正確性。
 
-影子模式是 bypass OPAC 的前置驗證 —— 我方決策全速運轉但不碰控制器,
-趁 OPAC 還在跑時累積對照資料。最重要的保證是「絕對不下發」。
+2026-09-07 之前這個模組是純影子(絕對不下發),使用者要求「演算法上去」後
+改為可下發。舊的「絕對不下發」保證因此換成三條更精確的保證:
+  (1) 下發只有 _actuate 一條路,不會有第二個地方偷送;
+  (2) 預設關閉,要明確開啟才會動到路口;
+  (3) 它走的是與人工下發**同一道**把關(_control_guard),不是自己的簡化版。
 """
 import os
 import sys
@@ -15,35 +18,145 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def test_shadow_never_sends_anything():
-    """★最重要:影子模組不可以有任何下發行為。
+def test_only_one_send_path():
+    """★最重要:下發只能有 _actuate 一條路。
 
-    用 AST 檢查「實際被呼叫的函式名」,不掃註解與 docstring
-    (docstring 裡會提到 control/send,那是在說明「不走那條路」)。
+    下發是對 signal_daemon 送 control/send,所以這裡掃的是「誰在呼叫
+    _daemon_post」。多一個地方能送,就多一個沒被把關的路口控制入口。
     """
     import ast
     src = (ROOT / "api" / "routes" / "signal_shadow.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
-    called = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            f = node.func
-            if isinstance(f, ast.Name):
-                called.add(f.id)
-            elif isinstance(f, ast.Attribute):
-                called.add(f.attr)
-    forbidden = {"control_send", "send", "sendall", "_send_frame",
-                 "send_frame", "write_frame"}
-    hit = called & forbidden
-    assert not hit, "影子模組不可呼叫下發相關函式:%s" % hit
 
-    imported = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            for a in node.names:
-                imported.add(a.name)
-    assert "control_send" not in imported
-    assert "control_prepare" not in imported
+    def calls_daemon_post(node):
+        return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                   and n.func.id == "_daemon_post" for n in ast.walk(node))
+
+    senders = [fn.name for fn in ast.walk(tree)
+               if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+               and calls_daemon_post(fn)]
+    assert senders == ["_actuate"], "下發路徑不只一條:%s" % senders
+
+
+def test_never_sends_in_process():
+    """🛑 不可以自己 import signal_tc3 直接送。
+
+    連著 :1001 的 socket 與控制策略只存在 traffic-signal 那個行程;
+    在 traffic-api 裡直接呼叫等於「看起來有送、其實什麼都沒發生」。
+    """
+    import ast
+    src = (ROOT / "api" / "routes" / "signal_shadow.py").read_text(encoding="utf-8")
+    called = set()
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.Call):
+            f = n.func
+            called.add(f.id if isinstance(f, ast.Name) else
+                       (f.attr if isinstance(f, ast.Attribute) else ""))
+    forbidden = {"_controller_send", "control_send", "sendall",
+                 "_send_frame", "send_frame", "write_frame"}
+    assert not (called & forbidden), "不可在本行程直接下發:%s" % (called & forbidden)
+
+
+def test_actuate_disabled_by_default():
+    """預設不下發 —— 要明確開啟才會動到路口號誌。"""
+    import importlib
+    import api.routes.signal_shadow as m
+    os.environ.pop("SIGNAL_SHADOW_ACTUATE", None)
+    m = importlib.reload(m)
+    assert m.ACTUATE_DEFAULT is False
+    assert m._act["enabled"] is False
+
+
+def _fake_daemon(monkeypatch, m, calls):
+    def post(path, body):
+        calls.append((path, body))
+        if path.endswith("/prepare"):
+            return {"token": "T"}
+        return {"sent": {"seq": 7, "raw": "AA 5F 1C"}}
+    monkeypatch.setattr(m, "_daemon_post", post)
+
+
+class _D:
+    action = "SWITCH"
+    reason = "測試"
+
+
+LIVE_OK = {"control_mode": "external_dynamic", "clearance": False, "stale": False}
+
+
+def test_actuate_blocked_when_disabled(monkeypatch):
+    """關閉時不管引擎判什麼都不送,而且要說得出原因。"""
+    import api.routes.signal_shadow as m
+    calls = []
+    _fake_daemon(monkeypatch, m, calls)
+    monkeypatch.setitem(m._act, "enabled", False)
+    m._actuate(_D(), 1, LIVE_OK)
+    assert calls == []
+    assert m._act["blocked"]
+
+
+def test_actuate_requires_phase_control(monkeypatch):
+    """控制策略沒有時相控制(bit4)就不送 —— 送了控制器一定回 NAK。"""
+    import api.routes.signal_shadow as m
+    calls = []
+    _fake_daemon(monkeypatch, m, calls)
+    monkeypatch.setitem(m._act, "enabled", True)
+    monkeypatch.setitem(m._act, "last_ts", 0.0)
+    m._actuate(_D(), 1, dict(LIVE_OK, control_mode="fixtime"))
+    assert calls == []
+    assert "時相控制" in m._act["blocked"]
+
+
+def test_actuate_not_during_clearance_or_stale(monkeypatch):
+    """清道中不送(會變成連跳兩步階);抄錄過期也不送(看不到現況不動路口)。"""
+    import api.routes.signal_shadow as m
+    calls = []
+    _fake_daemon(monkeypatch, m, calls)
+    monkeypatch.setitem(m._act, "enabled", True)
+    monkeypatch.setitem(m._act, "last_ts", 0.0)
+    m._actuate(_D(), 1, dict(LIVE_OK, clearance=True))
+    m._actuate(_D(), 1, dict(LIVE_OK, stale=True))
+    assert calls == []
+
+
+def test_actuate_sends_next_step_and_throttles(monkeypatch):
+    """實際送出時:內容是 5F1C info=000000(跳下一步階),而且會節流。
+
+    🛑 為什麼不是指定對向綠燈步階:那會跳過清道(行閃/行紅/黃/全紅)。
+    """
+    import api.routes.signal_shadow as m
+    calls = []
+    _fake_daemon(monkeypatch, m, calls)
+    monkeypatch.setitem(m._act, "enabled", True)
+    monkeypatch.setitem(m._act, "last_ts", 0.0)
+    monkeypatch.setitem(m._act, "n", 0)
+
+    m._actuate(_D(), 1, LIVE_OK)
+    assert calls[0] == ("/api/signal/control/prepare",
+                        {"code": "5F1C", "info_hex": "000000"})
+    assert calls[1][0] == "/api/signal/control/send"
+    assert m._act["n"] == 1
+
+    # 立刻再判一次 SWITCH:節流要擋下來
+    m._actuate(_D(), 1, LIVE_OK)
+    assert len(calls) == 2
+    assert "節流" in m._act["blocked"]
+
+
+def test_actuate_reports_daemon_rejection(monkeypatch):
+    """daemon 把關擋下(403)時:不可以當成送出成功,原因要留給畫面看。"""
+    import api.routes.signal_shadow as m
+
+    def post(path, body):
+        raise RuntimeError("daemon 403: 目前限制為「只准查詢」")
+
+    monkeypatch.setattr(m, "_daemon_post", post)
+    monkeypatch.setitem(m._act, "enabled", True)
+    monkeypatch.setitem(m._act, "last_ts", 0.0)
+    monkeypatch.setitem(m._act, "n", 0)
+    m._actuate(_D(), 1, LIVE_OK)
+    assert m._act["n"] == 0
+    assert "只准查詢" in m._act["blocked"]
 
 
 def test_shadow_disabled_by_default():
