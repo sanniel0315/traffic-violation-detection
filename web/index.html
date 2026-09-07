@@ -8086,7 +8086,6 @@
                                        宣告(模式碼) / 實際下發(頻率+最近幾秒前) / 穩定度 -->
                                 <div class="ctl-verdict" :class="sigWhoCtl.cls">
                                     <b>{{ sigWhoCtl.text }}</b>
-                                    <span>{{ sigWhoCtl.sub }}</span>
                                 </div>
                                 <!-- 🛑 兩個開關都會**真的動到路口號誌的控制權**,不是顯示切換:
                                      · 動態控制:關 → 我方一則設定類命令都送不出去(把關層擋)
@@ -8099,12 +8098,16 @@
                                     <span class="wr-sw-i">
                                         <el-switch v-model="sigDynOn" size="small" :loading="sigDynBusy"
                                                    @change="sigSetDyn" active-text="動態控制" inline-prompt></el-switch>
-                                        <em>{{ sigDyn.level && sigDyn.level!=='L0' ? ('降階 '+sigDyn.level) : (sigDynOn?'我方可下發':'我方不下發') }}</em>
+                                        <em :title="'🛑 這個開關是記憶體狀態,traffic-signal 重啟(含每次部署)會回到關閉 —— 那是刻意的 fail-safe:重啟後不會自己開始下發。'">{{ sigDyn.level && sigDyn.level!=='L0' ? ('降階 '+sigDyn.level) : (sigDynOn?'我方可下發':'我方不下發(重啟後預設)') }}</em>
                                     </span>
                                     <span class="wr-sw-i">
+                                        <!-- 🛑 總開關關閉時「維持授權」是**死的** —— reassert 的守衛規定
+                                             只有總開關開且未降階才重新宣告。不 disable 的話畫面看起來
+                                             啟用了、實際完全不作用,那比沒有這個開關更糟。 -->
                                         <el-switch v-model="sigKeepAuth" size="small" :loading="sigDynBusy"
+                                                   :disabled="!sigDynOn"
                                                    @change="sigSetPolicy" active-text="維持授權" inline-prompt></el-switch>
-                                        <em>{{ sigKeepAuth ? ('已重新宣告 '+(sigDl.reassert&&sigDl.reassert.count||0)+' 次') : '中央改回定時就留住' }}</em>
+                                        <em>{{ !sigDynOn ? '需先啟用動態控制' : (sigKeepAuth ? ('已重新宣告 '+(sigDl.reassert&&sigDl.reassert.count||0)+' 次') : '中央改回定時就留住') }}</em>
                                     </span>
                                 </div>
                                 <div class="wr-ctlway">
@@ -24924,7 +24927,6 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             const ext = w.sendCls === 'live';
             return {
                 text: ext ? '外部系統正在下發控制' : '控制器自己在跑內建時制',
-                sub: ext ? '我方仍未下發任何命令' : '我方與外部系統都沒有下發',
                 cls: ext ? 'warn' : 'ok',
             };
         });

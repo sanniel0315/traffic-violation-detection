@@ -144,3 +144,35 @@ if __name__ == "__main__":
     test_hijacked_track_resumes_suppression()
     test_static_and_real_car_coexist()
     print("OK")
+
+
+# ── 偵測信心門檻(2026-09-07 實測後定案)────────────────────────────────
+def test_信心門檻不可低於雜訊帶():
+    """cam_3 地上左轉箭頭被判成 car 的信心是 0.131。門檻低於它就擋不住標線。
+
+    2026-09-07 現場實測 3603 幀 / 9822 筆:
+      0.12(舊值) 誤報 3572 : 真車 3105 → 誤報佔 53.5%
+      0.25       誤報   67 : 真車 1633 → 誤報佔  3.9%
+    既有的固定物抑制擋不住這種「閃爍出現」的擦邊偵測(每次中斷就把 300 秒計時歸零),
+    只能從源頭擋。
+    """
+    from detection.congestion_detector import CongestionDetector
+
+    assert CongestionDetector.DEFAULT_DETECT_CONF >= 0.20, (
+        "壅塞偵測門檻低於 0.20 → 地上標線/標誌/路緣會被當成車"
+    )
+
+
+def test_fallback_門檻也要在雜訊之上():
+    """fallback 只在主偵測器一台都沒抓到時啟用 —— 空曠路面必定觸發它。
+
+    舊值 0.05:主門檻拉高後,空路會落到 fallback,標線照樣被抓進來,
+    誤報反而更明顯。兩個門檻要一起守。
+    """
+    from detection.congestion_detector import CongestionDetector
+
+    assert CongestionDetector.DEFAULT_FALLBACK_CONF >= 0.15, (
+        "fallback 門檻低於 0.15 → 空曠路面會用標線湊出佔用率"
+    )
+    assert (CongestionDetector.DEFAULT_FALLBACK_CONF
+            <= CongestionDetector.DEFAULT_DETECT_CONF), "fallback 不該比主門檻嚴"

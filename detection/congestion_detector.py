@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """壅塞偵測模組"""
+import os
+
 import cv2
 import numpy as np
 from typing import Dict, List, Any, Optional
@@ -17,8 +19,21 @@ class CongestionDetector:
     # 車輛數封頂只針對它們,不誤傷「幾台小客車真的塞住」的情況。
     # 'truck' 也算:細分類沒跑或判不出來時類別會停在 truck,前端顯示就是「大貨車」。
     LARGE_VEHICLE_CLASSES = frozenset({'heavy_truck', 'bus', 'truck'})
-    DEFAULT_DETECT_CONF = 0.12
-    DEFAULT_FALLBACK_CONF = 0.05
+    # 🛑 門檻不能再低。2026-09-07 在 cam_3 實測 3603 幀 / 9822 筆車輛偵測,
+    #    依「同一位置佔據 >=30% 幀」自動歸類固定物(地上標線/標誌/路緣):
+    #      門檻 0.12(舊值) 誤報 3572 : 真車 3105 → 誤報佔 53.5%
+    #      門檻 0.20        誤報  469 : 真車 1961 → 誤報佔 19.3%
+    #      門檻 0.25        誤報   67 : 真車 1633 → 誤報佔  3.9%
+    #    也就是舊門檻之下「超過一半的車其實是標線」。實例:cam_3 地上左轉箭頭
+    #    被判成 car 信心 0.131,剛好擦過 0.12 過關。
+    #    🛑 既有的固定物抑制擋不住它 —— 那套要求「同一點連續 300 秒、中斷不超過
+    #    30 秒」,而這種擦邊偵測是**閃爍出現**的,每次中斷就把計時歸零,永遠累積
+    #    不到門檻。要從源頭擋掉,不能只靠事後抑制。
+    DEFAULT_DETECT_CONF = float(os.getenv("CONGESTION_DETECT_CONF", "0.25"))
+    # 🛑 fallback 只在主偵測器「一台都沒抓到」時啟用,所以它必須也在雜訊之上。
+    #    舊值 0.05:空曠路面主偵測器抓不到 → 觸發 fallback → 標線必定被抓進來
+    #    → 空路照樣有佔用率。把主門檻拉高卻不動這裡,會讓誤報更明顯而不是消失。
+    DEFAULT_FALLBACK_CONF = float(os.getenv("CONGESTION_FALLBACK_CONF", "0.15"))
     # 停等長度評估用：每種車輛佔用的等效路面長度（公尺）
     VEHICLE_EQUIVALENT_LENGTH_M = {
         'bicycle':     1.8,
