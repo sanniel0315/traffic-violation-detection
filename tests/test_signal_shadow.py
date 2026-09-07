@@ -790,3 +790,28 @@ def test_auth_renew_period_shorter_than_effect_time():
     from api.routes import signal_tc3 as T
     assert T.REASSERT_EFFECT == 1, "EffectTime 不應被放大,那會拆掉 fail-safe"
     assert T.AUTH_RENEW_SEC < 60, "續約週期要短於 EffectTime 的 1 分鐘"
+
+
+def test_prepare_accepts_by_label(monkeypatch):
+    """🛑 prepare 要能正常回 token —— 這條測試是被實際事故逼出來的。
+
+    2026-09-08:我把稽核用的 `by` 標籤塞進 _finish_prepare,但 `by` 是
+    control_prepare 的區域變數 → NameError → **每一次 prepare 都 500**。
+    後果是演算法一則 5F1C 都送不出去,而我部署後只驗了「策略還是 10H」——
+    那是續約(_do_reassert)在撐,走的是完全不同的路徑,看不出下發已經全掛。
+    所以這裡直接驗兩條下發路徑的共用函式。
+    """
+    import inspect
+    from api.routes import signal_tc3 as T
+
+    sig = inspect.signature(T._finish_prepare)
+    assert "by" in sig.parameters, "_finish_prepare 要收 by,否則呼叫端會 NameError"
+
+    out = T._finish_prepare(b"\xaa\xbb\x01", "5F1C", 0x1C, 0x5F, 1, 1, "algorithm")
+    assert out.get("token")
+    assert T._pending[out["token"]]["by"] == "algorithm"
+
+    # 沒帶 by 也要能用(人工下發不一定給標籤)
+    out2 = T._finish_prepare(b"\xaa\xbb\x02", "5F10", 0x10, 0x5F, 1, 2)
+    assert out2.get("token")
+    assert T._pending[out2["token"]]["by"] == ""
