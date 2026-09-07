@@ -978,7 +978,11 @@ async def shadow_status(limit: int = Query(50, ge=1, le=500),
         "enabled": SHADOW_ENABLED,
         "running": running,
         "interval_sec": SHADOW_INTERVAL_SEC,
-        "note": "影子模式只記錄不下發，路口仍由現行控制方(OPAC)控制",
+        # 🛑 2026-09-07 改寫:別再說「影子」也別再說「OPAC 在控」。
+        #    通訊已接上(中央↔控制器全部經由我方中繼),但控制未下發;
+        #    而 OPAC 目前是停的,路口跑的是控制器內建時制。
+        #    兩件事要分開講,混成一個詞會讓人誤判我方在系統中的位置。
+        "note": "線上演算法比對:通訊已接上(中央經由我方中繼),但我方不下發任何控制命令;路口目前跑控制器內建時制",
         **st,
         "agree_rate": round(sum(agree) / len(agree), 3) if agree else None,
         "recent": rows,
@@ -1270,7 +1274,7 @@ async def shadow_plan(_user=Depends(get_current_user)):
         "action": d.action, "reason": d.reason,
         "would_send": False,
         "control_evidence": _control_evidence(30),
-        "note": "影子模式:本決策只記錄不下發,路口仍由現行控制方控制",
+        "note": "線上演算法比對:本決策只記錄不下發,路口目前跑控制器內建時制",
     }
 
 def _control_evidence(minutes: int = 30) -> dict:
