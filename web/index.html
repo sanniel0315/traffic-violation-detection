@@ -24427,11 +24427,11 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         //    (2026-09-07 現場回報)。分相1 往軸線右側、分相2 往左側推開,
         //    再把同相的兩座燈沿軸線錯開,五座就都分得開。
         const SIG_HEADS = [
-            {id: 5, phase: 1, offset_m: 0,   side_m: 14,  label: '5'},
-            {id: 3, phase: 1, offset_m: 60,  side_m: 14,  label: '3'},
-            {id: 4, phase: 2, offset_m: 0,   side_m: -14, label: '4'},
-            {id: 2, phase: 2, offset_m: 70,  side_m: -14, label: '2'},
-            {id: 1, phase: 2, offset_m: 155, side_m: -14, label: '1'},
+            {id: 5, phase: 1, offset_m: 0,  side_m: 14,  label: '5'},
+            {id: 3, phase: 1, offset_m: 45, side_m: 14,  label: '3'},
+            {id: 4, phase: 2, offset_m: 0,  side_m: -14, label: '4'},
+            {id: 2, phase: 2, offset_m: 45, side_m: -14, label: '2'},
+            {id: 1, phase: 2, offset_m: 90, side_m: -14, label: '1'},
         ];
         const drawWarMap = () => {
             if (!wrMap) return;
@@ -24480,7 +24480,12 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 const color = WR_LV_COLOR[lv];
                 const A = [stopCam.lat, stopCam.lng];
                 const B = wrOffset(stopCam.lat, stopCam.lng, ux * segLen, uy * segLen);
-                fitPts.push(A, B);
+                // 🛑 只把**停止線**收進視野,不收儲車空間的遠端(B)。
+                //    B 在分相2 是 220 公尺外,收進來會把地圖拉遠一倍,
+                //    16 公尺的燈距就被壓成幾個像素而互相重疊
+                //    (2026-09-07 使用者:「地圖可以再拉近點,只要是這次交流道範圍」)。
+                //    進場道的線段照樣畫到 B,只是不因為它而縮小視野。
+                fitPts.push(A);
                 const Q = wrOffset(stopCam.lat, stopCam.lng, ux * Math.min(q, segLen), uy * Math.min(q, segLen));
                 // 進場道底色(儲車空間全長)
                 upsert('seg', ph, () => L.polyline([A, B], {color: color, weight: 11, opacity: .22,
