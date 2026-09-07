@@ -3836,6 +3836,10 @@
         .wr-flow.lv2 { animation-duration:1.8s; }            /* 中等 */
         .wr-flow.lv3 { animation-duration:3.4s; }            /* 擁擠:慢 */
         .wr-flow.lv4 { animation-duration:7s; }              /* 嚴重壅塞:幾乎停住 */
+        /* 🛑 動不動由燈態決定,壓在等級之後(後宣告者勝):
+              紅燈 = 車是停的,動畫必須停;清道 = 收尾,放很慢。 */
+        .wr-flow.fl-stop  { animation:none; }
+        .wr-flow.fl-clear { animation-duration:9s; }
         @keyframes wrFlow { to { stroke-dashoffset:-23; } }
         /* 燈頭:綠燈呼吸、清道閃爍、紅燈靜止 */
         .wr-lamp { transition:fill .25s ease; }
@@ -24435,7 +24439,10 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             {id: 3, phase: 1, offset_m: 45, side_m: 14,  label: '3'},
             {id: 4, phase: 2, offset_m: 0,  side_m: -14, label: '4'},
             {id: 2, phase: 2, offset_m: 45, side_m: -14, label: '2'},
-            {id: 1, phase: 2, offset_m: 90, side_m: -14, label: '1'},
+            // 🛑 1 號燈在**匝道口**(進場道最遠端),不是停止線附近 ——
+            //    使用者指正。offset 用該分相的線段長度,讓它落在畫出來的
+            //    進場道盡頭,跟現場的位置關係一致。
+            {id: 1, phase: 2, offset_m: 'end', side_m: -14, label: '1'},
         ];
         const drawWarMap = () => {
             if (!wrMap) return;
@@ -24495,17 +24502,28 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 upsert('seg', ph, () => L.polyline([A, B], {color: color, weight: 11, opacity: .22,
                                                            lineCap: 'butt', className: 'wr-seg'}),
                        (l) => { l.setLatLngs([A, B]); l.setStyle({color: color}); });
-                // 排隊帶:虛線往路口方向流動。**流動速度由判級決定** ——
-                // 順暢跑得快、壅塞幾乎停住,一眼就看得出哪一側在動。
-                // 這是把資料畫成動態,不是裝飾:速度等級 = wrLvRank。
+                // 🛑 燈態要在排隊帶之前算 —— 流動動畫必須跟燈連動,不能只看壅塞等級。
+                const isGreen = d.green_phase === ph;
+                // 排隊帶:虛線往路口方向流動。
+                // 流動**速度**由壅塞判級決定(順暢跑得快、壅塞幾乎停住);
+                // 流動**要不要動**由燈態決定:
+                //   🛑 2026-09-07 使用者回報「道路狀態動畫沒同步」—— 原本只看
+                //      壅塞等級,紅燈時車子照樣在圖上流動,跟旁邊亮著的紅燈互相
+                //      矛盾。紅燈時車是停的,動畫就該停;清道時放慢表示正在收尾。
+                //   這是把資料畫成動態,不是裝飾:速度=壅塞等級,動不動=燈態。
+                const flowState = !isGreen ? 'fl-stop' : (d.clearance ? 'fl-clear' : 'fl-go');
+                const flowCls = 'wr-flow lv' + lv + ' ' + flowState;
                 upsert('queue', ph, () => L.polyline([A, Q], {color: color, weight: 11, opacity: .95,
-                                                             lineCap: 'butt', className: 'wr-flow lv' + lv}),
+                                                             lineCap: 'butt', className: flowCls}),
                        (l) => { l.setLatLngs([A, Q]); l.setStyle({color: color});
                                 const el = l.getElement();
+                                // 🛑 只抽掉**我們自己的** class 再補上 —— 整個覆蓋會把
+                                //    Leaflet 的 leaflet-interactive 洗掉,滑鼠事件就失效。
                                 if (el) el.setAttribute('class',
-                                    (el.getAttribute('class') || '').replace(/\blv[0-4]\b/g, '') + ' wr-flow lv' + lv); });
-                // 燈頭:停止線旁(往路口方向 4 m、側移 6 m),綠/清道黃/紅
-                const isGreen = d.green_phase === ph;
+                                    (el.getAttribute('class') || '')
+                                        .replace(/(wr-flow|lv[0-4]|fl-stop|fl-clear|fl-go)/g, '')
+                                        .trim() + ' ' + flowCls); });
+                // 燈頭:停止線旁
                 const nx = -uy, ny = ux;
                 const P = wrOffset(stopCam.lat, stopCam.lng, -ux * 4 + nx * 6, -uy * 4 + ny * 6);
                 // 🛑 燈頭要畫成**真的號誌燈**(三燈燈箱),不是一個彩色圓點。
@@ -24538,9 +24556,12 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 });
                 SIG_HEADS.filter((h) => h.phase === ph).forEach((h) => {
                     // 沿進場道軸線往上游 offset_m,再側移 side_m(避免互相重疊)
+                    // offset_m 可以是 'end' —— 代表「進場道盡頭(匝道口)」,
+                    // 用該分相實際畫出來的線段長度,不寫死公尺數。
+                    const off = (h.offset_m === 'end') ? segLen : Number(h.offset_m) || 0;
                     const HP = wrOffset(stopCam.lat, stopCam.lng,
-                                        ux * h.offset_m + nx * h.side_m,
-                                        uy * h.offset_m + ny * h.side_m);
+                                        ux * off + nx * h.side_m,
+                                        uy * off + ny * h.side_m);
                     const tip = '號誌燈 ' + h.label + ' · 分相 ' + ph + ' ' + lampWord
                               + '（位置為示意,待現場提供實際座標）';
                     upsert('lamp', 'h' + h.id,
