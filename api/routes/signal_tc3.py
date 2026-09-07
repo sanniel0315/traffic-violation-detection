@@ -1425,18 +1425,30 @@ async def signal_config(_user=Depends(get_current_user)):
 
 
 # HardwareStatus(0F04/0FC1)16 位元對照。
-# 🛑 來源分兩級,呈現時要分清楚:
-#    bit14 是我方現場實證的(見 HW_STATUS_FIX 的說明);其餘 15 個位元的名稱
-#    來自 /sig 前端的 i18n 字串,**未經我方現場實證**,所以每一項都帶
-#    verified 標記。/sig 自己也標了 polarityPending「語意待確認」。
-#    不要把「抄來的名稱」當成「驗證過的事實」。
-# 極性:多數位元是 Error(1=故障),bit8/bit14 是狀態旗標(1=好)。
-#    先前程式註解說 bit14 是「廠商寫反」,其實是語意本來就不同類 ——
-#    controllerReady 本來就是 1=就緒。
+#
+# 🛑 協定原文自己就說這張表不是硬規定:
+#    「0F H+04 H 的 HardwareStatus 各位元為建議及參考內容,主辦機關可依需求修訂」
+#    (協定 4-36)。所以**位元表不可能只靠讀協定對完** —— 名稱與極性最終要向
+#    主辦機關/控制器廠商書面確認。下面的 evidence 欄就是誠實標示每一位的證據等級。
+#
+# 證據等級(HW_BIT_EVIDENCE):
+#    measured = 我方現場實測站得住(bit13、bit14)
+#    spec     = 協定 4-36 的建議名稱,10 天 45,843 筆抄錄中**從未為 1**,
+#               既沒被證實也沒被推翻(bit0-12、bit15,bit2 除外)
+#    conflict = 實測與抄來的名稱矛盾(bit2)
+#
+# 2026-08-28 ~ 09-07,45,843 筆 0F04/0FC1,只出現過 4 種值:
+#    0x4000(54.8%) 0x6000(44.9%) 0x4004(0.13%) 0x6004(0.07%)
+#    → 除了 bit2/bit13/bit14,其餘 13 個位元十天內一次都沒亮過。
 HW_BITS = [
     (0,  "cpuModuleError",        "CPU 模組錯誤",              "processor", True),
     (1,  "memoryError",           "記憶體錯誤",                "processor", True),
-    (2,  "timerError",            "計時器錯誤",                "processor", True),
+    # 🛑 bit2 抄來的名稱是「計時器錯誤」,但實測對不上:十天內亮了 76 次
+    #    (佔 0.18% 的樣本),每次只持續 0~109 秒(中位 18.6 秒)就自己熄掉,
+    #    期間號誌運轉正常、抄錄不中斷。真的計時器故障不會這樣自癒 76 次。
+    #    0F04 與 0FC1 兩種訊框的出現率一致(0.12% / 0.13%),所以不是解碼假象。
+    #    語意未明 —— 這一位絕對不可以拿去觸發告警。
+    (2,  "bit2Unknown",           "位元 2(語意未明,實測與「計時器錯誤」矛盾)", "processor", True),
     (3,  "watchdogTimerError",    "看門狗計時器錯誤",          "processor", True),
     (4,  "powerError",            "電源異常(AC 80~130V 之外)", "power",     True),
     (5,  "ioUnitError",           "I/O 單元錯誤(行人觸動/子機連鎖)", "ioCabinet", True),
@@ -1447,7 +1459,12 @@ HW_BITS = [
     (10, "timingPlanError",       "時制計畫錯誤",              "timingPlan", True),
     (11, "signalConflictError",   "號誌衝突",                  "signalLight", True),
     (12, "signalPowerError",      "號誌電源異常",              "power",     True),
-    (13, "timingPlanOnTransition", "時制計畫轉換中",           "timingPlan", False),
+    # 🛑 bit13 抄來的名稱是「時制計畫轉換中」,實測推翻:轉換中應該是瞬間事件,
+    #    但這一位十天內有 45.0% 的時間是 1。與控制策略 bit4(時相控制)比對
+    #    一致率 95.8%(45,843 筆),不一致的部分全是回報延遲造成
+    #    (策略→1 後 bit13 跟上中位 14.5 秒;策略→0 後中位 160.5 秒,
+    #     受 0F04 回報週期限制)。結論:這一位是「外部時相控制進行中」。
+    (13, "phaseControlActive",  "外部時相控制進行中",           "timingPlan", False),
     (14, "controllerReady",       "控制器就緒",                "processor", False),
     (15, "commLineBad",           "通訊線路不良",              "communication", True),
 ]
@@ -1459,8 +1476,15 @@ HW_GROUPS = {
     "timingPlan": "時制計畫",
     "ioCabinet": "I/O / 機箱",
 }
-# 只有 bit14 是我方現場實證過的
-HW_VERIFIED_BITS = {14}
+# 我方現場實證過的位元(其餘只顯示位元值,不做正常/異常判定)
+HW_VERIFIED_BITS = {13, 14}
+# 每一位的證據等級 —— 前端要能一眼看出哪些是實測、哪些只是抄協定
+HW_BIT_EVIDENCE = {
+    2:  ("conflict", "十天亮 76 次、每次中位 18.6 秒自癒,與「計時器錯誤」矛盾;語意未明"),
+    13: ("measured", "與控制策略 bit4(時相控制)一致率 95.8%,不一致全為回報延遲"),
+    14: ("measured", "45,843 筆全部為 1,控制器正常運轉;1=就緒"),
+}
+HW_EVIDENCE_DEFAULT = ("spec", "協定 4-36 建議名稱;十天 45,843 筆從未為 1,未被證實也未被推翻")
 
 
 @router.get("/device-status", summary="設備狀態(HardwareStatus 16 位元逐項)")
@@ -1505,8 +1529,10 @@ async def device_status(_user=Depends(get_current_user)):
         else:
             abnormal = None
             pending += 1
+        ev_level, ev_why = HW_BIT_EVIDENCE.get(bit, HW_EVIDENCE_DEFAULT)
         grouped.setdefault(group, []).append({
             "bit": bit, "key": key, "label": label,
+            "evidence": ev_level, "evidence_why": ev_why,
             "raw": 1 if on else 0,
             "abnormal": abnormal,          # None = 極性未實證,不判定
             "polarity": ("error" if is_error else "flag") if verified else "pending",
@@ -1522,9 +1548,13 @@ async def device_status(_user=Depends(get_current_user)):
         "pending_count": pending,           # 極性待確認、不做判定的位元數
         "groups": [{"key": g, "title": HW_GROUPS[g], "items": grouped.get(g, [])}
                    for g in HW_GROUPS if grouped.get(g)],
-        "note": "只有 bit14(控制器就緒)經我方現場實證,fault_count 只計入它。"
-                "其餘位元的名稱抄自對方前端字串、極性未經實證,一律只顯示位元值"
-                "不做正常/異常判定 —— 拿沒驗證過的極性去判狀態會產生假警報。",
+        "note": "bit13(外部時相控制進行中)與 bit14(控制器就緒)經我方現場實證,"
+                "fault_count 只計入這兩位。bit2 實測與抄來的名稱矛盾、語意未明。"
+                "其餘 13 位十天內從未為 1,名稱來自協定 4-36 的**建議值** —— "
+                "協定原文明訂各位元「為建議及參考內容,主辦機關可依需求修訂」,"
+                "所以這張表要對完必須向主辦機關/控制器廠商書面確認,不是讀協定就能定案。"
+                "未實證的位元一律只顯示位元值不做判定 —— 拿沒驗證過的極性去判狀態"
+                "會產生假警報。",
     }
 
 @router.get("/coverage", summary="TC3 命令覆蓋矩陣(規範 105 條 vs 實際抄到)")
