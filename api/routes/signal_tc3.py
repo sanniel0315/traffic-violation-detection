@@ -251,21 +251,24 @@ if _conn.get("center_relay") is None:
     _conn["center_relay"] = CENTER_RELAY_ENABLED
 CENTER_LISTEN_HOST = os.getenv("SIGNAL_TC3_CENTER_LISTEN_HOST", "0.0.0.0")
 CENTER_LISTEN_PORT = int(os.getenv("SIGNAL_TC3_CENTER_LISTEN_PORT", "1001") or 1001)
-# 🛑 2026-09-07 現場實證:中央不看 bit14 —— 翻與不翻,中央都顯示正常。
-#    08-28 00:45~09:30  送 0x0000(flip14 翻掉 bit14)  1130 筆  中央正常
-#    09-07 13:0x        送 0x4000(raw 原封轉發)                中央正常
-#    所以「翻 bit14 補償中央反向解讀」這個理由不成立(它是根據協定推測寫的,
-#    當時中央還沒真的接上來驗證過)。現場已改用 raw,並寫進 systemd drop-in
-#    zz-hwstatus.conf(SIGNAL_TC3_HWSTATUS_MODE=raw)讓它撐過重啟。
-#    保留 flip14 這條路徑只為了留退路,不再是建議值 ——
-#    中繼竄改轉發資料本身就是風險:送出去的值與控制器實際回報不符,出事無法對帳。
-#    bit14 語意本身仍成立:它是 controllerReady,1=就緒=正常,
-#    與多數 Error 旗標(1=故障)不同類。
+# 🛑 2026-09-07 現場實證(對照中央畫面),結論與這裡原本的註解完全相反:
+#    13:03:20~13:04:25  送 0x0000(flip14 翻掉 bit14) → 中央硬體狀態顯示**異常**
+#    13:05:20~          送 0x4000(raw 原封轉發)       → 中央硬體狀態顯示**正常**
+#    中央**有**在看 bit14,而且照協定標準讀法 1=控制器就緒=正常。
+#    翻掉 bit14 等於告訴中央「控制器未就緒」—— 翻轉本身就是中央顯示異常的
+#    原因,不是什麼「補償中央的反向解讀」。那個補償理由是 08-21 依協定推測寫的,
+#    當時中央根本還沒接上來,無從驗證。
+#    現場已改用 raw,並寫進 systemd drop-in zz-hwstatus.conf
+#    (SIGNAL_TC3_HWSTATUS_MODE=raw)讓它撐過重啟 —— 不設 env 會跑回 flip14,
+#    中央又會顯示異常。
+#    flip14 這條路徑只留當退路,**不可以再當預設值用**。
+#    bit14 語意:controllerReady,1=就緒=正常,與多數 Error 旗標(1=故障)不同類。
 HW_STATUS_FIX = os.getenv("SIGNAL_TC3_FIX_HWSTATUS", "1") != "0"
 HW_STATUS_FIX_CODES = ("0F04", "0FC1")   # 帶 HardwareStatus 的訊息
 HW_STATUS_FIX_MASK = 0x4000              # 要翻的位元(bit14 信號驅動單元)
 # 對中央上傳 HardwareStatus 的模式,可執行期切換(不用重啟 daemon):
-#   raw = 不動(純通透,現場採用);flip14 = 只翻 bit14(程式預設,已證實不必要);
+#   raw = 不動(純通透,現場採用,中央顯示正常);
+#   flip14 = 只翻 bit14(程式預設值,但實證會害中央顯示異常,只留當退路);
 #   zero = 全 0(硬體全報正常)
 #   force = 強制送指定的 16-bit 值(測試用:逐 bit 送、對照中央顯示哪項 → 對出位元表)
 _hw_center_mode = {"mode": os.getenv("SIGNAL_TC3_HWSTATUS_MODE",
