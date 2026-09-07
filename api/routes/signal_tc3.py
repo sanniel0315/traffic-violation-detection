@@ -1597,6 +1597,83 @@ async def device_status(_user=Depends(get_current_user)):
                 "會產生假警報。",
     }
 
+# ── 號誌燈頭位置 ──────────────────────────────────────────────────────
+# 現場共 5 座號誌燈,分相對應取自《國道8號新市交流道-攝影機安裝俯視圖》:
+#   1 / 2 / 4 → 下匝道(分相 2)、3 / 5 → 上匝道(分相 1)
+# 🛑 俯視圖上只有星號沒有經緯度,所以位置由使用者在路口圖上**拖曳**定位,
+#    存進這個檔。沒存過之前前端用示意位置排列,並在圖上標明「位置為示意」。
+# 🛑 這個檔要加進 scripts/deploy_keep_runtime_config.sh 的保護清單,
+#    否則每次部署的 git reset --hard 會把現場擺好的位置洗掉。
+SIGNAL_HEADS_PATH = os.getenv(
+    "SIGNAL_HEADS_PATH",
+    str(pathlib.Path(_CONN_PATH).parent / "signal_heads.json")
+    if _CONN_PATH else "/workspace/config/system/signal_heads.json")
+
+# 分相對應是現場事實,不開放從前端改 —— 只有座標可以拖。
+SIGNAL_HEAD_PHASE = {1: 2, 2: 2, 3: 1, 4: 2, 5: 1}
+
+
+def _load_signal_heads() -> dict:
+    try:
+        with open(SIGNAL_HEADS_PATH, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return {int(k): v for k, v in (d.get("heads") or {}).items()}
+    except Exception:
+        return {}
+
+
+@router.get("/heads", summary="號誌燈頭位置(使用者拖曳定位的結果)")
+async def signal_heads_get(_user=Depends(get_current_user)):
+    saved = _load_signal_heads()
+    out = []
+    for hid in sorted(SIGNAL_HEAD_PHASE):
+        pos = saved.get(hid) or {}
+        out.append({"id": hid, "phase": SIGNAL_HEAD_PHASE[hid],
+                    "lat": pos.get("lat"), "lng": pos.get("lng"),
+                    "placed": bool(pos.get("lat") is not None and pos.get("lng") is not None)})
+    n = sum(1 for x in out if x["placed"])
+    return {"heads": out, "placed_count": n, "total": len(out),
+            "note": ("全部 %d 座都已定位,圖上是實際位置。" % n) if n == len(out)
+                    else ("已定位 %d/%d 座;未定位的用示意位置排列,"
+                          "在路口圖上拖曳燈頭即可存下實際位置。" % (n, len(out)))}
+
+
+@router.post("/heads", summary="存下拖曳後的號誌燈頭位置")
+async def signal_heads_set(request: Request, _user=Depends(get_current_user)):
+    """body: {"id": 1, "lat": 23.06, "lng": 120.27}  或 {"reset": true} 清除全部。
+
+    🛑 只寫我方自己的設定檔,不下傳控制器 —— 燈頭位置是地圖標註,
+       與號誌運轉無關。
+    """
+    body = await request.json()
+    saved = _load_signal_heads()
+    if body.get("reset"):
+        saved = {}
+    else:
+        try:
+            hid = int(body.get("id"))
+            lat, lng = float(body.get("lat")), float(body.get("lng"))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="需要 id / lat / lng")
+        if hid not in SIGNAL_HEAD_PHASE:
+            raise HTTPException(status_code=400, detail="燈號只有 1~5")
+        # 🛑 擋掉明顯離譜的座標:拖到地圖外或程式算錯時,寧可拒絕也不要存進去
+        #    —— 存了之後圖上會有一座燈飛到海裡,而且看不出來是什麼時候壞的。
+        if not (21.5 <= lat <= 25.5 and 119.5 <= lng <= 122.5):
+            raise HTTPException(status_code=400, detail="座標不在台灣範圍內,拒絕存檔")
+        saved[hid] = {"lat": lat, "lng": lng}
+    try:
+        os.makedirs(os.path.dirname(SIGNAL_HEADS_PATH), exist_ok=True)
+        with open(SIGNAL_HEADS_PATH, "w", encoding="utf-8") as f:
+            json.dump({"heads": {str(k): v for k, v in saved.items()}}, f,
+                      ensure_ascii=False, indent=1)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"存檔失敗: {exc}")
+    add_log("info", "號誌燈頭位置更新: %s" % ("清除全部" if body.get("reset") else
+                                              "燈 %s" % body.get("id")), "signal")
+    return {"ok": True, "placed_count": len(saved), "total": len(SIGNAL_HEAD_PHASE)}
+
+
 @router.get("/coverage", summary="TC3 命令覆蓋矩陣(規範 105 條 vs 實際抄到)")
 async def coverage(_user=Depends(get_current_user)):
     """規範全表 join 實際抄到的次數。
