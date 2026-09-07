@@ -179,5 +179,26 @@ ssh "${SSH_OPTS[@]}" "$USER_AT@$HOST" '
   printf "   %-16s %s 條(上游控制器 + 中央中繼)\n" "號誌 1001 連線" "$n"
 '
 
+# ── 7) 同步 GitHub ────────────────────────────────────────────────
+# 🛑 現場沒有外網,但**開發機有** —— 部署完一定要順手 push,否則 GitHub 會
+#    一直停在舊版:別人 clone 到的是舊碼、Actions 的紀錄對不上現場實際跑的版本,
+#    網路恢復後 runner 補跑的也是過期的 commit。
+#    push 失敗不算部署失敗(現場已經是新版了),但要明確警告,不可以默默跳過。
+say "同步 GitHub"
+if git push "${DEPLOY_REMOTE:-origin}" "$BRANCH" 2>&1 | sed 's/^/   /'; then
+  REMOTE_SHA=$(git rev-parse --short "${DEPLOY_REMOTE:-origin}/$BRANCH" 2>/dev/null || echo "?")
+  if [ "$REMOTE_SHA" = "${LOCAL:0:7}" ]; then
+    info "GitHub 已同步 $REMOTE_SHA"
+  else
+    printf '   \033[33m⚠ GitHub 顯示 %s,與本機 %s 不一致,請人工確認\033[0m\n' \
+           "$REMOTE_SHA" "${LOCAL:0:7}"
+  fi
+else
+  printf '   \033[33m⚠ push 失敗(開發機也連不到 GitHub?)。現場已是新版,\n'
+  printf '     但 GitHub 仍停在舊版 —— 有網路時請補 git push。\033[0m\n'
+fi
+
 printf '\n\033[32m✅ 部署完成 %s\033[0m\n' "${LOCAL:0:7}"
-printf '   網路恢復後 GitHub Actions 會補跑同一個 commit,結果會是 no change。\n'
+printf '   三邊版本:本機 %s / 現場 %s / GitHub %s\n' \
+       "${LOCAL:0:7}" "${DEPLOYED:0:7}" \
+       "$(git rev-parse --short "${DEPLOY_REMOTE:-origin}/$BRANCH" 2>/dev/null || echo '?')"
