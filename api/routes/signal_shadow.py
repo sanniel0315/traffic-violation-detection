@@ -527,6 +527,16 @@ _release_cache = {"ts": 0.0, "data": None}
 def _release_stats() -> dict:
     """今日各分相的放行統計:累計綠燈秒數 / 放行次數 / 前一次多長。
 
+    🛑 這是**現場實際控制**的放行統計(來源:控制器 5F03 回報的 green_phase),
+       **不是我方演算法的計數**。我方只算不下發,不會產生任何放行。
+
+    🛑 2026-09-07 修:原本這裡也限定 control_mode='external_dynamic',
+       所以外部系統 10:25 停控之後,這三個數字就**凍在早上的累積值**不再更新
+       —— 畫面每 5 秒刷新一次,顯示的卻是八小時前的數字,而且看不出來它是舊的。
+       實測當日 external_dynamic 7262 筆(00:00~10:25)、fixtime 5287 筆
+       (00:37~18:19),後者完全沒被計入。
+       改成不限控制模式:「今天實際放行了幾次、多久」跟誰在控無關。
+
     🛑 加 30 秒快取。/plan 每 5 秒被打一次,而這裡要掃當日整份 log
        (尖峰一天上萬筆),不快取等於把決策盤的輪詢變成資料庫壓力來源。
     """
@@ -539,7 +549,7 @@ def _release_stats() -> dict:
         conn = _db()
         rows = conn.execute(
             "SELECT ts,green_phase FROM signal_shadow_log "
-            "WHERE ts>=? AND control_mode='external_dynamic' ORDER BY ts",
+            "WHERE ts>=? ORDER BY ts",
             (day + "T00:00:00",)).fetchall()
         conn.close()
     except Exception:
@@ -1046,7 +1056,9 @@ def _outcome_window(since_iso: str, until_iso: str) -> dict:
         #    不論填多少都回傳當天全部樣本)。
         cur = conn.execute(
             "SELECT queue_m_1,queue_m_2,actual FROM signal_shadow_log "
-            "WHERE ts>=? AND ts<=? AND control_mode='external_dynamic' ORDER BY id",
+            # 🛑 不再限定 external_dynamic(見檔頭 EVAL_MODE_ALL):對方停控時
+            #    成效視窗會整個變空,而成效本來就該不分誰在控都算得出來。
+            "WHERE ts>=? AND ts<=? ORDER BY id",
             (since_iso, until_iso))
         st2 = (phase_role(2) or {}).get("storage_m")
         for q1, q2, actual in cur.fetchall():
@@ -1607,7 +1619,8 @@ async def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
         conn = _db()
         rows = conn.execute(
             "SELECT ts,green_phase,queue_m_1,queue_m_2 FROM signal_shadow_log "
-            "WHERE ts>=? AND ts<=? AND control_mode='external_dynamic' "
+            # 🛑 不再限定 external_dynamic(見檔頭 EVAL_MODE_ALL)
+            "WHERE ts>=? AND ts<=? "
             "ORDER BY ts", (since_iso, until_iso)).fetchall()
         conn.close()
     except Exception as e:
@@ -2210,7 +2223,8 @@ async def shadow_benchmark(minutes: int = Query(360, ge=30, le=1440),
         conn = _db()
         rows = conn.execute(
             "SELECT ts,green_phase,queue_m_1,queue_m_2 FROM signal_shadow_log "
-            "WHERE ts>=? AND ts<=? AND control_mode='external_dynamic' "
+            # 🛑 不再限定 external_dynamic(見檔頭 EVAL_MODE_ALL)
+            "WHERE ts>=? AND ts<=? "
             "ORDER BY ts", (since_iso, until_iso)).fetchall()
         conn.close()
     except Exception as e:
@@ -2776,7 +2790,9 @@ async def shadow_timeline(minutes: int = Query(15, ge=1, le=1440),
             "flow_vpm_1,flow_vpm_2,ours,actual,agree,switch_gain,keep_gain,"
             "change_cost,reason,clearance,step_id "
             "FROM signal_shadow_log WHERE ts>=? AND ts<=? "
-            "AND control_mode='external_dynamic' ORDER BY ts",
+            # 🛑 不再限定 external_dynamic(見檔頭 EVAL_MODE_ALL):時間軸若只畫
+            #    外部控制期間,對方停控後整張圖是空的。
+            "ORDER BY ts",
             (since_iso, until_iso)).fetchall()
         conn.close()
     except Exception as e:
