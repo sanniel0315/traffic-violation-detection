@@ -2305,6 +2305,135 @@ async def control_status(_user=Depends(get_current_user)):
     }
 
 
+# ── 時制計畫的用途命名 ────────────────────────────────────────────────
+# 🛑 TC3 的時制計畫**只有編號沒有名稱**(5FC5/5FC8 都只回 PlanID)。
+#    「哪一個是 VIP 特勤」在控制器裡查不到,只有機關自己知道 ——
+#    所以不由程式猜,由使用者標記,存在這裡。驗收條文也寫「可視機關需求調整」。
+#    🛑 絕對不要用「週期短/綠燈偏袒某一側」去推測哪個是特勤:
+#       計畫 23 的綠燈是 40/60(偏袒下匝道),看起來很像特勤,但那只是猜測。
+#       猜錯的代價是有人按下「特勤」卻切到別的計畫。
+SIGNAL_PLAN_LABELS_PATH = os.getenv(
+    "SIGNAL_PLAN_LABELS_PATH", "config/system/signal_plan_labels.json")
+PLAN_PURPOSES = ("normal", "peak", "offpeak", "holiday", "vip", "event", "other")
+
+
+def _plan_labels_load() -> dict:
+    try:
+        with open(SIGNAL_PLAN_LABELS_PATH, "r", encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _plan_labels_save(d: dict) -> None:
+    os.makedirs(os.path.dirname(SIGNAL_PLAN_LABELS_PATH) or ".", exist_ok=True)
+    tmp = SIGNAL_PLAN_LABELS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(d, fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, SIGNAL_PLAN_LABELS_PATH)   # 原子換檔,不留半截檔案
+
+
+@router.get("/timing-plans/labels", summary="時制計畫的用途命名(含 VIP/特勤)")
+async def plan_labels_get(_user=Depends(get_current_user)):
+    return {"labels": _plan_labels_load(), "purposes": list(PLAN_PURPOSES),
+            "note": "TC3 的時制計畫只有編號沒有名稱,用途由機關自行標記。"}
+
+
+@router.post("/timing-plans/labels", summary="設定時制計畫的用途命名")
+async def plan_labels_set(body: dict, _user=Depends(get_current_user)):
+    """body: {"plan_id": 23, "name": "特勤疏導", "purpose": "vip", "note": "..."}
+    name 給空字串就是把這個計畫的標記刪掉。"""
+    try:
+        pid = int((body or {}).get("plan_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="plan_id 要是整數")
+    if not (0 <= pid <= 48):
+        raise HTTPException(status_code=400, detail="plan_id 超出範圍(0~48)")
+    purpose = str((body or {}).get("purpose") or "other")
+    if purpose not in PLAN_PURPOSES:
+        raise HTTPException(status_code=400,
+                            detail="purpose 只能是 %s" % "、".join(PLAN_PURPOSES))
+    labels = _plan_labels_load()
+    name = str((body or {}).get("name") or "").strip()[:24]
+    if not name:
+        labels.pop(str(pid), None)
+    else:
+        labels[str(pid)] = {"name": name, "purpose": purpose,
+                            "note": str((body or {}).get("note") or "")[:80],
+                            "by": getattr(_user, "username", None) or str(_user),
+                            "ts": time.time()}
+    _plan_labels_save(labels)
+    add_log("info", "時制計畫命名:計畫 %d → %s" % (pid, name or "(清除)"), "signal")
+    return {"ok": True, "labels": labels}
+
+
+@router.post("/timing-plans/run", summary="手動切換執行中的時制計畫(5F18)")
+async def timing_plan_run(body: dict, _user=Depends(get_current_user)):
+    """人工指定控制器要跑哪一個時制計畫。VIP/特勤就是走這一支。
+
+    🛑 這一支**刻意不受動態控制總開關與降階影響**,只受號控總開關與
+       「只准查詢」限制。理由:降階的定義是「我方演算法停止下發」,
+       而人工切一個固定時制計畫正是降階時最需要做的事;特勤更是緊急需求,
+       不該因為演算法被關掉就按不動。所以這裡呼叫的是 CONTROL_ENABLED /
+       CONTROL_QUERY_ONLY 兩道,不呼叫 dynamic_blocked()。
+    🛑 但它仍然是**會改變路口運轉**的命令,所以照樣寫操作紀錄與訊框側錄,
+       事後查得到是誰在什麼時候切到哪一個計畫。
+    """
+    try:
+        pid = int((body or {}).get("plan_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="plan_id 要是整數")
+    if not (0 <= pid <= 48):
+        raise HTTPException(status_code=400, detail="plan_id 超出範圍(0~48)")
+    if not CONTROL_ENABLED:
+        raise HTTPException(status_code=403, detail="號控未啟用(SIGNAL_TC3_CONTROL=0)")
+    if CONTROL_QUERY_ONLY:
+        raise HTTPException(status_code=403,
+                            detail="目前限制為「只准查詢」,設定類被擋下。")
+    addr = _target_addr()
+    if addr is None:
+        raise HTTPException(status_code=409, detail="沒有目標位址,不猜。")
+    sock = _sock_ref.get("sock")
+    if sock is None:
+        raise HTTPException(status_code=409, detail="號誌通道目前沒有連線,無法送出。")
+
+    user = getattr(_user, "username", None) or str(_user)
+    labels = _plan_labels_load()
+    label = (labels.get(str(pid)) or {}).get("name") or ""
+    seq = (int(_seq_next.get("n", 0)) + 1) & 0xFF
+    frame = build_frame(addr, seq, bytes([0x5F, 0x18, pid & 0xFF]))
+    raw = frame.hex(" ").upper()
+    ok, err = False, ""
+    with _send_lock:
+        try:
+            with _ctrl_tx_lock:
+                sock.sendall(frame)
+            _seq_next["n"] = seq
+            ok = True
+        except Exception as exc:
+            err = "%s: %s" % (type(exc).__name__, exc)
+    rec = {"ts": time.time(), "user": user, "code": "5F18", "kind": "設定",
+           "addr": addr, "seq": seq, "raw": raw, "ok": ok, "error": err}
+    _sent_log.append(rec)
+    _persist_control(rec)
+    if ok:
+        _enqueue_frame({"ts": rec["ts"], "src": "self", "code": "5F18",
+                        "seq": seq, "addr": addr, "len": len(frame),
+                        "cks_ok": True, "raw": raw, "user": user})
+    add_log("warning" if not ok else "info",
+            "時制計畫切換:%s → 計畫 %d%s" % (
+                "成功" if ok else "失敗 " + err, pid,
+                "(%s)" % label if label else ""), "signal")
+    print("[signal-tc3][控制] user=%s code=5F18 plan=%d ok=%s raw=%s"
+          % (user, pid, ok, raw), flush=True)
+    if not ok:
+        raise HTTPException(status_code=502, detail="送出失敗: " + err)
+    return {"ok": True, "plan_id": pid, "label": label, "sent": rec,
+            "note": "已送出。控制器接受後 5FC8 回報的目前計畫會變成這一個 —— "
+                    "請以 5FC8 的回報為準,不要以本次送出成功當作已生效。"}
+
+
 @router.post("/control/prepare", summary="準備下傳(只組碼框與預覽,不送出)")
 async def control_prepare(body: dict, _user=Depends(get_current_user)):
     """把要送的內容組成碼框並解回來給人看,確認無誤再用 token 送出。
