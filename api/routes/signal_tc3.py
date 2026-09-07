@@ -1285,7 +1285,10 @@ def _center_relay_loop() -> None:
                 #    pass 模式:原封轉發整個 chunk,與先前位元組級相同 ——
                 #    不進逐框判斷,避免為了一個預設關閉的功能改動熱路徑。
                 #    其他模式:下面逐框判斷後才轉,代價是解不出的碎片不轉發。
-                if DOWNLINK_POLICY == "pass":
+                # 🛑 log_only 也走原封轉發 —— 它只是記帳,不該為了記帳就承擔
+                #    「解不出的碎片不轉發」這個風險。只有真的要攔(hold_*)
+                #    才有理由改走逐框路徑。
+                if DOWNLINK_POLICY != "hold_5f10":
                     _controller_send(d)
                 _center_state["from_center_bytes"] += len(d)
                 # 側錄中央下傳的 frame(設定/查詢),標 src=center
@@ -1306,9 +1309,11 @@ def _center_relay_loop() -> None:
                     rec = decode_frame(frame)
                     # 🛑 非 pass 模式的轉發在這裡做。解不出來的框(rec is None)
                     #    一律放行 —— 我們看不懂的東西不該替中央決定要不要送。
-                    if DOWNLINK_POLICY != "pass":
+                    if DOWNLINK_POLICY == "hold_5f10":
                         if _downlink_allow(rec):
                             _controller_send(frame)
+                    elif DOWNLINK_POLICY == "log_only":
+                        _downlink_allow(rec)      # 只記帳,轉發已在上面做過
                     if rec is None:
                         continue
                     rec["src"] = "center"       # 來源:中央下傳(下行)
