@@ -24348,6 +24348,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         });
         // ── 戰情地圖:重用系統 Leaflet 離線圖磚,相機座標取地圖頁設定的 lat/lng ──
         let wrMap = null;
+        let wrFitSig = '';        // 上次框過的點集合簽章(見 drawWarMap 的 fitBounds)
         const wrLayers = {seg: {}, queue: {}, cam: {}, lamp: {}};
         const sigWarMapNote = ref('');
         const WR_LV_COLOR = {0: '#b8c4d4', 1: '#1f9d55', 2: '#d9a400', 3: '#e8842b', 4: '#c43a31'};
@@ -24366,7 +24367,9 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 zoomControl: false, attributionControl: false,
                 dragging: false, scrollWheelZoom: false, doubleClickZoom: false,
                 touchZoom: false, boxZoom: false, keyboard: false, tap: false,
-            }).setView(MAP_SITE_CENTER, MAP_SITE_ZOOM + 2);   // +2:再放大一級,路口填滿版面
+            // 起始視野只是 fitBounds 生效前的暫時畫面 —— 真正的範圍由
+            // drawWarMap 依所有標記自動框定,不靠這裡的縮放等級。
+            }).setView(MAP_SITE_CENTER, MAP_SITE_ZOOM);
             L.tileLayer('/web/tiles/{z}/{x}/{y}.jpg', {minZoom: MAP_MIN_ZOOM, maxZoom: MAP_MAX_ZOOM,
                                                         errorTileUrl: MAP_BLANK_TILE}).addTo(wrMap);
             drawWarMap();
@@ -24390,6 +24393,10 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             [d.green_side, d.red_side].forEach((sd) => { if (sd) sides[sd.phase_no] = sd; });
             const center = [MAP_SITE_CENTER[0], MAP_SITE_CENTER[1]];
             const dist = (c) => Math.hypot((c.lng - center[1]) * WR_MLON, (c.lat - center[0]) * WR_MLAT);
+            // 🛑 用來自動框視野的點,只收**穩定**的幾何:相機座標與儲車空間全長的
+            //    兩端。不可以把排隊帶的端點收進來 —— 那個每 5 秒變長變短,
+            //    視野會跟著一直縮放,牆上看起來像壞掉。
+            const fitPts = [];
             const upsert = (bucket, key, make, update) => {
                 if (wrLayers[bucket][key]) update(wrLayers[bucket][key]);
                 else wrLayers[bucket][key] = make().addTo(wrMap);
@@ -24408,6 +24415,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 const color = WR_LV_COLOR[lv];
                 const A = [stopCam.lat, stopCam.lng];
                 const B = wrOffset(stopCam.lat, stopCam.lng, ux * segLen, uy * segLen);
+                fitPts.push(A, B);
                 const Q = wrOffset(stopCam.lat, stopCam.lng, ux * Math.min(q, segLen), uy * Math.min(q, segLen));
                 // 進場道底色(儲車空間全長)
                 upsert('seg', ph, () => L.polyline([A, B], {color: color, weight: 11, opacity: .22,
@@ -24445,6 +24453,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                                                             : (dy > 0 ? 'top' : 'bottom');
                     const off = {right: [10, 0], left: [-10, 0], top: [0, -10], bottom: [0, 10]}[dir];
                     // 相機點的動態:判級越高脈動越明顯(lv0 未量到與離線一律不動)
+                    fitPts.push([c.lat, c.lng]);
                     const camCls = 'wr-cam-mk ' + (c.online === false ? 'off' : 'lv' + wrLvRank(c.level));
                     upsert('cam', c.camera_id,
                            () => L.circleMarker([c.lat, c.lng], {radius: 7, color: '#ffffff', weight: 2.5, fillColor: cc, fillOpacity: 1, className: camCls})
@@ -24456,6 +24465,20 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                                     if (el) el.setAttribute('class', camCls); });
                 });
             });
+            // 🛑 視野自動框住**所有**標記,不要用固定縮放等級。
+            //    2026-09-07 使用者:「要涵蓋所有的號誌,現在少一個,要再廣」——
+            //    固定 zoom 只要有一台相機在邊界外就會被裁掉,而且看不出來少了誰。
+            //    只在「要框的點集合變了」時重算(相機增減、座標補上),
+            //    否則每次 draw 都 fitBounds 會跟畫面刷新一起抖。
+            if (fitPts.length) {
+                const sig = fitPts.map((q) => Number(q[0]).toFixed(5) + ',' + Number(q[1]).toFixed(5)).sort().join('|');
+                if (sig !== wrFitSig) {
+                    wrFitSig = sig;
+                    try {
+                        wrMap.fitBounds(L.latLngBounds(fitPts), {padding: [28, 28], maxZoom: MAP_MAX_ZOOM});
+                    } catch (e) { /* 只有一個點或座標壞掉:維持原視野 */ }
+                }
+            }
         };
         // 資料更新就重畫;地圖物件 upsert,不會累積
         watch(() => sigPlan.value, () => { if (wrMap) drawWarMap(); });
