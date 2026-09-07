@@ -92,9 +92,39 @@ def test_center_relay_bidirectional_and_inject():
     S.shutdown_event.clear()
 
 
+def test_hardwarestatus_raw_is_default():
+    """🛑 預設必須是純通透:控制器報 0x4000,中央就要收到 0x4000。
+
+    2026-09-07 現場實證:翻掉 bit14 送 0x0000 → 中央硬體狀態顯示異常;
+    原封送 0x4000(bit14=1 控制器就緒)→ 中央顯示正常。所以「不竄改」才是
+    安全的預設值。這條測試就是防止預設值被改回 flip14。
+    """
+    import socket as _s
+    info = bytes([0x0F, 0x04, 0x40, 0x00])
+    frame = S.build_frame(0xFFFF, 0x63, info)
+    rec = S.decode_frame(frame)
+    old = dict(S._hw_center_mode)
+    S._hw_center_mode["mode"] = "raw"        # 預設值,顯式寫出來讓測試自足
+    ours, far = _s.socketpair()
+    far.settimeout(2)
+    S._center_sock_ref["sock"] = ours
+    try:
+        S._forward_controller_frame_to_center(frame, rec)
+        got = far.recv(1024)
+    finally:
+        S._close_center()
+        far.close()
+        S._hw_center_mode.update(old)
+    assert got == frame, "raw 模式必須原封轉發,一個位元都不能改"
+    print("test_hardwarestatus_raw_is_default: PASS")
+
+
 def test_hardwarestatus_bit14_flip_to_center():
-    """0F04(HardwareStatus=0x4000) 轉給中央前,bit14 應被翻成 0(補償廠商寫反),
-    且重組的碼框 CKS 合法、其他欄位不變。"""
+    """flip14 這條退路本身要能動(顯式指定才會用到,已不是預設值)。
+
+    🛑 這條驗的是「程式碼路徑正確」,不是「應該這樣送中央」——
+       實證顯示翻轉會害中央顯示異常,見 test_hardwarestatus_raw_is_default。
+    """
     import socket as _s
     # 造一個 0F04 主動回報:INFO = 0F 04 + HardwareStatus(0x4000 big-endian)
     info = bytes([0x0F, 0x04, 0x40, 0x00])
@@ -105,12 +135,15 @@ def test_hardwarestatus_bit14_flip_to_center():
     ours, far = _s.socketpair()
     far.settimeout(2)
     S._center_sock_ref["sock"] = ours
+    _old_mode = dict(S._hw_center_mode)
+    S._hw_center_mode["mode"] = "flip14"     # 預設已改 raw,要測這條得顯式指定
     try:
         S._forward_controller_frame_to_center(frame, rec)
         got = far.recv(1024)
     finally:
         S._close_center()
         far.close()
+        S._hw_center_mode.update(_old_mode)
     # 中央收到的框:解出來 HardwareStatus 應為 0x0000(bit14 被翻掉)
     out = S.decode_frame(got)
     assert out is not None and out.get("cks_ok"), "校正後的框 CKS 不合法"
@@ -134,5 +167,6 @@ def test_hardwarestatus_bit14_flip_to_center():
 
 if __name__ == "__main__":
     test_center_relay_bidirectional_and_inject()
+    test_hardwarestatus_raw_is_default()
     test_hardwarestatus_bit14_flip_to_center()
     print("ALL PASS")
