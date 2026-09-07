@@ -3750,6 +3750,10 @@
         .ctl-verdict.warn b { color:#8a5d00; }
         .ctl-verdict.ok { border-color:#bfe5cc; background:#f2fbf5; }
         .ctl-verdict.ok b { color:#1f7a34; }
+        /* 🛑 我方在控要跟「外部在控」明顯不同色 —— 這兩句結論的責任歸屬完全不同,
+           顏色一樣的話值班的人會看錯是誰在動這個路口。 */
+        .ctl-verdict.ours { border-color:#a9c9ef; background:#eef5fd; }
+        .ctl-verdict.ours b { color:#14539a; }
         .wr-sw { display:flex; flex-wrap:wrap; gap:8px 18px; margin:2px 0 10px; }
         .wr-sw-i { display:flex; align-items:center; gap:8px; }
         .wr-sw-i em { font-style:normal; font-size:var(--fs-caption); color:var(--gov-muted); }
@@ -24297,7 +24301,11 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         //    2026-09-06 用同一段程式重跑 09-05 後推翻(見 §7.13a):綠燈長度變異係數
         //    0.61~0.74、範圍 5~103 秒、跟排隊正相關,不是固定時制。
         //    現行控制的類型**未定性**,兩個方向都不要寫死。
-        const SIG_MODE_TEXT={external_dynamic:'回報:外部動態(未經我方驗證)',
+        // 🛑 external_dynamic 只代表策略位元 bit4「時相控制」有設,**不代表是誰設的**。
+        //    我方演算法接管後也是這個模式碼,先前寫死「外部動態」會在我方下發時
+        //    顯示成別人在控(2026-09-07 現場回報)。誰在控由 sigWhoCtl 用下發證據判,
+        //    這裡只講模式碼本身的意思。
+        const SIG_MODE_TEXT={external_dynamic:'回報:時相控制(逐步階接管中)',
                              controller_dynamic:'回報:控制器動態',
                              center_manual:'回報:中心手動', roadside_manual:'回報:路側手動',
                              fixtime:'回報:定時控制'};
@@ -25182,20 +25190,47 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 send = bits.join(' · ');
                 cls = age <= 90 ? 'live' : 'stale';
             }
+            // 🛑 誰在控:先看我方有沒有在送(這是精確的,src=self 是我方自己寫的),
+            //    沒有才退回「ACK 顯示有人在送但不是我方」。次數不相減 ——
+            //    同一則命令會有多個重複 ACK,相減會得到假數字。
+            const ours = ev.ours || {};
+            const algo = ours.algorithm, renew = ours.renew;
+            const fresh = (o) => o && o.age_sec != null && o.age_sec <= 120;
+            let who = '無下發 —— 路口在跑控制器內建時制', whoCls = 'idle';
+            if (fresh(algo)) {
+                who = '我方動態號誌演算法正在下發';
+                whoCls = 'ours';
+                send = '我方 5F1C 換相 ' + ((algo.by_code || {})['5F1C'] || 0) + ' 次'
+                     + (fresh(renew) ? ' · 5F10 續約 ' + renew.count + ' 次' : '')
+                     + ' · 最近 ' + Math.round(algo.age_sec) + ' 秒前';
+                cls = 'live';
+            } else if (fresh(renew)) {
+                who = '我方持有時相控制授權(續約中),尚未送出換相命令';
+                whoCls = 'ours';
+                send = '我方 5F10 續約 ' + renew.count + ' 次 · 最近 '
+                     + Math.round(renew.age_sec) + ' 秒前' + (c1c ? ' · ' + send : '');
+                cls = 'live';
+            } else if (cls === 'live') {
+                who = '外部系統正在下發控制(非我方)';
+                whoCls = 'ext';
+            }
             const st = ev.strategy_stable, n = ev.strategy_samples || 0;
             const stable = (st == null) ? '—'
                 : (Math.round(st * 1000) / 10) + '% 的回報為同一模式（' + n + ' 筆 / 近 '
                   + (ev.minutes || 30) + ' 分鐘）';
-            return {mode: sigCtlModeText.value, send: send, sendCls: cls, stable: stable};
+            return {mode: sigCtlModeText.value, send: send, sendCls: cls, stable: stable,
+                    who: who, whoCls: whoCls};
         });
         // 一句話結論:現在到底誰在控。
+        // 🛑 誰在控 —— 用下發證據回答,不要用模式碼。
+        //    2026-09-07 現場回報:我方演算法已經在下發,卡片卻寫「外部系統正在
+        //    下發控制」。成因是這裡只看「有沒有人在送」(sendCls==='live'),
+        //    沒有問「送的人是誰」。我方送的訊框在 signal_frames 裡是 src='self'、
+        //    user 以 algorithm/renew 開頭,那是精確的來源,直接用。
         const sigWhoCtl = computed(() => {
             const w = sigCtlWay.value;
-            const ext = w.sendCls === 'live';
-            return {
-                text: ext ? '外部系統正在下發控制' : '控制器自己在跑內建時制',
-                cls: ext ? 'warn' : 'ok',
-            };
+            const CLS = {ours: 'ours', ext: 'warn', idle: 'ok'};
+            return {text: w.who, cls: CLS[w.whoCls] || 'ok'};
         });
         const sigWarFrames = computed(() =>
             (sigFrames.value || []).filter((f) => String(f.code || '').toUpperCase() === '5F03')
