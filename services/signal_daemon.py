@@ -41,7 +41,10 @@ def _startup() -> None:
         signal_tc3.start_recorder()
         signal_tc3.start_center_relay()
         signal_tc3.start_frame_writer()
-        print("📶 [signal-daemon] 已啟動 recorder + 中央中繼 + 持久化 writer", flush=True)
+        # 🛑 授權續約:時相控制的 EffectTime=1 只有一分鐘,到期控制器自己交還
+        #    (2026-09-07 實測)。執行緒常駐,但只在動態控制開啟且 L0 時才真的送。
+        signal_tc3.start_auth_renew()
+        print("📶 [signal-daemon] 已啟動 recorder + 中央中繼 + 持久化 writer + 授權續約", flush=True)
     except Exception as exc:
         print(f"⚠️ [signal-daemon] 啟動失敗: {exc}", flush=True)
 

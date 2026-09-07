@@ -1243,9 +1243,65 @@ _downlink = {"seen": 0, "held": 0, "passed": 0, "last_held": None,
              "events": deque(maxlen=100)}
 
 
-def _do_reassert() -> None:
-    """重新宣告 5F10。🛑 要等中央那一輪完整結束再送 —— 貼太近的話控制器
-    還在處理上一則,我方這則會被丟掉(實測 0.2 秒不夠,連 0F80 都沒有)。"""
+# ── 授權續約 ──────────────────────────────────────────────────────────
+# 🛑 2026-09-07 23:24 實測(中央的覆蓋全被 hold 擋掉,所以看得乾淨):
+#      23:24:39 我方送 5F10 10 01 → 23:24:58 控制器 ACK,策略變 10H
+#      23:25:00 中央 5F40 查 → 控制器 5FC0 回 `10 01`
+#      23:25:00~23:25:25 中央連送 6 次 5F10 01 00,全部被擋(held 6)
+#      23:26:00 控制器 5FC0 回 `01 01` ← **沒有任何中央命令通過**
+#    結論:EffectTime=1 就是 1 分鐘,時間到控制器自己把控制權交還。
+#    也就是說「擋住中央」只解決了一半 —— 授權還是會自己過期。
+#    程式裡原本就有這條線索:OPAC 每 60 秒送一次 5F10 續約(見 _control_mode)。
+#
+# 🛑 為什麼續約週期要**短於** EffectTime,而不是把 EffectTime 設很大:
+#    授權會過期正是我方最重要的 fail-safe —— traffic-signal 掛掉、網路斷、
+#    使用者關掉總開關,控制器最多一分鐘後就自己回到定時,不需要任何人善後。
+#    EffectTime 設很大等於把這個保險拆掉。所以維持 1 分鐘,由我方每 45 秒續。
+AUTH_RENEW_SEC = float(os.getenv("SIGNAL_TC3_AUTH_RENEW_SEC", "45") or 45)
+_auth = {"n": 0, "last": None, "last_error": "", "thread": None}
+
+
+def _auth_renew_loop() -> None:
+    """動態控制開著且未降階時,週期性續約時相控制授權。
+
+    🛑 關掉總開關就不再續 —— 不需要送任何「歸還」命令,授權自己會在
+       一分鐘內過期,控制器回到定時。失敗方向永遠是回到定時。
+    """
+    while not shutdown_event.is_set():
+        try:
+            if _dyn.get("enabled") and _dyn.get("level") == "L0":
+                strat = _safety.get("strategy")
+                # 已經是時相控制也要續 —— 續的是「剩餘時間」,不是「模式」。
+                # 只有在完全沒抄到策略時跳過:那代表抄錄斷了,此時不該下命令。
+                if isinstance(strat, int):
+                    _do_reassert(kind="續約")
+                    _auth["n"] += 1
+                    _auth["last"] = time.time()
+                    _auth["last_error"] = ""
+        except Exception as exc:
+            _auth["last_error"] = "%s: %s" % (type(exc).__name__, exc)
+        shutdown_event.wait(AUTH_RENEW_SEC)
+
+
+def start_auth_renew() -> None:
+    """啟動授權續約執行緒(冪等)。"""
+    if _auth["thread"] is not None and _auth["thread"].is_alive():
+        return
+    t = threading.Thread(target=_auth_renew_loop, daemon=True, name="signal-auth-renew")
+    _auth["thread"] = t
+    t.start()
+    print("🔑 [signal-tc3] 授權續約啟動(每 %.0f 秒,僅在動態控制開啟且 L0 時作用)"
+          % AUTH_RENEW_SEC, flush=True)
+
+
+def _do_reassert(kind: str = "重新宣告") -> None:
+    """送 5F10 宣告/續約時相控制授權。
+
+    🛑 要等中央那一輪完整結束再送 —— 貼太近的話控制器還在處理上一則,
+       我方這則會被丟掉(實測 0.2 秒不夠,連 0F80 都沒有)。
+    kind 只影響日誌用字:「重新宣告」是被中央改掉之後搶回來,
+    「續約」是授權快到期前主動延長 —— 兩者的訊框完全相同,但稽核時
+    要分得出當時發生的是哪一件事。"""
     try:
         if not (_dyn.get("enabled") and _dyn.get("level") == "L0"):
             return                      # 這 0.2 秒內被降階或關掉了就不要送
@@ -1265,11 +1321,11 @@ def _do_reassert() -> None:
             _enqueue_frame({"ts": time.time(), "src": "self", "code": "5F10",
                             "seq": seq, "addr": addr, "len": len(frame),
                             "cks_ok": True, "raw": frame.hex(" ").upper(),
-                            "user": "reassert"})
-            add_log("info", "下控重新宣告:中央把策略改回定時,我方重送 5F10 0x%02X"
-                    % REASSERT_STRATEGY, "signal")
-            print("[signal-tc3][控制] user=reassert code=5F10 seq=%d raw=%s"
-                  % (seq, frame.hex(" ").upper()), flush=True)
+                            "user": "reassert" if kind == "重新宣告" else "renew"})
+            add_log("info", "授權%s:我方送 5F10 0x%02X(EffectTime=%d 分)"
+                    % (kind, REASSERT_STRATEGY, REASSERT_EFFECT), "signal")
+            print("[signal-tc3][控制] user=%s code=5F10 seq=%d raw=%s"
+                  % (("reassert" if kind == "重新宣告" else "renew"), seq, frame.hex(" ").upper()), flush=True)
         else:
             _reassert["last_error"] = "送不出去(控制器未連線?)"
     except Exception as exc:
