@@ -3668,7 +3668,6 @@
                     display:flex; flex-direction:column; gap:5px; }
         /* 控制權結論列:一句話講完誰在控,顏色只用來分「外部在控」與「沒人在控」,
            不代表好壞 —— 外部在控是事實不是異常。 */
-        .ctl-explain { font-size:var(--fs-caption); color:var(--gov-muted); }
         .ctl-verdict { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px;
                        padding:8px 12px; border-radius:10px; margin-bottom:10px;
                        border:1px solid var(--gov-border); background:var(--gov-surface-2); }
@@ -3852,7 +3851,8 @@
            三燈燈箱:亮的那一顆有光暈,暗的兩顆壓到很低的亮度。
            🛑 動畫連動真實燈態 —— 綠燈呼吸、清道的黃燈閃(閃比呼吸更急,
               對應「馬上要換相了」)、紅燈恆亮不動(它是狀態,不是提醒)。 */
-        .sig-head-wrap { background:none; border:none; }
+        .sig-head-wrap { background:none; border:none; cursor:grab; }
+        .sig-head-wrap:active { cursor:grabbing; }
         .sig-head { position:relative; }
         .sig-head svg { display:block; overflow:visible; }
         .sig-head .sh-box { fill:#232830; stroke:#ffffff; stroke-width:1.6; }
@@ -8038,7 +8038,6 @@
                                     <div class="wr-ctlway-row">
                                         <span class="k">宣告</span>
                                         <b :title="sigCtlModeNote">{{ sigCtlWay.mode }}</b>
-                                        <span class="ctl-explain">{{ sigCtlModeExplain }}</span>
                                     </div>
                                     <div class="wr-ctlway-row">
                                         <span class="k">實際下發</span>
@@ -23406,7 +23405,7 @@ const app=createApp({
                             loadSignalFrames(); if (!cameras.value.length) loadCameras();
                             loadWarVd(); startWarVdTimer();
                             try { streamWantHeartbeat(); } catch (e) { }   // 立刻預約 lite,別等 3 秒
-                            setTimeout(initWarMap, 50); },
+                            setTimeout(initWarMap, 50); loadSigHeads(); },
             // 合併後的分頁要把原本各自的載入器都帶上,少一個那一區就會空白。
             // 🛑 驗收清單 2026-09-07 拆成獨立分頁(使用者:驗收清單跟運作統計分開)——
             //    驗收是「對規格逐條交代」,運作統計是「這段時間跑得怎樣」,
@@ -24035,18 +24034,6 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                              fixtime:'回報:定時控制'};
         const sigCtlModeText=computed(()=>
             SIG_MODE_TEXT[sigPlan.value.control_mode]||sigPlan.value.control_mode||'尚未取得');
-        // 每種控制模式的白話說明 —— 只寫「這個模式代表控制器怎麼動作」,
-        // 🛑 不要在這裡寫任何成效或優劣的判斷:模式是控制器回報的事實,
-        //    而現行控制的類型至今仍未定性(見 sigCtlModeNote)。
-        const SIG_MODE_EXPLAIN={
-            fixtime:'控制器照自己內建的時制計畫跑固定秒數,不看車流、也不接受外部換相命令',
-            controller_dynamic:'控制器用自己的偵測器做動態調整,不需要外部下命令',
-            external_dynamic:'控制器把換相交給外部系統,只執行 5F1C 送來的時相/步階命令',
-            center_manual:'中心端人工指定時制,控制器照指定的計畫跑',
-            roadside_manual:'現場面板有人在手動操作(警察或維護人員),優先權高於其他控制',
-        };
-        const sigCtlModeExplain=computed(()=>
-            SIG_MODE_EXPLAIN[sigPlan.value.control_mode]||'');
         const sigCtlModeNote='模式碼由控制器回報,不是我方驗證過的行為。'
                             +'現行控制的類型尚未定性 —— 舊結論「固定時制+時段計畫」已於 2026-09-06 推翻'
                             +'(上線報告 §7.13a);對外一律寫「相對於現行控制」。';
@@ -24444,6 +24431,42 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             //    進場道盡頭,跟現場的位置關係一致。
             {id: 1, phase: 2, offset_m: 'end', side_m: -14, label: '1'},
         ];
+        // 使用者在圖上拖曳定位的燈頭座標。沒定位過的用示意位置排列。
+        // 🛑 存在後端(config/system/signal_heads.json)不是 localStorage ——
+        //    戰情牆、辦公室、手機看到的必須是同一組位置;存在瀏覽器的話
+        //    「我這台看起來對」會變成假的驗證。
+        const sigHeadPos = ref({});     // {1:{lat,lng}, ...}
+        const sigHeadNote = ref('');
+        const loadSigHeads = async () => {
+            try {
+                const r = await fetch('/api/signal/heads', {credentials: 'include'});
+                if (!r.ok) return;
+                const d = await r.json();
+                const m = {};
+                (d.heads || []).forEach((h) => { if (h.placed) m[h.id] = {lat: h.lat, lng: h.lng}; });
+                sigHeadPos.value = m;
+                sigHeadNote.value = d.note || '';
+                wrFitSig = '';          // 位置變了,視野要重算
+                drawWarMap();
+            } catch (e) { /* 拿不到就維持示意位置 */ }
+        };
+        const saveSigHead = async (id, lat, lng) => {
+            try {
+                const r = await fetch('/api/signal/heads', {
+                    method: 'POST', credentials: 'include',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: id, lat: lat, lng: lng}),
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) { ElMessage.error('燈 ' + id + ' 存檔失敗:' + (d.detail || r.status)); return; }
+                sigHeadPos.value = Object.assign({}, sigHeadPos.value, {[id]: {lat: lat, lng: lng}});
+                sigHeadNote.value = d.placed_count === d.total
+                    ? ('全部 ' + d.total + ' 座都已定位,圖上是實際位置。')
+                    : ('已定位 ' + d.placed_count + '/' + d.total + ' 座;'
+                       + '未定位的用示意位置排列,在路口圖上拖曳燈頭即可存下實際位置。');
+                ElMessage.success('燈 ' + id + ' 位置已存');
+            } catch (e) { ElMessage.error('燈 ' + id + ' 存檔失敗'); }
+        };
         const drawWarMap = () => {
             if (!wrMap) return;
             const d = sigPlan.value || {};
@@ -24460,8 +24483,8 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             // 🛑 一定要讓看的人知道燈頭位置是示意的,否則會被當成實測位置。
             // 🛑 號誌燈的位置是示意的,一定要講出來 —— 不講的話現場會把它
             //    當成實測位置,靠它判斷「燈在哪」就會被誤導。
-            const headNote = '號誌燈 1~5 依現場俯視圖的分相對應排列（1/2/4 下匝道、3/5 上匝道），'
-                           + '位置為示意，燈色與動畫為實測；實際座標待現場提供。';
+            const headNote = '號誌燈 1~5 依現場俯視圖的分相對應（1/2/4 下匝道、3/5 上匝道）；'
+                           + '燈色與動畫為實測。' + (sigHeadNote.value || '拖曳燈頭可定位並存檔。');
             sigWarMapNote.value = missing.length
                 ? ('尚未在地圖頁設定座標:' + missing.join('、') + ' —— 這幾台不會出現在圖上。' + headNote)
                 : headNote;
@@ -24556,18 +24579,36 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 });
                 SIG_HEADS.filter((h) => h.phase === ph).forEach((h) => {
                     // 沿進場道軸線往上游 offset_m,再側移 side_m(避免互相重疊)
+                    // 位置優先用**使用者拖曳存下的實際座標**;沒定位過才用示意排列。
                     // offset_m 可以是 'end' —— 代表「進場道盡頭(匝道口)」,
                     // 用該分相實際畫出來的線段長度,不寫死公尺數。
+                    const saved = sigHeadPos.value[h.id];
                     const off = (h.offset_m === 'end') ? segLen : Number(h.offset_m) || 0;
-                    const HP = wrOffset(stopCam.lat, stopCam.lng,
-                                        ux * off + nx * h.side_m,
-                                        uy * off + ny * h.side_m);
+                    const HP = saved ? [saved.lat, saved.lng]
+                                     : wrOffset(stopCam.lat, stopCam.lng,
+                                                ux * off + nx * h.side_m,
+                                                uy * off + ny * h.side_m);
                     const tip = '號誌燈 ' + h.label + ' · 分相 ' + ph + ' ' + lampWord
-                              + '（位置為示意,待現場提供實際座標）';
+                              + (saved ? '（實際位置）' : '（位置為示意,拖曳可定位）');
+                    // 🛑 拖曳只搬地圖標註,不會動到號誌 —— 這是純顯示層的座標。
+                    //    draggable 一定要在**建立時**給,Leaflet 的 marker 之後
+                    //    只能用 marker.dragging.enable() 開,漏了就拖不動。
                     upsert('lamp', 'h' + h.id,
-                           () => L.marker(HP, {icon: lampIcon(lampState), keyboard: false})
-                                  .bindTooltip(tip, {permanent: false}),
-                           (l) => { l.setLatLng(HP); l.setIcon(lampIcon(lampState));
+                           () => {
+                               const mk = L.marker(HP, {icon: lampIcon(lampState),
+                                                        keyboard: false, draggable: true,
+                                                        autoPan: false})
+                                           .bindTooltip(tip, {permanent: false});
+                               mk.on('dragend', (ev) => {
+                                   const ll = ev.target.getLatLng();
+                                   saveSigHead(h.id, ll.lat, ll.lng);
+                               });
+                               return mk;
+                           },
+                           (l) => { // 🛑 拖曳中不要用資料把位置拉回去,不然會抖到拖不動
+                                    if (!(l.dragging && l.dragging._draggable
+                                          && l.dragging._draggable._moving)) l.setLatLng(HP);
+                                    l.setIcon(lampIcon(lampState));
                                     l.setTooltipContent(tip); });
                     fitPts.push([HP[0], HP[1]]);
                 });
@@ -25808,7 +25849,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigCtlWay,sigWhoCtl,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeNote,sigCtlModeExplain,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
