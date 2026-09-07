@@ -882,6 +882,10 @@ def _safety_watch(rec: dict) -> None:
                 elif prev_mode in MANUAL_MODES and mode not in MANUAL_MODES:
                     if _safety.get("manual_confirmed"):
                         _safety["manual_confirmed"] = False
+                        # 手動解除才回 L0 —— 只有「確認過的手動」會降階,
+                        # 所以也只有它的解除該恢復。其他原因的降階不受影響。
+                        if _dyn.get("level") == "L2" and "手動介入" in (_dyn.get("reason") or ""):
+                            enter_degraded("L0", "手動已解除")
                         title, sev = "號誌:手動解除", "warn"
                     else:
                         # 從沒確認過手動,就沒有「解除」可言(過渡態的回程)
@@ -903,6 +907,13 @@ def _safety_watch(rec: dict) -> None:
                 elif rec["ts"] - pend["since"] >= MANUAL_CONFIRM_SEC:
                     _safety.pop("manual_pending", None)
                     _safety["manual_confirmed"] = True
+                    # 🛑 規範 (G):員警手動時我方要調整策略。我方的解讀是**完全讓開** ——
+                    #    現場員警在處理的通常是我方看不到的狀況(事故、車隊、臨時管制),
+                    #    此時演算法的最佳行為是不要插手。
+                    #    掛在「已確認」的手動上而不是原始位元:5F10 續約的瞬間
+                    #    策略會閃過 05H,用原始位元判會每小時假降階十次(2026-09-03 教訓)。
+                    enter_degraded("L2", "偵測到手動介入(%s),我方停止下發"
+                                   % _strategy_text(pend["to"]))
                     _safety_event(
                         "strategy", "warn", "號誌:手動介入",
                         f"{_strategy_text(pend['from'])} → {_strategy_text(pend['to'])}"
