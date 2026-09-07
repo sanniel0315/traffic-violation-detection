@@ -720,6 +720,82 @@ _act = {"enabled": ACTUATE_DEFAULT, "n": 0, "last_ts": 0.0, "last_seq": None,
         "events": deque(maxlen=100)}
 
 
+def _actuate_gates(live: dict, now: float) -> Optional[str]:
+    """這一刻能不能下發。回原因字串表示不能,回 None 表示可以。
+
+    🛑 這一份要同時被「真的要送」與「預估會不會送」使用,不可以各寫一份 ——
+       兩份一定會漂移,然後畫面上顯示的預估就會跟實際行為對不起來。
+    """
+    if not _act["enabled"]:
+        return "演算法下發未啟用"
+    # 控制策略必須含 bit4 時相控制,否則控制器一定回 NAK
+    # (2026-09-07 實測:沒有 bit4 時我方 5F1C 得到 ErrorCode=2)
+    # control_mode=external_dynamic 就是 bit4 有設(見 signal_tc3._control_mode)。
+    if live.get("control_mode") != "external_dynamic":
+        return "控制策略未含時相控制(目前 %s),送了會被拒" % (
+            live.get("control_mode") or "未知")
+    # 清道期間不送:控制器已經在換相了,再送一次會疊加成連跳兩步階
+    if live.get("clearance"):
+        return "清道中,不重複下命令"
+    # 資料過期就不送 —— 看不到現在幾相幾秒的時候不可以動路口
+    if live.get("stale"):
+        return "抄錄資料過期,不下發"
+    # 節流。🛑 沒有這道的話,每一次取樣判 SWITCH 就送一次 —— 控制器會被
+    #    連續命令推著跑,綠燈可能短到不合理。最小綠是引擎那一層的閘門,
+    #    這裡是獨立於引擎的第二層。
+    gap = now - _act["last_ts"]
+    if _act["last_ts"] and gap < ACTUATE_MIN_GAP_SEC:
+        return "節流中(距上次下發 %.0f 秒,需 %.0f 秒)" % (gap, ACTUATE_MIN_GAP_SEC)
+    return None
+
+
+def _forecast(d, live: dict, green_elapsed: float,
+              min_green: float, max_green: float) -> dict:
+    """控制預估:接下來會發生什麼。
+
+    🛑 分成「算得準的」與「算不準的」兩塊,不可以混著講:
+       · 最小綠、最大綠、節流 —— 都是時鐘,秒數是**確定**的。
+       · 「紅側延滯何時超過綠側價值」—— 取決於接下來的車流,**不可預估**。
+       所以下面只給區間(最早/最晚),不給一個假裝精確的單一秒數。
+       把不確定的東西寫成確定的數字,是這個畫面最容易犯的錯。
+    """
+    now = time.time()
+    blocked = _actuate_gates(live, now)
+    min_remain = max(0.0, min_green - green_elapsed)
+    max_remain = max(0.0, max_green - green_elapsed)
+    thr_remain = 0.0
+    if _act["last_ts"]:
+        thr_remain = max(0.0, ACTUATE_MIN_GAP_SEC - (now - _act["last_ts"]))
+    earliest = max(min_remain, thr_remain)
+
+    if d.action == "SWITCH" and not blocked:
+        text, certainty = "立即下發(本次取樣就送)", "certain"
+    elif d.action == "SWITCH" and blocked:
+        text, certainty = "引擎判換相,但被擋:" + blocked, "blocked"
+    elif min_remain > 0:
+        text, certainty = ("最快 %.0f 秒後才可能換相(未滿最小綠)" % earliest), "bounded"
+    elif thr_remain > 0:
+        text, certainty = ("最快 %.0f 秒後才可能換相(節流未到)" % earliest), "bounded"
+    else:
+        text, certainty = ("隨時可能換相,最晚 %.0f 秒後強制換相(最大綠)" % max_remain), "bounded"
+
+    return {
+        "action": d.action,
+        "will_send_now": bool(d.action == "SWITCH" and not blocked),
+        "blocked": blocked or "",
+        # 🛑 earliest/latest 是**區間**不是預測值。中間何時切取決於車流。
+        "earliest_switch_sec": round(earliest, 1),
+        "latest_switch_sec": round(max_remain, 1),
+        "min_green_remain_sec": round(min_remain, 1),
+        "throttle_remain_sec": round(thr_remain, 1),
+        "est_green_total_min_sec": round(green_elapsed + earliest, 1),
+        "est_green_total_max_sec": round(green_elapsed + max_remain, 1),
+        "text": text,
+        "certainty": certainty,
+        "note": "最早/最晚是時鐘算得出來的界線;中間何時換相取決於車流,不做單點預測。",
+    }
+
+
 def _actuate(d, g_no: int, live: dict) -> None:
     """引擎判 SWITCH → 送 5F1C。每一道把關的結果都寫進 _act['blocked'],
     畫面上要看得出「這次為什麼沒送」,不能只是靜靜地不動作。
@@ -736,30 +812,13 @@ def _actuate(d, g_no: int, live: dict) -> None:
         _act["blocked"] = why
         return None
 
-    if not _act["enabled"]:
-        return stop("演算法下發未啟用")
     if d.action != "SWITCH":
         return stop("")
-    # 1) 控制策略必須含 bit4 時相控制,否則控制器一定回 NAK
-    #    (2026-09-07 實測:沒有 bit4 時我方 5F1C 得到 ErrorCode=2)
-    #    control_mode=external_dynamic 就是 bit4 有設(見 signal_tc3._control_mode)。
-    if live.get("control_mode") != "external_dynamic":
-        return stop("控制策略未含時相控制(目前 %s),送了會被拒"
-                    % (live.get("control_mode") or "未知"))
-    # 2) 清道期間不送:控制器已經在換相了,再送一次會疊加成連跳兩步階
-    if live.get("clearance"):
-        return stop("清道中,不重複下命令")
-    # 3) 資料過期就不送 —— 看不到現在幾相幾秒的時候不可以動路口
-    if live.get("stale"):
-        return stop("抄錄資料過期,不下發")
-    # 4) 節流。🛑 沒有這道的話,每一次取樣判 SWITCH 就送一次 ——
-    #    控制器會被連續命令推著跑,綠燈可能短到不合理。
-    #    最小綠是引擎那一層的閘門,這裡是獨立於引擎的第二層。
     now = time.time()
-    gap = now - _act["last_ts"]
-    if _act["last_ts"] and gap < ACTUATE_MIN_GAP_SEC:
-        return stop("節流中(距上次下發 %.0f 秒,需 %.0f 秒)" % (gap, ACTUATE_MIN_GAP_SEC))
-    # 5) 送出:prepare 取 token → send。daemon 端的 _control_guard 會再擋一次
+    why = _actuate_gates(live, now)
+    if why:
+        return stop(why)
+    # 送出:prepare 取 token → send。daemon 端的 _control_guard 會再擋一次
     #    (號控總開關 / 只准查詢 / 動態總開關 / 降階),被擋會回 403,原因照抄。
     try:
         tok = _daemon_post("/api/signal/control/prepare",
@@ -1439,9 +1498,23 @@ async def shadow_plan(_user=Depends(get_current_user)):
         },
         "gates": gates,
         "action": d.action, "reason": d.reason,
-        "would_send": False,
+        # 🛑 would_send 與 note 以前是寫死的 False /「只記錄不下發」。
+        #    演算法接上下發之後那就是謊 —— 這兩個欄位必須跟著實際狀態走。
+        "would_send": bool(d.action == "SWITCH"),
+        "actuate": {
+            "enabled": _act["enabled"],
+            "sent": _act["n"],
+            "last_ts": _act["last_ts"] or None,
+            "last_reason": _act["last_reason"],
+            "last_raw": _act["last_raw"],
+            "last_error": _act["last_error"],
+            "min_gap_sec": ACTUATE_MIN_GAP_SEC,
+        },
+        "forecast": _forecast(d, live, green_elapsed, min_green, max_green),
         "control_evidence": _control_evidence(30),
-        "note": "線上演算法比對:本決策只記錄不下發,路口目前跑控制器內建時制",
+        "note": ("線上演算法控制:引擎判換相就下發 5F1C 提早結束綠燈"
+                 if _act["enabled"] else
+                 "線上演算法比對:本決策只記錄不下發,路口目前跑控制器內建時制"),
     }
 
 def _control_evidence(minutes: int = 30) -> dict:
