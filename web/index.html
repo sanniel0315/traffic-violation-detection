@@ -3844,6 +3844,24 @@
         @keyframes wrBreathe { 0%,100% { r:7; opacity:1; } 50% { r:9; opacity:.82; } }
         @keyframes wrBlink { 0%,100% { opacity:1; } 50% { opacity:.35; } }
         /* 相機點:判級越高脈動越明顯;未量到與離線不動 */
+        /* ── 路口圖的號誌燈頭 ────────────────────────────────────
+           三燈燈箱:亮的那一顆有光暈,暗的兩顆壓到很低的亮度。
+           🛑 動畫連動真實燈態 —— 綠燈呼吸、清道的黃燈閃(閃比呼吸更急,
+              對應「馬上要換相了」)、紅燈恆亮不動(它是狀態,不是提醒)。 */
+        .sig-head-wrap { background:none; border:none; }
+        .sig-head svg { display:block; overflow:visible; }
+        .sig-head .sh-box { fill:#232830; stroke:#ffffff; stroke-width:1.6; }
+        .sig-head circle { fill:#39404a; transition:fill .25s ease; }
+        .sig-head.red   .sh-r { fill:#e8463a; filter:drop-shadow(0 0 5px rgba(232,70,58,.95)); }
+        .sig-head.amber .sh-a { fill:#f0a92a; filter:drop-shadow(0 0 5px rgba(240,169,42,.95));
+                                animation:shBlink .55s steps(1,end) infinite; }
+        .sig-head.green .sh-g { fill:#3fc463; filter:drop-shadow(0 0 6px rgba(63,196,99,.95));
+                                animation:shBreath 2.2s ease-in-out infinite; }
+        @keyframes shBreath { 0%,100%{ opacity:1; } 50%{ opacity:.55; } }
+        @keyframes shBlink  { 0%,49%{ opacity:1; } 50%,100%{ opacity:.25; } }
+        @media (prefers-reduced-motion: reduce) {
+            .sig-head.amber .sh-a, .sig-head.green .sh-g { animation:none; }
+        }
         .wr-cam-mk { transition:fill .25s ease; }
         .wr-cam-mk.lv2 { animation:wrPulse 2.6s ease-in-out infinite; }
         .wr-cam-mk.lv3 { animation:wrPulse 1.7s ease-in-out infinite; }
@@ -24437,38 +24455,45 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                                     (el.getAttribute('class') || '').replace(/\blv[0-4]\b/g, '') + ' wr-flow lv' + lv); });
                 // 燈頭:停止線旁(往路口方向 4 m、側移 6 m),綠/清道黃/紅
                 const isGreen = d.green_phase === ph;
-                const lampColor = !isGreen ? '#c43a31' : (d.clearance ? '#d97706' : '#1f9d55');
                 const nx = -uy, ny = ux;
                 const P = wrOffset(stopCam.lat, stopCam.lng, -ux * 4 + nx * 6, -uy * 4 + ny * 6);
-                const lampCls = !isGreen ? 'wr-lamp red' : (d.clearance ? 'wr-lamp amber' : 'wr-lamp green');
-                upsert('lamp', ph, () => L.circleMarker(P, {radius: 7, color: '#ffffff', weight: 2, fillColor: lampColor, fillOpacity: 1, className: lampCls})
-                                        .bindTooltip('分相 ' + ph + (isGreen ? (d.clearance ? ' 清道' : ' 綠燈') : ' 紅燈'), {permanent: false}),
-                       (l) => { l.setLatLng(P); l.setStyle({fillColor: lampColor});
-                                const el = l.getElement();
-                                if (el) el.setAttribute('class', lampCls); });
-                list.forEach((c) => {
-                    const cc = WR_LV_COLOR[wrLvRank(c.level)];
-                    // 🛑 常駐標籤只放**短碼**,不放數字。四台相機各掛一段
-                    //    「名稱 · 佔有率 · 排隊」的常駐標籤,在 360px 高的地圖上必然互相遮蓋
-                    //    (2026-09-06 使用者回報)。數字改放地圖下方的狀態列,
-                    //    那裡有足夠寬度、也不會擋住路口幾何。
-                    // 方向依相機相對路口中心的位置往**外**放,兩兩才不會撞在一起。
-                    const dx = (c.lng - center[1]) * WR_MLON, dy = (c.lat - center[0]) * WR_MLAT;
-                    const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left')
-                                                            : (dy > 0 ? 'top' : 'bottom');
-                    const off = {right: [10, 0], left: [-10, 0], top: [0, -10], bottom: [0, 10]}[dir];
-                    // 相機點的動態:判級越高脈動越明顯(lv0 未量到與離線一律不動)
-                    fitPts.push([c.lat, c.lng]);
-                    const camCls = 'wr-cam-mk ' + (c.online === false ? 'off' : 'lv' + wrLvRank(c.level));
-                    upsert('cam', c.camera_id,
-                           () => L.circleMarker([c.lat, c.lng], {radius: 7, color: '#ffffff', weight: 2.5, fillColor: cc, fillOpacity: 1, className: camCls})
-                                   .bindTooltip(c.name, {permanent: true, direction: dir, offset: off, className: 'wr-tip'}),
-                           (l) => { l.setLatLng([c.lat, c.lng]);
-                                    l.setStyle({fillColor: cc, color: c.online ? '#ffffff' : '#c3ccd7'});
-                                    l.setTooltipContent(c.name);
-                                    const el = l.getElement();
-                                    if (el) el.setAttribute('class', camCls); });
+                // 🛑 燈頭要畫成**真的號誌燈**(三燈燈箱),不是一個彩色圓點。
+                //    圓點只能表達顏色,看不出「這是號誌」;三燈燈箱在戰情牆上
+                //    幾公尺外一眼就認得出,而且暗掉的兩燈本身就是
+                //    「現在不是那個狀態」的資訊。
+                //    用 divIcon 不用 circleMarker:SVG 才畫得出燈箱,
+                //    而且 CSS 動畫(亮燈呼吸、清道黃燈閃)可以直接掛在元素上。
+                const lampState = !isGreen ? 'red' : (d.clearance ? 'amber' : 'green');
+                const lampTip = '分相 ' + ph + (isGreen ? (d.clearance ? ' 清道(黃)' : ' 綠燈') : ' 紅燈');
+                const lampIcon = (st) => L.divIcon({
+                    className: 'sig-head-wrap', iconSize: [22, 46],
+                    // 🛑 錨點指到燈箱**底部中央** —— 燈頭是立在停止線上的,
+                    //    用中心對齊會讓燈箱有一半浮在路面上,位置看起來就是錯的。
+                    iconAnchor: [11, 46],
+                    html: '<div class="sig-head ' + st + '">'
+                        + '<svg viewBox="0 0 22 46" width="22" height="46" aria-hidden="true">'
+                        + '<rect x="1.2" y="1.2" width="19.6" height="43.6" rx="5" class="sh-box"/>'
+                        + '<circle cx="11" cy="11" r="5.6" class="sh-r"/>'
+                        + '<circle cx="11" cy="23" r="5.6" class="sh-a"/>'
+                        + '<circle cx="11" cy="35" r="5.6" class="sh-g"/>'
+                        + '</svg></div>',
                 });
+                upsert('lamp', ph,
+                       () => L.marker(P, {icon: lampIcon(lampState), keyboard: false})
+                              .bindTooltip(lampTip, {permanent: false}),
+                       (l) => { l.setLatLng(P); l.setIcon(lampIcon(lampState));
+                                l.setTooltipContent(lampTip); });
+                // 🛑 相機標記已移除(2026-09-07 使用者決定):地圖上要看的是號誌。
+                //    相機的量測值在上方「相機量測」那一列已經有了,兩邊重複只會
+                //    讓路口幾何被四個圓點塞滿。座標仍收進 fitPts —— 視野要涵蓋
+                //    整段進場道,少了它範圍會縮得太小。
+                list.forEach((c) => { fitPts.push([c.lat, c.lng]); });
+            });
+            // 🛑 相機標記改成不畫之後,先前已經 addTo(wrMap) 的圖層不會自己消失
+            //    —— upsert 只是不再更新它們。要主動移除一次。
+            Object.keys(wrLayers.cam).forEach((k) => {
+                try { wrMap.removeLayer(wrLayers.cam[k]); } catch (e) { }
+                delete wrLayers.cam[k];
             });
             // 🛑 視野自動框住**所有**標記,不要用固定縮放等級。
             //    2026-09-07 使用者:「要涵蓋所有的號誌,現在少一個,要再廣」——
