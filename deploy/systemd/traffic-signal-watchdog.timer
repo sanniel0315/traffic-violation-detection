@@ -1,0 +1,13 @@
+[Unit]
+Description=Run traffic signal watchdog every 10 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+# 避開整分齊發,錯開對 daemon 與 DB 的存取
+RandomizedDelaySec=30
+AccuracySec=15s
+Unit=traffic-signal-watchdog.service
+
+[Install]
+WantedBy=timers.target
