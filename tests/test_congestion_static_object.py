@@ -181,8 +181,27 @@ def test_fallback_門檻也要在雜訊之上():
 
 
 # ── 單車不算壅塞(2026-09-07 實測後定案)────────────────────────────────
+# 🛑 這裡不可以呼叫真的 __init__ —— 它會建立 VehicleDetector,載入 YOLO 模型與
+#    CUDA context,污染同一個 pytest process 裡後面的測試(實測會讓
+#    test_signal_shadow 的 4 條掛掉,單獨跑卻全過)。用 __new__ 手動組裝。
+def _bare_detector():
+    from collections import defaultdict
+    from detection.congestion_detector import CongestionDetector
+
+    det = CongestionDetector.__new__(CongestionDetector)
+    det.history_map = defaultdict(list)
+    det.tracker_map = {}
+    det.track_meta_map = defaultdict(dict)
+    det.queue_state_map = defaultdict(dict)
+    det.static_spot_map = defaultdict(list)
+    det.prev_center_map = {}
+    det.flow_state_map = defaultdict(lambda: {"seen": {}, "passed": []})
+    det.fallback_detector = None
+    return det
+
+
 def _analyze_one(det, cls_name, occ_boxes):
-    """跑一次 analyze,回傳 level。occ_boxes 決定佔用率高低。"""
+    """跑幾輪 analyze 讓停等判定穩定,回傳最後一次結果。"""
     import numpy as np
     frame = np.zeros((720, 1280, 3), dtype=np.uint8)
 
@@ -196,34 +215,26 @@ def _analyze_one(det, cls_name, occ_boxes):
                     for x1, y1, x2, y2 in occ_boxes]
 
     det.detector = _FakeDet()
-    det.fallback_detector = None
     res = None
-    for _ in range(6):          # 跑幾輪讓 tracker/停等判定穩定
-        res = det.analyze(frame, zones=None, camera_key="t_single",
+    for _ in range(8):
+        res = det.analyze(frame, zones=None, camera_key=f"t_{cls_name}",
                           params={"stop_speed_px_per_sec": 0, "stop_min_frames": 2})
     return res
 
 
-def test_單一小客車停著不算壅塞():
+def test_單一小客車停等不算壅塞():
     """cam_3 上匝道實測:ROI 94,101 px²,單一小客車依距離佔 10.2%~25.8%,
     中等門檻 0.20 正好卡在中間 → 同一台車停近一點就「中等」、遠一點就「暢通」。
     紅燈時一台小客車在匝道停等是正常現象,不是壅塞。"""
-    from detection.congestion_detector import CongestionDetector
-
-    det = CongestionDetector.__new__(CongestionDetector)
-    CongestionDetector.__init__(det, vehicle_detector=object())
-    # 一台佔畫面約 25% 的靜止小客車
-    big = [(200, 200, 840, 660)]
-    res = _analyze_one(det, "car", big)
+    det = _bare_detector()
+    res = _analyze_one(det, "car", [(200, 200, 840, 660)])
+    assert res["vehicle_count"] == 1, "測試前提:要真的有抓到 1 台車"
     assert res["level"] == "low", f"單一小客車不該判壅塞,實得 {res['level']}"
 
 
 def test_單一大貨車停著仍算壅塞():
     """保留原設計:單一大貨/大客卡住前方 != 短暫路過,仍要升級。"""
-    from detection.congestion_detector import CongestionDetector
-
-    det = CongestionDetector.__new__(CongestionDetector)
-    CongestionDetector.__init__(det, vehicle_detector=object())
-    big = [(200, 200, 840, 660)]
-    res = _analyze_one(det, "heavy_truck", big)
+    det = _bare_detector()
+    res = _analyze_one(det, "heavy_truck", [(200, 200, 840, 660)])
+    assert res["vehicle_count"] == 1
     assert res["level"] != "low", "單一大貨車卡住仍應判為壅塞"
