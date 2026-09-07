@@ -3849,7 +3849,12 @@
            🛑 動畫連動真實燈態 —— 綠燈呼吸、清道的黃燈閃(閃比呼吸更急,
               對應「馬上要換相了」)、紅燈恆亮不動(它是狀態,不是提醒)。 */
         .sig-head-wrap { background:none; border:none; }
+        .sig-head { position:relative; }
         .sig-head svg { display:block; overflow:visible; }
+        .sig-head .sh-no { position:absolute; left:50%; top:-7px; transform:translateX(-50%);
+                           font:700 10px var(--font-mono); color:#ffffff; background:#232830;
+                           border-radius:99px; padding:0 5px; line-height:14px;
+                           border:1px solid rgba(255,255,255,.75); }
         .sig-head .sh-box { fill:#232830; stroke:#ffffff; stroke-width:1.6; }
         .sig-head circle { fill:#39404a; transition:fill .25s ease; }
         .sig-head.red   .sh-r { fill:#e8463a; filter:drop-shadow(0 0 5px rgba(232,70,58,.95)); }
@@ -7622,7 +7627,7 @@
                 <!-- ══ 驗收清單 ══
                      每一項都是打端點實際量出來的,不是宣稱。
                      量不到回 unknown,不當成通過 —— 缺資料和通過是兩件事。 -->
-                <div v-if="page==='signal_hub'" v-show="signalTab==='eval'">
+                <div v-if="page==='signal_hub'" v-show="signalTab==='accept'">
                     <div class="sig-tab-bar">
                         <span class="sig-tab-title">驗收清單</span>
                         <el-button size="small" plain @click="loadSigAcceptance"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>重新量測</el-button>
@@ -23383,6 +23388,7 @@ const app=createApp({
         const sigTabs = ref([
             {key: 'live',   label: '即時戰情',   icon: 'i-activity'},
             {key: 'eval',   label: '線上評估',   icon: 'i-bar'},
+            {key: 'accept', label: '驗收清單',   icon: 'i-check'},
             {key: 'lamp',   label: '號誌燈態',   icon: 'i-zap'},
             {key: 'device', label: '設備與設定', icon: 'i-list'},
             {key: 'frames', label: '通訊紀錄',   icon: 'i-zap'},
@@ -23396,9 +23402,12 @@ const app=createApp({
                             try { streamWantHeartbeat(); } catch (e) { }   // 立刻預約 lite,別等 3 秒
                             setTimeout(initWarMap, 50); },
             // 合併後的分頁要把原本各自的載入器都帶上,少一個那一區就會空白。
+            // 🛑 驗收清單 2026-09-07 拆成獨立分頁(使用者:驗收清單跟運作統計分開)——
+            //    驗收是「對規格逐條交代」,運作統計是「這段時間跑得怎樣」,
+            //    兩件事的讀者與時機都不同,混在一頁會互相稀釋。
             eval:   () => { loadViz(); startVizTimer(); loadVizHourly();
-                            loadSigStats(); startSigStatTimer();
-                            loadSigAcceptance(); loadSigConsole(); },
+                            loadSigStats(); startSigStatTimer(); loadSigConsole(); },
+            accept: () => loadSigAcceptance(),
             device: () => { loadSignal(); startSignalTimer(); loadSigDevice();
                             loadSigConfig(); },
             lamp:   () => { loadSignal(); startSignalTimer(); loadSignalFrames(); },
@@ -23413,7 +23422,7 @@ const app=createApp({
         // 舊分頁鍵 → 新分頁。使用者可能有加書籤的深層連結(?page=signal_hub&tab=viz),
 // 直接拿掉舊鍵會讓那些連結落到空白畫面。
 const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
-                       viz: 'eval', stats: 'eval', accept: 'eval'};
+                       viz: 'eval', stats: 'eval'};
         const switchSigTab = (key) => {
             if (SIG_TAB_ALIAS[key]) {
                 if (key === 'plan') sigDetailOpen.value = true;
@@ -24398,6 +24407,26 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             drawWarMap();
             setTimeout(() => wrMap && wrMap.invalidateSize(true), 120);
         };
+        // ── 路口號誌燈頭 ────────────────────────────────────────────
+        // 現場共 5 座號誌燈,分相對應取自《國道8號新市交流道-攝影機安裝俯視圖》:
+        //   1 / 2 / 4 → 下匝道(分相 2,WN)
+        //   3 / 5     → 上匝道(分相 1,NE)
+        //
+        // 🛑 位置是**示意**不是實測座標。俯視圖上只有星號,沒有經緯度;
+        //    從空照圖用像素反推會得到「看起來很精確、其實是錯的」座標,
+        //    那比示意更糟 —— 現場要靠它判位置時會被誤導。
+        //    所以這裡把每一座燈排在**它所屬分相的進場道軸線上**(順序照圖上
+        //    由遠而近),顏色與動畫則連動該分相的真實燈態(那部分是實測的)。
+        //    等現場提供 5 座燈的實際經緯度,把 lat/lng 填進來就會變成實測位置。
+        // 🛑 offset_m 是沿進場道軸線、距停止線的公尺數(往上游為正),
+        //    side_m 是垂直軸線的側移(正 = 軸線右側),只用來讓燈不互相重疊。
+        const SIG_HEADS = [
+            {id: 5, phase: 1, offset_m: 0,   side_m: 6,  label: '5'},
+            {id: 3, phase: 1, offset_m: 55,  side_m: 6,  label: '3'},
+            {id: 4, phase: 2, offset_m: 0,   side_m: 6,  label: '4'},
+            {id: 2, phase: 2, offset_m: 60,  side_m: 6,  label: '2'},
+            {id: 1, phase: 2, offset_m: 150, side_m: 6,  label: '1'},
+        ];
         const drawWarMap = () => {
             if (!wrMap) return;
             const d = sigPlan.value || {};
@@ -24411,7 +24440,14 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 if (!sysCam || !(sysCam.lat && sysCam.lng)) { missing.push(c.name); return; }
                 (byPhase[c.phase_no] = byPhase[c.phase_no] || []).push(Object.assign({}, c, {lat: sysCam.lat, lng: sysCam.lng}));
             });
-            sigWarMapNote.value = missing.length ? ('尚未在地圖頁設定座標:' + missing.join('、') + ' —— 這幾台不會出現在圖上') : '';
+            // 🛑 一定要讓看的人知道燈頭位置是示意的,否則會被當成實測位置。
+            // 🛑 號誌燈的位置是示意的,一定要講出來 —— 不講的話現場會把它
+            //    當成實測位置,靠它判斷「燈在哪」就會被誤導。
+            const headNote = '號誌燈 1~5 依現場俯視圖的分相對應排列（1/2/4 下匝道、3/5 上匝道），'
+                           + '位置為示意，燈色與動畫為實測；實際座標待現場提供。';
+            sigWarMapNote.value = missing.length
+                ? ('尚未在地圖頁設定座標:' + missing.join('、') + ' —— 這幾台不會出現在圖上。' + headNote)
+                : headNote;
             const sides = {};
             [d.green_side, d.red_side].forEach((sd) => { if (sd) sides[sd.phase_no] = sd; });
             const center = [MAP_SITE_CENTER[0], MAP_SITE_CENTER[1]];
@@ -24464,25 +24500,38 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //    用 divIcon 不用 circleMarker:SVG 才畫得出燈箱,
                 //    而且 CSS 動畫(亮燈呼吸、清道黃燈閃)可以直接掛在元素上。
                 const lampState = !isGreen ? 'red' : (d.clearance ? 'amber' : 'green');
-                const lampTip = '分相 ' + ph + (isGreen ? (d.clearance ? ' 清道(黃)' : ' 綠燈') : ' 紅燈');
-                const lampIcon = (st) => L.divIcon({
-                    className: 'sig-head-wrap', iconSize: [22, 46],
-                    // 🛑 錨點指到燈箱**底部中央** —— 燈頭是立在停止線上的,
-                    //    用中心對齊會讓燈箱有一半浮在路面上,位置看起來就是錯的。
-                    iconAnchor: [11, 46],
+                const lampWord = isGreen ? (d.clearance ? '清道(黃)' : '綠燈') : '紅燈';
+                // 🛑 燈頭要畫成**真的號誌燈**(三燈燈箱),不是彩色圓點:圓點只能
+                //    表達顏色,看不出「這是號誌」;暗掉的兩燈本身就是
+                //    「現在不是那個狀態」的資訊。用 divIcon 才畫得出燈箱,
+                //    CSS 動畫(綠燈呼吸、清道黃燈閃)也才掛得上去。
+                const lampIcon = (st, label) => L.divIcon({
+                    className: 'sig-head-wrap', iconSize: [22, 52],
+                    // 🛑 錨點指到燈箱**底部中央** —— 燈頭是立在路面上的,
+                    //    用中心對齊會讓燈箱有一半沉進路面,位置看起來就是錯的。
+                    iconAnchor: [11, 52],
                     html: '<div class="sig-head ' + st + '">'
                         + '<svg viewBox="0 0 22 46" width="22" height="46" aria-hidden="true">'
                         + '<rect x="1.2" y="1.2" width="19.6" height="43.6" rx="5" class="sh-box"/>'
                         + '<circle cx="11" cy="11" r="5.6" class="sh-r"/>'
                         + '<circle cx="11" cy="23" r="5.6" class="sh-a"/>'
                         + '<circle cx="11" cy="35" r="5.6" class="sh-g"/>'
-                        + '</svg></div>',
+                        + '</svg><b class="sh-no">' + label + '</b></div>',
                 });
-                upsert('lamp', ph,
-                       () => L.marker(P, {icon: lampIcon(lampState), keyboard: false})
-                              .bindTooltip(lampTip, {permanent: false}),
-                       (l) => { l.setLatLng(P); l.setIcon(lampIcon(lampState));
-                                l.setTooltipContent(lampTip); });
+                SIG_HEADS.filter((h) => h.phase === ph).forEach((h) => {
+                    // 沿進場道軸線往上游 offset_m,再側移 side_m(避免互相重疊)
+                    const HP = wrOffset(stopCam.lat, stopCam.lng,
+                                        ux * h.offset_m + nx * h.side_m,
+                                        uy * h.offset_m + ny * h.side_m);
+                    const tip = '號誌燈 ' + h.label + ' · 分相 ' + ph + ' ' + lampWord
+                              + '（位置為示意,待現場提供實際座標）';
+                    upsert('lamp', 'h' + h.id,
+                           () => L.marker(HP, {icon: lampIcon(lampState, h.label), keyboard: false})
+                                  .bindTooltip(tip, {permanent: false}),
+                           (l) => { l.setLatLng(HP); l.setIcon(lampIcon(lampState, h.label));
+                                    l.setTooltipContent(tip); });
+                    fitPts.push([HP[0], HP[1]]);
+                });
                 // 🛑 相機標記已移除(2026-09-07 使用者決定):地圖上要看的是號誌。
                 //    相機的量測值在上方「相機量測」那一列已經有了,兩邊重複只會
                 //    讓路口幾何被四個圓點塞滿。座標仍收進 fitPts —— 視野要涵蓋
@@ -24491,6 +24540,13 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             });
             // 🛑 相機標記改成不畫之後,先前已經 addTo(wrMap) 的圖層不會自己消失
             //    —— upsert 只是不再更新它們。要主動移除一次。
+            // 🛑 燈頭的 key 從「分相編號」改成「h+燈號」之後,舊的那兩個
+            //    (key 為 1、2)不會自己消失 —— upsert 只是不再更新它們。
+            Object.keys(wrLayers.lamp).forEach((k) => {
+                if (String(k).charAt(0) === 'h') return;
+                try { wrMap.removeLayer(wrLayers.lamp[k]); } catch (e) { }
+                delete wrLayers.lamp[k];
+            });
             Object.keys(wrLayers.cam).forEach((k) => {
                 try { wrMap.removeLayer(wrLayers.cam[k]); } catch (e) { }
                 delete wrLayers.cam[k];
