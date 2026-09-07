@@ -107,7 +107,24 @@ def _paired_block(p: dict, tag: str) -> str:
     return (f"| {tag} | {p['runs_usable']} | {p['earlier']}（有車 {p.get('earlier_meaningful', '—')}） | {p['same']} | "
             f"{p['hold']} | {p['later']} | {_v(dm.get('avg'), 1)} | {_v(p.get('waste_sec_total'), 0)} | "
             f"{_v((hc.get('margin_at_switch') or {}).get('avg'), 1)} | "
-            f"{_v(100 * (hc.get('red_waiting_ratio') or 0), 0)}% | {src} |")
+            f"{_v(100 * (hc.get('red_waiting_ratio') or 0), 0)}% | {_power_cell(p)} | {src} |")
+
+
+# 🛑 樣本鑑別力 —— 沒有這一欄,「零早切」會被讀成成效。
+#    2026-09-07:實測下午時段 55 段綠燈全部續綠、零早切,看起來像我方完全
+#    同意現行控制,但紅側**一段都沒有車在等** —— 那種情況下任何演算法都不會
+#    想換相,零早切是理所當然的廢話。報告裡必須把這件事寫在數字旁邊,
+#    否則讀報告的人會把「沒有需求」誤讀成「演算法有效」。
+_POWER_LABEL = {"ok": "有", "weak": "偏弱", "none": "🛑 無", "no_data": "—"}
+
+
+def _power_cell(p: dict) -> str:
+    sp = (p or {}).get("sample_power") or {}
+    v = sp.get("verdict")
+    if not v:
+        return "—"
+    n, tot = sp.get("runs_red_waiting"), sp.get("runs")
+    return f"{_POWER_LABEL.get(v, v)}({n}/{tot})"
 
 
 def _tdx_block(t: dict | None) -> str:
@@ -178,13 +195,26 @@ def render(report: dict, paired_a: dict | None = None, paired_b: dict | None = N
             if pk and off and pk.get("cycles") and off.get("cycles"):
                 lines += [_core_table(off, pk, "standard").replace("| A |", "| 離峰 |").replace("| B |", "| 尖峰 |"), ""]
         lines += ["## 五、決策配對（逐次綠燈：我方會早幾秒切）", "",
-                  "| 時段 | 綠燈段 | 早切 | 同時 | 續綠 | 晚切 | 早切平均Δ(秒) | 有代價空放(秒) | 續綠裕度 | 續綠時紅側有車 | 秒數來源 |",
-                  "|---|---|---|---|---|---|---|---|---|---|---|",
+                  "| 時段 | 綠燈段 | 早切 | 同時 | 續綠 | 晚切 | 早切平均Δ(秒) | 有代價空放(秒) | 續綠裕度 | 續綠時紅側有車 | 樣本鑑別力 | 秒數來源 |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|",
                   _paired_block(paired_a, "A")]
         if paired_b:
             lines.append(_paired_block(paired_b, "B"))
         lines += ["", "> Δ 為負代表我方會比現行控制早切；「有代價空放」只計紅側真的有車在等的早切。"
                   "晚切必須為 0 —— 我方不會比現行控制更慢放人。", ""]
+        _pw = [(t, (x or {}).get("sample_power") or {})
+               for t, x in (("A", paired_a), ("B", paired_b)) if x]
+        _bad = [(t, sp) for t, sp in _pw if sp.get("verdict") in ("none", "weak")]
+        if _bad:
+            lines += ["> 🛑 **樣本鑑別力不足,以下時段的「零早切/低早切」不可以當成效證據**：", ""]
+            for t, sp in _bad:
+                lines.append(f"> - {t} 時段：{sp.get('note')}"
+                             f"（紅側有車 {sp.get('runs_red_waiting')}/{sp.get('runs')} 段,"
+                             f"紅側平均排隊 {sp.get('red_queue_avg_m')} m）")
+            lines += ["",
+                      "> 判準:我方「該不該提早換相」這個問題,只有在**紅側真的有車在等**時才問得出答案。"
+                      "紅側沒車時零早切是理所當然的,不代表演算法與現行控制一樣好,也不代表它沒用 ——"
+                      "那段資料單純沒有鑑別力。", ""]
     if meta.get("sources"):
         lines += ["## 附錄、資料來源與重現方式", "",
                   "每個數字都能用下列 API 重算（需登入）；配對逐段明細與逐時列另存 CSV 於報告旁。", ""]
