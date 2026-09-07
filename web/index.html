@@ -25362,27 +25362,19 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         const sigWarMapNote = ref('');
         const WR_LV_COLOR = {0: '#b8c4d4', 1: '#1f9d55', 2: '#d9a400', 3: '#e8842b', 4: '#c43a31'};
         const wrLvRank = (l) => ({low: 1, medium: 2, high: 3, critical: 4}[String(l || '').toLowerCase()] || 0);
-        // 🛑 2026-09-08 現場回報「地圖的路況反了:下匝道在塞、上匝道沒車,圖上相反」。
-        //    查證後決策資料是對的(實測 分相1 11.5m / 分相2 37.5m),錯的是**著色來源**:
-        //    線段顏色原本取自相機的壅塞等級 level,而 level 來自壅塞分數
-        //    = max(佔有率, 排隊分數) 的**移動平均** —— 尖峰時路況變化快,
-        //    移動平均會落後好幾分鐘,於是顏色顯示的是幾分鐘前的狀態,
-        //    跟旁邊即時的排隊帶互相矛盾。
-        //    🛑 而且相機 2(NE-1)的壅塞偵測 ROI **同時涵蓋上匝道與下匝道**
-        //       (「上高速公路前平面道路」+「下高速公路後平面道路」),
-        //       下匝道一塞就會把分相 1 的 level 拉高 —— 上匝道那條線因此被染紅。
-        //       那是現場 ROI 設定的問題,不是程式能自行決定要不要改的。
-        //    改用「排隊佔儲車空間的比例」著色:即時、與排隊帶同源、與決策同源,
-        //    三者不會再互相矛盾。相機自己的壅塞等級保留在量測卡與 tooltip。
-        // 🛑 這是**顯示用**的分級門檻,不是壅塞判級演算法的門檻,兩者不可混用。
-        const wrLvFromQueue = (q, storage) => {
-            const r = (Number(storage) || 0) ? (Number(q) || 0) / Number(storage) : 0;
-            if (r <= 0) return 0;
-            if (r < 0.10) return 1;
-            if (r < 0.30) return 2;
-            if (r < 0.60) return 3;
-            return 4;
-        };
+        // 🛑 2026-09-08:現場回報「地圖路況反了」,我一度把著色從 level 改成
+        //    「排隊 ÷ 儲車空間」,**那是錯的,已撤回**。實測當下分相2 是
+        //    level=critical、排隊 31.5m,但儲車空間 600m,比例只有 5% ——
+        //    比例分級會把真正的壅塞畫成順暢的綠色。
+        //    儲車空間是「回堵到主線之前還能塞多少」,不是「多少算塞」。
+        //    著色仍以 level 為準,它已經把佔有率與排隊分數都算進去了。
+        //
+        // 🛑 但 level 有兩個已知偏差,看圖的人要知道(tooltip 有寫):
+        //    (1) 它是壅塞分數的**移動平均**,尖峰時會落後幾分鐘;
+        //    (2) 相機 2(NE-1)的壅塞偵測 ROI **同時涵蓋上匝道與下匝道**
+        //        (「上高速公路前平面道路」+「下高速公路後平面道路」),
+        //        下匝道一塞會把分相 1 的 level 拉高。
+        //        那是現場 ROI 設定,程式不該自行決定要不要改。
         // 公尺 ↔ 經緯度(站點在北緯 23°,等距近似夠用)
         const WR_MLAT = 110900, WR_MLON = 102500;
         const wrOffset = (lat, lng, dxm, dym) => [lat + dym / WR_MLAT, lng + dxm / WR_MLON];
@@ -25534,9 +25526,13 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 list.forEach((c) => { camLv = Math.max(camLv, wrLvRank(c.level)); q = Math.max(q, Number(c.queue_m) || 0); });
                 const storage = Number((sides[ph] || {}).storage_m) || (ph === 1 ? 210 : 600);
                 const segLen = Math.min(storage, ph === 1 ? 160 : 220);
-                // 著色依即時排隊佔儲車比例(見 wrLvFromQueue 的說明),不用滯後的
-                // 壅塞分數移動平均;camLv 留給 tooltip 對照,兩個數字都看得到。
-                const lv = wrLvFromQueue(q, storage);
+                // 🛑 2026-09-08 我先把著色改成「排隊 ÷ 儲車空間」,那是**錯的**,已撤回。
+                //    實測當下:分相2 level=critical、排隊 31.5m,但儲車空間是 600m,
+                //    比例只有 5% —— 用比例分級會把真正的壅塞畫成順暢的綠色。
+                //    儲車空間是「回堵到主線之前還能塞多少」,不是「多少算塞」,
+                //    拿它當分母等於把判級門檻綁在一個跟壅塞程度無關的長度上。
+                //    壅塞等級仍以 level 為準(它已經把佔有率與排隊分數都算進去)。
+                const lv = camLv;
                 const color = WR_LV_COLOR[lv];
                 const A = [stopCam.lat, stopCam.lng];
                 const B = wrOffset(stopCam.lat, stopCam.lng, ux * segLen, uy * segLen);
