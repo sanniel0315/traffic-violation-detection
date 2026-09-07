@@ -8558,7 +8558,10 @@
                         </details>
                     </div>
                 </div>
-                <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
+                <!-- ══ 號誌燈態:獨立分頁(使用者決定)══
+                     原本併在「設備與設定」裡,但燈態是**運轉中的即時資訊**,
+                     跟設定/參數不是同一類東西,混在一頁要捲很久才找得到。 -->
+                <div v-if="page==='signal_hub'" v-show="signalTab==='lamp'">
                     <div class="ds-page-hero">
                         <div class="ds-page-hero-row">
                             <div style="min-width:0;flex:1">
@@ -23297,6 +23300,7 @@ const app=createApp({
         const sigTabs = ref([
             {key: 'live',   label: '即時戰情',   icon: 'i-activity'},
             {key: 'eval',   label: '線上評估',   icon: 'i-bar'},
+            {key: 'lamp',   label: '號誌燈態',   icon: 'i-zap'},
             {key: 'device', label: '設備與設定', icon: 'i-list'},
             {key: 'frames', label: '通訊紀錄',   icon: 'i-zap'},
         ]);
@@ -23314,6 +23318,7 @@ const app=createApp({
                             loadSigAcceptance(); loadSigConsole(); },
             device: () => { loadSignal(); startSignalTimer(); loadSigDevice();
                             loadSigConfig(); },
+            lamp:   () => { loadSignal(); startSignalTimer(); loadSignalFrames(); },
             frames: () => { loadSignalFrames(); loadSigConsole(); },
         };
         // 明細區預設收合;從舊的 ?tab=plan 進來的人自動展開,不然會以為東西不見了。
@@ -23324,7 +23329,7 @@ const app=createApp({
         //    從舊連結進來的人先看到戰情,再自己切到燈態與設備。
         // 舊分頁鍵 → 新分頁。使用者可能有加書籤的深層連結(?page=signal_hub&tab=viz),
 // 直接拿掉舊鍵會讓那些連結落到空白畫面。
-const SIG_TAB_ALIAS = {plan: 'eval', light: 'device', config: 'device',
+const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                        viz: 'eval', stats: 'eval', accept: 'eval'};
         const switchSigTab = (key) => {
             if (SIG_TAB_ALIAS[key]) {
