@@ -82,10 +82,35 @@ def test_只准查詢時設定類要被擋(tc3, monkeypatch):
 
 
 def test_開放設定類之後才放行(tc3, monkeypatch):
+    """🛑 開放設定類**還不夠** —— 還要動態控制總開關是開的。
+
+    規範 (E) 要求遠端開關、(D) 要求降階運轉,兩者都落在把關層而不是介面層:
+    只擋按鈕的話,知道 API 的人照樣送得出去。
+    """
     monkeypatch.setattr(tc3, "CONTROL_ENABLED", True)
     monkeypatch.setattr(tc3, "CONTROL_QUERY_ONLY", False)
-    for cmd in (0x15, 0x10, 0x45):
-        assert tc3._control_guard(cmd) is None
+    old = dict(tc3._dyn)
+    try:
+        # 總開關關著 → 設定類仍被擋,但**查詢類照樣放行**
+        tc3._dyn.update({"enabled": False, "level": "L0", "reason": ""})
+        for cmd in (0x15, 0x10, 0x1C):
+            why = tc3._control_guard(cmd)
+            assert why and "總開關" in why, f"總開關關著卻放行了 cmd={cmd:02X}"
+        assert tc3._control_guard(0x45) is None, "查詢類不該被總開關擋 —— 它不改變運轉"
+
+        # 總開關開了 → 放行
+        tc3._dyn.update({"enabled": True})
+        for cmd in (0x15, 0x10, 0x45):
+            assert tc3._control_guard(cmd) is None
+
+        # 降階 L2 → 設定類再度被擋,查詢仍可用(降階時更需要查現場狀況)
+        tc3.enter_degraded("L2", "單元測試")
+        for cmd in (0x15, 0x1C):
+            why = tc3._control_guard(cmd)
+            assert why and "降階" in why, f"降階中卻放行了 cmd={cmd:02X}"
+        assert tc3._control_guard(0x45) is None, "降階時查詢也被擋了 —— 那會看不到現場"
+    finally:
+        tc3._dyn.update(old)
 
 
 def test_送出用的碼框組得出來且解得回去(tc3):
