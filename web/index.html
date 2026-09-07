@@ -25185,11 +25185,13 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         //    操作者要能從這裡判斷「中央那邊會看到什麼」。
         const sigDlText = computed(() => {
             if (!sigDynOn.value) return '需先啟用動態控制';
-            const d = sigDl.value || {};
             if (sigDlPolicy.value === 'reassert')
-                return '已重新宣告 ' + ((d.reassert && d.reassert.count) || 0) + ' 次(策略會來回跳)';
+                return '中央改回定時後重新宣告(策略會來回跳)';
+            // 🛑 使用者 2026-09-08:「攔下幾則不用記」—— 畫面不顯示計數。
+            //    後端照舊記(_downlink.held 與系統日誌),那是稽核要用的,
+            //    只是值班畫面上這個數字沒有意義:重點是模式,不是次數。
             if (sigDlPolicy.value === 'hold_5f10')
-                return '已攔下 ' + (d.held || 0) + ' 則 · 中央該則收不到 ACK';
+                return '中央改回定時的命令不轉給控制器';
             return '中央改回定時就留住';
         });
         const sigDynBusy = ref(false);
@@ -25294,22 +25296,26 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             const ours = ev.ours || {};
             const algo = ours.algorithm, renew = ours.renew;
             const fresh = (o) => o && o.age_sec != null && o.age_sec <= 120;
-            let who = '無下發 —— 路口在跑控制器內建時制', whoCls = 'idle';
+            // 🛑 結論這一行用**最精簡**的說法(使用者 2026-09-08)。
+            //    「持有授權」與「已在送換相」的差別不放進結論句 —— 兩者都是
+            //    我方在控,值班的人第一眼要的是這個。細節在下面那行「實際下發」
+            //    講(送了幾次、幾秒前),不重複塞進標題。
+            let who = '控制器內建時制', whoCls = 'idle';
             if (fresh(algo)) {
-                who = '我方動態號誌演算法正在下發';
+                who = '動態號誌分析器控制中';
                 whoCls = 'ours';
                 send = '我方 5F1C 換相 ' + ((algo.by_code || {})['5F1C'] || 0) + ' 次'
                      + (fresh(renew) ? ' · 5F10 續約 ' + renew.count + ' 次' : '')
                      + ' · 最近 ' + Math.round(algo.age_sec) + ' 秒前';
                 cls = 'live';
             } else if (fresh(renew)) {
-                who = '我方持有時相控制授權(續約中),尚未送出換相命令';
+                who = '動態號誌分析器控制中';
                 whoCls = 'ours';
                 send = '我方 5F10 續約 ' + renew.count + ' 次 · 最近 '
                      + Math.round(renew.age_sec) + ' 秒前' + (c1c ? ' · ' + send : '');
                 cls = 'live';
             } else if (cls === 'live') {
-                who = '外部系統正在下發控制(非我方)';
+                who = '外部系統控制中';
                 whoCls = 'ext';
             }
             const st = ev.strategy_stable, n = ev.strategy_samples || 0;
@@ -25336,15 +25342,14 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         const sigLedCtl = computed(() => {
             const w = sigCtlWay.value || {};
             if (w.whoCls === 'ours') {
-                const sending = (sigFc.value || {}).sent > 0;
                 return {
                     cls: 'ok',
-                    text: sending ? '我方演算法控制中' : '我方持有授權',
-                    tip: w.send || '我方正在下發控制命令給號誌機',
+                    text: '動態號誌分析器控制中',
+                    tip: w.send || '我方持有時相控制授權並依決策下發',
                 };
             }
             if (w.whoCls === 'ext') {
-                return {cls: 'warn', text: '外部系統下發中',
+                return {cls: 'warn', text: '外部系統控制中',
                         tip: '有人在下發,但不是我方 —— ' + (w.send || '')};
             }
             return {cls: 'warn', text: '未下發控制',
