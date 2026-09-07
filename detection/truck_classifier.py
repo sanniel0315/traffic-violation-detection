@@ -56,10 +56,11 @@ MIN_CROP_PX = int(os.getenv("TRUCK_CLS_MIN_CROP_PX", "48") or 0)
 # 留出驗證:小貨 F1 67.1%→74.1%、大小貨巨平均 recall 78.0%→84.2%,整體也從
 # 94.9% 升到 95.4% —— 兩邊同時變好,不是取捨。
 ARBITER_MIN_CONF = float(os.getenv("TRUCK_CLS_ARBITER_MIN_CONF", "0.99"))
-# 主模型判定前把 light 機率乘上這個倍率(>1 = 較願意判小貨)。
-# 現行判定偏保守(小貨 precision 82.6% 遠高於 recall 71.4%),不在最佳工作點。
-# 留出驗證 alpha=2.0 再多拿 +1.9pp 小貨 F1、+2.6pp 巨平均 recall。
-LIGHT_BIAS = float(os.getenv("TRUCK_CLS_LIGHT_BIAS", "2.0"))
+# 🛑 別再試「把 light 機率乘一個倍率來偏向判小貨」——離線掃參數看起來有 +1.9pp,
+#    但那是純 argmax 的算法,沒模擬 conf_threshold。實際上 bias 只會在
+#    heavy 機率 > light 機率時翻轉,而那必然代表 light < 0.5 = conf_threshold,
+#    翻轉後一律被門檻擋掉變「未知」。它只會把「判大貨」變成「判不出來」。
+#    要讓它生效就得回傳放大後的信心,那等於偷偷放寬信心門檻,更糟。
 
 
 class TruckClassifier:
@@ -196,9 +197,8 @@ class TruckClassifier:
             return self._default_result()
 
         if self.primary is not None:
-            # 主模型先判(light 機率乘 LIGHT_BIAS 後才取 argmax,見上方工作點說明)
-            class_name, top1_conf = self._infer(self.primary, self.primary_names, crop, "truck_cls",
-                                                light_bias=LIGHT_BIAS)
+            # 主模型先判
+            class_name, top1_conf = self._infer(self.primary, self.primary_names, crop, "truck_cls")
             # 🛑 只有主模型判「小貨」時才叫仲裁 —— 這是把成本從 5.4% 壓到 0.9% 的關鍵。
             #    主模型判其他三類時實測都比現行模型好,不需要也不該去問第二顆。
             if class_name == "light_truck":
@@ -229,6 +229,7 @@ class TruckClassifier:
 
     def _infer(self, model, names, crop, tag: str):
         """跑一顆模型,回 (class_name, conf);失敗回 (None, 0.0)。
+
 
         過 process-wide GPU lock 避免跟其他 detector 並發踩到 CUDA stream race。
         這裡通常巢狀在 VehicleDetector.detect 的 lock 內,時間會被算進 detection,

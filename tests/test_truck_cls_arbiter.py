@@ -13,6 +13,7 @@
 import sys
 import types
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -21,9 +22,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 class _Probs:
-    def __init__(self, top1, conf):
+    def __init__(self, top1, conf, n=4):
         self.top1 = top1
         self.top1conf = types.SimpleNamespace(item=lambda: conf)
+        # LIGHT_BIAS != 1 時 _infer 會走機率向量路徑,假模型也要提供 data
+        vec = [(1.0 - conf) / (n - 1)] * n
+        vec[top1] = conf
+        self.data = types.SimpleNamespace(tolist=lambda: list(vec))
 
 
 class _Result:
@@ -98,13 +103,13 @@ def test_主模型判小客車時不呼叫仲裁():
 def test_主模型判小貨而仲裁判大貨時改判大貨():
     """這就是規則 A 修掉的那一格(246 條中真值 226 條是大貨)。"""
     primary = _FakeModel(NAMES, top1=2)      # light_truck
-    arbiter = _FakeModel(NAMES, top1=1, conf=0.88)   # heavy_truck
+    arbiter = _FakeModel(NAMES, top1=1, conf=0.995)  # heavy_truck(要 >= ARBITER_MIN_CONF)
     obj = _make(primary, arbiter)
 
     res = obj.classify(_frame(), _bbox())
 
     assert res["class_name"] == "heavy_truck"
-    assert res["confidence"] == pytest.approx(0.88)
+    assert res["confidence"] == pytest.approx(0.995)
     assert arbiter.calls == 1
 
 
@@ -129,20 +134,69 @@ def test_沒有主模型時行為與啟用前相同():
 def test_兩顆模型類別順序不同時各用各的映射():
     """共用 class_names 會把類別對錯 —— 這是最容易靜默出錯的地方。"""
     primary = _FakeModel(NAMES_ALT, top1=0)          # NAMES_ALT[0] = light_truck
-    arbiter = _FakeModel(NAMES, top1=1, conf=0.77)   # NAMES[1]     = heavy_truck
+    arbiter = _FakeModel(NAMES, top1=1, conf=0.995)  # NAMES[1] = heavy_truck
     obj = _make(primary, arbiter)
 
     res = obj.classify(_frame(), _bbox())
 
     # 主模型判小貨(用 NAMES_ALT)→ 仲裁判大貨(用 NAMES)→ 改判大貨
     assert res["class_name"] == "heavy_truck"
-    assert res["confidence"] == pytest.approx(0.77)
+    assert res["confidence"] == pytest.approx(0.995)
 
 
-def test_仲裁結果信心不足時回未知():
-    """門檻要套用在最終採用的那個答案上。"""
-    primary = _FakeModel(NAMES, top1=2)
-    arbiter = _FakeModel(NAMES, top1=1, conf=0.3)    # 低於 0.5
+def test_主模型信心不足時回未知():
+    """conf_threshold 要套用在最終採用的那個答案上。"""
+    primary = _FakeModel(NAMES, top1=2, conf=0.3)    # 低於 conf_threshold 0.5
+    arbiter = _FakeModel(NAMES, top1=3)              # 非大貨,不推翻
     obj = _make(primary, arbiter)
 
     assert obj.classify(_frame(), _bbox())["class_name"] == "unknown"
+
+
+# ── 判定工作點(2026-09-07 留半驗證後加)────────────────────────────────
+class _ProbModel:
+    """回傳指定機率向量的假模型(names 依 index 對應)。"""
+
+    def __init__(self, names, probs, calls=None):
+        self.names = names
+        self._p = probs
+        self.calls = 0
+
+    def predict(self, **kwargs):
+        self.calls += 1
+        pr = types.SimpleNamespace(
+            top1=max(range(len(self._p)), key=lambda i: self._p[i]),
+            top1conf=types.SimpleNamespace(item=lambda: max(self._p)),
+            data=types.SimpleNamespace(tolist=lambda: list(self._p)),
+        )
+        return [types.SimpleNamespace(probs=pr)]
+
+
+def test_仲裁信心不足時不推翻():
+    """舊行為只要 argmax 是大貨就推翻,會誤殺真小貨(留出驗證小貨 F1 67.1%→74.1%)。"""
+    from detection import truck_classifier as TC
+
+    primary = _ProbModel(NAMES, [0.0, 0.30, 0.70, 0.0])   # light
+    arbiter = _ProbModel(NAMES, [0.0, 0.55, 0.45, 0.0])   # heavy 但只有 0.55
+    obj = _make(primary, arbiter)
+    with mock.patch.object(TC, "ARBITER_MIN_CONF", 0.99):
+        res = obj.classify(_frame(), _bbox())
+    assert res["class_name"] == "light_truck", "仲裁沒把握就不該推翻"
+    assert arbiter.calls == 1, "仍要問仲裁(要拿到它的信心才能判斷)"
+
+
+def test_仲裁高信心時才推翻():
+    from detection import truck_classifier as TC
+
+    primary = _ProbModel(NAMES, [0.0, 0.30, 0.70, 0.0])
+    arbiter = _ProbModel(NAMES, [0.0, 0.995, 0.005, 0.0])
+    obj = _make(primary, arbiter)
+    with mock.patch.object(TC, "ARBITER_MIN_CONF", 0.99):
+        res = obj.classify(_frame(), _bbox())
+    assert res["class_name"] == "heavy_truck"
+
+
+# 🛑 曾經加過 LIGHT_BIAS(把 light 機率乘倍率偏向判小貨),已移除。
+# 原因:bias 只在 heavy 機率 > light 時翻轉,那必然代表 light < 0.5 = conf_threshold,
+# 翻轉後一律被門檻擋成「未知」—— 只會把「判大貨」變成「判不出來」。
+# 離線掃參數看到的 +1.9pp 是假的(那個算法沒模擬 conf_threshold)。詳見該檔註解。
