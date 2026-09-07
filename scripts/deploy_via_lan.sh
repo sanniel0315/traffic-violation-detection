@@ -97,12 +97,17 @@ echo "$CHANGED" | sed 's/^/   /'
 #    控制模式判讀空白了六天。這裡的比對規則必須與 workflow 同步。
 RESTART_SIGNAL=0
 RESTART_IO=0
+RESTART_HLS=0
 echo "$CHANGED" | grep -qE '^(services/signal_daemon\.py|api/routes/signal_tc3\.py|detection/signal_timing_lookup\.py|config/tc3/|config/system/ramp_timing_baseline\.json)' && RESTART_SIGNAL=1
 echo "$CHANGED" | grep -qE '^(services/io_(daemon|service)\.py|api/routes/(lock|io)_?.*\.py|api/utils/door_state\.py)' && RESTART_IO=1
+# 🛑 traffic-hls-remote(單元名不是 traffic-remote-hls)跑的就是 services/remote_hls.py。
+#    不列進來的話改了不會生效 —— 就是「改完六天沒生效」那個坑。
+echo "$CHANGED" | grep -qE '^services/remote_hls\.py' && RESTART_HLS=1
 say "將重啟的服務"
 info "traffic-api      是(一律重啟)"
 info "traffic-signal   $([ $RESTART_SIGNAL -eq 1 ] && echo '是(號誌抄錄相關檔案有變動)' || echo '否(無相關變動,避免中斷抄錄)')"
 info "traffic-io       $([ $RESTART_IO -eq 1 ] && echo '是(IO/電子鎖相關檔案有變動)' || echo '否(無相關變動)')"
+info "traffic-hls-remote $([ $RESTART_HLS -eq 1 ] && echo '是(remote_hls.py 有變動)' || echo '否(無相關變動)')"
 
 if [ "$DRY" -eq 1 ]; then
   printf '\n\033[33m--dry-run:到此為止,現場沒有被改動。\033[0m\n'
@@ -121,7 +126,7 @@ info "已送達 $HOST:/tmp/deploy.bundle"
 # ── 5) 在現場套用 ─────────────────────────────────────────────────
 say "現場套用"
 ssh "${SSH_OPTS[@]}" "$USER_AT@$HOST" \
-    "REMOTE_DIR='$REMOTE_DIR' BRANCH='$BRANCH' RESTART_SIGNAL=$RESTART_SIGNAL RESTART_IO=$RESTART_IO bash -s" <<'REMOTE_SCRIPT'
+    "REMOTE_DIR='$REMOTE_DIR' BRANCH='$BRANCH' RESTART_SIGNAL=$RESTART_SIGNAL RESTART_IO=$RESTART_IO RESTART_HLS=$RESTART_HLS bash -s" <<'REMOTE_SCRIPT'
 set -euo pipefail
 cd "$REMOTE_DIR"
 BEFORE=$(git rev-parse --short HEAD)
@@ -150,6 +155,10 @@ fi
 if [ "$RESTART_IO" = "1" ]; then
   echo "   重啟 traffic-io"
   sudo -n systemctl restart traffic-io.service || echo "   ⚠ traffic-io 重啟失敗,請人工確認"
+fi
+if [ "$RESTART_HLS" = "1" ]; then
+  echo "   重啟 traffic-hls-remote"
+  sudo -n systemctl restart traffic-hls-remote.service || echo "   ⚠ traffic-hls-remote 重啟失敗,請人工確認"
 fi
 rm -f /tmp/deploy.bundle
 REMOTE_SCRIPT

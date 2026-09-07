@@ -250,6 +250,17 @@ jobs:
             echo "traffic-io: 無相關變動,不重啟"
           fi
 
+          # 🛑 traffic-hls-remote(單元名不是 traffic-remote-hls —— 2026-09-07 因為
+          #    猜錯名字,一度把它誤判成「沒人管的孤兒行程」)跑的就是
+          #    services/remote_hls.py。不列進來的話改了不會生效,
+          #    又是上面那個「改完沒生效」的坑。
+          if echo "$CHANGED" | grep -qE '^services/remote_hls\.py'; then
+            echo "=== restart traffic-hls-remote (remote_hls.py 有變動) ==="
+            sudo -n systemctl restart traffic-hls-remote.service ||               echo "::warning::traffic-hls-remote 重啟失敗,請人工確認"
+          else
+            echo "traffic-hls-remote: 無相關變動,不重啟"
+          fi
+
           sleep 6
           echo "=== verify deployed version ==="
           for i in $(seq 1 20); do

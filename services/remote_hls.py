@@ -100,6 +100,13 @@ def _repack_loop():
                     print(f"[remote_hls] {_src_name(cam)} 卡住 {int(time.time()-fresh)}s,砍掉重生", flush=True)
                     try:
                         p.kill()
+                        # 🛑 kill 之後一定要 wait,否則子行程變殭屍。
+                        #    2026-09-07 現場實測:系統上長期停著 4 個
+                        #    [ffmpeg] <defunct>,父行程就是這裡 —— 舊碼 kill 完
+                        #    直接把 Popen 物件丟掉(_procs[cam]=None),沒有人收屍。
+                        #    (Python 會在下次 Popen() 時順手回收,所以數量穩定在
+                        #     4 個不會無限長,但那是碰巧,不是這段程式做對了。)
+                        p.wait(timeout=5)
                     except Exception:
                         pass
                     p = _procs[cam] = None
