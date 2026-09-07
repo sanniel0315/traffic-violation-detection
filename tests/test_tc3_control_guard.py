@@ -180,6 +180,10 @@ def test_確認手動時自動降階L2(tc3, monkeypatch):
     掛在「已確認」的手動上,不是原始位元 —— 5F10 續約瞬間策略會閃過 05H,
     用原始位元判會每小時假降階十次(2026-09-03 教訓)。
     """
+    # 🛑 要驗的是「降階會擋」,所以前面兩道把關必須先放行,否則擋下來的是
+    #    CONTROL_ENABLED 而不是降階 —— 測試會過但驗錯了東西。
+    monkeypatch.setattr(tc3, "CONTROL_ENABLED", True)
+    monkeypatch.setattr(tc3, "CONTROL_QUERY_ONLY", False)
     old_dyn, old_safety = dict(tc3._dyn), dict(tc3._safety)
     try:
         tc3._dyn.update({"enabled": True, "level": "L0", "reason": ""})

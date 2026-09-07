@@ -3242,6 +3242,12 @@
            收折時把**互動元件**藏起來,狀態標籤留著當摘要 ——
            那正是收折後唯一該看的東西:這張卡現在正不正常。 */
         .card.is-folded > .card-header { border-bottom: none; padding-top: 9px; padding-bottom: 9px; }
+        /* 🛑 收折後只留**第一個**狀態標籤。2026-09-07 現場回報「每個卡片超亂」——
+           按鈕已經藏掉了,但多顆 tag 還排在一起:即時燈態 3 顆、命令覆蓋矩陣 3 顆、
+           號控下傳 3 顆,收起來就變成一長排彩色標籤,比展開還雜。
+           第一顆通常就是最重要的狀態(已連線/已抄到/通道已連線),其餘是細節,
+           要看就展開。 */
+        .card.is-folded > .card-header .el-tag ~ .el-tag { display: none !important; }
         .card.is-folded > .card-header .el-button,
         .card.is-folded > .card-header .el-switch,
         .card.is-folded > .card-header .el-input,
@@ -6877,7 +6883,7 @@
                                     <div class="ds-section-num ds-section-num--text">安全分數</div>
                                     <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">各路段安全分數 (0-100)</div>
                                 </div>
-                                <span style="font-size:12px;color:var(--gov-muted)">近 30 天</span>
+                                <span class="st-sub">近 30 天</span>
                             </div>
                             <div v-if="analyticsSafety.length" style="display:flex;flex-direction:column;gap:10px">
                                 <div v-for="s in analyticsSafety" :key="`sf-${s.camera_id}`"
@@ -6898,7 +6904,7 @@
                                     <div class="ds-section-num ds-section-num--text">違規熱點</div>
                                     <div style="font-size:15px;font-weight:700;color:var(--gov-text);margin-top:4px">違規熱點 top 10 (地點 × 時段 × 類型)</div>
                                 </div>
-                                <span style="font-size:12px;color:var(--gov-muted)">近 30 天</span>
+                                <span class="st-sub">近 30 天</span>
                             </div>
                             <!-- 24h heatmap strip — 從 hotspots hour 維度聚合,色階突顯尖峰時段 -->
                             <div v-if="analyticsHotspots.length" style="margin-bottom:12px">
@@ -6968,7 +6974,7 @@
                                     <el-select v-model="analyticsForecastCam" size="small" style="width:180px" @change="loadAnalytics">
                                         <el-option v-for="c in (cameras||[])" :key="`fc-cam-${c.id}`" :label="`${c.name} (cam_${c.id})`" :value="c.id"/>
                                     </el-select>
-                                    <span style="font-size:12px;color:var(--gov-muted)">peak {{ analyticsForecast.peak?.hour }}:00 ({{ analyticsForecast.peak?.count }})</span>
+                                    <span class="st-sub">peak {{ analyticsForecast.peak?.hour }}:00 ({{ analyticsForecast.peak?.count }})</span>
                                     <el-tag size="small" type="warning">下小時 {{ analyticsForecast.forecast?.next_hour }}:00 預測 {{ analyticsForecast.forecast?.predicted_count }} 車</el-tag>
                                 </div>
                             </div>
@@ -7626,7 +7632,7 @@
                                     </el-checkbox-group>
                                 </div>
                                 <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                                    <span style="font-size:12px;color:var(--gov-muted)">推播時段</span>
+                                    <span class="st-sub">推播時段</span>
                                     <input type="time" v-model="d.window.start" style="padding:3px 6px;border:1px solid var(--gov-border,#dce3ea);border-radius:6px">
                                     <span>~</span>
                                     <input type="time" v-model="d.window.end" style="padding:3px 6px;border:1px solid var(--gov-border,#dce3ea);border-radius:6px">
@@ -7721,7 +7727,7 @@
                             </div>
                             <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
                                 <el-switch v-model="sigAccIssuesOnly" size="small" active-text="只看待處理" inline-prompt></el-switch>
-                                <span style="font-size:12px;color:var(--gov-muted)">{{ sigAcc.note }}</span>
+                                <span class="st-sub">{{ sigAcc.note }}</span>
                             </div>
                         </div>
                     </div>
@@ -7959,9 +7965,7 @@
                         </div>
                         <div class="card-body">
                             <div class="analysis-setting-tip">
-                                🛑 綠燈長度是<b>區間量測</b>：真值落在 [量到值, 量到值+取樣週期)。
-                                下面的<b>綠燈平均</b>是已加回半個週期的估計值，括號內為實際量到的（偏低）。
-                                「低於最小綠」以上界判定並排除被斷點截斷的段 —— 只計入不容爭議的次數。
+                                綠燈長度為區間量測
                             </div>
                             <!-- 🛑 表格重整:
                                  (a) 數字欄的表頭也要右對齊 —— 原本 th 全部靠左、td 靠右,
@@ -8356,7 +8360,7 @@
                     <div class="card">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-activity"/></svg>控制時間軸</span>
-                            <span style="font-size:12px;color:var(--gov-muted)">{{ vzRangeText }}</span>
+                            <span class="st-sub">{{ vzRangeText }}</span>
                         </div>
                         <div class="card-body">
                             <div v-if="!vzData.available" class="analysis-setting-tip">{{ vzData.error||'這段時間沒有評估資料。' }}</div>
@@ -8447,8 +8451,7 @@
                         </div>
                         <div class="card-body">
                             <div class="analysis-setting-tip">
-                                每整點過 2 分自動算前一小時;當前這一小時標「進行中」。配對法用控制器 5F03 秒數;
-                                延滯為近似(停等延滯),排隊與通過為實測。change_cost 12.5 = 舊參數(假設飽和流 1800)。
+                                每整點算前一小時
                             </div>
                             <div class="sc-wrap">
                                 <table class="sc-table sc-table--stats">
@@ -10797,7 +10800,7 @@
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-history"/></svg>NVR 同步紀錄</span>
                             <div style="display:flex;gap:8px;align-items:center">
-                                <span style="font-size:12px;color:var(--gov-muted)">最近 {{ nvrSyncHistory.length }} 筆</span>
+                                <span class="st-sub">最近 {{ nvrSyncHistory.length }} 筆</span>
                                 <el-button size="small" plain @click="loadNvrSyncHistory"><svg class="text-icon"><use href="#i-refresh"/></svg>重新整理</el-button>
                             </div>
                         </div>
@@ -11779,16 +11782,16 @@
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-history"/></svg>NTP 同步紀錄</span>
                             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                                <span style="font-size:12px;color:var(--gov-muted)">{{ ntpQueryMode ? '查詢結果' : '最近' }} {{ ntpSyncHistory.length }} 筆</span>
+                                <span class="st-sub">{{ ntpQueryMode ? '查詢結果' : '最近' }} {{ ntpSyncHistory.length }} 筆</span>
                                 <el-button size="small" plain @click="loadNtpSyncHistory"><svg class="text-icon"><use href="#i-refresh"/></svg>重新整理</el-button>
                             </div>
                         </div>
                         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--gov-border);background:var(--gov-surface,#f8fafc)">
-                            <span style="font-size:12px;color:var(--gov-muted)">日期範圍</span>
+                            <span class="st-sub">日期範圍</span>
                             <input type="date" v-model="ntpFilter.dateFrom" class="stats-native-select" style="width:150px">
-                            <span style="font-size:12px;color:var(--gov-muted)">至</span>
+                            <span class="st-sub">至</span>
                             <input type="date" v-model="ntpFilter.dateTo" class="stats-native-select" style="width:150px">
-                            <span style="font-size:12px;color:var(--gov-muted)">層級</span>
+                            <span class="st-sub">層級</span>
                             <select v-model="ntpFilter.level" class="stats-native-select" style="width:110px">
                                 <option value="">全部</option>
                                 <option value="success">success</option>
@@ -11796,7 +11799,7 @@
                                 <option value="error">error</option>
                                 <option value="info">info</option>
                             </select>
-                            <span style="font-size:12px;color:var(--gov-muted)">筆數</span>
+                            <span class="st-sub">筆數</span>
                             <select v-model.number="ntpFilter.limit" class="stats-native-select" style="width:90px">
                                 <option :value="15">15</option>
                                 <option :value="50">50</option>
