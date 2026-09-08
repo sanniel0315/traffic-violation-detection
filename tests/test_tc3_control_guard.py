@@ -534,3 +534,22 @@ def test_控制策略位元表要八位元齊全(tc3):
     assert len(bits) == 8
     on = [b["bit"] for b in bits if b["on"]]
     assert on == [2, 4], "0x14 應該是 bit2 路口手動 + bit4 時相控制"
+
+
+def test_raw_模式下遮蔽位元仍須生效(tc3):
+    """🛑 2026-09-08 實際送錯上線路的 bug。
+
+    轉發的修改區塊條件原本是 (_mode != "raw" or _cab),所以 raw 模式下
+    **遮蔽位元被靜靜忽略** —— 現場切到 raw 之後中央又跳 I/O unit error,
+    因為 bit13 根本沒被遮掉,原封 0x6000 送出去、中央反讀成 0x0060。
+
+    遮蔽是獨立於位元組順序的設定,兩者不可以互相決定要不要套用。
+    """
+    import inspect
+    src = inspect.getsource(tc3._forward_controller_frame_to_center)
+    assert "or _msk" in src, "raw 模式下遮蔽位元又會被跳過"
+
+    # 純函式那一層本來就對,順便釘住:raw + 遮蔽要真的遮掉
+    f = tc3._hw_for_center
+    assert f(0x6000, "raw", mask_out=0x2000) == 0x4000
+    assert f(0x6000, "swap", mask_out=0x2000) == 0x0040
