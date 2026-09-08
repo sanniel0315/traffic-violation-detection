@@ -105,6 +105,10 @@ class Decision:
     change_cost: float = 0.0         # 換相成本(車·秒),切一次要付的代價
     forced_by_max_green: bool = False
     blocked_by_priority: bool = False # 因主線保護而不切
+    # 這一輪是**哪一關**決定的:min_green / max_green / priority / cost。
+    # 🛑 沒有這個欄位的話,畫面只能拿 threshold 去解釋每一種判定 —— 但前三關
+    #    根本沒有比較成本,把門檻印成「決策依據」是錯的(2026-09-08 抓到)。
+    decided_by: str = "cost"
     green_phase: Optional[int] = None
     green_elapsed: float = 0.0
     detail: dict = field(default_factory=dict)
@@ -164,6 +168,18 @@ def decide(
     # 換相成本 = 換相損失時間 × 飽和流(這段時間誰都不能走)
     change_cost = lost_time_sec * sat_per_sec * lost_time_sec
 
+    # 🛑 門檻在**四道關卡之前**就算好,並且四種判定都帶著它。
+    #    以前只有走到第④關才寫進 detail,提早返回的那三種就退回用
+    #    「keep_gain + change_cost」(沒乘 keep_weight)—— 畫面上顯示的門檻
+    #    因此與 keep_weight=3.0 對不起來,稽核時無法解釋(2026-09-08 抓到)。
+    #    現在無論走哪一關,detail["threshold"] 都是引擎真正的門檻;
+    #    「這一輪有沒有真的用到它」由 decided_by 表示,不靠數字本身暗示。
+    kw = keep_weight
+    if red_side.priority and priority_keep_weight is not None:
+        kw = float(priority_keep_weight)
+    weighted_keep = keep_gain * kw
+    threshold = weighted_keep + change_cost
+
     d = Decision(action="KEEP",
                  switch_gain=round(switch_gain, 2),
                  keep_gain=round(keep_gain, 2),
@@ -175,12 +191,18 @@ def decide(
                          "green_demand": round(green_demand, 2),
                          "green_remain": round(green_remain, 2),
                          "stranded_arrivals": round(stranded_arrivals, 2),
-                         "discharged": round(discharged, 2)})
+                         "discharged": round(discharged, 2),
+                         "keep_weight": kw,
+                         "keep_gain_weighted": round(weighted_keep, 2),
+                         "threshold": round(threshold, 2)})
+    if red_side.priority and priority_keep_weight is not None:
+        d.detail["priority_red"] = True
 
     # ① min-green 未滿 → 一律不可切
     if green_elapsed_sec < min_green_sec:
         d.action = "KEEP"
         d.reason = f"未滿最小綠 {min_green_sec:.0f}s(已亮 {green_elapsed_sec:.0f}s)"
+        d.decided_by = "min_green"
         return d
 
     # ② max-green 到頂 → 強制切(即使綠燈側還有需求)
@@ -188,6 +210,7 @@ def decide(
         d.action = "SWITCH"
         d.forced_by_max_green = True
         d.reason = f"已達最大綠 {max_green_sec:.0f}s,強制切換"
+        d.decided_by = "max_green"
         return d
 
     # ③ 主線保護:綠燈側是優先相且排隊逼近儲車上限 → 不可切走
@@ -198,6 +221,7 @@ def decide(
         d.blocked_by_priority = True
         d.reason = (f"主線保護:分相{green_side.phase_no}排隊已達儲車上限 "
                     f"{gsr*100:.0f}%,不切走")
+        d.decided_by = "priority"
         return d
 
     # ④ 一般規則:切換效益 > 保持效益 + 換相成本 → 才值得切
@@ -210,15 +234,6 @@ def decide(
     #    整體延滯變差。這裡只改「紅側是優先相」這一種情況,其餘完全不變。
     # 🛑 這個值**沒有**經過 keep_weight 那樣的驗證,是為了現場要求
     #    (2026-09-08「下匝道要放多點,很塞」)加的旋鈕,要用實測回頭驗證。
-    kw = keep_weight
-    if red_side.priority and priority_keep_weight is not None:
-        kw = float(priority_keep_weight)
-        d.detail["priority_red"] = True
-    weighted_keep = keep_gain * kw
-    threshold = weighted_keep + change_cost
-    d.detail["keep_weight"] = kw
-    d.detail["keep_gain_weighted"] = round(weighted_keep, 2)
-    d.detail["threshold"] = round(threshold, 2)
     w = "" if kw == 1.0 else f"×{kw:g}"
     if switch_gain > threshold:
         d.action = "SWITCH"

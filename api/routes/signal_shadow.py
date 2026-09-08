@@ -1782,10 +1782,18 @@ async def shadow_plan(_user=Depends(get_current_user)):
             #    兩個數字互相矛盾,看的人無法判斷哪個才是決策依據。
             #    引擎的真正門檻是 keep_gain×keep_weight + change_cost
             #    (signal_decision_engine.py 的 weighted_keep),以它為準。
-            "threshold": d.detail.get("threshold",
-                                      round(d.keep_gain + d.change_cost, 2)),
-            "margin": round(d.switch_gain - float(
-                d.detail.get("threshold", d.keep_gain + d.change_cost)), 2),
+            # 🛑 2026-09-08 再修:那個 fallback(沒乘 keep_weight)其實還活著 ——
+            #    引擎提早返回(未滿最小綠/最大綠/主線保護)時不寫 threshold,
+            #    畫面就退回顯示 keep_gain+change_cost。現場實測撈到
+            #    keep_gain 156.25 + 5.48 = 門檻 161.73,但同一頁的
+            #    keep_weight 標 3.0,兩者對不起來,稽核時無法解釋。
+            #    現在引擎四種判定都帶同一個門檻,fallback 直接拿掉。
+            "threshold": d.detail["threshold"],
+            "margin": round(d.switch_gain - float(d.detail["threshold"]), 2),
+            # 這一輪由哪一關決定。前三關沒有比較成本,門檻只是「當時的參考值」,
+            # 畫面要據此標示,不可以印成決策依據。
+            "decided_by": d.decided_by,
+            "threshold_used": d.decided_by == "cost",
             **d.detail,
         },
         "constants": {

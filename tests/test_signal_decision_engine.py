@@ -203,3 +203,56 @@ def test_green_side_flow_counts_even_when_queue_cleared():
                        red_side=ApproachState(2, queue_m=60.0, waiting_sec=60.0),
                        **common)
     assert heavy_red.action == "SWITCH"
+
+
+# ── 提早返回的三關也要帶「引擎真正的門檻」 ─────────────────────────────
+# 🛑 2026-09-08 現場抓到:未滿最小綠時 /plan 顯示門檻 161.73
+#    (= keep_gain 156.25 + change_cost 5.48,**沒乘** keep_weight),
+#    但同一頁的 keep_weight 標 3.0 —— 兩個數字對不起來,稽核時無法解釋。
+#    原因是引擎只在第④關才寫 detail["threshold"],前三關由 API 用
+#    fallback 補一個算法不同的值。現在四關統一。
+
+def _mk(elapsed, **kw):
+    from detection.signal_decision_engine import decide, ApproachState
+    args = dict(
+        green_phase=2, green_elapsed_sec=elapsed,
+        green_side=ApproachState(2, queue_m=30, flow_vpm=15,
+                                 storage_m=600, priority=True),
+        red_side=ApproachState(1, queue_m=20, flow_vpm=8,
+                               storage_m=210, waiting_sec=elapsed),
+        min_green_sec=20, max_green_sec=100, saturation_vph=936,
+        meters_per_vehicle=6.12, lost_time_sec=5, keep_weight=3.0)
+    args.update(kw)
+    return decide(**args)
+
+
+def test_threshold_is_weighted_in_every_branch():
+    """四種判定的 threshold 都必須 = keep_gain×keep_weight + change_cost。"""
+    for d in (_mk(5),                                   # 未滿最小綠
+              _mk(120),                                 # 最大綠
+              _mk(50)):                                 # 走到成本比較
+        want = round(d.keep_gain * d.detail["keep_weight"] + d.change_cost, 2)
+        assert d.detail["threshold"] == want, (d.decided_by, d.detail)
+
+
+def test_decided_by_marks_which_gate_fired():
+    assert _mk(5).decided_by == "min_green"
+    assert _mk(120).decided_by == "max_green"
+    assert _mk(50).decided_by == "cost"
+    # 主線保護:綠側是優先相且排隊逼近上限
+    from detection.signal_decision_engine import ApproachState
+    d = _mk(50, green_side=ApproachState(2, queue_m=500, flow_vpm=15,
+                                         storage_m=600, priority=True))
+    assert d.decided_by == "priority" and d.blocked_by_priority
+
+
+def test_priority_keep_weight_applies_before_early_return():
+    """紅側是優先相時的替代權重,提早返回的那幾關也要反映出來。"""
+    d = _mk(5, red_side=__import__(
+        "detection.signal_decision_engine", fromlist=["ApproachState"]
+    ).ApproachState(1, queue_m=20, flow_vpm=8, storage_m=210,
+                    waiting_sec=5, priority=True),
+        priority_keep_weight=2.0)
+    assert d.decided_by == "min_green"
+    assert d.detail["keep_weight"] == 2.0
+    assert d.detail["priority_red"] is True
