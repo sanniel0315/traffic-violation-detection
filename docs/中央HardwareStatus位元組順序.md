@@ -1,8 +1,8 @@
 # 中央端 HardwareStatus 位元組順序不一致（含 swap 補償）
 
 **站點**：國道8號新市交流道（東向） **日期**：2026-09-08
-**狀態**：2026-09-08 17:34 定案 `hwstatus-mode = raw` ＋ 遮蔽 bit13
-（先前一度用 `swap`，在查出「兩條路徑」之後改回，理由見下）
+**狀態**：2026-09-08 18:01 定案 `hwstatus-mode = swap` ＋ 遮蔽 bit13
+（以中央端 XML 端點實測驗證，`eq_hw_status` 為空）
 
 ---
 
@@ -41,19 +41,29 @@
 這也解釋了 2026-09-07 那個一直對不上的舊實測：當時送 `0x4000` 中央顯示「正常」——
 那是**就緒旗標路徑**（正常讀 bit14）給的結論，與告警名稱路徑無關。
 
-### 定案：`raw` ＋ 遮蔽 bit13
+### 定案：`swap` ＋ 遮蔽 bit13
+
+以中央端的 XML 端點**實際量測**，同一個路口、相隔一分鐘：
 
 ```
-raw   就緒旗標正常(故障燈不亮)，代價是告警欄固定一個假的
-      SIGNAL_DRIVER_UNIT_ERROR
-swap  告警名稱乾淨，代價是「沒有代碼的故障」
+18:00:00  raw   → eq_hw_status="SIGNAL_DRIVER_UNIT_ERROR"  eq_comm_status="0"
+18:01:00  swap  → eq_hw_status=""                          eq_comm_status="0"
 ```
 
-選 `raw`：**假告警有代碼、可辨識、文件說得清楚**；
-而「沒有代碼的故障」維運上最難處理 —— 沒人知道要查什麼。
+**`swap` 在這份 XML 上完全乾淨，沒有代價。**
 
-🛑 這是在兩個都不對的選項裡挑代價較小的，**不是修好了**。
-   正解仍是中央端讓兩條路徑用同一種位元組順序（依協定應為 big-endian）。
+🛑 這推翻了本文件先前的推論。之前寫「`swap` 的代價是沒有代碼的故障」，
+那是根據現場口頭回報推的；而 XML 顯示 `swap` 時 `eq_comm_status="0"`、
+所有欄位皆空 —— **那個「有故障但沒代碼」不是來自這份 XML**，
+是中央畫面上的其他東西（很可能是 `hold_5f10` 攔截造成的命令逾時，
+當時實測每 5 秒攔一次）。兩件事被混在一起推論，導致一度選了 `raw`。
+
+**教訓**：有機器可讀的原始欄位就不要靠轉述推論。
+`http://10.105.6.73/api/smg/r24a/device/scmXMLData.xmL` 每分鐘更新一次，
+往後任何位元組相關的判斷都以它為準。
+
+正解仍是中央端讓兩條路徑用同一種位元組順序（依協定應為 big-endian）；
+在那之前 `swap` 讓告警欄維持乾淨。
 
 ---
 
@@ -129,7 +139,7 @@ bit1、bit5、bit6 **從未為 1** —— 控制器未曾回報過那三項故�
 使用者 2026-09-08 決定：**「這個不是暫時，重啟都必須維持」**、**「固定這樣，不要動」**。
 
 ```
-hwstatus_mode = raw     純通透(2026-09-08 17:34 定案,先前為 swap)
+hwstatus_mode = swap    對調兩個位元組(2026-09-08 18:01 以中央 XML 實測定案)
 hwstatus_mask = 0x2000  遮掉 bit13(外部時相控制進行中)
 ```
 
@@ -139,14 +149,14 @@ hwstatus_mask = 0x2000  遮掉 bit13(外部時相控制進行中)
 
 ```json
 config/system/signal_conn.json
-{ ..., "hwstatus_mode": "raw", "hwstatus_mask": 8192 }
+{ ..., "hwstatus_mode": "swap", "hwstatus_mask": 8192 }
 ```
 
 **第二層 — systemd drop-in**（設定檔遺失或換機部署時兜底）
 
 ```
 /etc/systemd/system/traffic-signal.service.d/zz-hwmode.conf
-Environment=SIGNAL_TC3_HWSTATUS_MODE=raw
+Environment=SIGNAL_TC3_HWSTATUS_MODE=swap
 Environment=SIGNAL_TC3_HWSTATUS_MASK=8192
 ```
 
@@ -201,12 +211,15 @@ curl -X POST --cookie "tvd_session=$TOK" \
 
 正解是中央端讓**兩條路徑用同一種位元組順序**（依協定應為 big-endian）。
 
-修好之後：
+🛑 修好之後**必須同步切回 `raw`** —— 兩邊同時「修好」會再次錯開，方向相反。
+切換前後都用中央的 XML 端點量一次，不要靠畫面轉述：
 
-- 現行 `raw` 就是正確的，**不需要改** —— 這也是選 `raw` 的附帶好處：
-  中央修好的那一刻起，我方不必同步動作就自動正確。
-- `mask = 0x2000` 可以考慮拿掉，讓中央看得到「外部時相控制進行中」；
-  但要先確認中央不會把它當成異常在管理。
+```bash
+curl http://10.105.6.73/api/smg/r24a/device/scmXMLData.xmL
+```
+
+`mask = 0x2000` 可以考慮拿掉，讓中央看得到「外部時相控制進行中」；
+但要先確認中央不會把它當成異常在管理。
 
 驗證方式：關閉動態控制時 bit13 應熄滅、中央對應顯示同步變化；
 開啟機箱門時中央應顯示「機箱門開啟」而非「記憶體異常」。
@@ -288,6 +301,28 @@ if ((_mode != "raw" or _cab) and ...):   # raw 且機箱門關 → 整段跳過
 它有正確的順序，且執行期可一行切回 `raw`（不必重啟，下一框約 2 秒生效）。
 
 ---
+
+## 中央端資料來源（往後查證都用它）
+
+```
+http://10.105.6.73/api/smg/r24a/device/scmXMLData.xmL
+```
+
+```xml
+<file_attribute file_name="1min_sig_operation_data_center.xml"
+                control_center_id="40" time="2026-09-08 18:01:00">
+  <sig eqId="SIG-N8-E-9-L-E-1" eq_comm_status="0" eq_hw_status="" message=""/>
+```
+
+| 欄位 | 意義 |
+|---|---|
+| `eqId` | 中央對本路口的設備編號 `SIG-N8-E-9-L-E-1` |
+| `control_center_id` | `40` |
+| `eq_comm_status` | 通訊狀態，`0` = 正常 |
+| `eq_hw_status` | 硬體狀態告警名稱（空 = 無告警） |
+
+🛑 這是 **1 分鐘週期**的檔案，改值之後最多要等 60 秒才會反映。
+先前幾次「看起來沒反應」很可能就是沒等滿一個週期。
 
 ## 相關
 
