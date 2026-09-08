@@ -3079,12 +3079,21 @@ async def degrade_log(hours: int = Query(24, ge=1, le=720),
                 spans.append(open_span)
                 open_span = None
         else:
-            if open_span:                          # 降階中又升級(L2→L3)
+            if open_span:                          # 降階中又多一種故障(或 L2→L3)
+                # 🛑 2026-09-08 修:這裡原本更新 level 與 reason 卻**沒有更新 kind**,
+                #    所以同一段裡先後發生兩種故障時,類別停在第一次那一種、
+                #    原因卻換成最新那一種 —— 畫面出現「類別:指令傳輸錯誤 /
+                #    原因:偵測器故障…」自相矛盾,現場實際看到過。
+                #    kind 跟著 reason 走,並另外累計整段出現過的所有類別。
                 open_span["level"] = r["level"]
                 open_span["reason"] = r["reason"]
+                open_span["kind"] = r["kind"]
+                if r["kind"] and r["kind"] not in open_span["kinds"]:
+                    open_span["kinds"].append(r["kind"])
             else:
                 open_span = {"start": r["epoch"], "start_ts": r["ts"],
                              "level": r["level"], "kind": r["kind"],
+                             "kinds": [r["kind"]] if r["kind"] else [],
                              "reason": r["reason"], "end": None,
                              "duration_sec": None, "cleared_by": ""}
     if open_span:
