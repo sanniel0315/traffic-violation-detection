@@ -434,3 +434,15 @@ def test_啟動與失聯時要主動查控制策略(tc3):
         "啟動時與抄不到策略時都要主動查 5F40,不能只做一邊")
     # 「抄不到就不下命令」這個安全性質不可以被改掉
     assert 'isinstance(strat, int)' in src, "抄不到策略時仍必須跳過下發"
+
+
+def test_抄不到策略時不可睡滿一個續約週期(tc3):
+    """🛑 2026-09-08:探測逾時後,主迴圈送完 5F40 就睡滿 20 秒才用答案,
+    續約只剩 1 秒餘裕才趕上。查完要快點回頭看。
+    """
+    import inspect
+    src = inspect.getsource(tc3._auth_renew_loop)
+    assert "AUTH_PROBE_SEC" in src, "沒有短間隔重查"
+    assert src.count("AUTH_PROBE_SEC") >= 2, "啟動與主迴圈兩處都要用短間隔"
+    assert "continue" in src, "抄不到策略那一輪要 continue,不可掉到長 wait"
+    assert tc3.AUTH_PROBE_SEC < tc3.AUTH_RENEW_SEC, "重查間隔要短於續約週期"
