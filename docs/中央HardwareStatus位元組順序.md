@@ -39,8 +39,18 @@
 | 10:07–10:10 | `0x4020` | `0x2040` | SIGNAL_DRIVER_UNIT_ERROR、TIMING_PLAN_ON_TRANSITION | ✅ |
 | 12:15 | `0x4200` | `0x0042` | 記憶體異常、SIGNAL_DRIVER_UNIT_ERROR | ✅ |
 | 12:43 | `0x6200` | `0x0062` | 記憶體異常、I/O unit error、SIGNAL_DRIVER_UNIT_ERROR | ✅ |
+| **16:58** | **`0x4000`** | **`0x0040`** | **SIGNAL_DRIVER_UNIT_ERROR** | ✅ |
 
-四組值、四次預測全中。
+五組值、五次預測全中。
+
+### 2026-09-08 17:00 複驗：中央**仍然**反著讀
+
+當日曾短暫切到 `raw`，測中央是否已修正。結果中央顯示
+`SIGNAL_DRIVER_UNIT_ERROR` —— 正是 `0x4000` 反讀成 `0x0040`（bit6）的結果。
+**中央端未修正，`swap` 必須留著。** 17:02:53 已切回。
+
+> 先前推測「中央可能已修好」的旁證（15:38 起不再送 `5F10 01 00`）**不成立**，
+> 那與位元組順序無關。
 
 ## 我方為 big-endian 的依據
 
@@ -103,9 +113,17 @@ Environment=SIGNAL_TC3_HWSTATUS_MASK=8192
 執行期切換（立即生效，不必重啟）：
 
 ```bash
+# 只在執行期生效(預設) —— 臨時測試用,重啟會回到設定檔的值
 curl -X POST --cookie "tvd_session=$TOK" \
-  "http://127.0.0.1:8012/api/signal/control/hwstatus-mode?mode=swap"
+  ".../api/signal/control/hwstatus-mode?mode=swap&mask=8192"
+
+# 永久改(寫進設定檔) —— 要明確帶 persist=1
+curl -X POST --cookie "tvd_session=$TOK" \
+  ".../api/signal/control/hwstatus-mode?mode=swap&mask=8192&persist=1"
 ```
+
+🛑 `persist` 預設 **0**。臨時測試不該有能力改掉常設組態 —— 2026-09-08
+就是因為預設會落檔，一次「試一下」把鎖定的 `swap` 換成了 `raw`。
 
 模式：`raw`（純通透）/ `swap`（對調位元組）/ `flip14`（只翻 bit14，退路）/
 `zero`（全報正常）/ `force`（測試指定值）。`mask` 參數設定要遮掉的位元。
@@ -155,7 +173,7 @@ curl -X POST --cookie "tvd_session=$TOK" \
 | `api/routes/signal_tc3.py` `_hw_for_center()` | 純函式：依模式算出要送中央的值 |
 | 同檔 `_forward_controller_frame_to_center()` | 轉發時套用，改完用 `build_frame` 重算 CKS + byte stuffing |
 | 同檔 `_latest_hwstatus()` | 畫面顯示的「收 → 送」，與轉發共用同一支 |
-| `POST /api/signal/control/hwstatus-mode` | 執行期切換，非 force 模式會存檔 |
+| `POST /api/signal/control/hwstatus-mode` | 執行期切換；`persist=1` 才存檔（預設只在執行期生效） |
 | `tests/test_tc3_control_guard.py` | 逐模式驗實際送出值、可逆性、持久化 |
 
 改動只碰 `0F04` / `0FC1` 的那 2 個位元組，其餘所有訊息一律原封轉發；
@@ -187,7 +205,33 @@ curl -X POST --cookie "tvd_session=$TOK" \
 上面所有位元運算（機箱 bit9、flip14）都是在**我方的位元語意**下做的。
 先交換再設位元會設到錯的位置。
 
-**3. `force` 模式會被機箱位元污染**
+**3. `raw` 模式下遮蔽位元被靜靜忽略（曾送錯上線路）**
+
+轉發的修改區塊條件原本是：
+
+```python
+if ((_mode != "raw" or _cab) and ...):   # raw 且機箱門關 → 整段跳過
+```
+
+所以 `raw` 模式下 `mask` 完全沒作用，控制器的 `0x6000` 原封送出
+（`sent_hw=None`），中央反讀成 `0x0060` = `I/O unit error` + `SIGNAL_DRIVER`。
+
+**後果**：那次 `raw` 測試完全無效 —— 送出去的值根本不是以為的 `0x4000`，
+不能用來判斷中央改了讀法沒有。而且一度被誤判成「閂鎖的舊告警」。
+
+**教訓**：遮蔽是**獨立於位元組順序**的設定，兩者不可以互相決定要不要套用。
+條件已補 `or _msk`，並加測試釘住。
+
+**4. 模式切換會落檔，臨時測試覆蓋了鎖定值**
+
+現場說「試一下」，切到 `raw` 之後它**直接寫進 `signal_conn.json`**，
+覆蓋掉前一天才鎖定的 `swap` —— 一次臨時測試就把常設組態換掉，
+而且沒有任何地方提醒。
+
+**已改**：`persist` 預設 **0**（只在執行期生效），要永久改必須明確帶
+`persist=1`；回應會講清楚有沒有存檔、重啟後會回到哪個值。
+
+**5. `force` 模式會被機箱位元污染**
 
 `force` 之後仍會 OR 上機箱 bit9（在我方位元語意下），所以拿 `force` 當
 `swap` 的 dry run 會得到 `0x0262` 而不是 `0x0062`。要驗 `swap` 就直接開 `swap`，
