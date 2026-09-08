@@ -4145,6 +4145,23 @@
         .sig-head-wrap:active { cursor:grabbing; }
         .sig-head { position:relative; }
         .sig-head svg { display:block; overflow:visible; }
+        /* 🛑 2026-09-08 現場:「號誌 1、2 是分相2 的,線標跑到分相一」。
+           查證後燈↔分相的設定是對的,燈頭在圖上的位置是**概略**放的(使用者:
+           「位置距離沒差,位置差不多」),1、2 剛好落在分相1 那條線旁邊,
+           而圖上沒有任何東西說明它屬於哪一相 —— 看的人只能憑位置猜,猜錯就
+           以為標反了。這跟先前「兩條線沒有字」是同一類問題,解法一樣:把分相
+           直接寫在燈上,不要靠位置推。
+           🛑 標的是**分相**不是燈號。先前決定「不標燈號」仍然成立 ——
+              燈號只有維護在意,而分相是看圖的人現在真的需要的資訊。 */
+        .sig-head .sh-ph {
+            position:absolute; left:50%; transform:translateX(-50%);
+            top:-13px; padding:0 5px; border-radius:7px;
+            font:700 10px/13px system-ui,sans-serif; letter-spacing:.3px;
+            color:#fff; white-space:nowrap; pointer-events:none;
+            border:1px solid rgba(255,255,255,.85);
+        }
+        .sig-head .sh-ph.p1 { background:#2f6fd0; }
+        .sig-head .sh-ph.p2 { background:#8a4bd0; }
         .sig-head .sh-box { fill:#232830; stroke:#ffffff; stroke-width:1.6; }
         .sig-head circle { fill:#39404a; transition:fill .25s ease; }
         .sig-head.red   .sh-r { fill:#e8463a; filter:drop-shadow(0 0 5px rgba(232,70,58,.95)); }
@@ -25744,6 +25761,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                     // 用底部對齊反而會讓它整個浮到位置上方。
                     iconAnchor: [23, 11],
                     html: '<div class="sig-head ' + st + '">'
+                        + '<span class="sh-ph p' + ph + '">分相' + ph + '</span>'
                         + '<svg viewBox="0 0 46 22" width="46" height="22" aria-hidden="true">'
                         + '<rect x="1.2" y="1.2" width="43.6" height="19.6" rx="5" class="sh-box"/>'
                         + '<circle cx="11" cy="11" r="5.6" class="sh-r"/>'
