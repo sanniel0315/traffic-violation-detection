@@ -3939,29 +3939,6 @@
         .wr-sw-i em { font-style:normal; font-size:var(--fs-caption); color:var(--gov-muted); }
         .wr-sw-i em.warn { color:var(--gov-warn, #e8590c); font-weight:600; }
         .wr-sw-k { font-size:var(--fs-caption); color:var(--gov-mute-2); }
-        /* 遠端重開機:沿用系統既有的按鈕風格,不另外配色。
-           🛑 2026-09-08 兩次調整的紀錄,避免有人再改回去:
-              初版 el-button type=danger plain → 淡紅底配淡紅字,現場反映
-              「字看不清楚」;第二版改成實心紅底白字,現場再反映
-              「恢復系統風格,不要用紅色」。最終沿用系統中性按鈕,
-              危險性靠**確認框**表達(它會顯示實際碼框與目標位址),
-              不靠顏色。 */
-        .wr-sw-i .wr-reboot {
-            display:inline-flex; align-items:center; gap:6px;
-            height:28px; padding:0 12px; border-radius:6px;
-            background:var(--gov-surface,#fff);
-            border:1px solid var(--gov-border-strong,#c3ccd8);
-            color:var(--gov-text); font-size:var(--fs-caption); font-weight:600;
-            line-height:1; cursor:pointer;
-            transition:background .15s ease, border-color .15s ease;
-        }
-        .wr-sw-i .wr-reboot:hover:not(:disabled) {
-            background:var(--gov-bg-soft,#f1f5f9);
-            border-color:var(--gov-primary,#1f4e8c); }
-        .wr-sw-i .wr-reboot:active:not(:disabled) { background:var(--gov-border,#dbe2ea); }
-        .wr-sw-i .wr-reboot:disabled { opacity:.55; cursor:not-allowed; }
-        .wr-sw-i .wr-reboot svg { width:14px; height:14px; fill:currentColor; }
-        .wr-sw-i em.danger { color:var(--gov-mute-2); }
         /* 演算法下發的累計次數:開關旁邊直接看得到,不用滑鼠移上去 */
         .wr-sw-i .wr-actn {
             font-size:var(--fs-caption); font-weight:700; color:var(--gov-text);
@@ -8929,15 +8906,10 @@
                                              所以會先跳確認框,並把實際碼框與目標位址顯示出來再送。
                                              我方會自動站開(抄不到 5F03 → stale 閘門;策略不含時相
                                              控制 → 另一道),重開完 45 秒內續約自動取回授權。 -->
-                                        <button type="button" class="wr-reboot"
-                                                :disabled="sigRebootBusy"
-                                                @click="sigRemoteReboot">
-                                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                                                <path d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/>
-                                            </svg>
-                                            <span>{{ sigRebootBusy ? '送出中…' : '遠端重開機' }}</span>
-                                        </button>
-                                        <em class="danger">0F10 重開號誌控制器</em>
+                                        <el-button size="small" plain :loading="sigRebootBusy"
+                                                   @click="sigRemoteReboot"><svg class="text-icon"
+                                                   style="margin-right:4px"><use href="#i-refresh"/></svg>遠端重開機</el-button>
+                                        <em>0F10 重開號誌控制器</em>
                                     </span>
                                 </div>
                             </div>
