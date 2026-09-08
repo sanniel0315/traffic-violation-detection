@@ -981,7 +981,8 @@ def test_degrade_span_kind_follows_latest_fault(tmp_path, monkeypatch):
     S._degrade_persist("L2", "指令傳輸錯誤:連續 3 次未被接受", "transmit")
     S._degrade_persist("L3", "偵測器故障:分相 1、2 的排隊與流量都取不到", "detector")
 
-    out = asyncio.get_event_loop().run_until_complete(S.degrade_log(hours=24, _user=None))
+    out = asyncio.new_event_loop().run_until_complete(
+        S.degrade_log(hours=24, _user=None))
     sp = out["spans"][0]
     assert sp["duration_sec"] is None          # 仍在降階中 → 不是 0 秒
     assert sp["level"] == "L3"

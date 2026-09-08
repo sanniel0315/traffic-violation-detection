@@ -9193,10 +9193,11 @@
                         <div class="ds-kpi-card warn"><div class="ds-kpi-label">我方會早切</div><div class="ds-kpi-value">{{ vzPaired.earlier }}</div><div class="ds-kpi-hint">其中紅側有車 {{ vzPaired.earlier_meaningful }} · 平均早 {{ vzNum(vzPaired.delta_meaningful&&vzPaired.delta_meaningful.avg) }} 秒</div></div>
                         <div class="ds-kpi-card"><div class="ds-kpi-label">同時 / 續綠 / 晚切</div><div class="ds-kpi-value ds-kpi-value--text">{{ vzPaired.same }} / {{ vzPaired.hold }} / {{ vzPaired.later }}</div><div class="ds-kpi-hint">同時 = ±5 秒容忍;晚切必須 0</div></div>
                         <div class="ds-kpi-card ok"><div class="ds-kpi-label">有代價空放</div><div class="ds-kpi-value">{{ vzNum(vzPaired.waste_sec_total,0) }}<span style="font-size:14px;margin-left:4px">秒</span></div><div class="ds-kpi-hint">紅側有車時,我方判切到實際換相之間</div></div>
-                        <!-- 🛑 樣本鑑別力:沒有這張卡,「零早切」會被誤讀成成效。
-                             紅側沒車時零早切是理所當然的廢話;紅側有車卻仍零早切
-                             才是結論。兩者的畫面數字完全一樣,必須另外標出來。 -->
-                        <div class="ds-kpi-card" :class="vzPowerCls"><div class="ds-kpi-label">樣本鑑別力</div><div class="ds-kpi-value ds-kpi-value--text">{{ vzPower.runs_red_waiting==null?'—':(vzPower.runs_red_waiting+' / '+vzPower.runs) }}</div><div class="ds-kpi-hint">綠燈段中紅側有車在等的段數{{ vzPower.red_queue_avg_m==null?'':(' · 紅側平均排隊 '+vzPower.red_queue_avg_m+' m') }}</div></div>
+                        <!-- 🛑 2026-09-08 使用者拿掉「樣本鑑別力」這張卡。
+                             卡拿掉了,但上方那句警語**必須留著** —— 沒有它,
+                             「早切 0 / 空放 0 秒」會被讀成成效,而這批樣本其實是
+                             紅側根本沒車。後端 sample_power 照算不動(警語靠它),
+                             要恢復這張卡把 vzPower 那組欄位重畫即可。 -->
                     </div>
 
                     <div class="card">
