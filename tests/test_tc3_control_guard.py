@@ -417,3 +417,20 @@ def test_啟動後不可空等一個完整週期(tc3):
     assert "AUTH_FIRST_WAIT_SEC" in src, "啟動後沒有先探策略就直接進週期迴圈"
     # 探測迴圈要在主迴圈之前
     assert src.index("AUTH_FIRST_WAIT_SEC") < src.index("while not shutdown_event.is_set():\n        try:")
+
+
+def test_啟動與失聯時要主動查控制策略(tc3):
+    """🛑 2026-09-08 第二次失控的真正原因。
+
+    5F00/5FC0(控制策略)只有在中央輪詢 5F40 時才會出現,中央大約一分鐘問一次。
+    重啟後 _safety["strategy"] 有將近 60 秒是 None,續約迴圈整段跳過
+    (它刻意在抄不到策略時不下命令),授權就在這段空窗到期 → 路口退回定時控制。
+
+    等待治不好,要**自己去問**:啟動時查一次,主迴圈抄不到時每輪再查。
+    """
+    import inspect
+    src = inspect.getsource(tc3._auth_renew_loop)
+    assert src.count('_send_query_to_controller("5F40"') >= 2, (
+        "啟動時與抄不到策略時都要主動查 5F40,不能只做一邊")
+    # 「抄不到就不下命令」這個安全性質不可以被改掉
+    assert 'isinstance(strat, int)' in src, "抄不到策略時仍必須跳過下發"
