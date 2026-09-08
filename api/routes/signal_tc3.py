@@ -1235,7 +1235,14 @@ def _send_to_center(frame: bytes) -> bool:
 _downlink_policy = {"v": os.getenv("SIGNAL_TC3_DOWNLINK_POLICY", "pass")}
 DOWNLINK_POLICIES = ("pass", "log_only", "reassert", "hold_5f10")
 # 我方要維持的控制策略(bit4 時相控制)。reassert 只送這個值。
-REASSERT_STRATEGY = int(os.getenv("SIGNAL_TC3_REASSERT_STRATEGY", "16"))   # 0x10
+# 🛑 0x14 = bit4 時相控制 **+ bit2 路口手動**,不是只有 bit4。
+#    2026-09-08 現場回報「切不了路口手動」。原因:ControlStrategy 是**允許哪些
+#    控制來源**的遮罩,我方每 45 秒續約都寫 0x10(只允許時相控制)——
+#    等於每 45 秒把「允許路口手動」關掉一次。現場在控制箱切手動,最多撐 45 秒
+#    就被我方的續約清掉,操作員會覺得手動根本沒有作用。
+#    把 bit2 一起包進去之後,現場隨時切得動;我方仍持有 bit4,動態控制照跑。
+#    🛑 這不是「宣告現在是手動」,是「允許現場切手動」——兩件事不同。
+REASSERT_STRATEGY = int(os.getenv("SIGNAL_TC3_REASSERT_STRATEGY", "20"))   # 0x14
 REASSERT_EFFECT = int(os.getenv("SIGNAL_TC3_REASSERT_EFFECT", "1"))
 REASSERT_DELAY = float(os.getenv("SIGNAL_TC3_REASSERT_DELAY", "1.2"))
 _reassert = {"n": 0, "last": None, "last_error": ""}
@@ -1305,6 +1312,16 @@ def _do_reassert(kind: str = "重新宣告") -> None:
     try:
         if not (_dyn.get("enabled") and _dyn.get("level") == "L0"):
             return                      # 這 0.2 秒內被降階或關掉了就不要送
+        # 🛑 現場已經切走控制權時不要續約 —— 否則會跟操作員搶。
+        #    降階要 MANUAL_CONFIRM_SEC(8 秒)確認才成立,而續約每 45 秒一次;
+        #    若續約正好落在那 8 秒內,操作員的手動會在還沒被確認之前就被我方
+        #    寫回去,現場看到的就是「切了沒用」。這一道把那個競態關掉。
+        #    判定:控制器已清掉 bit4(不再是我方接管)且有任一手動位元 → 不送。
+        _cur = _safety.get("strategy")
+        if (isinstance(_cur, int) and not (_cur & _BIT_PHASE)
+                and (_cur & STRATEGY_MANUAL_MASK)):
+            _reassert["last_error"] = "現場/中央手動中,不續約(%s)" % _strategy_text(_cur)
+            return
         addr = _target_addr()
         if addr is None:
             _reassert["last_error"] = "沒有目標位址"

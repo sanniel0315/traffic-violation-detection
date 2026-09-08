@@ -201,3 +201,38 @@ def test_確認手動時自動降階L2(tc3, monkeypatch):
     finally:
         tc3._dyn.update(old_dyn)
         tc3._safety.update(old_safety)
+
+
+def test_續約策略必須包含路口手動位元(tc3):
+    """🛑 2026-09-08 現場:「切不了路口手動」。
+
+    ControlStrategy 是「允許哪些控制來源」的遮罩。我方每 45 秒送一次
+    5F10 續約,若只寫 bit4(0x10),等於每 45 秒把「允許路口手動」關掉一次 ——
+    現場在控制箱切手動,最多撐 45 秒就被清掉,操作員會以為手動壞了。
+    現場必須永遠切得動手動,所以續約值一定要含 bit2。
+    """
+    assert tc3.REASSERT_STRATEGY & tc3._BIT_PHASE, "續約必須保有時相控制 bit4"
+    assert tc3.REASSERT_STRATEGY & tc3._BIT_ROADSIDE, \
+        "續約必須一併允許路口手動 bit2,否則現場切不了手動"
+
+
+def test_現場已切手動時不再續約(tc3, monkeypatch):
+    """降階要 8 秒確認,續約每 45 秒一次 —— 若續約落在那 8 秒內,
+    操作員的手動會在被確認之前就被我方寫回去。這一道把競態關掉。
+    """
+    sent = []
+    monkeypatch.setattr(tc3, "_controller_send", lambda f: sent.append(f) or True)
+    monkeypatch.setattr(tc3, "_target_addr", lambda: 0x0001)
+    monkeypatch.setitem(tc3._dyn, "enabled", True)
+    monkeypatch.setitem(tc3._dyn, "level", "L0")
+
+    # 控制器已清掉 bit4、亮起路口手動 → 不可以再送 5F10
+    monkeypatch.setitem(tc3._safety, "strategy", tc3._BIT_ROADSIDE | tc3._BIT_FIXTIME)
+    tc3._do_reassert(kind="續約")
+    assert sent == [], "現場手動中卻仍送出續約,會把操作員的手動蓋掉"
+    assert "手動" in tc3._reassert["last_error"]
+
+    # 我方仍持有 bit4(時相控制中)→ 照常續約
+    monkeypatch.setitem(tc3._safety, "strategy", tc3._BIT_PHASE)
+    tc3._do_reassert(kind="續約")
+    assert len(sent) == 1, "正常情況下應該要續約"
