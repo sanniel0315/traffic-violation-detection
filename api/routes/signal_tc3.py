@@ -73,6 +73,8 @@ def _load_conn_config() -> None:
                     _conn["center_relay"] = bool(d.get("center_relay"))
                 if "safety_push" in d:
                     _conn["safety_push"] = bool(d.get("safety_push"))
+                if "dynamic_control" in d:
+                    _conn["dynamic_control"] = bool(d.get("dynamic_control"))
     except Exception as exc:
         print(f"[signal_tc3] 讀連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
 
@@ -84,7 +86,8 @@ def _save_conn_config() -> None:
             json.dump({"host": _conn["host"], "port": _conn["port"],
                        "enabled": _conn["enabled"],
                        "center_relay": bool(_conn.get("center_relay")),
-                       "safety_push": bool(_conn.get("safety_push", True))},
+                       "safety_push": bool(_conn.get("safety_push", True)),
+                       "dynamic_control": bool(_conn.get("dynamic_control", False))},
                       f, ensure_ascii=False, indent=1)
     except Exception as exc:
         print(f"[signal_tc3] 存連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
@@ -2075,6 +2078,9 @@ async def dynamic_set(request: Request, _user=Depends(get_current_user)):
     who = getattr(_user, "username", None) or str(_user)
     if "enabled" in body:
         _dyn["enabled"] = bool(body["enabled"])
+        # 🛑 存檔:重啟後要回到操作者最後設定的狀態,不可以靜靜變回關閉。
+        _conn["dynamic_control"] = _dyn["enabled"]
+        _save_conn_config()
         add_log("warning", "動態控制總開關:%s(操作者 %s)"
                 % ("啟用" if _dyn["enabled"] else "關閉", who), "signal")
         _dyn["events"].append({"ts": time.time(), "from": "-", "to": "-",
@@ -2248,9 +2254,23 @@ def _kind_of(cmd: int, device: int = 0x5F) -> str:
 #    故障當下最不該做的事,就是再送一則命令去「處理」故障 ——
 #    那要求「我方仍能正確下發」,而降階的前提正是「我方可能不能」。
 #    詳見 docs/降階與故障檢核_PLANNING.md
+# 🛑 2026-09-08:總開關改成**持久化**,重啟後回到操作者最後設定的狀態。
+#    起因:為了修機箱門上傳而重啟 traffic-signal,總開關是純記憶體狀態,
+#    重啟後靜靜回到「關閉」—— 路口退回固定時制、演算法停擺 45 分鐘,
+#    畫面上沒有任何地方顯示「這是重啟造成的」,沒人會發現。
+#    這種「重啟就悄悄改變路口控制權」的行為不可以留著。
+#
+# 🛑 為什麼敢在重啟後自動恢復:失敗方向仍然是安全的。
+#    · 服務若一直起不來,就不會續約 5F10,控制器的看門狗(EffectTime 1 分鐘)
+#      到期自己回固定時制 —— 崩潰迴圈不會把路口鎖在我方手上。
+#    · 降階級數**不持久化**,一律從 L0 起算,故障檢核會依現場實況重新降階。
+#    · 下發仍要過所有既有閘門(control_mode、stale、最小綠、節流…)。
+#    env SIGNAL_TC3_DYNAMIC_CONTROL 只在「還沒有任何操作紀錄」時當預設值。
 DYNAMIC_CONTROL_DEFAULT = os.getenv("SIGNAL_TC3_DYNAMIC_CONTROL", "0") != "0"
+if _conn.get("dynamic_control") is None:
+    _conn["dynamic_control"] = DYNAMIC_CONTROL_DEFAULT
 _dyn = {
-    "enabled": DYNAMIC_CONTROL_DEFAULT,   # 動態控制總開關(遠端可切)
+    "enabled": bool(_conn.get("dynamic_control")),   # 動態控制總開關(遠端可切,持久化)
     "level": "L0",                        # L0 正常 / L1 降級 / L2 停止下發 / L3 全退出
     "reason": "",
     "since": None,
