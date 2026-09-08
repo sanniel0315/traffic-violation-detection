@@ -988,3 +988,46 @@ def test_degrade_span_kind_follows_latest_fault(tmp_path, monkeypatch):
     assert sp["level"] == "L3"
     assert sp["kind"] == "detector"            # 跟著最新的原因走
     assert set(sp["kinds"]) == {"transmit", "detector"}
+
+
+def test_degrade_bootstrap_closes_open_span_on_restart(tmp_path, monkeypatch):
+    """重啟時要把上一段沒關閉的降階補一筆復歸,並標明是重啟關閉的。
+
+    🛑 2026-09-08 現場:統計報表顯示「降階 1 段 · 累計 0 秒 · 進行中」,
+       但同一頁的運作狀態是 L0 —— 降階狀態在記憶體,重啟就回 L0,
+       DB 那一段卻永遠開著。
+    """
+    import asyncio
+    from api.routes import signal_shadow as S
+
+    db = tmp_path / "shadow.db"
+    monkeypatch.setattr(S, "_DB_PATH", str(db))
+    monkeypatch.setattr(S, "_db_ready", False)
+
+    S._degrade_persist("L2", "偵測器故障:兩相都取不到", "detector")
+    S._degrade_bootstrap()
+
+    out = asyncio.new_event_loop().run_until_complete(
+        S.degrade_log(hours=24, _user=None))
+    assert out["count"] == 1
+    sp = out["spans"][0]
+    assert sp["duration_sec"] is not None       # 已關閉,不再是「進行中」
+    assert sp["closed_by_restart"] is True      # 但要標明不是量到的恢復時刻
+    assert out["ongoing"] is False
+    # 再跑一次不可以重複補(最後一筆已經是 L0)
+    S._degrade_bootstrap()
+    again = asyncio.new_event_loop().run_until_complete(
+        S.degrade_log(hours=24, _user=None))
+    assert again["count"] == 1
+
+
+def test_degrade_bootstrap_noop_when_nothing_open(tmp_path, monkeypatch):
+    from api.routes import signal_shadow as S
+    db = tmp_path / "shadow2.db"
+    monkeypatch.setattr(S, "_DB_PATH", str(db))
+    monkeypatch.setattr(S, "_db_ready", False)
+    S._degrade_bootstrap()                       # 空表
+    conn = S._db()
+    n = conn.execute("SELECT COUNT(*) FROM signal_degrade_log").fetchone()[0]
+    conn.close()
+    assert n == 0

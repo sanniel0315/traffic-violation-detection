@@ -1463,6 +1463,42 @@ def _report() -> None:
             pass
 
 
+def _degrade_bootstrap() -> None:
+    """啟動時把「上次沒有關閉的降階段」補一筆復歸。
+
+    🛑 為什麼需要:降階狀態在記憶體(T._dyn),重啟就回到 L0,但 DB 裡那一段
+       **沒有結束列**,於是永遠開著 —— 統計報表顯示「降階 1 段 · 累計 0 秒 ·
+       進行中」,而同一頁的運作狀態寫 L0,兩者互相矛盾(2026-09-08 現場看到)。
+
+    🛑 結束時間用**重啟時刻**,不是原降階時刻。理由:服務沒在跑的期間,
+       我方確實沒有在控制路口(控制器跑固定時制)—— 那段本來就該計入降階,
+       這是保守的一邊,不會低報故障時間。
+       但「實際何時恢復」我方並不知道,所以另外標 kind='restart',
+       畫面與匯出都要標示這一段是重啟關閉的,不可以當成量到的時間。
+    """
+    try:
+        conn = _db()
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS signal_degrade_log("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, epoch REAL,"
+            "level TEXT, kind TEXT, reason TEXT)")
+        row = conn.execute(
+            "SELECT level,ts FROM signal_degrade_log ORDER BY epoch DESC LIMIT 1"
+        ).fetchone()
+        conn.close()
+    except Exception as exc:
+        _fault["last_error"] = "降階復歸補寫檢查失敗: %s" % exc
+        return
+    if not row or row[0] == "L0":
+        return                          # 沒有掛著的段
+    _degrade_persist(
+        "L0", "服務重啟:上一段降階(%s 起,%s)在重啟時關閉 —— "
+              "實際恢復時刻不明,持續時間計至重啟為止" % (row[1], row[0]),
+        "restart")
+    add_log("warning", "啟動檢查:補寫一筆重啟復歸,關閉 %s 起未結束的降階段"
+            % row[1], "signal")
+
+
 def start_shadow() -> bool:
     """啟動影子執行緒（冪等）。回傳是否真的啟動。"""
     global _thread
@@ -1471,6 +1507,9 @@ def start_shadow() -> bool:
             return False
         _stop.clear()
         _stats["started_at"] = datetime.now().isoformat(timespec="seconds")
+        # 🛑 要在迴圈開始前補 —— 迴圈第一輪就可能因為新故障再寫一筆降階,
+        #    順序反了會變成「新的降階被舊段的復歸關掉」。
+        _degrade_bootstrap()
         # 先載回上次量到的,再嘗試重量;重量失敗也不會是空的
         _load_saturation()
         _load_params()
@@ -3028,6 +3067,9 @@ async def degrade_log(hours: int = Query(24, ge=1, le=720),
                 open_span["end"] = r["epoch"]
                 open_span["duration_sec"] = round(r["epoch"] - open_span["start"], 1)
                 open_span["cleared_by"] = r["reason"]
+                # 🛑 重啟關閉的段:持續時間是「計至重啟為止」,不是量到的恢復時刻。
+                #    畫面與匯出都要標出來,否則會被當成實測值。
+                open_span["closed_by_restart"] = (r["kind"] == "restart")
                 spans.append(open_span)
                 open_span = None
         else:
@@ -3047,7 +3089,8 @@ async def degrade_log(hours: int = Query(24, ge=1, le=720),
                              "level": r["level"], "kind": r["kind"],
                              "kinds": [r["kind"]] if r["kind"] else [],
                              "reason": r["reason"], "end": None,
-                             "duration_sec": None, "cleared_by": ""}
+                             "duration_sec": None, "cleared_by": "",
+                             "closed_by_restart": False}
     if open_span:
         spans.append(open_span)                    # 仍在降階中,duration 維持 None
     spans.reverse()
@@ -3060,7 +3103,9 @@ async def degrade_log(hours: int = Query(24, ge=1, le=720),
         "ongoing": bool(spans and spans[0].get("end") is None),
         "degraded_sec": round(total, 1),
         "degraded_ratio": round(total / (hours * 3600), 5) if hours else None,
-        "note": "spans 的最後一段若 duration 為 null,代表仍在降階中,不是零秒。",
+        "note": "spans 的最後一段若 duration 為 null,代表仍在降階中,不是零秒;"
+                "closed_by_restart=true 的段是服務重啟時關閉的,持續時間計至重啟為止,"
+                "不是量到的恢復時刻。",
     }
 
 
