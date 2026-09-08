@@ -324,3 +324,22 @@ def test_hwstatus_模式白名單含swap(tc3):
     import inspect
     src = inspect.getsource(tc3.control_hwstatus_mode)
     assert '"swap"' in src, "control_hwstatus_mode 沒有放行 swap"
+
+
+def test_hwstatus_模式要持久化(tc3, tmp_path, monkeypatch):
+    """🛑 使用者 2026-09-08:「這個不是暫時,重啟都必須維持」。
+
+    只靠 systemd drop-in 撐不住 —— 檔案被清掉、或換一台機器部署就沒了,
+    而那時中央會立刻又看到一整排假故障(bit9/bit13/bit14 被讀成三個硬體錯誤)。
+    切了就要存,讀得回來。
+    """
+    cfg = tmp_path / "conn.json"
+    monkeypatch.setattr(tc3, "_CONN_PATH", str(cfg))
+
+    monkeypatch.setitem(tc3._conn, "hwstatus_mode", "swap")
+    tc3._save_conn_config()
+    assert '"hwstatus_mode": "swap"' in cfg.read_text(encoding="utf-8")
+
+    monkeypatch.setitem(tc3._conn, "hwstatus_mode", "raw")
+    tc3._load_conn_config()
+    assert tc3._conn["hwstatus_mode"] == "swap", "重啟後沒有回到設定的模式"

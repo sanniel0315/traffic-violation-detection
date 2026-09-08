@@ -75,6 +75,8 @@ def _load_conn_config() -> None:
                     _conn["safety_push"] = bool(d.get("safety_push"))
                 if "dynamic_control" in d:
                     _conn["dynamic_control"] = bool(d.get("dynamic_control"))
+                if d.get("hwstatus_mode"):
+                    _conn["hwstatus_mode"] = str(d.get("hwstatus_mode"))
     except Exception as exc:
         print(f"[signal_tc3] 讀連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
 
@@ -87,7 +89,8 @@ def _save_conn_config() -> None:
                        "enabled": _conn["enabled"],
                        "center_relay": bool(_conn.get("center_relay")),
                        "safety_push": bool(_conn.get("safety_push", True)),
-                       "dynamic_control": bool(_conn.get("dynamic_control", False))},
+                       "dynamic_control": bool(_conn.get("dynamic_control", False)),
+                       "hwstatus_mode": _conn.get("hwstatus_mode") or "raw"},
                       f, ensure_ascii=False, indent=1)
     except Exception as exc:
         print(f"[signal_tc3] 存連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
@@ -280,11 +283,11 @@ HW_STATUS_FIX_MASK = 0x4000              # 要翻的位元(bit14 信號驅動單
 #   zero = 全 0(硬體全報正常)
 #   force = 強制送指定的 16-bit 值(測試用:逐 bit 送、對照中央顯示哪項 → 對出位元表)
 #
-# 🛑 swap 是**暫時補償**,不是正解。中央端把 HardwareStatus 的兩個位元組讀反了,
-#    正解是中央改。使用者 2026-09-08 決定「我們自己要修好」,故加此模式。
-#    我方已提出書面舉證(四組實測全中),交由中央端評估。
-#    **中央端修正之後,這個模式一定要拿掉、切回 raw** —— 否則會再次錯開,
-#    而且錯的方向剛好相反,屆時中央看到的又會是另一組假故障。
+# 🛑 swap 是本站的**常設組態**(2026-09-08 使用者決定,且要求重啟必須維持)。
+#    中央端把 HardwareStatus 的兩個位元組反過來讀,我方在轉送時對調以對齊它。
+#    ⚠ 這是與**中央目前的解讀方式**對齊,不是協定本身改了。若哪天中央端改成
+#      big-endian,這裡必須同步切回 raw —— 兩邊同時「修好」會再次錯開,
+#      而且方向相反,屆時中央看到的是另一組假故障。切換前務必與中央端確認。
 #    實證(2026-09-08,四組值四次預測全中):
 #      我方送 0x6000 → 中央顯示 IO_UNIT_ERROR + SIGNAL_DRIVER_UNIT_ERROR
 #      我方送 0x4020 → 中央顯示 SIGNAL_DRIVER + TIMING_PLAN_ON_TRANSITION
@@ -292,8 +295,15 @@ HW_STATUS_FIX_MASK = 0x4000              # 要翻的位元(bit14 信號驅動單
 #      我方送 0x6200 → 中央顯示 記憶體異常 + I/O unit error + SIGNAL_DRIVER
 #    我方為 big-endian 的依據:bit14(就緒)恆為 1、bit13 與控制策略 bit4 在
 #    45,843 筆上一致率 95.8%、同協定 StepSec 等 2-byte 欄位皆 big-endian。
-_hw_center_mode = {"mode": os.getenv("SIGNAL_TC3_HWSTATUS_MODE",
-                                     "flip14" if HW_STATUS_FIX else "raw"),
+# 🛑 取值順序:持久化設定 > env > 預設。
+#    2026-09-08 使用者:「這個不是暫時,重啟都必須維持」——
+#    只靠 systemd drop-in 撐不住:檔案被清掉、或換一台機器部署就沒了,
+#    而那時中央會立刻又看到一整排假故障。改成跟動態控制總開關同一套持久化,
+#    在畫面上切了就會留住,不必改 systemd 也不必重啟。
+#    (drop-in 仍然設 swap 當第二層保險:設定檔若整個遺失還有 env 兜著。)
+_hw_center_mode = {"mode": (_conn.get("hwstatus_mode")
+                            or os.getenv("SIGNAL_TC3_HWSTATUS_MODE",
+                                         "flip14" if HW_STATUS_FIX else "raw")),
                    "value": 0}     # force 模式要送的值
 # 自我查詢比對:我方主動查控制器(5F40/5F48/5F44/0F41),回報預設「不轉發中央」,
 # 避免中央看到它沒問的回報。用「有界計數 + 短窗」抑制:只擋掉我們預期筆數的回報,
@@ -3416,6 +3426,11 @@ def control_hwstatus_mode(mode: str = "flip14", value: int = 0,
     _hw_center_mode["mode"] = m
     if m == "force":
         _hw_center_mode["value"] = int(value) & 0xFFFF
+    else:
+        # 🛑 force 是測試用的,不持久化 —— 把測試值留到重啟之後會很難查。
+        #    其餘模式要留住:使用者明確要求「重啟都必須維持」。
+        _conn["hwstatus_mode"] = m
+        _save_conn_config()
     note = {"flip14": "只翻 bit14(補償廠商寫反)", "zero": "硬體全報正常(全0)",
             "raw": "純通透不動",
             "swap": "對調兩個位元組(補償中央反讀,中央修好後要切回 raw)",
