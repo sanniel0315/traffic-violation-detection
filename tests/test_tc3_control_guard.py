@@ -289,32 +289,38 @@ def test_授權到期殘留的手動位元不可以擋住續約(tc3, monkeypatch
                             "路口會永遠回不到動態控制")
 
 
-def test_hwstatus_swap_模式(tc3):
-    """🛑 2026-09-08:中央端把 HardwareStatus 兩個位元組讀反,使用者決定我方補償。
+def test_hwstatus_每個模式送出的值(tc3):
+    """🛑 2026-09-08 這裡出過一個真的上線路的 bug。
 
-    這是**暫時措施**,中央端修好之後要切回 raw —— 否則會再次錯開,
-    而且錯的方向剛好相反。這則測試守的是交換本身正確,不是背書這個做法。
-
-    實測對照(四組全中):我方 0x6200(機箱門開+時相控制中+就緒)
-    被中央讀成 0x0062(記憶體異常+I/O unit error+SIGNAL_DRIVER_UNIT_ERROR)。
-    交換之後我方送 0x0062,中央才會讀回 0x6200。
+    新增 swap 時只在最後補了交換那一步,沒給它自己的取值分支 ——
+    swap 掉進 else(flip14),先把 bit14 XOR 掉才交換,
+    送出 0x0022 而不是 0x0062,中央看到的「控制器就緒」整個不見了。
+    當時的單元測試只驗了交換算術,沒驗**模式分派**,所以沒抓到;
+    是現場 dry run 才發現的(錯誤值在線路上約 20 秒)。
+    這一則逐模式驗實際送出的值。
     """
-    def swap(v):
-        return ((v & 0xFF) << 8) | ((v >> 8) & 0xFF)
+    f = tc3._hw_for_center
+    RAW = 0x6000          # 現場常態值:bit13 外部時相控制中 + bit14 控制器就緒
 
-    assert swap(0x6200) == 0x0062
-    assert swap(0x6000) == 0x0060
-    assert swap(0x4200) == 0x0042
-    assert swap(0x4000) == 0x0040
-    # 交換兩次要回到原值,不可以有位元遺失
-    for v in (0x6200, 0x6000, 0x4004, 0x0001, 0xFFFF, 0x0000, 0x1234):
-        assert swap(swap(v)) == v, "0x%04X 交換兩次沒回到原值" % v
-    assert "swap" in tc3.control_hwstatus_mode.__doc__ or True
+    assert f(RAW, "raw") == 0x6000, "raw 必須原封不動"
+    assert f(RAW, "swap") == 0x0060, "swap 掉了位元 —— 就是當初那個 bug"
+    assert f(RAW, "zero") == 0x0000
+    assert f(RAW, "force", 0x1234) == 0x1234
+    assert f(RAW, "flip14") == 0x2000, "flip14 只翻 bit14"
+
+    # 機箱門開啟:先在我方位元語意下設 bit9,最後一步才交換
+    assert f(RAW, "raw", cabinet_open=True) == 0x6200
+    assert f(RAW, "swap", cabinet_open=True) == 0x0062, (
+        "順序錯了 —— 先交換再設機箱位元會設到錯的位置")
+
+    # swap 必須可逆:交換兩次回到原值,一個位元都不能掉
+    for v in (0x6000, 0x6200, 0x4000, 0x4004, 0x0001, 0xFFFF, 0x0000, 0x1234):
+        once = f(v, "swap")
+        assert f(once, "swap") == v, "0x%04X 交換兩次沒回到原值" % v
 
 
-def test_hwstatus_模式白名單含swap(tc3, monkeypatch):
+def test_hwstatus_模式白名單含swap(tc3):
     """模式清單漏掉 swap 的話,畫面切了會 400,而且看不出為什麼。"""
     import inspect
     src = inspect.getsource(tc3.control_hwstatus_mode)
     assert '"swap"' in src, "control_hwstatus_mode 沒有放行 swap"
-    assert 'raw/swap' in src or 'swap' in src
