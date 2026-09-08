@@ -25466,7 +25466,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         // ── 戰情地圖:重用系統 Leaflet 離線圖磚,相機座標取地圖頁設定的 lat/lng ──
         let wrMap = null;
         let wrFitSig = '';        // 上次框過的點集合簽章(見 drawWarMap 的 fitBounds)
-        const wrLayers = {seg: {}, queue: {}, qfill: {}, cam: {}, lamp: {}};
+        const wrLayers = {seg: {}, queue: {}, qfill: {}, cam: {}, lamp: {}, lbl: {}};
         const sigWarMapNote = ref('');
         const WR_LV_COLOR = {0: '#b8c4d4', 1: '#1f9d55', 2: '#d9a400', 3: '#e8842b', 4: '#c43a31'};
         const wrLvRank = (l) => ({low: 1, medium: 2, high: 3, critical: 4}[String(l || '').toLowerCase()] || 0);
@@ -25766,20 +25766,36 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //    不在前端另外寫死一份對應 —— 兩份會漂移。
                 const rampName = (sides[ph] || {}).ramp || ('分相 ' + ph);
                 const isPri = !!(sides[ph] || {}).priority;
+                // 🛑 常駐標籤只留「這是哪條路」—— 排隊長度與等級每秒在變,放在常駐
+                //    標籤裡會讓它一直變寬變窄,而且那是滑鼠停留才需要的細節(segTip 有)。
                 const segLabel = '<b>' + rampName + '</b>（分相 ' + ph + '）'
-                               + (isPri ? ' <i>主線保護</i>' : '')
-                               + '<br>排隊 ' + q.toFixed(1) + ' m · ' + LVW[lv];
+                               + (isPri ? ' <i>主線保護</i>' : '');
                 const segTip = rampName + '（分相 ' + ph + '）'
                              + '<br>排隊 ' + q.toFixed(1) + ' m / 儲車 ' + storage + ' m'
                              + '<br>壅塞等級 ' + LVW[camLv] + '（分數移動平均，會滯後）';
-                if (wrLayers.seg[ph]) {
-                    // 常駐標籤說「這是哪條路」,滑鼠停留才給細節 —— 兩者分開,
-                    // 常駐的那個要短,否則兩條標籤會在小地圖上疊在一起。
-                    wrLayers.seg[ph].unbindTooltip();
-                    wrLayers.seg[ph].bindTooltip(segLabel, {
-                        permanent: true, direction: 'center', opacity: .95,
-                        className: 'wr-seg-label' + (isPri ? ' pri' : '')});
-                }
+                // 🛑 2026-09-08 現場:「說明視窗兩個蓋住號誌了,也都疊加」。
+                //    原本用 direction:'center' 綁在線段上 —— Leaflet 會放在**線段
+                //    正中央**,而五座號誌燈全聚在停止線(A)那一端,標籤正好壓在燈上;
+                //    兩相的線段中點又靠得近,兩個常駐標籤自己也互相疊。
+                //    改成綁在**遠離路口那一端**(A→B 的 72% 處)的隱形錨點:
+                //      - 燈在 A 端,標籤在遠端 → 不再蓋住號誌
+                //      - 兩相各自往自己的上游延伸,標籤自然拉開 → 不再互疊
+                //    內容也精簡成一行(路名+分相+主線保護),排隊/等級留給滑鼠停留看,
+                //    footprint 小一半。
+                if (wrLayers.seg[ph]) wrLayers.seg[ph].unbindTooltip();
+                const LBL_AT = 0.72;
+                const LP = wrOffset(originLat, originLng,
+                                    ux * segLen * LBL_AT, uy * segLen * LBL_AT);
+                upsert('lbl', ph,
+                       () => L.marker(LP, {opacity: 0, interactive: false, keyboard: false})
+                              .bindTooltip(segLabel, {
+                                  permanent: true, direction: 'center', opacity: .95,
+                                  className: 'wr-seg-label' + (isPri ? ' pri' : '')}),
+                       (m) => { m.setLatLng(LP);
+                                m.unbindTooltip();
+                                m.bindTooltip(segLabel, {
+                                    permanent: true, direction: 'center', opacity: .95,
+                                    className: 'wr-seg-label' + (isPri ? ' pri' : '')}); });
                 if (q > 0) {
                     upsert('qfill', ph, () => L.polyline([A, Q], {color: color, weight: 11, opacity: .95,
                                                                   lineCap: 'butt', className: 'wr-qfill'}),
