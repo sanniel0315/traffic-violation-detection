@@ -75,11 +75,8 @@ def camera_label(key) -> str:
 
 
 PHASE_CAMERAS = {
-    # 🛑 相機↔分相的對應本身是對的(控制器燈態 + 92,802 筆佇列消散實證:
-    #    分相1 綠燈時 NE 排隊 10.8→1.6m 消散、WN 3.9→6.7m 累積,分相2 相反)。
-    #    2026-09-08 更正的是**匝道名稱**:NE 是下匝道、WN 是上匝道,原本標反。
-    1: _phase_cams("SIGNAL_SHADOW_CAMS_PHASE1", "2,3"),   # NE-1, NE-2 下匝道
-    2: _phase_cams("SIGNAL_SHADOW_CAMS_PHASE2", "4,5"),   # WN-1, WN-2 上匝道
+    1: _phase_cams("SIGNAL_SHADOW_CAMS_PHASE1", "2,3"),   # NE-1, NE-2 上匝道
+    2: _phase_cams("SIGNAL_SHADOW_CAMS_PHASE2", "4,5"),   # WN-1, WN-2 下匝道
 }
 # 🛑 PHASE_CAMERA 維持原意 = 官方時制表的 constraint_camera(該相的「基準測點」),
 #    不可以改成「清單第一台」—— 那是語意漂移,會讓依賴它的地方悄悄換了意思。
@@ -89,21 +86,6 @@ PHASE_CAMERA = {
     1: int(os.getenv("SIGNAL_SHADOW_CAM_PHASE1", "3") or 3),
     2: int(os.getenv("SIGNAL_SHADOW_CAM_PHASE2", "4") or 4),
 }
-
-
-def off_ramp_phase() -> int:
-    """下匝道(主線保護那一側)是哪一相 —— 從基準表的 role 反查,不寫死相號。
-
-    🛑 2026-09-08:相號與匝道的對應原本標反了(基準表把分相1 寫成上匝道,
-       現場實證是**下匝道**)。當時凡是寫死「下匝道 = 分相2」的地方全部跟著錯,
-       包括回堵門檻用錯儲車長度(210 vs 600)與主線保護判在錯的一相。
-       改成從 role 反查之後,基準表更正,這些判斷會自己跟著更正。
-    """
-    from detection.signal_timing_lookup import phase_role
-    for n in (1, 2):
-        if (phase_role(n) or {}).get("role") == "off_ramp":
-            return n
-    return 1
 
 # 抄錄器所在的獨立服務(traffic-signal.service)。燈態只有它有。
 SIGNAL_DAEMON_URL = os.getenv("SIGNAL_DAEMON_URL", "http://127.0.0.1:8012").rstrip("/")
@@ -646,9 +628,8 @@ def _phase_measure(phase: int) -> dict:
          分相2  WN-1 ↔ WN-2  相距 16.0 m
        相鄰車道只會差 3~4 公尺。數十公尺代表它們是**同一個進場的不同位置**
        (一台在停等區、一台在上游),看的是同一批車。
-       車流區設定也證實 NE-1 / NE-2 是同一進場的上下游關係,不是並排車道。
-       🛑 那兩個車流區的**名稱**沿用了「上匝道」的舊標示,2026-09-08 已證實
-          NE 側其實是下匝道 —— 名稱待現場更名,上下游關係的結論不受影響。
+       車流區設定也證實:NE-2「上匝道前停等區」、NE-1「上高速公路前平面道路」
+       —— 上下游關係,不是並排車道。
        這種情況下加總會把同一批車算兩次,switch_gain 會膨脹一倍,
        決策直接受影響。取最大才對:上游那台在隊伍長到超出停等區視野時
        才會給出更大的值,正好補上單台看不到的部分。
@@ -1575,7 +1556,7 @@ def _outcome_window(since_iso: str, until_iso: str) -> dict:
             #    成效視窗會整個變空,而成效本來就該不分誰在控都算得出來。
             "WHERE ts>=? AND ts<=? ORDER BY id",
             (since_iso, until_iso))
-        st2 = (phase_role(off_ramp_phase()) or {}).get("storage_m")
+        st2 = (phase_role(2) or {}).get("storage_m")
         for q1, q2, actual in cur.fetchall():
             samples.append({"queue_m_1": q1 or 0, "queue_m_2": q2 or 0,
                             "storage_2": st2, "interval_sec": SHADOW_INTERVAL_SEC,
@@ -2151,11 +2132,8 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
                      "truncated": bool(r.get("max_inner_gap") or _run_after_gap(r))}
                     for r in runs[-trend_limit:]]
 
-    # 出口(下匝道)滯留:取區間內的平均與最大,這是主線回堵的前哨。
-    # 🛑 2026-09-08:下匝道是**分相1**(原本標成分相2,取錯欄位),
-    #    改用 off_ramp_phase() 決定要取 queue_m_1 還是 queue_m_2。
-    _qi = 4 if off_ramp_phase() == 1 else 5
-    q2 = [float(r[_qi]) for r in rows if r[_qi] is not None]
+    # 出口(下匝道 = 分相2)滯留:取區間內的平均與最大,這是主線回堵的前哨
+    q2 = [float(r[5]) for r in rows if r[5] is not None]
     if q2:
         from detection.signal_decision_engine import DEFAULT_METERS_PER_VEHICLE as MPV
         out["exit_queue_m"] = {"avg": round(sum(q2) / len(q2), 1),
@@ -3543,14 +3521,13 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
 
     pp = plan_params(current_base_plan()) or {}
     max_green = _max_green(pp)
-    off_ph = off_ramp_phase()
-    storage_off = (phase_role(off_ph) or {}).get("storage_m") or 600
-    spill_m = storage_off * DEFAULT_SPILLBACK_RATIO_LOCAL
+    storage2 = (phase_role(2) or {}).get("storage_m") or 600
+    spill_m = storage2 * DEFAULT_SPILLBACK_RATIO_LOCAL
 
     waste_n = waste_ours_switch = 0        # 有代價的空放:綠側沒需求、紅側有人等
     waste_flow_known = 0
     idle_both_n = 0                        # 兩側都沒需求 —— 這不算浪費
-    max_q_off_observed = 0.0      # 下匝道側觀測到的最長排隊
+    max_q2_observed = 0.0
     maxg_n = maxg_ours_switch = 0
     spill_n = spill_ours_keep = 0
     dt = SHADOW_INTERVAL_SEC
@@ -3563,9 +3540,8 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
         gq = q1 if gp == 1 else q2
         gf = f1 if gp == 1 else f2
         rq = q2 if gp == 1 else q1
-        q_off = q1 if off_ph == 1 else q2
-        if q_off is not None:
-            max_q_off_observed = max(max_q_off_observed, float(q_off))
+        if q2 is not None:
+            max_q2_observed = max(max_q2_observed, float(q2))
         # ① 綠燈空放 —— 🛑 定義要加上「紅側有人在等」。
         #    2026-09-04 第一版只看綠側沒車,結果 59.1% 的取樣都被算成空放,
         #    但我方只有 3.1% 判定應換相 —— 因為那些時刻**兩側都沒車**(夜間
@@ -3599,10 +3575,10 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
             if ours == "SWITCH":
                 maxg_ours_switch += 1
         # ③ 下匝道回堵:排隊達儲車上限比例
-        if q_off is not None and float(q_off) >= spill_m:
+        if q2 is not None and float(q2) >= spill_m:
             spill_n += 1
             # 主線保護的正解是「不要把綠燈從下匝道切走」
-            if gp == off_ph and ours == "KEEP":
+            if gp == 2 and ours == "KEEP":
                 spill_ours_keep += 1
 
     def pct(a, b):
@@ -3636,14 +3612,13 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
         "spillback": {
             "samples": spill_n,
             "threshold_m": round(spill_m, 1),
-            "storage_m": storage_off,
-            "off_ramp_phase": off_ph,
+            "storage_m": storage2,
             "ours_protect": spill_ours_keep,
-            "max_observed_m": round(max_q_off_observed, 1),
+            "max_observed_m": round(max_q2_observed, 1),
             # 🛑 門檻可能超出量測範圍:ROI 看不到那麼長的隊伍,
             #    這時「0 次回堵」只代表沒量到,不代表沒發生。
-            "threshold_reachable": max_q_off_observed >= spill_m * 0.6,
-            "criteria": f"下匝道(分相{off_ph})排隊 ≥ 儲車上限 {storage_off}m 的 "
+            "threshold_reachable": max_q2_observed >= spill_m * 0.6,
+            "criteria": f"下匝道排隊 ≥ 儲車上限 {storage2}m 的 "
                         f"{int(DEFAULT_SPILLBACK_RATIO_LOCAL*100)}% = {spill_m:.0f}m",
         },
         "note": "🛑 這些是**局部佐證**:每一項都只描述那一刻可直接觀測的事實,"

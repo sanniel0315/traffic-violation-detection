@@ -7,16 +7,16 @@
   "lost_time_per_change_sec": 5,
   "phases": {
     "1": {
-      "role": "off_ramp",
-      "ramp": "下匝道",
-      "label": "出口",
+      "role": "on_ramp",
+      "ramp": "上匝道",
+      "label": "入口",
       "green_directions": [
         "北",
         "南"
       ],
-      "storage_m": 600,
-      "spill_to": "國道主線",
-      "priority": true,
+      "storage_m": 210,
+      "spill_to": "平面路口",
+      "priority": false,
       "cameras": [
         "ID2",
         "ID3"
@@ -24,16 +24,16 @@
       "constraint_camera": "ID3"
     },
     "2": {
-      "role": "on_ramp",
-      "ramp": "上匝道",
-      "label": "入口",
+      "role": "off_ramp",
+      "ramp": "下匝道",
+      "label": "出口",
       "green_directions": [
         "東",
         "西"
       ],
-      "storage_m": 210,
-      "spill_to": "平面路口",
-      "priority": false,
+      "storage_m": 600,
+      "spill_to": "國道主線",
+      "priority": true,
       "cameras": [
         "ID4",
         "ID5"
