@@ -8789,9 +8789,14 @@
                                      (收折的排除清單有 .el-switch,點開關不會誤觸收折) -->
                                 <div class="wr-sw">
                                     <span class="wr-sw-i">
+                                        <!-- 🛑 這個開關切的**就是**「時相控制 ↔ 定時控制」,中間沒有第三種狀態:
+                                             開 = 我方持有 5F10 bit4 時相控制,演算法逐步階下 5F1C 接管
+                                             關 = 授權不再續約,一分鐘內控制器回自己的時制計畫
+                                             右邊那行字直接寫現在是哪一種,不要只寫「動態號誌」——
+                                             現場問過「怎麼定時控制了」,那本質就是時相控制授權掉了。 -->
                                         <el-switch v-model="sigDynOn" size="small" :loading="sigDynBusy"
                                                    @change="sigSetDyn" active-text="動態控制" inline-prompt></el-switch>
-                                        <em :title="'🛑 2026-09-08 起這個開關會**持久化**:traffic-signal 重啟(含每次部署)會回到你最後設定的狀態,不再靜靜關掉。服務若起不來就不會續約 5F10,控制器看門狗 1 分鐘到期自己回固定時制,失敗方向仍然安全。'">{{ sigDyn.level && sigDyn.level!=='L0' ? ('降階 '+sigDyn.level) : (sigDynOn?'動態號誌':'動態號誌(未啟用)') }}</em>
+                                        <em :title="'🛑 2026-09-08 起這個開關會**持久化**:traffic-signal 重啟(含每次部署)會回到你最後設定的狀態,不再靜靜關掉。服務若起不來就不會續約 5F10,控制器看門狗 1 分鐘到期自己回固定時制,失敗方向仍然安全。'">{{ sigDyn.level && sigDyn.level!=='L0' ? ('降階 '+sigDyn.level) : (sigDynOn?'時相控制(演算法接管)':'定時控制(控制器內建時制)') }}</em>
                                     </span>
                                     <span class="wr-sw-i">
                                         <!-- 🛑 三種都是**死的**如果總開關沒開 —— 三個政策的守衛都規定
@@ -8799,7 +8804,7 @@
                                              啟用了、實際完全不作用,那比沒有這個控制項更糟。
                                              🛑 「攔下」會讓中央收不到那一則的 ACK,中央端可能顯示通訊
                                              逾時。這是已知代價,不是 bug —— 我方不偽造 ACK。 -->
-                                        <span class="wr-sw-k">中央改回定時時</span>
+                                        <span class="wr-sw-k" title="中央送 5F10 控制策略=0x01,就是把路口從時相控制切回定時控制。這裡決定我方要不要讓它切。">中央要切回定時控制時</span>
                                         <el-radio-group v-model="sigDlPolicy" size="small"
                                                         :disabled="!sigDynOn || sigDynBusy"
                                                         @change="sigSetPolicy">
@@ -25240,10 +25245,12 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         //    我方演算法接管後也是這個模式碼,先前寫死「外部動態」會在我方下發時
         //    顯示成別人在控(2026-09-07 現場回報)。誰在控由 sigWhoCtl 用下發證據判,
         //    這裡只講模式碼本身的意思。
-        const SIG_MODE_TEXT={external_dynamic:'回報:時相控制(逐步階接管中)',
-                             controller_dynamic:'回報:控制器動態',
-                             center_manual:'回報:中心手動', roadside_manual:'回報:路側手動',
-                             fixtime:'回報:定時控制'};
+        // 🛑 控制器回報的模式。時相控制與定時控制是同一個開關的兩端 ——
+        //    我方持有 5F10 bit4 就是時相控制,授權一掉就回定時控制。
+        const SIG_MODE_TEXT={external_dynamic:'時相控制 — 演算法逐步階接管中',
+                             controller_dynamic:'控制器內建動態控制',
+                             center_manual:'中心手動', roadside_manual:'路側手動(現場操作)',
+                             fixtime:'定時控制 — 控制器跑自己的時制計畫'};
         // 演算法運作狀態 + 控制預估。
         // 🛑 四種狀態要分得開,混在一起看的人會誤判現在到底會不會動路口:
         //    立即下發 / 引擎判換相但被擋 / 等時鐘(最小綠或節流) / 等車流。
