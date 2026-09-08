@@ -1245,7 +1245,12 @@ def _forward_controller_frame_to_center(frame: bytes, rec: dict) -> None:
     # 🛑 機箱門開啟要上傳,raw 模式也要處理 —— 所以這裡不能只看 _mode != "raw"。
     _cab = (CABINET_UPLOAD and rec.get("code") in HW_STATUS_FIX_CODES
             and _cabinet_open())
-    if ((_mode != "raw" or _cab) and rec.get("cks_ok")
+    # 🛑 2026-09-08 踩過:遮蔽位元原本也被這個條件擋掉,raw 模式下 mask 靜靜失效。
+    #    現場切到 raw 之後中央又跳 I/O unit error —— 因為 bit13 根本沒被遮掉,
+    #    原封 0x6000 送出去,中央反讀成 0x0060。
+    #    遮蔽是**獨立於位元組順序**的設定,不該由模式決定要不要套用。
+    _msk = int(_hw_center_mode.get("mask", 0)) & 0xFFFF
+    if ((_mode != "raw" or _cab or _msk) and rec.get("cks_ok")
             and rec.get("code") in HW_STATUS_FIX_CODES
             and isinstance(rec.get("addr"), int) and isinstance(rec.get("seq"), int)):
         try:
