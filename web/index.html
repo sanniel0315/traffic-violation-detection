@@ -8347,6 +8347,8 @@
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-list"/></svg>{{ sec.title }}</span>
                             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                                <el-tag size="small" type="warning" v-if="sec.clause && sec.clause!=='—'"
+                                        title="驗收條文「遠端管理功能」的項次">條文 {{ sec.clause }}</el-tag>
                                 <el-tag size="small" type="info">{{ sec.query }} → {{ sec.reply }}</el-tag>
                                 <el-tag size="small" type="info">規範 {{ sec.page }}</el-tag>
                                 <el-tag size="small" :type="sigCfgSecType(sec)">{{ sigCfgSecText(sec) }}</el-tag>
