@@ -3008,22 +3008,6 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
     if code:
         where += " AND code=?"
         args.append(code.strip().upper())
-    try:
-        conn = _sqlite3.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=8)
-        sends = list(conn.execute(
-            "SELECT ts,code,user,raw,seq FROM signal_frames WHERE " + where +
-            " ORDER BY ts DESC LIMIT ?", tuple(args) + (SCAN_CAP,)))
-        # 回應一次撈完再比對,不要每筆去查一次 DB。
-        # 🛑 不能只撈 0F80/0F81 —— 查詢類的回應是它自己的回報碼(0F42 → 0FC2)。
-        #    回應要多看 ACK_WAIT_SEC 秒,否則區間邊界那幾筆會被判成無回應。
-        replies = list(conn.execute(
-            "SELECT ts,code,raw,seq FROM signal_frames "
-            "WHERE src='controller' AND ts>? AND ts<=? ORDER BY ts",
-            (cut, end + ACK_WAIT_SEC)))
-        conn.close()
-    except Exception as exc:
-        return {"available": False, "reason": str(exc)[:160], "rows": []}
-
     def _query_reply_code(code: str) -> Optional[str]:
         """查詢碼 → 它自己的回報碼(0F42 → 0FC2)。非查詢類回 None。"""
         try:
@@ -3032,6 +3016,35 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
             return None
         # 查詢類的指令碼低半位元組是 4x/6x,回報是 +0x80
         return "%02X%02X" % (dev, (cmd + 0x80) & 0xFF) if 0x40 <= cmd < 0x80 else None
+
+    try:
+        conn = _sqlite3.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=8)
+        sends = list(conn.execute(
+            "SELECT ts,code,user,raw,seq FROM signal_frames WHERE " + where +
+            " ORDER BY ts DESC LIMIT ?", tuple(args) + (SCAN_CAP,)))
+        # 🛑 只撈**可能是回應**的訊框。原本撈該區間全部 src='controller',
+        #    但 5F03 每 2 秒一框,24 小時就有四萬多筆 —— 而它們不可能是任何
+        #    命令的回應。實測 24 小時查詢要 7.7 秒,幾乎全花在這裡。
+        #    需要的只有 ACK/NAK 加上「這批送出的查詢碼各自的回報碼」。
+        want_codes = {"0F80", "0F81"}
+        for _r in sends:
+            q = _query_reply_code(_r[1])
+            if q:
+                want_codes.add(q)
+        ph = ",".join("?" * len(want_codes))
+        # 回應要多看 ACK_WAIT_SEC 秒,否則區間邊界那幾筆會被判成無回應。
+        replies = list(conn.execute(
+            "SELECT ts,code,raw,seq FROM signal_frames "
+            "WHERE src='controller' AND ts>? AND ts<=? AND code IN (" + ph + ") "
+            "ORDER BY ts", (cut, end + ACK_WAIT_SEC) + tuple(sorted(want_codes))))
+        conn.close()
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:160], "rows": []}
+
+    # 🛑 配對再用 bisect 取時間窗,不要每一則命令都線性掃過全部回應 ——
+    #    那是 O(命令數 × 回應數)。
+    import bisect as _bisect
+    _rep_ts = [r[0] for r in replies]
 
     def replied(ts: float, code: str, seq):
         """回 (狀態, ErrorCode, 配對方式)。
@@ -3042,10 +3055,10 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
         want = bytes.fromhex(code)
         qreply = _query_reply_code(code)
         loose = None
-        for r in replies:
+        lo = _bisect.bisect_left(_rep_ts, ts)
+        hi = _bisect.bisect_right(_rep_ts, ts + ACK_WAIT_SEC)
+        for r in replies[lo:hi]:
             rts, rcode, raw, rseq = r[0], r[1], r[2], (r[3] if len(r) > 3 else None)
-            if rts < ts or rts > ts + ACK_WAIT_SEC:
-                continue
             # ① 查詢類:收到它自己的回報碼就算成功
             if qreply and rcode == qreply:
                 if seq is not None and rseq == seq:
@@ -3071,7 +3084,12 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
 
     # 決策理由:用時間最近的一筆(取樣每 5 秒,所以允許 6 秒內)
     reasons: list = []
+    # 🛑 「依據」只掛在 5F1C 上。這批沒有 5F1C 就完全不必碰那張表 ——
+    #    只查校時或重開機時,原本照樣撈一萬多筆樣本回來丟掉。
+    _need_reason = any(r[1] == "5F1C" for r in sends)
     try:
+        if not _need_reason:
+            raise StopIteration
         sconn = _db()
         iso = datetime.fromtimestamp(cut).isoformat(timespec="seconds")
         iso_e = datetime.fromtimestamp(end).isoformat(timespec="seconds")
@@ -3079,8 +3097,21 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
             "SELECT ts,green_phase,ours,reason,queue_m_1,queue_m_2,green_elapsed "
             "FROM signal_shadow_log WHERE ts>? AND ts<=? ORDER BY ts", (iso, iso_e)))
         sconn.close()
+    except StopIteration:
+        reasons = []
     except Exception:
         reasons = []
+
+    # 🛑 理由配對同樣不可以逐筆線性掃 —— 24 小時有一萬七千多筆樣本。
+    #    先把時戳轉成 epoch 排好,用 bisect 只看 ±6 秒那一段。
+    _rs = []
+    for _r in reasons:
+        try:
+            _rs.append((datetime.fromisoformat(_r[0]).timestamp(), _r))
+        except Exception:
+            continue
+    _rs.sort(key=lambda x: x[0])
+    _rs_ts = [x[0] for x in _rs]
 
     def why(ts: float):
         """對上這一則命令當時的決策樣本。
@@ -3092,11 +3123,9 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
         """
         best = best_sw = None
         gap = gap_sw = 6.0
-        for r in reasons:
-            try:
-                rt = datetime.fromisoformat(r[0]).timestamp()
-            except Exception:
-                continue
+        lo = _bisect.bisect_left(_rs_ts, ts - 6.0)
+        hi = _bisect.bisect_right(_rs_ts, ts + 6.0)
+        for rt, r in _rs[lo:hi]:
             d = abs(rt - ts)
             if d <= gap:
                 gap, best = d, r

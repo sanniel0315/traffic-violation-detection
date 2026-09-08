@@ -3735,6 +3735,11 @@ def _frames_db():
         conn.execute("CREATE INDEX IF NOT EXISTS ix_sf_ts ON signal_frames(ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_sf_src ON signal_frames(src)")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_sf_code ON signal_frames(code)")
+        # 🛑 單欄索引救不了「某來源、某區間」這種查詢:SQLite 只會挑一個用,
+        #    挑了 src 就要掃該來源全部(controller 一天四萬多筆)。
+        #    調整紀錄與通訊紀錄查的都是 (src, ts) 與 (code, ts),補複合索引。
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_sf_src_ts ON signal_frames(src, ts)")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_sf_code_ts ON signal_frames(code, ts)")
         conn.commit()
         _frame_db_ready = True
     return conn
