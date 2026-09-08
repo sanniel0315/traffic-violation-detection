@@ -25521,31 +25521,30 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         // 🛑 為什麼要接:原本地圖的黃燈是用 clearance 旗標**推**的,
         //    現在改用控制器直接回報的燈色 —— 推的會有誤差,回報的不會。
         const SIG_PHASE_SLOT = {1: 0, 2: 2};
-        const SIG_HEADS = [
-            // 燈頭 ↔ 分相(2026-09-08 使用者逐一確認):
-            //   分相1 上匝道 = 燈 3、5    分相2 下匝道 = 燈 1、2、4
-            // 🛑 控制器 5F03 實測**兩相各 3 個方向**亮綠(分相1 北/東北/南、
-            //    分相2 東/東南/西)—— 方向槽數與這裡的燈面數本來就不會一致,
-            //    不要拿方向數去推該分相有幾面燈(我犯過這個錯)。
-            {id: 5, phase: 1, offset_m: 0,  side_m: 14,  label: '5'},
-            {id: 3, phase: 1, offset_m: 45, side_m: 14,  label: '3'},
-            {id: 4, phase: 2, offset_m: 0,  side_m: -14, label: '4'},
-            {id: 2, phase: 2, offset_m: 45, side_m: -14, label: '2'},
-            // 🛑 1 號燈在**匝道口**(進場道最遠端),不是停止線附近 ——
-            //    使用者指正。offset 用該分相的線段長度,讓它落在畫出來的
-            //    進場道盡頭,跟現場的位置關係一致。
-            // 🛑 1 號燈屬**下匝道(分相2)** —— 使用者 2026-09-08 明確確認「1 下匝道」。
-            //    我一度把它改到分相1,那是誤解:使用者說的「有三個燈的是上匝道、
-            //    兩個燈的是下匝道」指的是**每支號誌桿上的燈泡數**(三色/兩色),
-            //    不是「該分相有幾面燈」。我拿它當數量去推,就把 1 號燈改錯邊了。
-            //    燈的分相錯了燈色就跟著錯,所以這種事寧可問清楚也不要推。
-            {id: 1, phase: 2, offset_m: 'end', side_m: -14, label: '1'},
-        ];
+        // 燈頭在圖上的**排列方式**(位置為示意;使用者拖曳過就以拖曳結果為準)。
+        // 🛑 這裡只留「怎麼排」,**不留「哪一座燈屬於哪一相」** ——
+        //    分相一律取自後端 sigHeadPhase(/api/signal/heads)。
+        //    2026-09-08 前端寫死一份就是因此漂移的:後端 3/5/6 是分相1、
+        //    1/2 是分相2,前端卻停在 1/2/4 是分相2、3/5 是分相1,畫面全反。
+        // 🛑 offset 沿進場道軸線往上游(公尺),side 是垂直軸線的側移。
+        //    同一相的燈沿軸線每 45 m 錯開,兩相往反方向側移,五座才不會疊在一起。
+        //    1 號燈固定放在進場道盡頭(匝道口)—— 使用者指正過它不在停止線附近。
+        const SIG_HEAD_SIDE_M = 14;
+        const sigHeadLayout = (id, idx, ph, segLen) => ({
+            offset_m: (id === 1) ? segLen : idx * 45,
+            side_m: (ph === 1 ? 1 : -1) * SIG_HEAD_SIDE_M,
+        });
         // 使用者在圖上拖曳定位的燈頭座標。沒定位過的用示意位置排列。
         // 🛑 存在後端(config/system/signal_heads.json)不是 localStorage ——
         //    戰情牆、辦公室、手機看到的必須是同一組位置;存在瀏覽器的話
         //    「我這台看起來對」會變成假的驗證。
         const sigHeadPos = ref({});     // {1:{lat,lng}, ...}
+        // 🛑 燈號與分相**一律以後端 /api/signal/heads 為準**,前端不留第二份。
+        //    2026-09-08 教訓:前端本來寫死 SIG_HEADS(1/2/4→分相2、3/5→分相1),
+        //    後端早已改成 {1:2, 2:2, 3:1, 5:1, 6:1}(分相1 三組、分相2 兩組,
+        //    而且 4 號燈已改號為 6)。兩份漂移,畫面照前端那份畫 ——
+        //    現場看到的就是「分相1 只有兩組、分相2 三組」,跟實際相反。
+        const sigHeadPhase = ref({});   // {id: phase}
         const sigHeadNote = ref('');
         const loadSigHeads = async () => {
             try {
@@ -25553,8 +25552,13 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 if (!r.ok) return;
                 const d = await r.json();
                 const m = {};
-                (d.heads || []).forEach((h) => { if (h.placed) m[h.id] = {lat: h.lat, lng: h.lng}; });
+                const ph = {};
+                (d.heads || []).forEach((h) => {
+                    ph[h.id] = Number(h.phase);
+                    if (h.placed) m[h.id] = {lat: h.lat, lng: h.lng};
+                });
                 sigHeadPos.value = m;
+                sigHeadPhase.value = ph;
                 sigHeadNote.value = d.note || '';
                 wrFitSig = '';          // 位置變了,視野要重算
                 drawWarMap();
@@ -25604,7 +25608,17 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             // 🛑 一定要讓看的人知道燈頭位置是示意的,否則會被當成實測位置。
             // 🛑 號誌燈的位置是示意的,一定要講出來 —— 不講的話現場會把它
             //    當成實測位置,靠它判斷「燈在哪」就會被誤導。
-            const headNote = '號誌燈 1~5 依現場俯視圖的分相對應（1/2/4 下匝道、3/5 上匝道）；'
+            // 🛑 燈號與分相都從後端來,這裡照著寫,不要再手打一份字串 ——
+            //    前端寫死的那份就是這樣跟後端漂移掉的(2026-09-08)。
+            // 🛑 這裡**不可以**讀 sides —— 它在下面才 const 宣告,在這裡取用會踩到
+            //    暫時死區(TDZ)ReferenceError,整個 drawWarMap 會中斷、地圖變空白。
+            //    匝道名稱線段上的常駐標籤已經有了,這裡只講燈號與分相就夠。
+            const headSummary = [1, 2].map((_p) => {
+                const ids = Object.keys(sigHeadPhase.value).map(Number)
+                    .filter((id) => sigHeadPhase.value[id] === _p).sort((a, b) => a - b);
+                return ids.length ? ('分相' + _p + ' = 燈 ' + ids.join('、')) : '';
+            }).filter(Boolean).join('；');
+            const headNote = (headSummary ? headSummary + '。' : '')
                            + '燈色與動畫為實測。' + (sigHeadNote.value || '拖曳燈頭可定位並存檔。');
             sigWarMapNote.value = missing.length
                 ? ('尚未在地圖頁設定座標:' + missing.join('、') + ' —— 這幾台不會出現在圖上。' + headNote)
@@ -25769,13 +25783,17 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                         + '<circle cx="35" cy="11" r="5.6" class="sh-g"/>'
                         + '</svg></div>',
                 });
-                SIG_HEADS.filter((h) => h.phase === ph).forEach((h) => {
+                const headIds = Object.keys(sigHeadPhase.value)
+                    .map(Number)
+                    .filter((id) => sigHeadPhase.value[id] === ph)
+                    .sort((a, b) => a - b);
+                headIds.forEach((hid, hidx) => {
+                    const h = Object.assign({id: hid, label: String(hid)},
+                                            sigHeadLayout(hid, hidx, ph, segLen));
                     // 沿進場道軸線往上游 offset_m,再側移 side_m(避免互相重疊)
                     // 位置優先用**使用者拖曳存下的實際座標**;沒定位過才用示意排列。
-                    // offset_m 可以是 'end' —— 代表「進場道盡頭(匝道口)」,
-                    // 用該分相實際畫出來的線段長度,不寫死公尺數。
                     const saved = sigHeadPos.value[h.id];
-                    const off = (h.offset_m === 'end') ? segLen : Number(h.offset_m) || 0;
+                    const off = Number(h.offset_m) || 0;
                     const HP = saved ? [saved.lat, saved.lng]
                                      : wrOffset(stopCam.lat, stopCam.lng,
                                                 ux * off + nx * h.side_m,
