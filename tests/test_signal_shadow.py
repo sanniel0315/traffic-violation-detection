@@ -878,3 +878,27 @@ def test_algorithm_never_switches_timing_plan():
     #    把「檔案裡不准出現 5F18」當測試會擋掉正當的讀取用途(第一版就踩到)。
     fn_src = ast.get_source_segment(src, fn) or ""
     assert "5F18" not in fn_src, "演算法不得切換時制計畫(5F18)"
+
+
+def test_no_send_on_first_green_step(monkeypatch):
+    """🛑 第一個綠階不送 —— 那會把綠燈推進延長段,與意圖相反。
+
+    2026-09-08 實測:步階結構是 綠1 → 綠2(感應延長) → 黃4 → 全紅5。
+    「跳下一步階」從步階1 只跳到步階2,而步階2 沒車時控制器本來會跳過。
+    實證:分相1 走 1→2 的比例 有介入 37% / 沒介入 16%;綠燈長度
+    有介入 47.1s vs 沒介入 46.2s —— **我方反而讓綠燈變長 0.9 秒**。
+    """
+    import api.routes.signal_shadow as m
+    calls = []
+    _fake_daemon(monkeypatch, m, calls)
+    monkeypatch.setitem(m._act, "enabled", True)
+    monkeypatch.setitem(m._act, "last_ts", 0.0)
+
+    # 第一個綠階 → 不送
+    m._actuate(_D(), 1, dict(LIVE_OK, step_id=m.FIRST_GREEN_STEP))
+    assert calls == []
+    assert "延長段" in m._act["blocked"]
+
+    # 後續綠階 → 才送(跳下一步階才會真的進清道)
+    m._actuate(_D(), 1, dict(LIVE_OK, step_id=m.FIRST_GREEN_STEP + 1))
+    assert len(calls) == 2      # prepare + send
