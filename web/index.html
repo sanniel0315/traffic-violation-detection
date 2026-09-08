@@ -25638,9 +25638,45 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             Object.keys(byPhase).map(Number).forEach((ph) => {
                 const list = byPhase[ph].slice().sort((x, y) => dist(x) - dist(y));
                 const stopCam = list[0], upCam = list[1] || list[0];
-                // 進場軸:停止線台 → 上游台(公尺),同一台時退回指向遠離路口
-                let ux = (upCam.lng - stopCam.lng) * WR_MLON, uy = (upCam.lat - stopCam.lat) * WR_MLAT;
-                if (upCam === stopCam) { ux = (stopCam.lng - center[1]) * WR_MLON; uy = (stopCam.lat - center[0]) * WR_MLAT; }
+                // 進場軸的方向。
+                // 🛑 2026-09-08 現場:「分相2 的道路動態沒畫在分相2 的號誌那」。
+                //    量出來五座燈有三座離**別人那條線**還比較近(燈3 離自己那條
+                //    154.7 m、離對面 1.6 m)。原因是方向用兩台相機外推:
+                //      分相2 WN-1↔WN-2 只相距 16.0 m,卻要外推 220 m → 放大 13.75 倍
+                //      分相1 NE-1↔NE-2 相距 52.9 m,外推 160 m       → 放大 3 倍
+                //    基線這麼短,相機座標差幾公尺,遠端就偏掉幾十公尺。
+                //    改用**該相的號誌燈位置**定方向(使用者親手標的,而且燈本來
+                //    就長在那條路上):基線變成 分相1 192.1 m、分相2 49.0 m,
+                //    與相機外推的方向差 58° / 29° —— 那就是先前線畫歪的量。
+                //    線因此自然通過該相的號誌,「動態線畫在自己的號誌那裡」成立。
+                // 🛑 燈不足兩座、或都還沒定位時,退回原本的相機外推 ——
+                //    新機器還沒標燈之前也要畫得出線。
+                //    🛑 只改方向不夠 —— 線的**起點**還在相機上,燈離線仍有 35~58 m。
+                //       起點一併改用「該相最靠路口的那座燈」,線才真的畫在號誌上:
+                //         只改方向  分相1 56.4/48.0/35.4 m  分相2 42.7/57.8 m
+                //         起點也改  分相1 32.1/12.7/ 0.0 m  分相2  0.0/ 0.0 m
+                //       停止線本來就在號誌那裡,拿燈當起點比拿相機更貼近實際 ——
+                //       相機是裝在看得清楚的地方,不一定在停止線上。
+                let ux, uy, originPt = null;
+                const phHeadPts = Object.keys(sigHeadPhase.value).map(Number)
+                    .filter((id) => sigHeadPhase.value[id] === ph)
+                    .map((id) => sigHeadPos.value[id])
+                    .filter((pt) => pt && isFinite(pt.lat) && isFinite(pt.lng))
+                    .sort((a, b) => dist(a) - dist(b));
+                if (phHeadPts.length >= 2) {
+                    const h0 = phHeadPts[0], h1 = phHeadPts[phHeadPts.length - 1];
+                    ux = (h1.lng - h0.lng) * WR_MLON;
+                    uy = (h1.lat - h0.lat) * WR_MLAT;
+                    originPt = h0;
+                } else {
+                    // 退回:停止線台 → 上游台(公尺),同一台時指向遠離路口
+                    ux = (upCam.lng - stopCam.lng) * WR_MLON;
+                    uy = (upCam.lat - stopCam.lat) * WR_MLAT;
+                    if (upCam === stopCam) {
+                        ux = (stopCam.lng - center[1]) * WR_MLON;
+                        uy = (stopCam.lat - center[0]) * WR_MLAT;
+                    }
+                }
                 const L0 = Math.hypot(ux, uy) || 1; ux /= L0; uy /= L0;
                 let camLv = 0, q = 0;
                 list.forEach((c) => { camLv = Math.max(camLv, wrLvRank(c.level)); q = Math.max(q, Number(c.queue_m) || 0); });
@@ -25654,15 +25690,17 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //    壅塞等級仍以 level 為準(它已經把佔有率與排隊分數都算進去)。
                 const lv = camLv;
                 const color = WR_LV_COLOR[lv];
-                const A = [stopCam.lat, stopCam.lng];
-                const B = wrOffset(stopCam.lat, stopCam.lng, ux * segLen, uy * segLen);
+                const originLat = originPt ? originPt.lat : stopCam.lat;
+                const originLng = originPt ? originPt.lng : stopCam.lng;
+                const A = [originLat, originLng];
+                const B = wrOffset(originLat, originLng, ux * segLen, uy * segLen);
                 // 🛑 只把**停止線**收進視野,不收儲車空間的遠端(B)。
                 //    B 在分相2 是 220 公尺外,收進來會把地圖拉遠一倍,
                 //    16 公尺的燈距就被壓成幾個像素而互相重疊
                 //    (2026-09-07 使用者:「地圖可以再拉近點,只要是這次交流道範圍」)。
                 //    進場道的線段照樣畫到 B,只是不因為它而縮小視野。
                 fitPts.push(A);
-                const Q = wrOffset(stopCam.lat, stopCam.lng, ux * Math.min(q, segLen), uy * Math.min(q, segLen));
+                const Q = wrOffset(originLat, originLng, ux * Math.min(q, segLen), uy * Math.min(q, segLen));
                 // 進場道底色(儲車空間全長)
                 upsert('seg', ph, () => L.polyline([A, B], {color: color, weight: 11, opacity: .22,
                                                            lineCap: 'butt', className: 'wr-seg'}),
@@ -25795,7 +25833,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                     const saved = sigHeadPos.value[h.id];
                     const off = Number(h.offset_m) || 0;
                     const HP = saved ? [saved.lat, saved.lng]
-                                     : wrOffset(stopCam.lat, stopCam.lng,
+                                     : wrOffset(originLat, originLng,
                                                 ux * off + nx * h.side_m,
                                                 uy * off + ny * h.side_m);
                     const tip = '號誌燈 ' + h.label + ' · 分相 ' + ph + ' ' + lampWord
