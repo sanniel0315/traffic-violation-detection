@@ -3960,6 +3960,26 @@
             border-radius:5px; padding:1px 7px; line-height:1.5; white-space:nowrap; }
         .wr-sw-i .wr-actn i { font-style:normal; font-weight:500; margin-left:2px;
                               color:var(--gov-mute-2); }
+        /* 控制器校時 */
+        .tsy-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+                    gap:10px; margin-bottom:14px; }
+        .tsy-cell { border:1px solid var(--gov-border,#dbe2ea); border-radius:8px;
+                    padding:10px 12px; background:var(--gov-bg-soft,#f8fafc); }
+        .tsy-k { font-size:var(--fs-caption); color:var(--gov-mute-2); margin-bottom:4px; }
+        .tsy-v { font-size:var(--fs-body); font-weight:600; font-variant-numeric:tabular-nums;
+                 color:var(--gov-text); word-break:break-all; }
+        .tsy-v.ok   { color:#1f7a34; }
+        .tsy-v.warn { color:#a86400; }
+        .tsy-v.bad  { color:#c0392b; }
+        .tsy-sub { font-size:var(--fs-caption); color:var(--gov-mute-2); margin-top:3px; }
+        .tsy-set { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px;
+                   padding:12px; border:1px solid var(--gov-border,#dbe2ea);
+                   border-radius:8px; margin-bottom:14px; }
+        .tsy-set label { font-size:var(--fs-caption); color:var(--gov-mute-2);
+                         display:inline-flex; align-items:center; gap:6px; }
+        .tsy-note { font-size:var(--fs-caption); color:var(--gov-mute-2);
+                    line-height:1.7; margin-top:10px; }
+        .tsy-note b { color:#a86400; }
         .wr-ctlway { display:flex; flex-direction:column; gap:3px; margin:6px 0 12px;
                      padding:8px 12px; border-left:3px solid var(--gov-border-strong);
                      background:var(--gov-bg-soft,#f1f5f9); border-radius:0 8px 8px 0; }
@@ -8181,6 +8201,126 @@
                             <el-button size="small" type="primary" :loading="sigTpBusy" @click="sigTpSaveLabel">儲存</el-button>
                         </template>
                     </el-dialog>
+                </div>
+
+                <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
+                    <div class="sig-tab-bar">
+                        <span class="sig-tab-title">控制器校時</span>
+                        <el-tag size="small" :type="sigTimeDriftType">{{ sigTimeDriftText }}</el-tag>
+                        <el-button size="small" plain :loading="sigTimeBusy"
+                                   @click="loadSigTime(1)">重新量測</el-button>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="tsy-grid">
+                                <div class="tsy-cell">
+                                    <div class="tsy-k">控制器時間</div>
+                                    <div class="tsy-v">{{ (sigTime.device||{}).text || '尚未取得' }}</div>
+                                    <div class="tsy-sub">{{ (sigTime.device||{}).roc_text || '' }}</div>
+                                </div>
+                                <div class="tsy-cell">
+                                    <div class="tsy-k">我方時間</div>
+                                    <div class="tsy-v">{{ sigTime.now || '—' }}</div>
+                                </div>
+                                <div class="tsy-cell">
+                                    <div class="tsy-k">差值（控制器 − 我方）</div>
+                                    <div class="tsy-v" :class="sigTimeDriftCls">{{ sigTimeDiffText }}</div>
+                                    <div class="tsy-sub">{{ (sigTime.device||{}).precise ? '精確值（以送出時刻比）' : '含回報落庫延遲，僅供參考' }}</div>
+                                </div>
+                                <div class="tsy-cell">
+                                    <div class="tsy-k">上次對時</div>
+                                    <div class="tsy-v">{{ sigTimeLastText }}</div>
+                                    <div class="tsy-sub">{{ sigTimeLastSub }}</div>
+                                </div>
+                            </div>
+
+                            <div class="tsy-set">
+                                <el-switch v-model="sigTimeAutoOn" size="small"
+                                           :loading="sigTimeBusy" @change="sigSetTimeAuto"
+                                           active-text="定時對時" inline-prompt></el-switch>
+                                <label>每
+                                    <el-input-number v-model="sigTimeAuto.interval_min" size="small"
+                                                     :min="1" :max="1440" :step="10"
+                                                     controls-position="right" style="width:104px"
+                                                     @change="sigSetTimeAuto"></el-input-number>
+                                    分鐘檢查
+                                </label>
+                                <label>差
+                                    <el-input-number v-model="sigTimeAuto.threshold_sec" size="small"
+                                                     :min="1" :max="3600" :step="1"
+                                                     controls-position="right" style="width:96px"
+                                                     @change="sigSetTimeAuto"></el-input-number>
+                                    秒以上才校正
+                                </label>
+                                <label>超過
+                                    <el-input-number v-model="sigTimeAuto.max_auto_sec" size="small"
+                                                     :min="5" :max="3600" :step="10"
+                                                     controls-position="right" style="width:104px"
+                                                     @change="sigSetTimeAuto"></el-input-number>
+                                    秒只告警
+                                </label>
+                                <el-button size="small" type="primary" plain
+                                           :loading="sigTimeBusy" @click="sigTimeSyncNow">立即對時</el-button>
+                            </div>
+
+                            <p v-if="(sigTime.auto||{}).last_error" class="tsy-note">
+                                <b>⚠ {{ (sigTime.auto||{}).last_error }}</b>
+                            </p>
+
+                            <div class="tsy-note">
+                                🛑 對時會改變控制器的系統時間。控制器依<b>時間</b>查表決定跑哪一組時制計畫，
+                                若一次拉太大步，可能在時段邊界造成非預期的計畫切換 ——
+                                所以差距超過上限時<b>只告警、不自動校正</b>，那種情況要人工確認控制器時鐘。
+                                <br>紀錄同時保留兩個差值：我方算的（控制器 − 我方），以及控制器
+                                <code>0F92</code> 自己回報的 <code>SecDif</code>，可交叉查核。
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>對時與量測紀錄</span>
+                            <el-button size="small" plain :loading="sigTimeBusy"
+                                       @click="loadSigTimeHistory">更新</el-button>
+                        </div>
+                        <div class="card-body">
+                            <el-table :data="sigTimeRows" size="small" empty-text="尚無紀錄"
+                                      style="width:100%" max-height="360">
+                                <el-table-column label="時間" width="150">
+                                    <template #default="sc">{{ sigFmtTs(sc.row.ts) }}</template>
+                                </el-table-column>
+                                <el-table-column label="來源" width="120">
+                                    <template #default="sc">
+                                        <el-tag size="small" :type="sc.row.source==='auto'?'info':'warning'">
+                                            {{ sc.row.source==='auto' ? '定時' : '人工' }}
+                                        </el-tag>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column label="校正前差值" width="120">
+                                    <template #default="sc">
+                                        {{ sc.row.diff_sec===null||sc.row.diff_sec===undefined ? '—'
+                                           : ((sc.row.diff_sec>0?'+':'')+sc.row.diff_sec+' 秒') }}
+                                    </template>
+                                </el-table-column>
+                                <el-table-column label="有無校正" width="100">
+                                    <template #default="sc">
+                                        <el-tag size="small" :type="sc.row.corrected?'success':'info'">
+                                            {{ sc.row.corrected ? '已校正' : '未動作' }}
+                                        </el-tag>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column label="SecDif" width="100">
+                                    <template #default="sc">
+                                        {{ sc.row.sec_dif===null||sc.row.sec_dif===undefined ? '—' : sc.row.sec_dif }}
+                                    </template>
+                                </el-table-column>
+                                <el-table-column label="備註" min-width="200">
+                                    <template #default="sc">{{ sc.row.note || '' }}</template>
+                                </el-table-column>
+                            </el-table>
+                        </div>
+                    </div>
                 </div>
 
                 <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
@@ -24427,7 +24567,8 @@ const app=createApp({
             eval:   () => { loadSigFaults(); loadViz(); startVizTimer(); loadVizHourly();
                             loadSigStats(); startSigStatTimer(); loadSigConsole(); },
             device: () => { loadSignal(); startSignalTimer(); loadSigDevice();
-                            loadSigConfig(); loadSigTp(); },
+                            loadSigConfig(); loadSigTp();
+                            loadSigTime(0); loadSigTimeHistory(); },
             lamp:   () => { loadSignal(); startSignalTimer(); loadSignalFrames(); },
             frames: () => { loadSignalFrames(); loadSigConsole(); },
         };
@@ -26074,6 +26215,129 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         //    blocked 是空字串代表引擎這一刻本來就判維持,不是被擋。
         // 🛑 一律取持久化值(後端 _actuate_counts),行程內計數重啟就歸零 ——
         //    2026-09-08 現場因此看到「已下發 0 次」而以為演算法從沒動過。
+        // ── 控制器校時 ───────────────────────────────────────────────
+        // 🛑 差值有兩種:probe=1 用**送出時刻**比(精確);probe=0 用回報框落庫的
+        //    時刻比,會多算 1~3 秒。畫面一定要標明看的是哪一種,否則會被當成
+        //    真的漂移了(2026-09-08 我自己就先算出 -3.1 秒的假值)。
+        const sigTime = ref({});
+        const sigTimeRows = ref([]);
+        const sigTimeBusy = ref(false);
+        const sigTimeAutoOn = ref(false);
+        const sigTimeAuto = ref({interval_min: 60, threshold_sec: 5, max_auto_sec: 60});
+        const loadSigTime = async (probe) => {
+            sigTimeBusy.value = true;
+            try {
+                const r = await fetch('/api/signal/time' + (probe ? '?probe=1' : ''),
+                                      {credentials: 'include'});
+                if (!r.ok) return;
+                sigTime.value = await r.json();
+                const a = sigTime.value.auto || {};
+                sigTimeAutoOn.value = !!a.enabled;
+                sigTimeAuto.value = {
+                    interval_min: Math.round((a.interval_sec || 3600) / 60),
+                    threshold_sec: a.threshold_sec || 5,
+                    max_auto_sec: a.max_auto_sec || 60,
+                };
+            } catch (e) { /* 讀不到就維持上次顯示 */ }
+            finally { sigTimeBusy.value = false; }
+        };
+        const loadSigTimeHistory = async () => {
+            try {
+                const r = await fetch('/api/signal/time/history?limit=200',
+                                      {credentials: 'include'});
+                if (!r.ok) return;
+                const d = await r.json();
+                sigTimeRows.value = d.rows || [];
+            } catch (e) { }
+        };
+        const sigTimeDiffText = computed(() => {
+            const d = (sigTime.value.device || {}).diff_sec;
+            if (d === null || d === undefined) return '—';
+            return (d > 0 ? '+' : '') + d + ' 秒';
+        });
+        const sigTimeDriftCls = computed(() => {
+            const dv = (sigTime.value.device || {}).diff_sec;
+            if (dv === null || dv === undefined) return '';
+            const a = Math.abs(dv), th = sigTimeAuto.value.threshold_sec || 5;
+            const mx = sigTimeAuto.value.max_auto_sec || 60;
+            if (mx < a) return 'bad';
+            if (th <= a) return 'warn';
+            return 'ok';
+        });
+        const sigTimeDriftType = computed(() => (
+            {ok: 'success', warn: 'warning', bad: 'danger'}[sigTimeDriftCls.value] || 'info'));
+        const sigTimeDriftText = computed(() => {
+            const dv = (sigTime.value.device || {}).diff_sec;
+            if (dv === null || dv === undefined) return '尚未量測';
+            return {ok: '時鐘正常', warn: '已達校正門檻', bad: '差距過大'}[sigTimeDriftCls.value];
+        });
+        const sigTimeLastText = computed(() => {
+            const l = sigTime.value.last_sync;
+            if (!l) return '尚未對時';
+            return l.corrected ? '已校正' : '檢查未動作';
+        });
+        const sigTimeLastSub = computed(() => {
+            const l = sigTime.value.last_sync;
+            if (!l) return '';
+            return sigFmtTs(l.ts) + (l.sec_dif === null || l.sec_dif === undefined
+                                     ? '' : ('　SecDif ' + l.sec_dif));
+        });
+        const sigSetTimeAuto = async () => {
+            sigTimeBusy.value = true;
+            try {
+                const a = sigTimeAuto.value;
+                const r = await fetch('/api/signal/control/time-auto', {
+                    method: 'POST', credentials: 'include',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        enabled: !!sigTimeAutoOn.value,
+                        interval_sec: Math.max(60, (a.interval_min || 60) * 60),
+                        threshold_sec: a.threshold_sec,
+                        max_auto_sec: a.max_auto_sec,
+                    }),
+                });
+                const d = await r.json();
+                if (!r.ok) throw new Error(d.detail || r.status);
+                ElMessage.success('定時對時設定已儲存' +
+                    (sigTimeAutoOn.value ? '（已啟用，重啟後維持）' : '（已關閉）'));
+            } catch (e) {
+                ElMessage.error('設定失敗：' + (e.message || e));
+            } finally { sigTimeBusy.value = false; await loadSigTime(0); }
+        };
+        const sigTimeSyncNow = async () => {
+            // 🛑 這會改變控制器的系統時間 —— 先把當下差值講清楚再讓人決定。
+            await loadSigTime(1);
+            const dv = (sigTime.value.device || {}).diff_sec;
+            try {
+                await ElementPlus.ElMessageBox.confirm(
+                    ['這會設定「運轉中號誌控制器」的系統時間。',
+                     '控制器目前：' + ((sigTime.value.device || {}).text || '未取得'),
+                     '我方時間：' + (sigTime.value.now || '—'),
+                     '目前差值：' + ((dv === null || dv === undefined) ? '未取得'
+                                     : ((dv > 0 ? '+' : '') + dv + ' 秒'))].join('\n'),
+                    '立即對時（0F12）',
+                    {confirmButtonText: '確定送出', cancelButtonText: '取消', type: 'warning'});
+            } catch (e) { ElMessage.info('已取消，未送出'); return; }
+            sigTimeBusy.value = true;
+            try {
+                const r = await fetch('/api/signal/control/time-sync',
+                                      {method: 'POST', credentials: 'include'});
+                const d = await r.json();
+                if (!r.ok) throw new Error(d.detail || r.status);
+                if (d.corrected) {
+                    ElMessage.success('已對時：校正前差 ' + d.diff_sec + ' 秒' +
+                        (d.sec_dif === null || d.sec_dif === undefined
+                         ? '' : ('，控制器回報 SecDif ' + d.sec_dif)));
+                } else {
+                    ElMessage.warning('未校正：' + (d.reason || '未知原因'));
+                }
+            } catch (e) {
+                ElMessage.error('對時失敗：' + (e.message || e));
+            } finally {
+                sigTimeBusy.value = false;
+                await loadSigTime(0); await loadSigTimeHistory();
+            }
+        };
         const sigActSent = computed(() => {
             const a = sigAct.value || {};
             const b = (sigPlan.value || {}).actuate || {};
@@ -27442,7 +27706,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigFaultLoading,loadSigFaults,sigFaultLevel,sigFaultTh,sigFaultKinds,sigFaultKindName,sigFaultCenter,sigDegDur,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNamed,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigActSent,sigActSent24h,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigFaultLoading,loadSigFaults,sigFaultLevel,sigFaultTh,sigFaultKinds,sigFaultKindName,sigFaultCenter,sigDegDur,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNamed,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigActSent,sigActSent24h,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
