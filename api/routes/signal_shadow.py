@@ -2075,11 +2075,11 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
            "exit_queue_m": None, "exit_queue_vehicles": None,
            "vehicles_per_green_sec": None,
            "dropped_unobserved": 0, "runs_used": 0,
-           "note": "綠燈長度由 5 秒取樣重建,最多低估一個取樣週期;"
-                   "抄錄過期(stale)被跳過的取樣會讓該段斷開。"
-                   "綠燈長度是區間量測:真值落在 [green_sec, green_sec+取樣週期)。"
-                   "below_min_green 以上界判定,且排除接在斷點之後或段內有斷點的段,"
-                   "所以它只計入『確定低於最小綠』的次數;不確定的計入 uncertain_truncated"}
+           # 🛑 精簡過(2026-09-08),但**不可以只留「由取樣重建」** ——
+           #    「真值落在區間內」與「不確定的另外計」是這張表能不能被引用的前提,
+           #    刪掉就變成看起來精確的數字。
+           "note": "綠燈長度由 5 秒取樣重建,真值落在 [green_sec, +5s)。"
+                   "低於最小綠只計『確定』的;不確定的計入 uncertain_truncated。"}
     # 我方下發的調整次數(規範 E)。來源是抄錄庫裡 src='self' 的下發框 ——
     # 我們自己送出去的每一則都會被側錄,所以這個數字有原始框可回溯。
     try:
@@ -2862,6 +2862,13 @@ async def fault_status(_user=Depends(get_current_user)):
 
 @router.get("/adjust-log", summary="歷史時制調整紀錄(每一次下發:何時、為什麼、有沒有生效)")
 async def adjust_log(hours: int = Query(24, ge=1, le=168),
+                     since: str = Query("", description="起(ISO);給了就蓋過 hours"),
+                     until: str = Query("", description="訖(ISO)"),
+                     code: str = Query("", description="訊息碼,如 5F1C"),
+                     by: str = Query("", description="來源關鍵字,如 algorithm"),
+                     ack: str = Query("", description="accepted / rejected / no_reply"),
+                     limit: int = Query(100, ge=1, le=1000),
+                     offset: int = Query(0, ge=0),
                      include_query: int = 0,
                      _user=Depends(get_current_user)):
     """驗收條文的「歷史時制調整紀錄」。
@@ -2896,18 +2903,41 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
     🛑 「依據」只掛在**換相命令(5F1C)**上。把最近的決策理由套到 0F42 對時查詢
        上會變成「未滿最小綠 20s」,與那則命令毫無關係 —— 那是誤導,不是資訊。
     """
-    cut = time.time() - hours * 3600
+    # 🛑 歷史查詢:since/until 給了就蓋過 hours。兩種都留著 ——
+    #    hours 是「最近多久」(戰情用),since/until 是「查那一段」(稽核用)。
+    def _epoch(v: str) -> Optional[float]:
+        try:
+            return datetime.fromisoformat(v).timestamp()
+        except Exception:
+            return None
+
+    cut = _epoch(since) if since else None
+    end = _epoch(until) if until else None
+    if cut is None:
+        cut = time.time() - hours * 3600
+    if end is None:
+        end = time.time() + 1
     out: list = []
+    # 🛑 上限放在 SQL 而不是取完再切:一次撈整年會把記憶體吃掉。
+    #    這個上限是**掃描範圍**不是回傳筆數 —— 回傳由 limit/offset 分頁。
+    SCAN_CAP = 20000
+    where = "src='self' AND ts>? AND ts<=? AND code<>'5F10'"
+    args = [cut, end]
+    if code:
+        where += " AND code=?"
+        args.append(code.strip().upper())
     try:
         conn = _sqlite3.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=8)
         sends = list(conn.execute(
-            "SELECT ts,code,user,raw,seq FROM signal_frames WHERE src='self' AND ts>? "
-            "AND code<>'5F10' ORDER BY ts DESC LIMIT 500", (cut,)))
+            "SELECT ts,code,user,raw,seq FROM signal_frames WHERE " + where +
+            " ORDER BY ts DESC LIMIT ?", tuple(args) + (SCAN_CAP,)))
         # 回應一次撈完再比對,不要每筆去查一次 DB。
         # 🛑 不能只撈 0F80/0F81 —— 查詢類的回應是它自己的回報碼(0F42 → 0FC2)。
+        #    回應要多看 ACK_WAIT_SEC 秒,否則區間邊界那幾筆會被判成無回應。
         replies = list(conn.execute(
             "SELECT ts,code,raw,seq FROM signal_frames "
-            "WHERE src='controller' AND ts>? ORDER BY ts", (cut,)))
+            "WHERE src='controller' AND ts>? AND ts<=? ORDER BY ts",
+            (cut, end + ACK_WAIT_SEC)))
         conn.close()
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:160], "rows": []}
@@ -2962,9 +2992,10 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
     try:
         sconn = _db()
         iso = datetime.fromtimestamp(cut).isoformat(timespec="seconds")
+        iso_e = datetime.fromtimestamp(end).isoformat(timespec="seconds")
         reasons = list(sconn.execute(
             "SELECT ts,green_phase,ours,reason,queue_m_1,queue_m_2 "
-            "FROM signal_shadow_log WHERE ts>? ORDER BY ts", (iso,)))
+            "FROM signal_shadow_log WHERE ts>? AND ts<=? ORDER BY ts", (iso, iso_e)))
         sconn.close()
     except Exception:
         reasons = []
@@ -2991,7 +3022,6 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
             return False
         return 0x40 <= cmd < 0x80
 
-    n_acc = n_rej = n_none = 0
     n_query = 0
     for row in sends:
         ts, code, user, raw = row[0], row[1], row[2], row[3]
@@ -3002,9 +3032,6 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
             if not int(include_query or 0):
                 continue
         state, err, how = replied(ts, code, seq)
-        n_acc += state == "accepted"
-        n_rej += state == "rejected"
-        n_none += state == "no_reply"
         item = {
             "ts": datetime.fromtimestamp(ts).isoformat(timespec="seconds"),
             "epoch": ts, "code": code, "by": user or "",
@@ -3013,13 +3040,33 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
         }
         # 🛑 「依據」只有換相命令有意義。把最近的決策理由套到對時查詢上
         #    會顯示「未滿最小綠 20s」,與那則命令毫無關係 —— 誤導不是資訊。
-        if code == "5F1C":
+        if item["code"] == "5F1C":
             item.update(why(ts))
         out.append(item)
+
+    # 🛑 來源/結果的過濾放在這裡(不是 SQL):結果要先配對完才知道。
+    #    統計數字用**過濾後、分頁前**的集合算 —— 摘要必須對得上正在查的東西,
+    #    不然「共 N 次」會跟表格裡的列數對不起來。
+    if by:
+        kw = by.strip().lower()
+        out = [r for r in out if kw in (r.get("by") or "").lower()]
+    if ack:
+        out = [r for r in out if r.get("likely_ack") == ack]
+    n_acc = sum(1 for r in out if r["likely_ack"] == "accepted")
+    n_rej = sum(1 for r in out if r["likely_ack"] == "rejected")
+    n_none = sum(1 for r in out if r["likely_ack"] == "no_reply")
     n_seq = sum(1 for r in out if r.get("ack_match") == "seq")
+    total = len(out)
+    page = out[offset:offset + limit]
     return {
-        "available": True, "hours": hours, "rows": out,
-        "count": len(out), "accepted": n_acc, "rejected": n_rej,
+        "available": True, "hours": hours,
+        "since": datetime.fromtimestamp(cut).isoformat(timespec="seconds"),
+        "until": datetime.fromtimestamp(min(end, time.time())).isoformat(timespec="seconds"),
+        "filters": {"code": code, "by": by, "ack": ack, "include_query": int(include_query or 0)},
+        "rows": page, "limit": limit, "offset": offset,
+        "total": total, "returned": len(page),
+        "scan_capped": len(sends) >= SCAN_CAP,
+        "count": total, "accepted": n_acc, "rejected": n_rej,
         "no_reply": n_none,
         "query_excluded": 0 if int(include_query or 0) else n_query,
         "matched_by_seq": n_seq,

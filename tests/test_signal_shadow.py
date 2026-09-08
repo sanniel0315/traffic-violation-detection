@@ -961,7 +961,9 @@ def test_adjust_log_依據只掛在換相命令():
     import inspect
     import api.routes.signal_shadow as m
     src = inspect.getsource(m.adjust_log)
-    assert 'if code == "5F1C":' in src, "依據沒有限定只掛在換相命令上"
+    # 2026-09-08 code 變成查詢參數(篩命令碼),迴圈內改用 item["code"]。
+    # 保證不變:依據只掛 5F1C。
+    assert 'if item["code"] == "5F1C":' in src, "依據沒有綁定只掛在換相命令上"
 
 
 def test_degrade_span_kind_follows_latest_fault(tmp_path, monkeypatch):
