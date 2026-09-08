@@ -25812,25 +25812,29 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //    原本用 direction:'center' 綁在線段上 —— Leaflet 會放在**線段
                 //    正中央**,而五座號誌燈全聚在停止線(A)那一端,標籤正好壓在燈上;
                 //    兩相的線段中點又靠得近,兩個常駐標籤自己也互相疊。
-                //    改成綁在**遠離路口那一端**(A→B 的 72% 處)的隱形錨點:
-                //      - 燈在 A 端,標籤在遠端 → 不再蓋住號誌
-                //      - 兩相各自往自己的上游延伸,標籤自然拉開 → 不再互疊
-                //    內容也精簡成一行(路名+分相+主線保護),排隊/等級留給滑鼠停留看,
-                //    footprint 小一半。
+                //    改成綁在**遠離路口那一端**(A→B 的 72% 處)的隱形錨點,燈在 A 端、
+                //    標籤在遠端 → 不再蓋住號誌。內容也精簡成一行。
+                //    🛑 但「沿線往外移」解不掉兩個標籤互疊 —— 實測兩條分相線幾乎平行
+                //       (方向 (-0.86,+0.51) vs (-0.99,+0.16),夾角約 21°),兩個錨點
+                //       在 72% 處只差 46.7 m(z18 約 85px),而且緯度只差 2.8 m
+                //       (螢幕上約 5px)= 並排在同一高度。標籤寬約 150px,
+                //       就算推到線的最遠端(100%)也只拉開 129px,**仍然疊**。
+                //    所以再加一層**畫面座標的垂直錯開**:分相1 往上、分相2 往下。
+                //    用 px 不用公尺 —— 跟縮放無關,也跟兩條線的夾角無關,
+                //    不會因為之後改 segLen 或燈的位置又疊回去。
                 if (wrLayers.seg[ph]) wrLayers.seg[ph].unbindTooltip();
                 const LBL_AT = 0.72;
                 const LP = wrOffset(originLat, originLng,
                                     ux * segLen * LBL_AT, uy * segLen * LBL_AT);
+                const lblOpt = {permanent: true,
+                                direction: (ph === 1) ? 'top' : 'bottom',
+                                offset: (ph === 1) ? [0, -14] : [0, 14],
+                                opacity: .95,
+                                className: 'wr-seg-label' + (isPri ? ' pri' : '')};
                 upsert('lbl', ph,
                        () => L.marker(LP, {opacity: 0, interactive: false, keyboard: false})
-                              .bindTooltip(segLabel, {
-                                  permanent: true, direction: 'center', opacity: .95,
-                                  className: 'wr-seg-label' + (isPri ? ' pri' : '')}),
-                       (m) => { m.setLatLng(LP);
-                                m.unbindTooltip();
-                                m.bindTooltip(segLabel, {
-                                    permanent: true, direction: 'center', opacity: .95,
-                                    className: 'wr-seg-label' + (isPri ? ' pri' : '')}); });
+                              .bindTooltip(segLabel, lblOpt),
+                       (m) => { m.setLatLng(LP); m.unbindTooltip(); m.bindTooltip(segLabel, lblOpt); });
                 if (q > 0) {
                     upsert('qfill', ph, () => L.polyline([A, Q], {color: color, weight: 11, opacity: .95,
                                                                   lineCap: 'butt', className: 'wr-qfill'}),
