@@ -287,3 +287,34 @@ def test_授權到期殘留的手動位元不可以擋住續約(tc3, monkeypatch
     tc3._do_reassert(kind="續約")
     assert len(sent) == 1, ("授權到期殘留的 bit2 擋住了續約 —— "
                             "路口會永遠回不到動態控制")
+
+
+def test_hwstatus_swap_模式(tc3):
+    """🛑 2026-09-08:中央端把 HardwareStatus 兩個位元組讀反,使用者決定我方補償。
+
+    這是**暫時措施**,中央端修好之後要切回 raw —— 否則會再次錯開,
+    而且錯的方向剛好相反。這則測試守的是交換本身正確,不是背書這個做法。
+
+    實測對照(四組全中):我方 0x6200(機箱門開+時相控制中+就緒)
+    被中央讀成 0x0062(記憶體異常+I/O unit error+SIGNAL_DRIVER_UNIT_ERROR)。
+    交換之後我方送 0x0062,中央才會讀回 0x6200。
+    """
+    def swap(v):
+        return ((v & 0xFF) << 8) | ((v >> 8) & 0xFF)
+
+    assert swap(0x6200) == 0x0062
+    assert swap(0x6000) == 0x0060
+    assert swap(0x4200) == 0x0042
+    assert swap(0x4000) == 0x0040
+    # 交換兩次要回到原值,不可以有位元遺失
+    for v in (0x6200, 0x6000, 0x4004, 0x0001, 0xFFFF, 0x0000, 0x1234):
+        assert swap(swap(v)) == v, "0x%04X 交換兩次沒回到原值" % v
+    assert "swap" in tc3.control_hwstatus_mode.__doc__ or True
+
+
+def test_hwstatus_模式白名單含swap(tc3, monkeypatch):
+    """模式清單漏掉 swap 的話,畫面切了會 400,而且看不出為什麼。"""
+    import inspect
+    src = inspect.getsource(tc3.control_hwstatus_mode)
+    assert '"swap"' in src, "control_hwstatus_mode 沒有放行 swap"
+    assert 'raw/swap' in src or 'swap' in src

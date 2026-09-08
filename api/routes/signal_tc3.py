@@ -274,10 +274,24 @@ HW_STATUS_FIX = os.getenv("SIGNAL_TC3_FIX_HWSTATUS", "0") != "0"
 HW_STATUS_FIX_CODES = ("0F04", "0FC1")   # 帶 HardwareStatus 的訊息
 HW_STATUS_FIX_MASK = 0x4000              # 要翻的位元(bit14 信號驅動單元)
 # 對中央上傳 HardwareStatus 的模式,可執行期切換(不用重啟 daemon):
-#   raw = 不動(純通透,**現在的預設值**,現場採用,中央顯示正常);
+#   raw = 不動(純通透);
+#   swap = **對調兩個位元組**(2026-09-08 使用者決定的補償,見下);
 #   flip14 = 只翻 bit14(實證會害中央顯示異常,只留當退路,要用得顯式設 env);
 #   zero = 全 0(硬體全報正常)
 #   force = 強制送指定的 16-bit 值(測試用:逐 bit 送、對照中央顯示哪項 → 對出位元表)
+#
+# 🛑 swap 是**暫時補償**,不是正解。中央端把 HardwareStatus 的兩個位元組讀反了,
+#    正解是中央改。使用者 2026-09-08 決定「我們自己要修好」,故加此模式。
+#    我方已提出書面舉證(四組實測全中),交由中央端評估。
+#    **中央端修正之後,這個模式一定要拿掉、切回 raw** —— 否則會再次錯開,
+#    而且錯的方向剛好相反,屆時中央看到的又會是另一組假故障。
+#    實證(2026-09-08,四組值四次預測全中):
+#      我方送 0x6000 → 中央顯示 IO_UNIT_ERROR + SIGNAL_DRIVER_UNIT_ERROR
+#      我方送 0x4020 → 中央顯示 SIGNAL_DRIVER + TIMING_PLAN_ON_TRANSITION
+#      我方送 0x4200 → 中央顯示 記憶體異常 + SIGNAL_DRIVER
+#      我方送 0x6200 → 中央顯示 記憶體異常 + I/O unit error + SIGNAL_DRIVER
+#    我方為 big-endian 的依據:bit14(就緒)恆為 1、bit13 與控制策略 bit4 在
+#    45,843 筆上一致率 95.8%、同協定 StepSec 等 2-byte 欄位皆 big-endian。
 _hw_center_mode = {"mode": os.getenv("SIGNAL_TC3_HWSTATUS_MODE",
                                      "flip14" if HW_STATUS_FIX else "raw"),
                    "value": 0}     # force 模式要送的值
@@ -1174,6 +1188,10 @@ def _forward_controller_frame_to_center(frame: bytes, rec: dict) -> None:
                     hs = raw_hs ^ HW_STATUS_FIX_MASK
                 if _cab:
                     hs |= (1 << CABINET_BIT)  # 只加不減:不蓋掉控制器自己報的位元
+                # 🛑 位元組交換一定要放在**最後一步** —— 上面所有位元運算(機箱位元、
+                #    flip14…)都是在**我方的位元語意**下做的,先交換再設位元會設錯位置。
+                if _mode == "swap":
+                    hs = ((hs & 0xFF) << 8) | ((hs >> 8) & 0xFF)
                 rec["sent_hw"] = hs           # 記下實際送中央的校正值(給通訊紀錄顯示「收→送」)
                 info = info[:2] + bytes(((hs >> 8) & 0xFF, hs & 0xFF)) + info[4:]
                 out = build_frame(rec["addr"], rec["seq"], info)
@@ -3039,6 +3057,8 @@ def _latest_hwstatus() -> dict:
         sent = _hw_center_mode.get("value", 0) & 0xFFFF
     elif mode == "raw":
         sent = recv
+    elif mode == "swap":
+        sent = ((recv & 0xFF) << 8) | ((recv >> 8) & 0xFF)
     else:
         sent = recv ^ HW_STATUS_FIX_MASK
     return {"received": recv, "received_hex": f"0x{recv:04X}",
@@ -3381,13 +3401,15 @@ def control_hwstatus_mode(mode: str = "flip14", value: int = 0,
     raw=純通透不動/force=強制送指定 16-bit 值(測試用,value 帶值)。
     切了立即對後續 0F04/0FC1 生效。"""
     m = (mode or "").strip().lower()
-    if m not in ("flip14", "zero", "raw", "force"):
-        raise HTTPException(status_code=400, detail="mode 只能 flip14/zero/raw/force")
+    if m not in ("flip14", "zero", "raw", "force", "swap"):
+        raise HTTPException(status_code=400,
+                            detail="mode 只能 raw/swap/flip14/zero/force")
     _hw_center_mode["mode"] = m
     if m == "force":
         _hw_center_mode["value"] = int(value) & 0xFFFF
     note = {"flip14": "只翻 bit14(補償廠商寫反)", "zero": "硬體全報正常(全0)",
             "raw": "純通透不動",
+            "swap": "對調兩個位元組(補償中央反讀,中央修好後要切回 raw)",
             "force": f"強制送 0x{_hw_center_mode['value']:04X}(測試)"}[m]
     try:
         add_log("info", f"HardwareStatus 上傳模式切為 {m}({note})", "signal")
