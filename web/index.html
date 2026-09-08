@@ -436,6 +436,38 @@
             outline-offset: 2px;
         }
 
+        /* ── 全站按鈕統一成 primary 樣式(2026-09-08 使用者指定)──────────
+           基準是「自我查詢比對」那顆:el-button--primary + el-button--small,
+           公務藍漸層、白字、hover 加深並抬升。
+
+           🛑 沒有型別(default)與 is-plain 的按鈕一律套同一組 —— 先前畫面上
+              同樣是「更新 / 重新載入 / 查詢」,有的白底灰框、有的淡藍、有的實心,
+              看起來像三套系統。
+           🛑 語意色**不動**:success/warning/danger/info 要保持可辨識,
+              「刪除」變成藍色才是真的危險。text/link 型也不動(那是連結不是按鈕)。 */
+        .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info):not(.el-button--text):not(.is-text):not(.is-link),
+        .el-button.is-plain:not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info) {
+            color: #fff !important;
+            background: linear-gradient(135deg, var(--gov-primary) 0%, #094680 100%) !important;
+            border-color: var(--gov-primary) !important;
+            box-shadow: 0 2px 6px rgba(11,94,168,0.25);
+        }
+        .el-button:not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info):not(.el-button--text):not(.is-text):not(.is-link):hover:not(.is-disabled) {
+            color: #fff !important;
+            background: linear-gradient(135deg, #0d6cb8 0%, #0b5ea8 100%) !important;
+            border-color: #0d6cb8 !important;
+            box-shadow: 0 6px 16px rgba(11,94,168,0.32);
+        }
+        /* 停用態要看得出來不能按,不能也是飽和的藍 */
+        .el-button.is-disabled,
+        .el-button.is-disabled:hover {
+            color: #fff !important;
+            background: #9db6cd !important;
+            border-color: #9db6cd !important;
+            box-shadow: none !important;
+            transform: none !important;
+        }
+
         /* —— el-tag: design system 配色, rounded pill, mono 數字 —— */
         .el-tag {
             border-radius: 999px !important;
@@ -8106,107 +8138,6 @@
 
                 <!-- 設備狀態併入「燈態與設備」分頁:兩者都是控制器硬體層的東西,
                      分兩個分頁只是讓人多點一次(2026-09-07 融合)。 -->
-                <!-- ══ 時制計畫控制 ══════════════════════════════════════
-                     🛑 TC3 的時制計畫**只有編號沒有名稱**(5FC5/5FC8 都只回 PlanID)。
-                        「哪一個是 VIP 特勤」在控制器裡查不到,只有機關自己知道,
-                        所以由使用者標記(驗收條文:可視機關需求調整)。
-                     🛑 絕對不用「週期短、綠燈偏袒某一側」去猜哪個是特勤 ——
-                        計畫 23 是 40/60 很像特勤,但那只是猜測;猜錯的代價是
-                        有人按下「特勤」卻切到別的計畫。
-                     🛑 切換用 5F18(PlanID)。送出成功 ≠ 已生效 ——
-                        以控制器 5FC8 回報的目前計畫為準,畫面上兩個分開顯示。 -->
-                <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
-                    <div class="sig-tab-bar">
-                        <span class="sig-tab-title">時制計畫控制</span>
-                        <el-tag size="small" :type="sigTp.running_plan_id?'success':'info'">
-                            {{ sigTp.running_plan_id ? ('執行中 計畫 '+sigTp.running_plan_id) : '尚未取得' }}
-                        </el-tag>
-                        <el-button size="small" plain :loading="sigTpLoading" @click="loadSigTp">重新載入</el-button>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-list"/></svg>目前執行中</span>
-                            <el-tag size="small" :type="sigTpAgeType">{{ sigTpAgeText }}</el-tag>
-                        </div>
-                        <div class="card-body">
-                            <div class="tp-now">
-                                <div class="tp-now-id">
-                                    <em>計畫</em><b>{{ sigTpNow.id }}</b>
-                                    <span class="tp-badge" :class="'p-'+sigTpNow.purpose"
-                                          v-if="sigTpNow.name">{{ sigTpNow.name }}</span>
-                                    <span class="tp-badge unnamed" v-else>未命名</span>
-                                </div>
-                                <div class="tp-now-k"><em>週期</em><b>{{ sigTpNow.cycle }}</b><i>s</i></div>
-                                <div class="tp-now-k"><em>時差</em><b>{{ sigTpNow.offset }}</b><i>s</i></div>
-                                <div class="tp-now-k" v-for="g in sigTpNow.greens" :key="'g'+g.idx">
-                                    <em>分相 {{ g.idx }} 綠燈</em><b>{{ g.green }}</b><i>s</i>
-                                </div>
-                            </div>
-                            <p class="tp-note">{{ sigTpNow.note }}</p>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-list"/></svg>全部時制計畫</span>
-                            <el-switch v-model="sigTpRealOnly" size="small" active-text="只看已設定" inline-prompt></el-switch>
-                        </div>
-                        <div class="card-body">
-                            <div class="analysis-setting-tip">
-                                控制器共 40 個計畫槽,多數是**空殼**(週期 10、綠燈 10/5 的預設值,
-                                代表沒設定過)。預設只列出真的有內容的。
-                            </div>
-                            <table class="data-table tp-tb">
-                                <thead><tr>
-                                    <th>計畫</th><th>用途名稱</th><th>週期</th><th>綠燈</th>
-                                    <th>最小綠</th><th>操作</th>
-                                </tr></thead>
-                                <tbody>
-                                    <tr v-for="r in sigTpRows" :key="'tp'+r.id" :class="{on:r.id===sigTp.running_plan_id}">
-                                        <td><b class="tp-id">{{ r.id }}</b>
-                                            <span class="tp-run" v-if="r.id===sigTp.running_plan_id">執行中</span></td>
-                                        <td>
-                                            <span class="tp-badge" :class="'p-'+r.purpose" v-if="r.name">{{ r.name }}</span>
-                                            <span class="tp-badge unnamed" v-else>—</span>
-                                        </td>
-                                        <td class="num">{{ r.cycle }}</td>
-                                        <td class="num">{{ r.greenText }}</td>
-                                        <td class="num">{{ r.minText }}</td>
-                                        <td class="tp-ops">
-                                            <el-button size="small" plain @click="sigTpEditOpen(r)">命名</el-button>
-                                            <el-button size="small" type="primary" plain
-                                                       :disabled="sigTpBusy || r.id===sigTp.running_plan_id"
-                                                       @click="sigTpRun(r.id)">切換</el-button>
-                                        </td>
-                                    </tr>
-                                    <tr v-if="!sigTpRows.length"><td colspan="6" class="tp-empty">尚未抄到任何時制計畫。</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <el-dialog v-model="sigTpEdit.open" title="時制計畫命名" width="440px">
-                        <div class="tp-form">
-                            <div class="tp-fr"><span class="k">計畫編號</span><b>{{ sigTpEdit.id }}</b></div>
-                            <div class="tp-fr"><span class="k">用途名稱</span>
-                                <el-input v-model="sigTpEdit.name" size="small" maxlength="24"
-                                          placeholder="例:平日尖峰 / VIP 特勤"></el-input></div>
-                            <div class="tp-fr"><span class="k">分類</span>
-                                <el-select v-model="sigTpEdit.purpose" size="small" style="width:150px">
-                                    <el-option v-for="o in SIG_TP_PURPOSES" :key="o.v" :label="o.t" :value="o.v"></el-option>
-                                </el-select></div>
-                            <div class="tp-fr"><span class="k">備註</span>
-                                <el-input v-model="sigTpEdit.note" size="small" maxlength="80"></el-input></div>
-                            <p class="tp-note">名稱留空並儲存,等於清除這個計畫的命名。</p>
-                        </div>
-                        <template #footer>
-                            <el-button size="small" @click="sigTpEdit.open=false">取消</el-button>
-                            <el-button size="small" type="primary" :loading="sigTpBusy" @click="sigTpSaveLabel">儲存</el-button>
-                        </template>
-                    </el-dialog>
-                </div>
-
                 <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
                     <div class="sig-tab-bar">
                         <span class="sig-tab-title">控制策略</span>
@@ -9954,70 +9885,6 @@
                         </div>
                     </div>
 
-                    <div class="card">
-                        <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-list"/></svg>命令覆蓋矩陣</span>
-                            <div style="display:flex;gap:8px;align-items:center">
-                                <el-tag size="small" type="success">已抄到 {{ sigCovSummary.seen_total }} / {{ sigCovSummary.catalog_total }}</el-tag>
-                                <el-tag v-if="sigCovSummary.extra_total" size="small" type="danger">規範外 {{ sigCovSummary.extra_total }}</el-tag>
-                                <el-tag size="small" type="info">訊框 {{ sigCovSummary.frames_total }}</el-tag>
-                                <el-button size="small" @click="loadSignalCoverage">重新載入</el-button>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <!-- 覆蓋率:整體大進度條 + 各等級/範疇小進度條 -->
-                            <div class="cov-hero">
-                                <div>
-                                    <div class="cov-hero-num">{{ sigCovSummary.seen_total }}<small> / {{ sigCovSummary.catalog_total||105 }}</small></div>
-                                    <div class="cov-hero-lbl">協定 3.0 訊息覆蓋率 · {{ Math.round(sigCovSummary.seen_total/(sigCovSummary.catalog_total||105)*100) }}%</div>
-                                </div>
-                                <div class="cov-hero-bar"><div class="cov-hero-fill" :style="{width:(sigCovSummary.seen_total/(sigCovSummary.catalog_total||105)*100)+'%'}"></div></div>
-                            </div>
-                            <div class="cov-bars">
-                                <div class="cov-bar-row" v-for="(b, bi) in sigCovSummary.by_level" :key="'lv'+bi">
-                                    <div class="cov-bar-head"><span class="k">等級 {{ b.level }}</span><span class="v">{{ b.seen }} / {{ b.total }}</span></div>
-                                    <div class="cov-bar-track"><div class="cov-bar-fill" :class="'lv-'+b.level" :style="{width:(b.total?b.seen/b.total*100:0)+'%'}"></div></div>
-                                </div>
-                                <div class="cov-bar-row" v-for="(b, bi) in sigCovSummary.by_scope" :key="'sc'+bi">
-                                    <div class="cov-bar-head"><span class="k">{{ b.scope==='IC' ? '號誌控制器' : '設備共用' }}</span><span class="v">{{ b.seen }} / {{ b.total }}</span></div>
-                                    <div class="cov-bar-track"><div class="cov-bar-fill sc" :style="{width:(b.total?b.seen/b.total*100:0)+'%'}"></div></div>
-                                </div>
-                            </div>
-                            <div style="display:flex;gap:8px;align-items:center;margin:10px 0">
-                                <el-radio-group v-model="sigCovFilter" size="small">
-                                    <el-radio-button label="all">全部</el-radio-button>
-                                    <el-radio-button label="seen">已抄到</el-radio-button>
-                                    <el-radio-button label="miss">未抄到</el-radio-button>
-                                </el-radio-group>
-                                <el-input v-model="sigCovQuery" size="small" clearable placeholder="搜尋訊息碼或類別" style="max-width:240px"></el-input>
-                                <el-checkbox v-model="sigCovHideOptional" size="small">隱藏設定/選用類(控制器不會送)</el-checkbox>
-                                <span style="font-size:12px;color:#94a3b8">顯示 {{ sigCovRows.length }} 筆</span>
-                            </div>
-                            <el-table :data="sigCovRows" size="small" max-height="420" style="width:100%"
-                                      :row-class-name="sigCovRowClass">
-                                <el-table-column label="狀態" width="80">
-                                    <template #default="sc">
-                                        <el-tag size="small" :type="sc.row.extra ? 'danger' : (sc.row.seen ? 'success' : 'info')">
-                                            {{ sc.row.extra ? '規範外' : (sc.row.seen ? '已抄到' : '未見') }}
-                                        </el-tag>
-                                    </template>
-                                </el-table-column>
-                                <el-table-column prop="code" label="訊息碼" width="88"></el-table-column>
-                                <el-table-column prop="device_name" label="設備" width="110"></el-table-column>
-                                <el-table-column prop="category" label="功能類別" min-width="200"></el-table-column>
-                                <el-table-column prop="message_type" label="訊息型態" width="150"></el-table-column>
-                                <el-table-column prop="level" label="等級" width="70"></el-table-column>
-                                <el-table-column label="中心下達" width="90">
-                                    <template #default="sc">
-                                        <span style="font-size:12px;color:#64748b">{{ sc.row.center_command ? '是' : '—' }}</span>
-                                    </template>
-                                </el-table-column>
-                                <el-table-column prop="spec_page" label="規範頁" width="80"></el-table-column>
-                                <el-table-column prop="count" label="次數" width="90"></el-table-column>
-                            </el-table>
-                        </div>
-                    </div>
-
                     <div class="card" v-if="sigCtl.enabled">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-zap"/></svg>號控下傳</span>
@@ -10028,10 +9895,6 @@
                             </span>
                         </div>
                         <div class="card-body">
-                            <div class="analysis-setting-tip">
-                                對號誌控制器下傳命令。{{ sigCtl.query_only?'目前限制為只准查詢 —— 查詢不改變路口運轉。':'⚠️ 已開放設定下傳，送出設定類會改變路口的實際號誌運轉。' }}
-                                流程:選命令 → 填參數 → <b>準備</b>(看預覽)→ <b>送出</b>(二次確認)。
-                            </div>
                             <div style="display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px">
                                 <div>
                                     <el-radio-group v-model="sigCmdKind" size="small" style="margin-bottom:8px">
@@ -24868,8 +24731,11 @@ const app=createApp({
             //    兩件事的讀者與時機都不同,混在一頁會互相稀釋。
             eval:   () => { loadSigFaults(); loadViz(); startVizTimer(); loadVizHourly();
                             loadSigStats(); startSigStatTimer(); loadSigConsole(); },
+            // 🛑 2026-09-08 拿掉「時制計畫控制」區塊後,這裡不再呼叫 loadSigTp()——
+            //    留著只會每次進分頁多打一次沒人看的請求。sigTp 那組 ref/函式
+            //    暫時保留(要恢復那個區塊時直接重畫模板即可),但不再被觸發。
             device: () => { loadSignal(); startSignalTimer(); loadSigDevice();
-                            loadSigConfig(); loadSigTp();
+                            loadSigConfig();
                             loadSigTime(0); loadSigTimeHistory();
                             loadSigStrategy(); },
             spec:   () => { loadSpec(); },
