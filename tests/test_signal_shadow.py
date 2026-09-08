@@ -815,3 +815,40 @@ def test_prepare_accepts_by_label(monkeypatch):
     out2 = T._finish_prepare(b"\xaa\xbb\x02", "5F10", 0x10, 0x5F, 1, 2)
     assert out2.get("token")
     assert T._pending[out2["token"]]["by"] == ""
+
+
+def test_priority_keep_weight_only_when_red_is_priority():
+    """🛑 主線保護相在等時才降低切換門檻,其他情況完全不變。
+
+    現場 2026-09-08:「下匝道要放多點,很塞」。實測佐證下匝道排隊 >30m 的時段,
+    上匝道拿到 2094 秒綠燈、下匝道只有 1354 秒。
+    🛑 但不可以直接調低全域 keep_weight —— 3.0 是參數搜尋 + 五個未調過的驗證
+       情境驗出來的(1.0→3.0 讓離最佳解從 +192.7% 收到 +51.8%),動它會讓整體
+       延滯變差。所以這條測試守住「只有紅側是優先相時才用低值」。
+    """
+    from detection.signal_decision_engine import ApproachState, decide
+
+    def run(red_priority: bool, pkw):
+        return decide(
+            green_phase=1, green_elapsed_sec=60.0,
+            green_side=ApproachState(1, queue_m=10.0, flow_vpm=5.0,
+                                     storage_m=210, priority=False),
+            red_side=ApproachState(2, queue_m=40.0, flow_vpm=20.0,
+                                   storage_m=600, priority=red_priority,
+                                   waiting_sec=60.0),
+            min_green_sec=10, max_green_sec=210,
+            keep_weight=3.0, priority_keep_weight=pkw)
+
+    # 紅側不是優先相 → 一定用 3.0,不受 priority_keep_weight 影響
+    d = run(False, 2.0)
+    assert d.detail["keep_weight"] == 3.0
+    assert "priority_red" not in d.detail
+
+    # 紅側是優先相 → 用較低的值,門檻跟著變低
+    d2 = run(True, 2.0)
+    assert d2.detail["keep_weight"] == 2.0
+    assert d2.detail["priority_red"] is True
+    assert d2.detail["threshold"] < run(True, None).detail["threshold"]
+
+    # 沒給 priority_keep_weight → 行為與從前完全相同(預設不改變現場行為)
+    assert run(True, None).detail["keep_weight"] == 3.0

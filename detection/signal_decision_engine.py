@@ -123,6 +123,7 @@ def decide(
     spillback_ratio: float = DEFAULT_SPILLBACK_RATIO,
     lost_time_sec: float = DEFAULT_LOST_TIME_SEC,
     keep_weight: float = DEFAULT_KEEP_WEIGHT,
+    priority_keep_weight: Optional[float] = None,
 ) -> Decision:
     """算出這一刻該 KEEP 還是 SWITCH。純函式，不碰 IO、不下發。"""
     mpv = meters_per_vehicle
@@ -202,12 +203,23 @@ def decide(
     # ④ 一般規則:切換效益 > 保持效益 + 換相成本 → 才值得切
     #    加上換相成本是防抖動:小幅優勢不值得付一次換相的代價
     #    綠側價值乘 keep_weight(現場校正,見 DEFAULT_KEEP_WEIGHT 的說明)
-    weighted_keep = keep_gain * keep_weight
+    # 🛑 紅側是主線保護相(下匝道)時,用比較低的 keep_weight —— 也就是
+    #    「下匝道在等的時候,我方比較願意把綠燈切過去」。
+    #    為什麼不直接調低全域 keep_weight:3.0 是參數搜尋 + 五個未調過的驗證
+    #    情境驗出來的(1.0→3.0 讓離最佳解從 +192.7% 收到 +51.8%),動它會讓
+    #    整體延滯變差。這裡只改「紅側是優先相」這一種情況,其餘完全不變。
+    # 🛑 這個值**沒有**經過 keep_weight 那樣的驗證,是為了現場要求
+    #    (2026-09-08「下匝道要放多點,很塞」)加的旋鈕,要用實測回頭驗證。
+    kw = keep_weight
+    if red_side.priority and priority_keep_weight is not None:
+        kw = float(priority_keep_weight)
+        d.detail["priority_red"] = True
+    weighted_keep = keep_gain * kw
     threshold = weighted_keep + change_cost
-    d.detail["keep_weight"] = keep_weight
+    d.detail["keep_weight"] = kw
     d.detail["keep_gain_weighted"] = round(weighted_keep, 2)
     d.detail["threshold"] = round(threshold, 2)
-    w = "" if keep_weight == 1.0 else f"×{keep_weight:g}"
+    w = "" if kw == 1.0 else f"×{kw:g}"
     if switch_gain > threshold:
         d.action = "SWITCH"
         d.reason = (f"紅側延滯 {switch_gain:.0f} > 綠側價值 {keep_gain:.0f}{w}"
