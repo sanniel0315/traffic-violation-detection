@@ -3968,6 +3968,12 @@
             border-radius:5px; padding:1px 7px; line-height:1.5; white-space:nowrap; }
         .wr-sw-i .wr-actn i { font-style:normal; font-weight:500; margin-left:2px;
                               color:var(--gov-mute-2); }
+        /* 演算法下發:已不是開關,只顯示狀態(跟隨總開關) */
+        .wr-sw-i .wr-actst { font-size:var(--fs-caption); font-weight:700; padding:1px 8px;
+                             border-radius:99px; white-space:nowrap; }
+        .wr-sw-i .wr-actst.on  { color:#1f7a34; background:#e8f5ec; border:1px solid #bfe3ca; }
+        .wr-sw-i .wr-actst.off { color:var(--gov-mute-2); background:var(--gov-bg-soft,#f1f5f9);
+                                 border:1px solid var(--gov-border,#dbe2ea); }
         /* 控制器校時 */
         .tsy-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
                     gap:10px; margin-bottom:14px; }
@@ -8822,9 +8828,13 @@
                                              送 5F1C,不再需要人按任何按鈕。它是最外層的一道:
                                              底下還有動態總開關、只准查詢、降階三道各自有效,
                                              所以這裡開著也不保證會送 —— 右邊那行字會說出當下被哪一道擋。 -->
-                                        <el-switch v-model="sigActOn" size="small" :loading="sigActBusy"
-                                                   :disabled="!sigDynOn"
-                                                   @change="sigSetAct" active-text="演算法下發" inline-prompt></el-switch>
+                                        <!-- 🛑 2026-09-08 現場:「動態號誌控制就是連動演算法下發,
+                                             所以不用另外切演算法。」原本兩個開關要各切一次 ——
+                                             但總開關關著時演算法本來就送不出去(控制策略不含時相控制,
+                                             閘門一定擋),所以第二個開關只會製造「以為開了其實沒開」。
+                                             改成:總開關連動下發,這裡只顯示狀態不再是開關。 -->
+                                        <span class="wr-sw-k">演算法下發</span>
+                                        <b class="wr-actst" :class="sigActOn?'on':'off'">{{ sigActOn?'跟隨總開關':'停用' }}</b>
                                         <!-- 🛑 計數直接掛在開關旁邊,不要只放在別的卡片裡 ——
                                              「演算法到底有沒有在動」是看這一排的人第一個要問的事。
                                              次數取自持久化訊框,服務重啟不歸零。 -->
@@ -26496,8 +26506,23 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                     body: JSON.stringify({enabled: !!v}),
                 });
                 if (!r.ok) throw new Error(r.status);
+                // 🛑 連動演算法下發 —— 使用者:「動態號誌控制就是連動演算法下發,
+                //    不用另外切演算法。」兩個各切一次只會製造「以為開了其實沒開」。
+                //    下發那一支失敗不算整體失敗:總開關已經生效,而下發關著時
+                //    路口只是回到定時控制,方向仍然安全。失敗會在 toast 講出來。
+                let actErr = '';
+                try {
+                    const ra = await fetch('/api/signal/shadow/actuate', {
+                        method: 'POST', credentials: 'include',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({enabled: !!v}),
+                    });
+                    if (!ra.ok) actErr = '下發開關同步失敗(HTTP ' + ra.status + ')';
+                } catch (e2) { actErr = '下發開關同步失敗:' + (e2.message || e2); }
                 await loadSigDyn();
-                sigToggleToast('動態控制已' + (v ? '啟用' : '關閉'), false);
+                if (actErr) { ElMessage.warning(actErr); }
+                sigToggleToast((v ? '時相控制已啟用，演算法開始下發'
+                                  : '已切回定時控制，演算法停止下發'), false);
             } catch (e) {
                 ElMessage.error('切換失敗'); sigDynOn.value = !v; await loadSigDyn();
             } finally { sigDynBusy.value = false; }
