@@ -3859,7 +3859,15 @@
         .aj-sum b.unk { color:#8a5d00; }
         .aj-code { font-family:var(--font-mono); font-weight:600; }
         .aj-q { font-family:var(--font-mono); text-align:right; white-space:nowrap; }
-        .aj-why { font-size:var(--fs-caption); color:var(--gov-muted); }
+        /* 🛑 2026-09-08 現場:「字體大小也不對」。原本依據欄用 fs-caption、
+           其餘欄位吃 data-table 繼承的 body 字級,同一列裡兩種大小,看起來像壞掉。
+           整張表統一 fs-small,依據欄只用顏色區分主次,不再改字級。 */
+        #sig-adj-tbl { font-size:var(--fs-small); }
+        #sig-adj-tbl th, #sig-adj-tbl td { padding:8px 12px; }
+        .aj-why { color:var(--gov-muted); }
+        .aj-ts { font-family:var(--font-mono); white-space:nowrap; }
+        .aj-m { font-style:normal; font-size:var(--fs-caption); color:var(--gov-mute-2);
+                margin-left:6px; white-space:nowrap; cursor:help; }
         .aj-st { display:inline-block; padding:1px 8px; border-radius:99px;
                  font-size:var(--fs-caption); font-weight:600; white-space:nowrap; }
         .aj-st.accepted { background:#e6f4ea; color:#1f7a34; }
@@ -8491,19 +8499,23 @@
                         </div>
                         <div class="card-body">
                             <div class="analysis-setting-tip">
-                                🛑 「有沒有接受」是用「控制器回覆的指令碼 + 時間鄰近」推的，
-                                不是逐則精確配對（0F80 的 seq 是控制器自己的計數，無法配對）。
-                                續約 5F10 不列入 —— 它維持授權，不改變運轉。
+                                結果以 <b>seq 精確配對</b>為主（{{ sigAdj.matched_by_seq||0 }} 筆），
+                                配不到才退回「指令碼＋時間鄰近」的推定，每一列的結果欄都標明用哪一種。
+                                查詢類的回應是它自己的回報碼（<code>0F42</code>→<code>0FC2</code>），不是 <code>0F80</code>。
+                                <br>不改變運轉的命令不列入：續約 <code>5F10</code> 只維持授權、查詢類只讀資料<span
+                                    v-if="sigAdj.query_excluded">（已排除 {{ sigAdj.query_excluded }} 筆查詢）</span>。
+                                「依據」只掛在換相命令 <code>5F1C</code> 上。
                             </div>
-                            <table class="data-table">
+                            <table class="data-table" id="sig-adj-tbl">
                                 <thead><tr><th>時間</th><th>命令</th><th>來源</th><th>結果</th>
                                     <th>當時排隊 上/下</th><th>依據</th></tr></thead>
                                 <tbody>
                                     <tr v-for="(r,ri) in (sigAdj.rows||[])" :key="'aj'+ri">
-                                        <td>{{ r.ts ? r.ts.slice(11) : '—' }}</td>
+                                        <td class="aj-ts">{{ sigAdjTime(r) }}</td>
                                         <td class="aj-code">{{ r.code }}</td>
                                         <td>{{ r.by }}</td>
-                                        <td><span class="aj-st" :class="r.likely_ack">{{ sigAdjAck(r) }}</span></td>
+                                        <td><span class="aj-st" :class="r.likely_ack">{{ sigAdjAck(r) }}</span><i
+                                                class="aj-m" :title="sigAdjMatchTip(r)">{{ sigAdjMatch(r) }}</i></td>
                                         <td class="aj-q">{{ sigAdjQ(r) }}</td>
                                         <td class="aj-why">{{ r.reason || '—' }}</td>
                                     </tr>
@@ -24468,6 +24480,18 @@ const app=createApp({
         const sigFault = ref({});
         const sigDeg = ref({});
         const sigAdj = ref({});
+        // 🛑 跨日時只顯示 HH:MM:SS 會讓人把昨天的當成今天的 —— 表格尾端本來就
+        //    含前一天的紀錄。同一天只顯示時間,跨日才補上日期。
+        const sigAdjTime = (r) => {
+            if (!r || !r.ts) return '—';
+            const today = new Date().toISOString().slice(0, 10);
+            return r.ts.slice(0, 10) === today ? r.ts.slice(11) : r.ts.replace('T', ' ');
+        };
+        const sigAdjMatch = (r) => ({seq: '精確', code_time: '推定'}[(r || {}).ack_match] || '');
+        const sigAdjMatchTip = (r) => ({
+            seq: 'seq 與指令碼都對得上 —— 逐則精確配對',
+            code_time: 'seq 配不到,改用指令碼＋時間鄰近推定;同時段若有外部也在送同一種命令可能混淆',
+        }[(r || {}).ack_match] || '');
         // 🛑 三種結果要分得開,不可以只寫「已送出」:
         //    接受 / 被拒 / 無回應 —— 後兩者代表那一次調整**沒有生效**。
         const sigAdjAck = (r) => ({
@@ -27706,7 +27730,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigFaultLoading,loadSigFaults,sigFaultLevel,sigFaultTh,sigFaultKinds,sigFaultKindName,sigFaultCenter,sigDegDur,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNamed,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigActSent,sigActSent24h,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,sigFaultLevel,sigFaultTh,sigFaultKinds,sigFaultKindName,sigFaultCenter,sigDegDur,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNamed,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigActSent,sigActSent24h,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }

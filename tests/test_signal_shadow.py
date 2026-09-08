@@ -902,3 +902,60 @@ def test_no_send_on_first_green_step(monkeypatch):
     # 後續綠階 → 才送(跳下一步階才會真的進清道)
     m._actuate(_D(), 1, dict(LIVE_OK, step_id=m.FIRST_GREEN_STEP + 1))
     assert len(calls) == 2      # prepare + send
+
+
+def test_adjust_log_不得再宣稱_seq_無法配對():
+    """🛑 2026-09-08 現場指正:那句說明是錯的。
+
+    舊註解寫「0F80 的 seq 是控制器自己的計數,無法配對」,但當天四則不同命令
+    實測 seq 完全對得上(0F12/0F10/0F47/5F10)。既然對得上就該精確配對,
+    不可以繼續用「時間鄰近」的推定當唯一手段,更不可以在畫面上這樣寫。
+    """
+    import inspect
+    import api.routes.signal_shadow as m
+    src = inspect.getsource(m.adjust_log)
+    # 🛑 docstring 可以**引用**那句錯話,但必須同時標明它是錯的 ——
+    #    留著更正紀錄有價值,留著沒被推翻的錯誤說明才是問題。
+    if "無法配對" in src:
+        assert "那是錯的" in src, "引用了那句錯話卻沒有標明它是錯的"
+    assert '"seq"' in src, "沒有做 seq 精確配對"
+    assert "ack_match" in src, "沒有標明每一筆是精確還是推定"
+
+    import pathlib
+    web = (pathlib.Path(__file__).resolve().parents[1] / "web" / "index.html"
+           ).read_text(encoding="utf-8")
+    assert "seq 是控制器自己的計數" not in web, "畫面上還留著那句錯誤說明"
+
+
+def test_adjust_log_查詢類不算時制調整():
+    """🛑 查詢類(5F40/0F42/0F46…)只讀資料,不改變運轉 ——
+    排除的理由跟續約 5F10 一模一樣。當天 0F42/5F40 探測佔了表格一半,
+    把真正的調整淹沒。
+    """
+    import inspect
+    import api.routes.signal_shadow as m
+    src = inspect.getsource(m.adjust_log)
+    assert "include_query" in src, "沒有把查詢類分開"
+    assert "_is_query" in src, "沒有判斷查詢類"
+    assert "query_excluded" in src, "沒有回報排除了幾筆,使用者會以為資料不見了"
+
+
+def test_adjust_log_查詢用自己的回報碼配對():
+    """🛑 查詢類的回應是它自己的回報碼(0F42 → 0FC2),不是 0F80。
+    舊版一律找 0F80,所以每一則查詢都被標成「無回應」—— 那是錯的。
+    """
+    import inspect
+    import api.routes.signal_shadow as m
+    src = inspect.getsource(m.adjust_log)
+    assert "_query_reply_code" in src, "沒有把查詢碼對到它的回報碼"
+    assert "0x40 <= cmd < 0x80" in src, "沒有用指令碼區間判斷查詢類"
+
+
+def test_adjust_log_依據只掛在換相命令():
+    """🛑 把最近的決策理由套到 0F42 對時查詢上會顯示「未滿最小綠 20s」,
+    與那則命令毫無關係 —— 那是誤導,不是資訊。
+    """
+    import inspect
+    import api.routes.signal_shadow as m
+    src = inspect.getsource(m.adjust_log)
+    assert 'if code == "5F1C":' in src, "依據沒有限定只掛在換相命令上"

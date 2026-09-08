@@ -2863,6 +2863,7 @@ async def fault_status(_user=Depends(get_current_user)):
 
 @router.get("/adjust-log", summary="歷史時制調整紀錄(每一次下發:何時、為什麼、有沒有生效)")
 async def adjust_log(hours: int = Query(24, ge=1, le=168),
+                     include_query: int = 0,
                      _user=Depends(get_current_user)):
     """驗收條文的「歷史時制調整紀錄」。
 
@@ -2871,43 +2872,91 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
 
     🛑 「有沒有接受」不能只看送出成功。5F1C 的 NAK 率實測 42% ——
        只列送出紀錄會讓人以為每一次調整都生效了。
-    🛑 ACK 配對用「0F80/0F81 酬載帶的指令碼 + 時間鄰近」,不是 seq:
-       實測 0F80 的 seq 是控制器自己的計數(全是 1),不是回我方的 seq。
-       前提是同一時間只有我方在送同一種命令;外部若同時送會混淆,
-       所以標成 likely_ack 而不是斷定,欄位名就講清楚它的性質。
-    🛑 續約(5F10 renew)不算「時制調整」—— 它只是維持授權,不改變運轉,
-       列進來會把真正的調整淹沒。用 include_renew=1 才帶出來。
+
+    🛑 2026-09-08 更正:配對**以 seq 為主**,不是只靠時間鄰近。
+       舊註解寫「0F80 的 seq 是控制器自己的計數,無法配對」——**那是錯的**。
+       當天四則不同命令實測,0F80/0F81 的 seq 與我方送出的 seq 完全相同,
+       酬載也指名被回應的 device+cmd:
+         送 AA BB 6B .. 0F 12 ..  → 回 AA BB 6B .. 0F 80 0F 12
+         送 AA BB 0A .. 0F 10 ..  → 回 AA BB 0A .. 0F 80 0F 10
+         送 AA BB 15 .. 0F 47     → 回 AA BB 15 .. 0F 81 0F 47 08(NAK)
+         送 AA BB 0B .. 5F 10 ..  → 回 AA BB 0B .. 0F 80 5F 10
+       所以先用 seq+指令碼精確配對(ack_match="seq");配不到才退回
+       指令碼+時間鄰近(ack_match="code_time"),那一種才是推定。
+       每一筆都標明用哪一種配到的,不要讓精確的與推定的混在一起看。
+
+    🛑 查詢類命令的回應**不是 0F80**,是它自己的回報碼(0F42 → 0FC2)。
+       舊版一律找 0F80,所以每一則查詢都被標成「無回應」—— 那是錯的,
+       15:14:18 那筆 0F42 明明收到了 0FC2。
+
+    🛑 不改變運轉的命令不算「時制調整」:
+       續約 5F10 維持授權、查詢類(5F40/0F42/0F46…)只是讀資料,兩者都不改運轉。
+       舊版只排除 5F10,結果查詢把真正的調整淹沒(當天 0F42/5F40 探測佔了一半)。
+       預設只列會改變運轉的設定類;include_query=1 才帶出查詢。
+
+    🛑 「依據」只掛在**換相命令(5F1C)**上。把最近的決策理由套到 0F42 對時查詢
+       上會變成「未滿最小綠 20s」,與那則命令毫無關係 —— 那是誤導,不是資訊。
     """
     cut = time.time() - hours * 3600
     out: list = []
     try:
         conn = _sqlite3.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=8)
         sends = list(conn.execute(
-            "SELECT ts,code,user,raw FROM signal_frames WHERE src='self' AND ts>? "
+            "SELECT ts,code,user,raw,seq FROM signal_frames WHERE src='self' AND ts>? "
             "AND code<>'5F10' ORDER BY ts DESC LIMIT 500", (cut,)))
-        # ACK/NAK 一次撈完再比對,不要每筆去查一次 DB
+        # 回應一次撈完再比對,不要每筆去查一次 DB。
+        # 🛑 不能只撈 0F80/0F81 —— 查詢類的回應是它自己的回報碼(0F42 → 0FC2)。
         replies = list(conn.execute(
-            "SELECT ts,code,raw FROM signal_frames WHERE code IN ('0F80','0F81') "
-            "AND ts>? ORDER BY ts", (cut,)))
+            "SELECT ts,code,raw,seq FROM signal_frames "
+            "WHERE src='controller' AND ts>? ORDER BY ts", (cut,)))
         conn.close()
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:160], "rows": []}
 
-    def replied(ts: float, code: str):
-        """送出後 ACK_WAIT_SEC 內,有沒有針對同一指令碼的 0F80/0F81。"""
+    def _query_reply_code(code: str) -> Optional[str]:
+        """查詢碼 → 它自己的回報碼(0F42 → 0FC2)。非查詢類回 None。"""
+        try:
+            dev, cmd = int(code[:2], 16), int(code[2:], 16)
+        except Exception:
+            return None
+        # 查詢類的指令碼低半位元組是 4x/6x,回報是 +0x80
+        return "%02X%02X" % (dev, (cmd + 0x80) & 0xFF) if 0x40 <= cmd < 0x80 else None
+
+    def replied(ts: float, code: str, seq):
+        """回 (狀態, ErrorCode, 配對方式)。
+
+        🛑 seq 對得上就是**精確配對**;配不到才退回指令碼+時間鄰近的推定。
+           兩者要分得出來,不可以混在一起當同一種可信度看。
+        """
         want = bytes.fromhex(code)
-        for rts, rcode, raw in replies:
+        qreply = _query_reply_code(code)
+        loose = None
+        for r in replies:
+            rts, rcode, raw, rseq = r[0], r[1], r[2], (r[3] if len(r) > 3 else None)
             if rts < ts or rts > ts + ACK_WAIT_SEC:
+                continue
+            # ① 查詢類:收到它自己的回報碼就算成功
+            if qreply and rcode == qreply:
+                if seq is not None and rseq == seq:
+                    return "accepted", None, "seq"
+                loose = loose or ("accepted", None, "code_time")
+                continue
+            if rcode not in ("0F80", "0F81"):
                 continue
             try:
                 b = bytes.fromhex(str(raw).replace(" ", ""))
             except Exception:
                 continue
             i = b.find(bytes([0x0F, 0x80 if rcode == "0F80" else 0x81]))
-            if i >= 0 and len(b) >= i + 4 and b[i + 2:i + 4] == want:
-                return ("accepted" if rcode == "0F80" else "rejected"), (
-                    b[i + 4] if len(b) > i + 4 else None)
-        return "no_reply", None
+            if i < 0 or len(b) < i + 4 or b[i + 2:i + 4] != want:
+                continue
+            state = "accepted" if rcode == "0F80" else "rejected"
+            err = b[i + 4] if len(b) > i + 4 else None
+            # ② seq 相同 = 精確配對,直接採用
+            if seq is not None and rseq == seq:
+                return state, err, "seq"
+            loose = loose or (state, err, "code_time")
+        return loose or ("no_reply", None, "none")
 
     # 決策理由:用時間最近的一筆(取樣每 5 秒,所以允許 6 秒內)
     reasons: list = []
@@ -2936,25 +2985,50 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
         return {"green_phase": best[1], "action": best[2], "reason": best[3],
                 "queue_m_1": best[4], "queue_m_2": best[5]}
 
+    def _is_query(code: str) -> bool:
+        try:
+            cmd = int(code[2:], 16)
+        except Exception:
+            return False
+        return 0x40 <= cmd < 0x80
+
     n_acc = n_rej = n_none = 0
-    for ts, code, user, raw in sends:
-        state, err = replied(ts, code)
+    n_query = 0
+    for row in sends:
+        ts, code, user, raw = row[0], row[1], row[2], row[3]
+        seq = row[4] if len(row) > 4 else None
+        is_q = _is_query(code)
+        if is_q:
+            n_query += 1
+            if not int(include_query or 0):
+                continue
+        state, err, how = replied(ts, code, seq)
         n_acc += state == "accepted"
         n_rej += state == "rejected"
         n_none += state == "no_reply"
-        out.append({
+        item = {
             "ts": datetime.fromtimestamp(ts).isoformat(timespec="seconds"),
             "epoch": ts, "code": code, "by": user or "",
-            "likely_ack": state, "error_code": err,
-            "raw": raw, **why(ts),
-        })
+            "likely_ack": state, "ack_match": how, "error_code": err,
+            "kind": "query" if is_q else "set", "raw": raw,
+        }
+        # 🛑 「依據」只有換相命令有意義。把最近的決策理由套到對時查詢上
+        #    會顯示「未滿最小綠 20s」,與那則命令毫無關係 —— 誤導不是資訊。
+        if code == "5F1C":
+            item.update(why(ts))
+        out.append(item)
+    n_seq = sum(1 for r in out if r.get("ack_match") == "seq")
     return {
         "available": True, "hours": hours, "rows": out,
         "count": len(out), "accepted": n_acc, "rejected": n_rej,
         "no_reply": n_none,
-        "note": "likely_ack 是用指令碼+時間鄰近推的,不是逐則精確配對"
-                "(0F80 的 seq 是控制器自己的計數,無法配對)。"
-                "續約 5F10 不列入 —— 它維持授權,不改變運轉。",
+        "query_excluded": 0 if int(include_query or 0) else n_query,
+        "matched_by_seq": n_seq,
+        "note": "結果以 **seq 精確配對**為主(ack_match=seq);配不到才退回"
+                "指令碼+時間鄰近的推定(ack_match=code_time),每筆都標明。"
+                "查詢類的回應是它自己的回報碼(0F42→0FC2),不是 0F80。"
+                "不改變運轉的命令不列入:續約 5F10 維持授權、查詢類只讀資料"
+                "(include_query=1 可帶出)。「依據」只掛在換相命令 5F1C 上。",
     }
 
 
