@@ -8645,7 +8645,7 @@
                                         <!-- 🛑 遠端重開機 = TC3 0F10「重新啟動設備」(協定 4-13),
                                              重開的是**運轉中的號誌控制器**,不是我方系統。
                                              重開期間路口會走啟動全紅等過渡狀態 —— 真的會影響交通,
-                                             所以要打字確認,不是按一下就送。
+                                             所以會先跳確認框,並把實際碼框與目標位址顯示出來再送。
                                              我方會自動站開(抄不到 5F03 → stale 閘門;策略不含時相
                                              控制 → 另一道),重開完 45 秒內續約自動取回授權。 -->
                                         <el-button size="small" type="danger" plain
@@ -26054,7 +26054,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         };
         // ── 遠端重開機:TC3 0F10「重新啟動設備」(協定 4-13) ──────────────
         // 🛑 重開的是**運轉中的號誌控制器**,不是我方系統。重開期間路口會走
-        //    啟動全紅等過渡狀態,真的會影響交通 —— 所以要打字確認。
+        //    啟動全紅等過渡狀態,真的會影響交通 —— 所以先跳確認框再送。
         // 🛑 走既有的兩段式 prepare → send:prepare 會過 _control_guard
         //    (號控總開關 / 只准查詢 / 動態總開關 / 降階四道),並把組好的碼框
         //    回來給人核對;send 帶 token(60 秒有效)。每一則都寫進操作紀錄。
@@ -26080,15 +26080,13 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             // 🛑 把**實際要送的碼框**顯示出來再確認 —— 確認一個看不到內容的動作
             //    等於沒有確認。位址也要顯示:送錯位址等於重開別的路口。
             try {
-                await ElementPlus.ElMessageBox.prompt(
+                await ElementPlus.ElMessageBox.confirm(
                     ['這會重新啟動「運轉中的號誌控制器」,重開期間路口會走啟動全紅等過渡狀態,真的會影響交通。',
                      '目標位址:' + (prep.addr_hex || prep.addr),
-                     '送出碼框:' + prep.raw,
-                     '確定要送出請輸入「重開」:'].join('\n'),
+                     '送出碼框:' + prep.raw].join('\n'),
                     '遠端重開機(0F10)',
-                    {confirmButtonText: '送出', cancelButtonText: '取消',
-                     type: 'warning', inputPattern: /^重開$/,
-                     inputErrorMessage: '要輸入「重開」兩個字才會送出'});
+                    {confirmButtonText: '確定送出', cancelButtonText: '取消',
+                     type: 'warning'});
             } catch (e) { ElMessage.info('已取消,未送出'); return; }
 
             sigRebootBusy.value = true;
