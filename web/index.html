@@ -3862,8 +3862,11 @@
         /* 🛑 2026-09-08 現場:「字體大小也不對」。原本依據欄用 fs-caption、
            其餘欄位吃 data-table 繼承的 body 字級,同一列裡兩種大小,看起來像壞掉。
            整張表統一 fs-small,依據欄只用顏色區分主次,不再改字級。 */
-        #sig-adj-tbl { font-size:var(--fs-small); }
-        #sig-adj-tbl th, #sig-adj-tbl td { padding:8px 12px; }
+        /* 🛑 降階表要與調整紀錄表同一個字級 —— 兩張表相鄰,字級不同看起來像
+              兩套系統(2026-09-08 現場反映)。共用同一組規則,不要各寫一份。 */
+        #sig-adj-tbl, #sig-deg-tbl { font-size:var(--fs-small); }
+        #sig-adj-tbl th, #sig-adj-tbl td,
+        #sig-deg-tbl th, #sig-deg-tbl td { padding:8px 12px; }
         .aj-why { color:var(--gov-muted); }
         .aj-ts { font-family:var(--font-mono); white-space:nowrap; }
         .aj-m { font-style:normal; font-size:var(--fs-caption); color:var(--gov-mute-2);
@@ -8558,16 +8561,15 @@
                         </div>
                         <div class="card-body">
                             <div class="analysis-setting-tip">
-                                🛑 這是持久化紀錄，服務重啟後仍查得到。最後一段若「仍在降階中」，
-                                持續時間顯示「進行中」而不是 0 秒 —— 那是兩件不同的事。
+                                持久化紀錄，重啟後仍查得到。持續欄的「進行中」代表尚未復歸，不是 0 秒。
                             </div>
-                            <table class="data-table">
+                            <table class="data-table" id="sig-deg-tbl">
                                 <thead><tr><th>開始</th><th>級數</th><th>類別</th><th>持續</th><th>原因</th></tr></thead>
                                 <tbody>
                                     <tr v-for="(sp,si) in (sigDeg.spans||[])" :key="'sp'+si">
                                         <td>{{ sp.start_ts }}</td>
                                         <td><span class="fl-lv" :class="'lv-'+sp.level">{{ sp.level }}</span></td>
-                                        <td>{{ sigFaultKindName(sp.kind) }}</td>
+                                        <td>{{ (sp.kinds||[sp.kind]).map(sigFaultKindName).join('、') }}</td>
                                         <td>{{ sigDegDur(sp) }}</td>
                                         <td class="fl-reason">{{ sp.reason }}</td>
                                     </tr>

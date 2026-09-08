@@ -962,3 +962,28 @@ def test_adjust_log_依據只掛在換相命令():
     import api.routes.signal_shadow as m
     src = inspect.getsource(m.adjust_log)
     assert 'if code == "5F1C":' in src, "依據沒有限定只掛在換相命令上"
+
+
+def test_degrade_span_kind_follows_latest_fault(tmp_path, monkeypatch):
+    """同一段降階裡先後發生兩種故障時,類別不可停在第一種。
+
+    🛑 2026-09-08 現場實際看到的矛盾列:
+       類別「指令傳輸錯誤」/ 原因「偵測器故障:分相 1、2 的排隊與流量都取不到」。
+       成因是 spans 的續接分支更新了 level 與 reason 卻沒更新 kind。
+    """
+    import asyncio
+    from api.routes import signal_shadow as S
+
+    db = tmp_path / "shadow.db"
+    monkeypatch.setattr(S, "_DB_PATH", str(db))
+    monkeypatch.setattr(S, "_db_ready", False)
+
+    S._degrade_persist("L2", "指令傳輸錯誤:連續 3 次未被接受", "transmit")
+    S._degrade_persist("L3", "偵測器故障:分相 1、2 的排隊與流量都取不到", "detector")
+
+    out = asyncio.get_event_loop().run_until_complete(S.degrade_log(hours=24, _user=None))
+    sp = out["spans"][0]
+    assert sp["duration_sec"] is None          # 仍在降階中 → 不是 0 秒
+    assert sp["level"] == "L3"
+    assert sp["kind"] == "detector"            # 跟著最新的原因走
+    assert set(sp["kinds"]) == {"transmit", "detector"}
