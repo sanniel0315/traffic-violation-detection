@@ -1355,14 +1355,23 @@ def _auth_renew_loop() -> None:
     🛑 關掉總開關就不再續 —— 不需要送任何「歸還」命令,授權自己會在
        一分鐘內過期,控制器回到定時。失敗方向永遠是回到定時。
     """
-    # 🛑 啟動後先等「抄到控制策略」就立刻續約,不要空等一個完整週期。
-    #    2026-09-08:重啟後第一次續約拖到 90 秒,而授權 60 秒就到期,
-    #    路口退回定時控制整整一分鐘。這一段把那個空窗關掉。
+    # 🛑 啟動後**主動查一次控制策略**,不要等中央來問。
+    #    2026-09-08 實測:5F00/5FC0 只有在中央輪詢 5F40 時才會出現,而中央
+    #    大約一分鐘才問一次 —— 重啟後 _safety["strategy"] 有將近 60 秒是 None,
+    #    續約迴圈整段跳過(它刻意在抄不到策略時不下命令),授權就在這段空窗到期,
+    #    路口退回定時控制。等待是治不好的,要自己問。
+    #    5F40 是查詢類:不改變運轉、不受降階影響,回報也不會轉給中央
+    #    (走 _send_query_to_controller,有自我查詢抑制)。
+    if _dyn.get("enabled"):
+        try:
+            _send_query_to_controller("5F40", b"", "auth-bootstrap")
+        except Exception as exc:
+            _auth["last_error"] = "啟動查策略失敗:%s" % exc
     _deadline = time.time() + AUTH_FIRST_WAIT_SEC
     while not shutdown_event.is_set() and time.time() < _deadline:
         if isinstance(_safety.get("strategy"), int):
             break
-        shutdown_event.wait(2)
+        shutdown_event.wait(1)
     while not shutdown_event.is_set():
         try:
             if _dyn.get("enabled") and _dyn.get("level") == "L0":
@@ -1374,6 +1383,14 @@ def _auth_renew_loop() -> None:
                     _auth["n"] += 1
                     _auth["last"] = time.time()
                     _auth["last_error"] = ""
+                else:
+                    # 🛑 抄不到策略就不下命令(這一點不變),但要**主動去問**,
+                    #    不然只能等中央輪詢,而那可能要一分鐘 —— 授權早就到期了。
+                    _auth["last_error"] = "尚未抄到控制策略,已主動查詢 5F40"
+                    try:
+                        _send_query_to_controller("5F40", b"", "auth-bootstrap")
+                    except Exception:
+                        pass
         except Exception as exc:
             _auth["last_error"] = "%s: %s" % (type(exc).__name__, exc)
         shutdown_event.wait(AUTH_RENEW_SEC)
