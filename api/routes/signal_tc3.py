@@ -1158,6 +1158,34 @@ def _cabinet_open() -> bool:
     return opened
 
 
+def _hw_for_center(raw_hs: int, mode: str, force_value: int = 0,
+                   cabinet_open: bool = False) -> int:
+    """算出「要送給中央的 HardwareStatus」。純函式,好測。
+
+    🛑 2026-09-08 這裡出過一個真的上線路的 bug:新增 swap 模式時只在最後補了
+       交換那一步,沒有給它自己的取值分支 —— swap 掉進 else(flip14),
+       先把 bit14 XOR 掉才交換,送出 0x0022 而不是 0x0062,中央看到的
+       「控制器就緒」整個不見了。抽成純函式並逐模式測,就是為了不再發生。
+       (當時是 dry run 抓到的,錯誤值在線路上約 20 秒。)
+
+    順序不可調換:先在**我方的位元語意**下算完(含機箱位元),最後一步才交換。
+    先交換再設位元會設到錯的位置。
+    """
+    if mode == "zero":
+        hs = 0
+    elif mode == "force":
+        hs = force_value & 0xFFFF
+    elif mode in ("raw", "swap"):
+        hs = raw_hs
+    else:                                  # flip14
+        hs = raw_hs ^ HW_STATUS_FIX_MASK
+    if cabinet_open:
+        hs |= (1 << CABINET_BIT)           # 只加不減
+    if mode == "swap":
+        hs = ((hs & 0xFF) << 8) | ((hs >> 8) & 0xFF)
+    return hs & 0xFFFF
+
+
 def _forward_controller_frame_to_center(frame: bytes, rec: dict) -> None:
     """把控制器的一個完整框轉給中央(透明中繼的上行)。
     🛑 例外1:我方自我查詢的回報,不轉中央(SELF_PROBE_SUPPRESS)。
@@ -1178,20 +1206,8 @@ def _forward_controller_frame_to_center(frame: bytes, rec: dict) -> None:
             info = _unstuff(frame[7:-3])
             if len(info) >= 4:
                 raw_hs = (info[2] << 8) | info[3]
-                if _mode == "zero":
-                    hs = 0
-                elif _mode == "force":
-                    hs = _hw_center_mode.get("value", 0) & 0xFFFF
-                elif _mode == "raw":
-                    hs = raw_hs               # 純通透,下面只可能再補機箱位元
-                else:
-                    hs = raw_hs ^ HW_STATUS_FIX_MASK
-                if _cab:
-                    hs |= (1 << CABINET_BIT)  # 只加不減:不蓋掉控制器自己報的位元
-                # 🛑 位元組交換一定要放在**最後一步** —— 上面所有位元運算(機箱位元、
-                #    flip14…)都是在**我方的位元語意**下做的,先交換再設位元會設錯位置。
-                if _mode == "swap":
-                    hs = ((hs & 0xFF) << 8) | ((hs >> 8) & 0xFF)
+                hs = _hw_for_center(raw_hs, _mode,
+                                    _hw_center_mode.get("value", 0), bool(_cab))
                 rec["sent_hw"] = hs           # 記下實際送中央的校正值(給通訊紀錄顯示「收→送」)
                 info = info[:2] + bytes(((hs >> 8) & 0xFF, hs & 0xFF)) + info[4:]
                 out = build_frame(rec["addr"], rec["seq"], info)
@@ -3050,17 +3066,10 @@ def _latest_hwstatus() -> dict:
         recv = None
     if recv is None:
         return {}
-    mode = _hw_center_mode["mode"]
-    if mode == "zero":
-        sent = 0
-    elif mode == "force":
-        sent = _hw_center_mode.get("value", 0) & 0xFFFF
-    elif mode == "raw":
-        sent = recv
-    elif mode == "swap":
-        sent = ((recv & 0xFF) << 8) | ((recv >> 8) & 0xFF)
-    else:
-        sent = recv ^ HW_STATUS_FIX_MASK
+    # 🛑 與轉發共用 _hw_for_center —— 兩份各算一次就會漂移,畫面顯示的「送」
+    #    會對不上線路上真正的值。(機箱位元這裡不加:它是逐框即時判定的。)
+    sent = _hw_for_center(recv, _hw_center_mode["mode"],
+                          _hw_center_mode.get("value", 0), False)
     return {"received": recv, "received_hex": f"0x{recv:04X}",
             "sent": sent, "sent_hex": f"0x{sent:04X}"}
 
