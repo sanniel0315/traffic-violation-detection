@@ -1345,7 +1345,9 @@ AUTH_RENEW_SEC = float(os.getenv("SIGNAL_TC3_AUTH_RENEW_SEC", "20") or 20)
 # 啟動後等抄到控制策略就立刻續約(每 2 秒探一次,最多等這麼久)。
 # 🛑 不可以直接等一個完整週期 —— 2026-09-08 重啟後第一次續約拖到 90 秒,
 #    授權在第 60 秒就到期了,路口白白退回定時控制一分鐘。
-AUTH_FIRST_WAIT_SEC = float(os.getenv("SIGNAL_TC3_AUTH_FIRST_WAIT", "30") or 30)
+AUTH_FIRST_WAIT_SEC = float(os.getenv("SIGNAL_TC3_AUTH_FIRST_WAIT", "60") or 60)
+# 還沒抄到控制策略時的重查間隔。要短 —— 連線一好就要立刻拿到策略開始續約。
+AUTH_PROBE_SEC = float(os.getenv("SIGNAL_TC3_AUTH_PROBE_SEC", "3") or 3)
 _auth = {"n": 0, "last": None, "last_error": "", "thread": None}
 
 
@@ -1362,16 +1364,19 @@ def _auth_renew_loop() -> None:
     #    路口退回定時控制。等待是治不好的,要自己問。
     #    5F40 是查詢類:不改變運轉、不受降階影響,回報也不會轉給中央
     #    (走 _send_query_to_controller,有自我查詢抑制)。
-    if _dyn.get("enabled"):
-        try:
-            _send_query_to_controller("5F40", b"", "auth-bootstrap")
-        except Exception as exc:
-            _auth["last_error"] = "啟動查策略失敗:%s" % exc
+    # 🛑 要**反覆**查,不是查一次就等 —— 服務剛起來時控制器連線還沒建立,
+    #    第一次查根本送不出去(2026-09-08 實測:啟動 14:19:57,連線 14:20:15)。
+    #    每 AUTH_PROBE_SEC 秒查一次,直到抄到策略。
     _deadline = time.time() + AUTH_FIRST_WAIT_SEC
     while not shutdown_event.is_set() and time.time() < _deadline:
         if isinstance(_safety.get("strategy"), int):
             break
-        shutdown_event.wait(1)
+        if _dyn.get("enabled"):
+            try:
+                _send_query_to_controller("5F40", b"", "auth-bootstrap")
+            except Exception as exc:
+                _auth["last_error"] = "啟動查策略失敗:%s" % exc
+        shutdown_event.wait(AUTH_PROBE_SEC)
     while not shutdown_event.is_set():
         try:
             if _dyn.get("enabled") and _dyn.get("level") == "L0":
@@ -1386,11 +1391,15 @@ def _auth_renew_loop() -> None:
                 else:
                     # 🛑 抄不到策略就不下命令(這一點不變),但要**主動去問**,
                     #    不然只能等中央輪詢,而那可能要一分鐘 —— 授權早就到期了。
+                    #    而且問完要**快點回頭看**,不可以睡滿一個續約週期:
+                    #    2026-09-08 實測就是這樣白等 20 秒,續約只剩 1 秒餘裕。
                     _auth["last_error"] = "尚未抄到控制策略,已主動查詢 5F40"
                     try:
                         _send_query_to_controller("5F40", b"", "auth-bootstrap")
                     except Exception:
                         pass
+                    shutdown_event.wait(AUTH_PROBE_SEC)
+                    continue
         except Exception as exc:
             _auth["last_error"] = "%s: %s" % (type(exc).__name__, exc)
         shutdown_event.wait(AUTH_RENEW_SEC)
