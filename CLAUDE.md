@@ -28,6 +28,7 @@ Jetson NX 邊緣運算：車輛偵測、車牌辨識、違規偵測、**壅塞�
 - `ocr 流程.md` — 車牌 OCR pipeline
 - `ramp_analyzer_README.md` — 匝道分析器
 - `MODEL_PATHS_PROPOSAL.md` / `model_paths.py` — 模型路徑管理
+- `docs/中央HardwareStatus位元組順序.md` — 🛑 中央端把 HardwareStatus 兩個位元組讀反,我方以 `hwstatus-mode=swap` 對齊(常設,非暫時)。含位元對照、四組實測、改回 raw 的條件、以及踩過的三個坑
 
 ## 攝影機命名慣例
 格式：`<camera_id>_<lane_id>`，例如 `62_1` 表示 62 號攝影機第 1 車道。
