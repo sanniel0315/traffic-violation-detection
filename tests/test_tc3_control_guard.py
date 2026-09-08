@@ -343,3 +343,34 @@ def test_hwstatus_模式要持久化(tc3, tmp_path, monkeypatch):
     monkeypatch.setitem(tc3._conn, "hwstatus_mode", "raw")
     tc3._load_conn_config()
     assert tc3._conn["hwstatus_mode"] == "swap", "重啟後沒有回到設定的模式"
+
+
+def test_hwstatus_遮蔽位元(tc3):
+    """🛑 2026-09-08 使用者授權遮掉 bit13(外部時相控制進行中)。
+
+    bit13 是**狀態指示不是故障**,只要我方持有時相控制它就恆亮,
+    中央把它顯示成 TIMING_PLAN_ON_TRANSITION 並當異常管理。
+    遮掉它不隱瞞運轉狀態 —— 中央每 5 秒輪詢 5F40,我方據實轉答 0x14。
+    """
+    f = tc3._hw_for_center
+    B13 = 1 << 13
+
+    # 遮 bit13:其餘位元不動
+    assert f(0x6000, "raw", mask_out=B13) == 0x4000
+    assert f(0x6004, "raw", mask_out=B13) == 0x4004, "遮蔽不可以動到其他位元"
+    assert f(0x4000, "raw", mask_out=B13) == 0x4000, "本來就沒亮就不該有變化"
+
+    # 遮蔽要在**交換之前**、在我方位元語意下做
+    assert f(0x6000, "swap", mask_out=B13) == 0x0040
+    assert f(0x6000, "swap", cabinet_open=True, mask_out=B13) == 0x0042
+
+    # 不遮的時候行為不變
+    assert f(0x6000, "swap", cabinet_open=True) == 0x0062
+
+
+def test_hwstatus_錯誤類位元不得遮蔽(tc3):
+    """🛑 遮狀態指示可以,遮錯誤類等於對主管機關謊報故障情形 —— 必須擋。"""
+    import inspect
+    src = inspect.getsource(tc3.control_hwstatus_mode)
+    assert "allowed" in src and "(1 << 13)" in src, "沒有限制可遮蔽的位元"
+    assert "不得遮蔽" in src, "沒有把理由寫在擋下來的訊息裡"

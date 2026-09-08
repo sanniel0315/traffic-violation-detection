@@ -77,6 +77,8 @@ def _load_conn_config() -> None:
                     _conn["dynamic_control"] = bool(d.get("dynamic_control"))
                 if d.get("hwstatus_mode"):
                     _conn["hwstatus_mode"] = str(d.get("hwstatus_mode"))
+                if "hwstatus_mask" in d:
+                    _conn["hwstatus_mask"] = int(d.get("hwstatus_mask") or 0)
     except Exception as exc:
         print(f"[signal_tc3] 讀連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
 
@@ -90,7 +92,8 @@ def _save_conn_config() -> None:
                        "center_relay": bool(_conn.get("center_relay")),
                        "safety_push": bool(_conn.get("safety_push", True)),
                        "dynamic_control": bool(_conn.get("dynamic_control", False)),
-                       "hwstatus_mode": _conn.get("hwstatus_mode") or "raw"},
+                       "hwstatus_mode": _conn.get("hwstatus_mode") or "raw",
+                       "hwstatus_mask": int(_conn.get("hwstatus_mask") or 0)},
                       f, ensure_ascii=False, indent=1)
     except Exception as exc:
         print(f"[signal_tc3] 存連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
@@ -276,6 +279,19 @@ CENTER_LISTEN_PORT = int(os.getenv("SIGNAL_TC3_CENTER_LISTEN_PORT", "1001") or 1
 HW_STATUS_FIX = os.getenv("SIGNAL_TC3_FIX_HWSTATUS", "0") != "0"
 HW_STATUS_FIX_CODES = ("0F04", "0FC1")   # 帶 HardwareStatus 的訊息
 HW_STATUS_FIX_MASK = 0x4000              # 要翻的位元(bit14 信號驅動單元)
+# 上傳中央前要**清掉**的位元遮罩(我方位元語意,在交換之前套用)。0 = 不遮。
+#
+# 🛑 2026-09-08 使用者授權遮掉 bit13(0x2000):
+#    bit13 是「外部時相控制進行中」——**狀態指示,不是故障**。只要我方持有
+#    時相控制它就恆亮,中央端把它顯示成 TIMING_PLAN_ON_TRANSITION 並當成
+#    異常在管理,等於每次動態控制都在中央刷一條不需要處理的訊息。
+#
+# 🛑 這**不是**隱瞞運轉狀態:中央每 5 秒輪詢 5F40 查控制策略,我方據實轉答
+#    0x14(含 bit4 時相控制),「誰在控」的權威來源完全沒有被動過。
+#    我方只是不讓同一件事在硬體狀態欄再跳一次告警。
+#    🛑 只准遮**狀態指示位元**。任何錯誤類位元(bit0-12、bit15)一律不得遮蔽 ——
+#       那才是對主管機關謊報故障情形,本專案不做。
+HW_STATUS_MASK_OUT = int(os.getenv("SIGNAL_TC3_HWSTATUS_MASK", "0") or 0)
 # 對中央上傳 HardwareStatus 的模式,可執行期切換(不用重啟 daemon):
 #   raw = 不動(純通透);
 #   swap = **對調兩個位元組**(2026-09-08 使用者決定的補償,見下);
@@ -304,7 +320,11 @@ HW_STATUS_FIX_MASK = 0x4000              # 要翻的位元(bit14 信號驅動單
 _hw_center_mode = {"mode": (_conn.get("hwstatus_mode")
                             or os.getenv("SIGNAL_TC3_HWSTATUS_MODE",
                                          "flip14" if HW_STATUS_FIX else "raw")),
-                   "value": 0}     # force 模式要送的值
+                   "value": 0,     # force 模式要送的值
+                   # 遮蔽位元同樣要撐過重啟(持久化 > env > 0)
+                   "mask": (int(_conn["hwstatus_mask"])
+                            if _conn.get("hwstatus_mask") is not None
+                            else HW_STATUS_MASK_OUT)}
 # 自我查詢比對:我方主動查控制器(5F40/5F48/5F44/0F41),回報預設「不轉發中央」,
 # 避免中央看到它沒問的回報。用「有界計數 + 短窗」抑制:只擋掉我們預期筆數的回報,
 # 中央若同碼查詢,其回報仍會有一筆通過(資料相同),不會被餓死。
@@ -1169,7 +1189,7 @@ def _cabinet_open() -> bool:
 
 
 def _hw_for_center(raw_hs: int, mode: str, force_value: int = 0,
-                   cabinet_open: bool = False) -> int:
+                   cabinet_open: bool = False, mask_out: int = 0) -> int:
     """算出「要送給中央的 HardwareStatus」。純函式,好測。
 
     🛑 2026-09-08 這裡出過一個真的上線路的 bug:新增 swap 模式時只在最後補了
@@ -1189,6 +1209,10 @@ def _hw_for_center(raw_hs: int, mode: str, force_value: int = 0,
         hs = raw_hs
     else:                                  # flip14
         hs = raw_hs ^ HW_STATUS_FIX_MASK
+    if mask_out:
+        # 🛑 在**我方位元語意**下遮,而且要在交換之前 —— 交換之後位置就變了。
+        #    force/zero 也照遮:那兩個是測試模式,遮了才跟正式行為一致。
+        hs &= ~mask_out & 0xFFFF
     if cabinet_open:
         hs |= (1 << CABINET_BIT)           # 只加不減
     if mode == "swap":
@@ -1217,7 +1241,8 @@ def _forward_controller_frame_to_center(frame: bytes, rec: dict) -> None:
             if len(info) >= 4:
                 raw_hs = (info[2] << 8) | info[3]
                 hs = _hw_for_center(raw_hs, _mode,
-                                    _hw_center_mode.get("value", 0), bool(_cab))
+                                    _hw_center_mode.get("value", 0), bool(_cab),
+                                    int(_hw_center_mode.get("mask", 0)))
                 rec["sent_hw"] = hs           # 記下實際送中央的校正值(給通訊紀錄顯示「收→送」)
                 info = info[:2] + bytes(((hs >> 8) & 0xFF, hs & 0xFF)) + info[4:]
                 out = build_frame(rec["addr"], rec["seq"], info)
@@ -3079,7 +3104,8 @@ def _latest_hwstatus() -> dict:
     # 🛑 與轉發共用 _hw_for_center —— 兩份各算一次就會漂移,畫面顯示的「送」
     #    會對不上線路上真正的值。(機箱位元這裡不加:它是逐框即時判定的。)
     sent = _hw_for_center(recv, _hw_center_mode["mode"],
-                          _hw_center_mode.get("value", 0), False)
+                          _hw_center_mode.get("value", 0), False,
+                          int(_hw_center_mode.get("mask", 0)))
     return {"received": recv, "received_hex": f"0x{recv:04X}",
             "sent": sent, "sent_hex": f"0x{sent:04X}"}
 
@@ -3415,10 +3441,15 @@ def control_self_probe(_user=Depends(get_current_user), plan_lo: int = 1, plan_h
 
 @router.post("/control/hwstatus-mode", summary="切換對中央上傳 HardwareStatus 的模式")
 def control_hwstatus_mode(mode: str = "flip14", value: int = 0,
+                          mask: Optional[int] = None,
                           _user=Depends(get_current_user)):
-    """執行期切換(不用重啟):flip14=只翻bit14(補償廠商寫反)/zero=硬體全報正常(全0)/
-    raw=純通透不動/force=強制送指定 16-bit 值(測試用,value 帶值)。
-    切了立即對後續 0F04/0FC1 生效。"""
+    """執行期切換(不用重啟):raw=純通透/swap=對調兩個位元組(本站常設)/
+    flip14=只翻bit14(退路)/zero=硬體全報正常(全0)/force=強制送指定值(測試用)。
+
+    mask 是上傳前要**清掉**的位元(我方位元語意,交換之前套用)。
+    🛑 只准遮**狀態指示位元**(例如 bit13 外部時相控制進行中)。
+       錯誤類位元一律不得遮蔽 —— 那是對主管機關謊報故障情形。
+    切了立即對後續 0F04/0FC1 生效,且會存檔撐過重啟。"""
     m = (mode or "").strip().lower()
     if m not in ("flip14", "zero", "raw", "force", "swap"):
         raise HTTPException(status_code=400,
@@ -3430,13 +3461,30 @@ def control_hwstatus_mode(mode: str = "flip14", value: int = 0,
         # 🛑 force 是測試用的,不持久化 —— 把測試值留到重啟之後會很難查。
         #    其餘模式要留住:使用者明確要求「重啟都必須維持」。
         _conn["hwstatus_mode"] = m
+    if mask is not None:
+        mv = int(mask) & 0xFFFF
+        # 🛑 只准遮狀態指示位元。bit13/bit14 之外的都是錯誤類或未明,
+        #    遮掉等於對主管機關謊報故障情形,直接擋。
+        allowed = (1 << 13) | (1 << 14)
+        if mv & ~allowed:
+            raise HTTPException(
+                status_code=400,
+                detail="只能遮蔽狀態指示位元 bit13/bit14;錯誤類位元不得遮蔽")
+        _hw_center_mode["mask"] = mv
+        _conn["hwstatus_mask"] = mv
+    if m != "force" or mask is not None:
         _save_conn_config()
     note = {"flip14": "只翻 bit14(補償廠商寫反)", "zero": "硬體全報正常(全0)",
             "raw": "純通透不動",
             "swap": "對調兩個位元組(補償中央反讀,中央修好後要切回 raw)",
             "force": f"強制送 0x{_hw_center_mode['value']:04X}(測試)"}[m]
     try:
-        add_log("info", f"HardwareStatus 上傳模式切為 {m}({note})", "signal")
+        add_log("info", "HardwareStatus 上傳模式切為 %s(%s)%s"
+                % (m, note,
+                   ("，遮蔽位元 0x%04X" % _hw_center_mode.get("mask", 0))
+                   if _hw_center_mode.get("mask") else ""), "signal")
     except Exception:
         pass
-    return {"ok": True, "mode": m, "note": note}
+    return {"ok": True, "mode": m, "note": note,
+            "mask": _hw_center_mode.get("mask", 0),
+            "mask_hex": "0x%04X" % _hw_center_mode.get("mask", 0)}
