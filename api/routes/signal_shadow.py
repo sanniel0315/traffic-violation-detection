@@ -1278,6 +1278,15 @@ def summarize(minutes: int = 60, since: Optional[str] = None,
     🛑 一致率一定要分「有車/無車」算。夜間兩側排隊都是 0，兩邊都 KEEP，
        一致率會漂到 98% —— 那個數字沒有資訊量，會蓋掉尖峰的真實表現。
        實測 13.5 小時:整體 87.4%，但只看有車樣本，08 時只有 54.7%。
+
+    🛑 **我方開始下發之後,一致率就不再是獨立對照** —— 這一點比數字本身重要。
+       影子模式的一致率原意是「我方判斷 vs **別人**的動作」。但 2026-09-07 23:43
+       我方開始送 5F1C 之後,控制器的動作有一部分正是我方造成的:拿我方的判斷去
+       比對我方造成的結果,一致率當然高。同理「我方提早切」也被污染 ——
+       我送出 5F1C 導致提早換相,那一筆會被記成「我方提早切且實際也切了」。
+       回傳裡帶 `comparison_valid` 與 `caveat`,呈現時必須一起顯示。
+       要真的量演算法成效,得有「開/關演算法」交替的時段做 A/B,
+       不能拿兩邊都是我方在控的資料去歸因。
     """
     # 🛑 「最近 N 分鐘」會隨查詢時間漂移 —— 要比對固定時段(例如尖峰
     #    06:00~12:00)就必須能指定起訖,否則早一分鐘晚一分鐘查到的不是同一段,
@@ -1357,6 +1366,20 @@ def summarize(minutes: int = 60, since: Optional[str] = None,
         b["active_agree_rate"] = (round(b["active_agree"] / b["active"], 3)
                                   if b["active"] else None)
     out["by_hour"] = [buckets[k] for k in sorted(buckets)]
+
+    # 🛑 一致率只有在「我方沒在下發」時才是獨立對照。
+    #    control_mode=external_dynamic 代表策略含 bit4 —— 2026-09-07 23:43 之後
+    #    那幾乎都是我方持有的授權,所以這個比例就是「我方在控的樣本占比」。
+    #    比例一高,一致率就變成「我方判斷 vs 我方造成的結果」,不是對照。
+    ours = sum(1 for r in rows if r[11] == "external_dynamic")
+    ratio = ours / len(rows) if rows else 0.0
+    out["ours_control_ratio"] = round(ratio, 3)
+    out["comparison_valid"] = bool(ratio < 0.2)
+    out["caveat"] = (
+        "我方在這段期間持有時相控制並下發,一致率是「我方判斷 vs 我方造成的結果」,"
+        "不可當成「與現行控制一致」的證據;要量演算法成效需要開/關交替的 A/B 時段。"
+        if ratio >= 0.2 else
+        "我方下發占比低,一致率可視為與現行控制的對照。")
     return out
 
 
