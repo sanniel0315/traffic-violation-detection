@@ -2930,7 +2930,9 @@ def _basis_plain(w: dict) -> str:
 
 @router.get("/adjust-log", summary="歷史時制調整紀錄(每一次下發:何時、為什麼、有沒有生效)")
 async def adjust_log(hours: int = Query(24, ge=1, le=168),
-                     since: str = Query("", description="起(ISO);給了就蓋過 hours"),
+                     minutes: int = Query(0, ge=0, le=43200,
+                                          description="給了就蓋過 hours;讓畫面三支查詢共用同一組區間參數"),
+                     since: str = Query("", description="起(ISO);給了就蓋過 minutes/hours"),
                      until: str = Query("", description="訖(ISO)"),
                      code: str = Query("", description="訊息碼,如 5F1C"),
                      by: str = Query("", description="來源關鍵字,如 algorithm"),
@@ -2983,6 +2985,7 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
 
     since, until, code, by, ack = _s(since), _s(until), _s(code), _s(by), _s(ack)
     hours, limit, offset = _i(hours, 24), _i(limit, 100), _i(offset, 0)
+    minutes = _i(minutes, 0)
     include_query = _i(include_query, 0)
 
     # 🛑 歷史查詢:since/until 給了就蓋過 hours。兩種都留著 ——
@@ -2996,7 +2999,9 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
     cut = _epoch(since) if since else None
     end = _epoch(until) if until else None
     if cut is None:
-        cut = time.time() - hours * 3600
+        # 🛑 三支查詢(stats / spec-report / adjust-log)要吃同一組區間參數,
+        #    畫面才可能「選一次區間,整頁跟著走」。
+        cut = time.time() - (minutes * 60 if minutes else hours * 3600)
     if end is None:
         end = time.time() + 1
     out: list = []
@@ -3209,6 +3214,8 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
 
 @router.get("/degrade-log", summary="降階與故障歷史(驗收要查的「故障情形」)")
 async def degrade_log(hours: int = Query(24, ge=1, le=720),
+                      minutes: int = Query(0, ge=0, le=43200),
+                      since: str = Query(""), until: str = Query(""),
                       _user=Depends(get_current_user)):
     """降階/復歸事件的歷史,以及每一段降階持續多久。
 
@@ -3216,7 +3223,23 @@ async def degrade_log(hours: int = Query(24, ge=1, le=720),
        重啟後仍查得到。驗收問「什麼時候故障、多久、期間號誌跑什麼」,
        答案要在這裡,而不是「服務重啟就沒了」。
     """
-    cut = time.time() - hours * 3600
+    # 🛑 與 stats / spec-report / adjust-log 吃同一組區間參數 ——
+    #    畫面是「選一次區間,整頁跟著走」,這支不跟就會出現一頁兩個時段。
+    def _ep(v):
+        try:
+            return datetime.fromisoformat(v).timestamp()
+        except Exception:
+            return None
+
+    hours = hours if isinstance(hours, int) and not isinstance(hours, bool) else 24
+    minutes = minutes if isinstance(minutes, int) and not isinstance(minutes, bool) else 0
+    since = since if isinstance(since, str) else ""
+    until = until if isinstance(until, str) else ""
+    cut = _ep(since) if since else None
+    top = _ep(until) if until else None
+    if cut is None:
+        cut = time.time() - (minutes * 60 if minutes else hours * 3600)
+    span_sec = (top or time.time()) - cut
     rows = []
     try:
         conn = _db()
@@ -3226,7 +3249,8 @@ async def degrade_log(hours: int = Query(24, ge=1, le=720),
             "level TEXT, kind TEXT, reason TEXT)")
         cur = conn.execute(
             "SELECT ts,epoch,level,kind,reason FROM signal_degrade_log "
-            "WHERE epoch>? ORDER BY epoch DESC LIMIT 500", (cut,))
+            "WHERE epoch>? AND (? IS NULL OR epoch<=?) "
+            "ORDER BY epoch DESC LIMIT 500", (cut, top, top))
         rows = [{"ts": r[0], "epoch": r[1], "level": r[2], "kind": r[3],
                  "reason": r[4]} for r in cur.fetchall()]
         conn.close()
@@ -3278,7 +3302,7 @@ async def degrade_log(hours: int = Query(24, ge=1, le=720),
         "count": len(spans),
         "ongoing": bool(spans and spans[0].get("end") is None),
         "degraded_sec": round(total, 1),
-        "degraded_ratio": round(total / (hours * 3600), 5) if hours else None,
+        "degraded_ratio": round(total / span_sec, 5) if span_sec > 0 else None,
         "note": "spans 的最後一段若 duration 為 null,代表仍在降階中,不是零秒;"
                 "closed_by_restart=true 的段是服務重啟時關閉的,持續時間計至重啟為止,"
                 "不是量到的恢復時刻。",
