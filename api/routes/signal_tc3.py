@@ -34,6 +34,7 @@ import socket
 import threading
 import time
 from collections import Counter, deque
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -79,6 +80,10 @@ def _load_conn_config() -> None:
                     _conn["hwstatus_mode"] = str(d.get("hwstatus_mode"))
                 if "hwstatus_mask" in d:
                     _conn["hwstatus_mask"] = int(d.get("hwstatus_mask") or 0)
+                for _k in ("time_auto_enabled", "time_auto_interval",
+                           "time_auto_threshold", "time_auto_max"):
+                    if _k in d:
+                        _conn[_k] = d.get(_k)
     except Exception as exc:
         print(f"[signal_tc3] 讀連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
 
@@ -93,7 +98,11 @@ def _save_conn_config() -> None:
                        "safety_push": bool(_conn.get("safety_push", True)),
                        "dynamic_control": bool(_conn.get("dynamic_control", False)),
                        "hwstatus_mode": _conn.get("hwstatus_mode") or "raw",
-                       "hwstatus_mask": int(_conn.get("hwstatus_mask") or 0)},
+                       "hwstatus_mask": int(_conn.get("hwstatus_mask") or 0),
+                       "time_auto_enabled": bool(_conn.get("time_auto_enabled", False)),
+                       "time_auto_interval": _conn.get("time_auto_interval", 3600),
+                       "time_auto_threshold": _conn.get("time_auto_threshold", 5),
+                       "time_auto_max": _conn.get("time_auto_max", 60)},
                       f, ensure_ascii=False, indent=1)
     except Exception as exc:
         print(f"[signal_tc3] 存連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
@@ -1826,7 +1835,10 @@ CONFIG_SECTIONS = [
     {"key": "vip",        "title": "特勤路線控制(VIP)", "query": "5F4E", "reply": "5FCE", "page": "5-66"},
     {"key": "hw_status",  "title": "設備硬體狀態",   "query": "0F41", "reply": "0FC1", "page": "4-21"},
     {"key": "firmware",   "title": "韌體版本/燒錄日", "query": "0F43", "reply": "0FC3", "page": "4-30"},
-    {"key": "datetime",   "title": "設備日期時間",   "query": "0F52", "reply": "0FD2", "page": "4-24"},
+    # 🛑 2026-09-08 更正:原本寫 0F52 / 0FD2,那兩個碼在協定 177 則裡**不存在**,
+    #    所以這一列永遠顯示「尚未抄到」,即使我方已經抄到 0FC2 兩筆。
+    #    正確是 0F42 設備日期時間－查詢 / 0FC2 回報(協定 4-26 / 4-27)。
+    {"key": "datetime",   "title": "設備日期時間",   "query": "0F42", "reply": "0FC2", "page": "4-27"},
 ]
 
 
@@ -2307,6 +2319,226 @@ async def downlink_set(request: Request, _user=Depends(get_current_user)):
     _downlink["events"].append({"ts": time.time(), "code": "-", "action": "policy",
                                 "raw": "%s → %s by %s" % (old, v, who)})
     return await downlink_status(_user)
+
+
+# ── 對時:送出與自動排程 ────────────────────────────────────────────────
+# 🛑 上限保護:差太多不自動校正,只告警。差距過大代表控制器時鐘可能故障或
+#    被人改過,那要人來判斷 —— 自動把它拉一大步反而危險,因為控制器是依
+#    **時間**查表決定跑哪一組時制計畫,跳一大步可能在時段邊界造成
+#    非預期的計畫切換。詳見 docs/設備對時_PLANNING.md。
+_time_auto = {
+    "enabled": bool(_conn.get("time_auto_enabled", False)),
+    "interval_sec": float(_conn.get("time_auto_interval", 3600) or 3600),
+    "threshold_sec": float(_conn.get("time_auto_threshold", 5) or 5),
+    "max_auto_sec": float(_conn.get("time_auto_max", 60) or 60),
+    "thread": None, "last_run": None, "last_error": "",
+}
+
+
+def _do_time_sync(source: str = "manual") -> dict:
+    """查 → 比 → 送 → 記。0F12 是設定類,要過 _control_guard 四道把關。"""
+    dev = _read_device_time()
+    if not dev:
+        _time_record(source, None, None, False, note="查不到控制器時間(0F42 無回應)")
+        return {"ok": False, "reason": "查不到控制器時間(0F42 無回應)"}
+    diff = dev["diff_sec"]
+    out = {"ok": True, "device_time": dev["text"], "device_roc": dev["roc_text"],
+           "diff_sec": diff, "corrected": False, "sec_dif": None}
+
+    why = _control_guard(0x12, 0x0F)
+    if why:
+        out["reason"] = why
+        _time_record(source, dev["dt"].timestamp(), diff, False, note=why)
+        return out
+
+    v = _time_values()
+    info = bytes((0x0F, 0x12, v["Year"], v["Month"], v["Day"],
+                  v["Week"], v["Hour"], v["Min"], v["Sec"]))
+    addr = _target_addr()
+    if addr is None:
+        out["reason"] = "沒有目標位址"
+        _time_record(source, dev["dt"].timestamp(), diff, False, note="沒有目標位址")
+        return out
+    seq = (int(_seq_next.get("n", 0)) + 1) & 0xFF
+    frame = build_frame(addr, seq, info)
+    before = _latest_frame("0F92")
+    before_ts = float(before["ts"]) if before else 0.0
+    if not _controller_send(frame):
+        out["reason"] = "送不出去(控制器未連線?)"
+        _time_record(source, dev["dt"].timestamp(), diff, False, note="送不出去")
+        return out
+    _seq_next["n"] = seq
+    _enqueue_frame({"ts": time.time(), "src": "self", "code": "0F12", "seq": seq,
+                    "addr": addr, "len": len(frame), "cks_ok": True,
+                    "raw": frame.hex(" ").upper(), "user": "time-sync(%s)" % source})
+    add_log("warning", "設備對時:送 0F12(校正前差 %+.1f 秒,來源 %s)"
+            % (diff, source), "signal")
+
+    # 等 0F92 拿 SecDif —— 控制器自己認的差值,與我方算的可交叉查核
+    sec_dif = None
+    deadline = time.time() + 4.0
+    while time.time() < deadline:
+        fr = _latest_frame("0F92")
+        if fr and float(fr["ts"]) > before_ts:
+            try:
+                b = [x.upper() for x in str(fr["raw"]).split()]
+                i = b.index("92")
+                sec_dif = int(b[i + 1], 16)
+                if sec_dif > 127:            # 有號:校正可能往前也可能往後
+                    sec_dif -= 256
+            except Exception:
+                pass
+            break
+        time.sleep(0.3)
+    out.update({"corrected": True, "sec_dif": sec_dif,
+                "raw": frame.hex(" ").upper()})
+    _time_record(source, dev["dt"].timestamp(), diff, True, sec_dif)
+    return out
+
+
+def _time_auto_loop() -> None:
+    """定時對時。預設關閉;差值在門檻與上限之間才校正,超過上限只告警。"""
+    while not shutdown_event.is_set():
+        shutdown_event.wait(max(60.0, _time_auto["interval_sec"]))
+        if shutdown_event.is_set() or not _time_auto["enabled"]:
+            continue
+        try:
+            dev = _read_device_time()
+            _time_auto["last_run"] = time.time()
+            if not dev:
+                _time_auto["last_error"] = "查不到控制器時間"
+                _time_record("auto", None, None, False, note="查不到控制器時間")
+                continue
+            d = abs(dev["diff_sec"])
+            if d < _time_auto["threshold_sec"]:
+                _time_auto["last_error"] = ""
+                _time_record("auto", dev["dt"].timestamp(), dev["diff_sec"], False,
+                             note="差 %+.1f 秒,未達門檻" % dev["diff_sec"])
+            elif d > _time_auto["max_auto_sec"]:
+                # 🛑 差太多不自動改 —— 可能是控制器時鐘故障或被人改過,要人看。
+                msg = ("設備時間差 %+.1f 秒,超過自動校正上限 %.0f 秒 —— "
+                       "不自動校正,請人工確認控制器時鐘"
+                       % (dev["diff_sec"], _time_auto["max_auto_sec"]))
+                _time_auto["last_error"] = msg
+                add_log("warning", msg, "signal")
+                _time_record("auto", dev["dt"].timestamp(), dev["diff_sec"], False,
+                             note="超過上限,只告警")
+            else:
+                _do_time_sync("auto")
+                _time_auto["last_error"] = ""
+        except Exception as exc:
+            _time_auto["last_error"] = "%s: %s" % (type(exc).__name__, exc)
+
+
+def start_time_auto() -> None:
+    """啟動定時對時執行緒(冪等)。"""
+    t = _time_auto.get("thread")
+    if t is not None and t.is_alive():
+        return
+    th = threading.Thread(target=_time_auto_loop, daemon=True,
+                          name="signal-time-auto")
+    _time_auto["thread"] = th
+    th.start()
+
+
+@router.get("/time", summary="設備時間:控制器 vs 我方,含差值與上次對時")
+async def signal_time(probe: int = 0, _user=Depends(get_current_user)):
+    """probe=1 主動查一次(0F42);預設只讀已抄到的最新 0FC2。"""
+    if int(probe or 0):
+        dev = _read_device_time()
+    else:
+        fr = _latest_frame("0FC2")
+        dev = _decode_device_time(fr["raw"]) if fr else None
+        if dev:
+            dev["asked_at"] = float(fr["ts"])
+            # 🛑 這是「抄到當下」的差值,含落庫延遲,只能當參考。
+            #    要精確請用 probe=1,那會用送出時刻比。
+            dev["diff_sec"] = round(dev["dt"].timestamp() - float(fr["ts"]), 1)
+    last = None
+    try:
+        conn = _time_db()
+        r = conn.execute("SELECT ts,source,diff_sec,corrected,sec_dif,note "
+                         "FROM signal_time_sync ORDER BY id DESC LIMIT 1").fetchone()
+        conn.close()
+        if r:
+            last = {"ts": r[0], "source": r[1], "diff_sec": r[2],
+                    "corrected": bool(r[3]), "sec_dif": r[4], "note": r[5]}
+    except Exception:
+        pass
+    return {
+        "now": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "device": ({"text": dev["text"], "roc_text": dev["roc_text"],
+                    "week": dev["week"], "diff_sec": dev["diff_sec"],
+                    "measured_at": dev.get("asked_at"),
+                    "precise": bool(int(probe or 0))} if dev else None),
+        "last_sync": last,
+        "auto": {k: _time_auto[k] for k in
+                 ("enabled", "interval_sec", "threshold_sec", "max_auto_sec",
+                  "last_run", "last_error")},
+        "note": "probe=0 的差值含回報落庫延遲(約 1~3 秒),只能當參考;"
+                "probe=1 用送出時刻比,才是精確值。",
+    }
+
+
+@router.get("/time/history", summary="對時歷史(漂移曲線的資料來源)")
+async def signal_time_history(limit: int = 200, _user=Depends(get_current_user)):
+    n = max(1, min(1000, int(limit or 200)))
+    rows = []
+    try:
+        conn = _time_db()
+        for r in conn.execute(
+                "SELECT ts,source,device_ts,diff_sec,corrected,sec_dif,note "
+                "FROM signal_time_sync ORDER BY id DESC LIMIT ?", (n,)):
+            rows.append({"ts": r[0], "source": r[1], "device_ts": r[2],
+                         "diff_sec": r[3], "corrected": bool(r[4]),
+                         "sec_dif": r[5], "note": r[6]})
+        conn.close()
+    except Exception as exc:
+        return {"error": str(exc), "rows": []}
+    return {"rows": rows, "count": len(rows),
+            "note": "diff_sec 是我方算的(控制器 − 我方);"
+                    "sec_dif 是控制器 0F92 自己回報的。兩個都留,可交叉查核。"}
+
+
+@router.post("/control/time-sync", summary="立即對時(送 0F12,回 SecDif)")
+async def control_time_sync(_user=Depends(get_current_user)):
+    """🛑 這會改變控制器的系統時間。過 _control_guard 四道把關,並寫操作紀錄。"""
+    who = getattr(_user, "username", None) or str(_user)
+    return _do_time_sync("manual(%s)" % who)
+
+
+@router.post("/control/time-auto", summary="定時對時開關與參數(持久化)")
+async def control_time_auto(request: Request, _user=Depends(get_current_user)):
+    """body: {enabled, interval_sec, threshold_sec, max_auto_sec}
+
+    🛑 這是**自動會改變控制器**的行為,預設關閉,且對應使用者設定的 toggle。
+    """
+    body = await request.json()
+    who = getattr(_user, "username", None) or str(_user)
+    if "enabled" in body:
+        _time_auto["enabled"] = bool(body["enabled"])
+        _conn["time_auto_enabled"] = _time_auto["enabled"]
+        add_log("warning", "定時對時:%s(操作者 %s)"
+                % ("啟用" if _time_auto["enabled"] else "關閉", who), "signal")
+    for key, ck, lo, hi in (("interval_sec", "time_auto_interval", 60, 86400),
+                            ("threshold_sec", "time_auto_threshold", 1, 3600),
+                            ("max_auto_sec", "time_auto_max", 5, 3600)):
+        if key in body:
+            val = float(body[key])
+            if not (lo <= val <= hi):
+                raise HTTPException(status_code=400,
+                                    detail="%s 要在 %s~%s 之間" % (key, lo, hi))
+            _time_auto[key] = val
+            _conn[ck] = val
+    if _time_auto["threshold_sec"] > _time_auto["max_auto_sec"]:
+        raise HTTPException(status_code=400,
+                            detail="門檻不可大於自動校正上限,否則永遠不會校正")
+    _save_conn_config()
+    if _time_auto["enabled"]:
+        start_time_auto()
+    return {k: _time_auto[k] for k in
+            ("enabled", "interval_sec", "threshold_sec", "max_auto_sec",
+             "last_run", "last_error")}
 
 
 @router.get("/coverage", summary="TC3 命令覆蓋矩陣(規範 105 條 vs 實際抄到)")
@@ -3280,6 +3512,102 @@ async def timing_plans_set_baseline(_user=Depends(get_current_user)):
 
 # ── 訊框持久化:背景 writer + 篩選查詢(監看要能存起來、篩選、重啟後還在) ──────
 _frame_db_ready = False
+
+
+# ── 設備對時(TC3「設備日期、時間管理」)──────────────────────────────────
+# 規劃見 docs/設備對時_PLANNING.md。一組五則,兩條路:
+#   寫入 0F12 設定 → 0F92 設定回報(帶 SecDif = 校正前差了幾秒)
+#   讀取 0F42 查詢 → 0FC2 回報   /  0F02 主動回報(這台從未送過)
+#
+# 🛑 欄位編碼,兩個都實際踩過:
+#    Year 是**民國年**(0x73=115 → 西元 2026)。當成 2000+ 會解出「20115 年」。
+#    時分秒是 **binary 不是 BCD**(0x14 = 20 時)。當 BCD 會錯 6 個多小時。
+#    Week 1~7(週一=1),與 Python 的 isoweekday() 相同。
+ROC_YEAR_BASE = 1911
+
+
+def _decode_device_time(raw: str) -> Optional[dict]:
+    """從 0FC2 的原始框解出控制器時間。解不出回 None。"""
+    try:
+        b = [x.upper() for x in str(raw or "").split()]
+        i = b.index("C2")
+        p = [int(x, 16) for x in b[i + 1:i + 8]]
+        if len(p) < 7:
+            return None
+        dt = datetime(ROC_YEAR_BASE + p[0], p[1], p[2], p[4], p[5], p[6])
+        return {"roc_year": p[0], "week": p[3], "dt": dt,
+                "text": dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "roc_text": "民國%d年%02d月%02d日 %02d:%02d:%02d"
+                            % (p[0], p[1], p[2], p[4], p[5], p[6])}
+    except Exception:
+        return None
+
+
+def _time_values(now: Optional[datetime] = None) -> dict:
+    """組 0F12 的欄位值。Week 用 isoweekday()(週一=1),與協定一致。"""
+    n = now or datetime.now()
+    return {"Year": n.year - ROC_YEAR_BASE, "Month": n.month, "Day": n.day,
+            "Week": n.isoweekday(), "Hour": n.hour, "Min": n.minute,
+            "Sec": n.second}
+
+
+def _time_db():
+    """對時紀錄表。與訊框同一個 DB,少一個檔案要管。"""
+    conn = _frames_db()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS signal_time_sync (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL,                -- 我方執行的時刻
+            source TEXT,            -- manual / auto
+            device_ts REAL,         -- 校正前控制器時間
+            diff_sec REAL,          -- 我方算的差值(控制器 - 我方)
+            corrected INTEGER,      -- 有沒有真的送 0F12
+            sec_dif INTEGER,        -- 控制器 0F92 回報的 SecDif
+            note TEXT
+        )""")
+    conn.commit()
+    return conn
+
+
+def _time_record(source: str, device_ts, diff_sec, corrected: bool,
+                 sec_dif=None, note: str = "") -> None:
+    try:
+        conn = _time_db()
+        conn.execute("INSERT INTO signal_time_sync"
+                     "(ts,source,device_ts,diff_sec,corrected,sec_dif,note)"
+                     " VALUES(?,?,?,?,?,?,?)",
+                     (time.time(), source, device_ts, diff_sec,
+                      1 if corrected else 0, sec_dif, note))
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        print("[signal-tc3] 對時紀錄寫入失敗: %s" % exc, flush=True)
+
+
+def _read_device_time(timeout: float = 4.0) -> Optional[dict]:
+    """主動查一次控制器時間。回 {dt, text, diff_sec, asked_at} 或 None。
+
+    🛑 用「送出時刻」跟控制器回報的秒數比,不是用回報框落庫的時刻 ——
+       落庫會晚 1~3 秒,拿它比會多算出幾秒的假差值(2026-09-08 踩過)。
+    """
+    before = _latest_frame("0FC2")
+    before_ts = float(before["ts"]) if before else 0.0
+    asked = time.time()
+    if not _send_query_to_controller("0F42", b"", "time-sync"):
+        return None
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        fr = _latest_frame("0FC2")
+        if fr and float(fr["ts"]) > before_ts:
+            dec = _decode_device_time(fr["raw"])
+            if dec:
+                dec["asked_at"] = asked
+                dec["diff_sec"] = round(dec["dt"].timestamp() - asked, 1)
+                dec["raw"] = fr["raw"]
+                return dec
+        time.sleep(0.3)
+    return None
+
 
 
 def _frames_db():

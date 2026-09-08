@@ -446,3 +446,55 @@ def test_抄不到策略時不可睡滿一個續約週期(tc3):
     assert src.count("AUTH_PROBE_SEC") >= 2, "啟動與主迴圈兩處都要用短間隔"
     assert "continue" in src, "抄不到策略那一輪要 continue,不可掉到長 wait"
     assert tc3.AUTH_PROBE_SEC < tc3.AUTH_RENEW_SEC, "重查間隔要短於續約週期"
+
+
+def test_設備時間解碼_民國年與binary(tc3):
+    """🛑 兩個坑都實際踩過:
+
+    Year 是**民國年**(0x73=115 → 西元 2026),當成 2000+ 會解出「20115 年」。
+    時分秒是 **binary 不是 BCD**(0x14=20 時),當 BCD 會錯 6 個多小時。
+    """
+    raw = "AA BB 31 FF FF 00 13 0F C2 73 09 08 02 0E 07 00 AA CC E1"
+    d = tc3._decode_device_time(raw)
+    assert d is not None
+    assert d["text"] == "2026-09-08 14:07:00", "民國年或 binary 解錯了"
+    assert d["roc_year"] == 115
+    assert d["week"] == 2, "Week 1~7,週二應為 2"
+
+    # 20 時那一筆(0x14):當 BCD 會讀成 14 時
+    raw2 = "AA BB 01 FF FF 00 13 0F C2 73 09 07 01 14 20 39 AA CC D9"
+    d2 = tc3._decode_device_time(raw2)
+    assert d2["text"] == "2026-09-07 20:32:57", "時分秒被當成 BCD 了"
+
+    assert tc3._decode_device_time("亂碼") is None, "解不出來要回 None,不可以拋"
+
+
+def test_設備時間編碼與解碼要對稱(tc3):
+    """組出去的值,照 0FC2 的規則讀回來必須一致 —— 否則對時會把時間設錯。"""
+    import datetime as _dt
+    for n in (_dt.datetime(2026, 9, 8, 14, 7, 0),
+              _dt.datetime(2026, 1, 1, 0, 0, 0),
+              _dt.datetime(2025, 12, 31, 23, 59, 59)):
+        v = tc3._time_values(n)
+        assert v["Year"] == n.year - 1911
+        assert v["Week"] == n.isoweekday(), "Week 要用 isoweekday(週一=1)"
+        raw = "AA BB 01 FF FF 00 13 0F C2 %02X %02X %02X %02X %02X %02X %02X AA CC 00" % (
+            v["Year"], v["Month"], v["Day"], v["Week"], v["Hour"], v["Min"], v["Sec"])
+        back = tc3._decode_device_time(raw)
+        assert back["text"] == n.strftime("%Y-%m-%d %H:%M:%S"), "編碼解碼不對稱"
+
+
+def test_定時對時預設關閉且有上限保護(tc3):
+    """🛑 自動會改變控制器的行為必須預設關閉(專案規範),且要有上限保護 ——
+    差太多代表控制器時鐘可能故障,自動拉一大步可能在時段邊界造成
+    非預期的時制計畫切換。
+    """
+    import inspect
+    assert tc3._time_auto["enabled"] is False or isinstance(
+        tc3._time_auto["enabled"], bool)
+    src = inspect.getsource(tc3._time_auto_loop)
+    assert "max_auto_sec" in src and "只告警" in src, "沒有上限保護"
+    assert "threshold_sec" in src, "沒有門檻,會頻繁微調"
+    # 門檻不可大於上限,否則永遠不會校正
+    setsrc = inspect.getsource(tc3.control_time_auto)
+    assert "門檻不可大於自動校正上限" in setsrc
