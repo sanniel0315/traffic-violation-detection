@@ -71,15 +71,22 @@ bit1、bit5、bit6 **從未為 1** —— 控制器未曾回報過那三項故�
 
 ---
 
-## 現行設定（常設，非暫時）
+## 現行設定（已鎖定，不要更動）
 
-使用者 2026-09-08 決定：**「這個不是暫時，重啟都必須維持」**。兩層保險：
+使用者 2026-09-08 決定：**「這個不是暫時，重啟都必須維持」**、**「固定這樣，不要動」**。
+
+```
+hwstatus_mode = swap    對調兩個位元組,對齊中央的解讀
+hwstatus_mask = 0x2000  遮掉 bit13(外部時相控制進行中)
+```
+
+兩層保險：
 
 **第一層 — 持久化設定檔**（畫面上切了就留住，不必改 systemd、不必重啟）
 
 ```json
 config/system/signal_conn.json
-{ ..., "hwstatus_mode": "swap" }
+{ ..., "hwstatus_mode": "swap", "hwstatus_mask": 8192 }
 ```
 
 **第二層 — systemd drop-in**（設定檔遺失或換機部署時兜底）
@@ -87,6 +94,7 @@ config/system/signal_conn.json
 ```
 /etc/systemd/system/traffic-signal.service.d/zz-hwmode.conf
 Environment=SIGNAL_TC3_HWSTATUS_MODE=swap
+Environment=SIGNAL_TC3_HWSTATUS_MASK=8192
 ```
 
 取值順序：**持久化 > env > 預設 `raw`**。`force` 模式**不持久化**（測試用，
@@ -100,7 +108,31 @@ curl -X POST --cookie "tvd_session=$TOK" \
 ```
 
 模式：`raw`（純通透）/ `swap`（對調位元組）/ `flip14`（只翻 bit14，退路）/
-`zero`（全報正常）/ `force`（測試指定值）。
+`zero`（全報正常）/ `force`（測試指定值）。`mask` 參數設定要遮掉的位元。
+
+---
+
+## 遮蔽 bit13（外部時相控制進行中）
+
+`bit13` 是**狀態指示，不是故障**。只要我方持有時相控制它就恆亮，中央端顯示成
+`TIMING_PLAN_ON_TRANSITION` 並當成異常在管理 —— 等於每次動態控制都在中央刷一條
+不需要處理的訊息。使用者 2026-09-08 授權遮蔽。
+
+**這不是隱瞞運轉狀態。** 中央每 5 秒輪詢 `5F40` 查控制策略，我方**據實**轉答
+`0x14`（含 bit4 時相控制）——「誰在控」的權威來源完全沒有被動過。
+我方只是不讓同一件事在硬體狀態欄再跳一次告警。
+
+🛑 **白名單只允許遮 bit13 / bit14 兩個狀態指示位元。** 帶到任何錯誤類位元
+（bit0–12、bit15）一律回 400：遮錯誤類等於對主管機關謊報故障情形，本專案不做。
+這條線寫死在 `control_hwstatus_mode`，不是靠人記得。
+
+遮蔽在**我方位元語意下、交換之前**套用 —— 交換之後位置就變了。
+
+```
+0x6000 遮 bit13              → 0x4000     其他位元不動
+0x6004 遮 bit13              → 0x4004     bit2 保留
+0x6000 遮 bit13 + swap + 機箱門 → 0x0042
+```
 
 ---
 
