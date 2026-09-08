@@ -3964,7 +3964,7 @@ def control_self_probe(_user=Depends(get_current_user), plan_lo: int = 1, plan_h
 
 @router.post("/control/hwstatus-mode", summary="切換對中央上傳 HardwareStatus 的模式")
 def control_hwstatus_mode(mode: str = "flip14", value: int = 0,
-                          mask: Optional[int] = None,
+                          mask: Optional[int] = None, persist: int = 0,
                           _user=Depends(get_current_user)):
     """執行期切換(不用重啟):raw=純通透/swap=對調兩個位元組(本站常設)/
     flip14=只翻bit14(退路)/zero=硬體全報正常(全0)/force=強制送指定值(測試用)。
@@ -3972,7 +3972,13 @@ def control_hwstatus_mode(mode: str = "flip14", value: int = 0,
     mask 是上傳前要**清掉**的位元(我方位元語意,交換之前套用)。
     🛑 只准遮**狀態指示位元**(例如 bit13 外部時相控制進行中)。
        錯誤類位元一律不得遮蔽 —— 那是對主管機關謊報故障情形。
-    切了立即對後續 0F04/0FC1 生效,且會存檔撐過重啟。"""
+    切了立即對後續 0F04/0FC1 生效。
+
+    🛑 persist 預設 **0(只在執行期生效,重啟後回到設定檔的值)**。
+       2026-09-08 踩過:現場說「試一下」,我切了 raw,它**直接落檔覆蓋掉**
+       前一天才鎖定的 swap —— 一次臨時測試就把常設組態換掉了,
+       而且沒有任何地方提醒。要永久改請明確帶 persist=1。
+    """
     m = (mode or "").strip().lower()
     if m not in ("flip14", "zero", "raw", "force", "swap"):
         raise HTTPException(status_code=400,
@@ -3980,9 +3986,8 @@ def control_hwstatus_mode(mode: str = "flip14", value: int = 0,
     _hw_center_mode["mode"] = m
     if m == "force":
         _hw_center_mode["value"] = int(value) & 0xFFFF
-    else:
-        # 🛑 force 是測試用的,不持久化 —— 把測試值留到重啟之後會很難查。
-        #    其餘模式要留住:使用者明確要求「重啟都必須維持」。
+    elif int(persist or 0):
+        # 🛑 只有明確要求才落檔。force 永遠不落檔(測試值留到重啟後很難查)。
         _conn["hwstatus_mode"] = m
     if mask is not None:
         mv = int(mask) & 0xFFFF
@@ -3994,8 +3999,9 @@ def control_hwstatus_mode(mode: str = "flip14", value: int = 0,
                 status_code=400,
                 detail="只能遮蔽狀態指示位元 bit13/bit14;錯誤類位元不得遮蔽")
         _hw_center_mode["mask"] = mv
-        _conn["hwstatus_mask"] = mv
-    if m != "force" or mask is not None:
+        if int(persist or 0):
+            _conn["hwstatus_mask"] = mv
+    if int(persist or 0) and m != "force":
         _save_conn_config()
     note = {"flip14": "只翻 bit14(補償廠商寫反)", "zero": "硬體全報正常(全0)",
             "raw": "純通透不動",
@@ -4008,6 +4014,13 @@ def control_hwstatus_mode(mode: str = "flip14", value: int = 0,
                    if _hw_center_mode.get("mask") else ""), "signal")
     except Exception:
         pass
+    saved = bool(int(persist or 0)) and m != "force"
     return {"ok": True, "mode": m, "note": note,
             "mask": _hw_center_mode.get("mask", 0),
-            "mask_hex": "0x%04X" % _hw_center_mode.get("mask", 0)}
+            "mask_hex": "0x%04X" % _hw_center_mode.get("mask", 0),
+            "persisted": saved,
+            "persisted_mode": _conn.get("hwstatus_mode") or "raw",
+            "persist_note": ("已存檔,重啟維持。" if saved else
+                             "**只在執行期生效**;重啟會回到設定檔的 %s。"
+                             "要永久改請帶 persist=1。"
+                             % (_conn.get("hwstatus_mode") or "raw"))}

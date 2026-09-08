@@ -553,3 +553,19 @@ def test_raw_模式下遮蔽位元仍須生效(tc3):
     f = tc3._hw_for_center
     assert f(0x6000, "raw", mask_out=0x2000) == 0x4000
     assert f(0x6000, "swap", mask_out=0x2000) == 0x0040
+
+
+def test_模式切換預設不落檔(tc3):
+    """🛑 2026-09-08 踩過:現場說「試一下」,切了 raw 之後它**直接落檔**,
+    覆蓋掉前一天才鎖定的 swap —— 一次臨時測試就把常設組態換掉,
+    而且沒有任何地方提醒。
+
+    臨時測試不該有能力改掉常設組態。要永久改必須明確帶 persist=1。
+    """
+    import inspect
+    src = inspect.getsource(tc3.control_hwstatus_mode)
+    assert "persist: int = 0" in src, "persist 沒有預設為 0"
+    assert 'int(persist or 0)' in src, "沒有依 persist 決定要不要落檔"
+    assert "persisted" in src, "回應沒有講清楚到底有沒有存檔"
+    # force 永遠不落檔
+    assert 'm != "force"' in src
