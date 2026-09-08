@@ -28,6 +28,7 @@ Jetson NX 邊緣運算：車輛偵測、車牌辨識、違規偵測、**壅塞�
 - `ocr 流程.md` — 車牌 OCR pipeline
 - `ramp_analyzer_README.md` — 匝道分析器
 - `MODEL_PATHS_PROPOSAL.md` / `model_paths.py` — 模型路徑管理
+- `docs/設備對時_PLANNING.md` — 對時規劃(0F12/0F92/0F42/0FC2/0F02 一組五則)。🛑 欄位是**民國年 + binary**,當成西元或 BCD 都會解錯
 - `docs/遠端重開機_0F10_測試紀錄.md` — 🛑 控制器**接受 `0F10` 但不執行**(有具名 0F80 ACK、從未回 0F90、無重開跡象)。已排除資料庫保護;剩下要問廠商的兩個問題與唯一還值得試的方向都寫在裡面
 - `docs/中央HardwareStatus位元組順序.md` — 🛑 中央端把 HardwareStatus 兩個位元組讀反,我方以 `hwstatus-mode=swap` 對齊(常設,非暫時)。含位元對照、四組實測、改回 raw 的條件、以及踩過的三個坑
 
