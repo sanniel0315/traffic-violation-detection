@@ -374,3 +374,22 @@ def test_hwstatus_錯誤類位元不得遮蔽(tc3):
     src = inspect.getsource(tc3.control_hwstatus_mode)
     assert "allowed" in src and "(1 << 13)" in src, "沒有限制可遮蔽的位元"
     assert "不得遮蔽" in src, "沒有把理由寫在擋下來的訊息裡"
+
+
+def test_設定總覽不得建議已被拒收的查詢(tc3, monkeypatch):
+    """🛑 現場:「尚未抄到 5FDF;可送查詢碼 5F5F 取回」——
+
+    但 5F5F 在這台控制器上歷史 16 次全 NAK(ErrorCode=1)。
+    照著建議去送只會再失敗一次,而且看的人不會知道前面已經試過那麼多次。
+    提示必須反映實際嘗試紀錄。
+    """
+    import inspect
+    src = inspect.getsource(tc3.signal_config)
+    assert "_query_attempts" in src, "沒有先查嘗試紀錄就給建議"
+    assert "拒收" in src and "需洽廠商" in src, "被拒時沒有講清楚後果與該找誰"
+    assert "尚未試過" in src, "沒試過的情況也要標明,否則跟試過失敗的混在一起"
+
+    # 三種情況都要有各自的說法,不可以共用同一句
+    fn = inspect.getsource(tc3._query_attempts)
+    assert "0F81" in fn, "沒有解析 0F81(設定或查詢無效)"
+    assert "src='self'" in fn, "沒有只算我方送出的"

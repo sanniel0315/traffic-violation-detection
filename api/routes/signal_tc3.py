@@ -1804,6 +1804,38 @@ def _latest_frame(reply_code: str) -> Optional[dict]:
     return {"ts": float(best[0]), "raw": best[1]} if best else None
 
 
+def _query_attempts(query_code: str) -> dict:
+    """我方送過這個查詢碼幾次、有沒有被拒。
+
+    🛑 為什麼需要:沒抄到回報時,原本一律建議「可送查詢碼 XX 取回」——
+       但這台控制器對部分查詢是**直接拒收**的(5F5F 歷史 16 次全 NAK
+       ErrorCode=1、0F47 今天 NAK ErrorCode=8)。照著建議去送只會再失敗一次,
+       而且看的人不會知道前面已經試過那麼多次。要嘛講清楚,要嘛不要建議。
+
+    0F81(設定或查詢無效)的酬載格式:0F 81 <dev> <cmd> <ErrorCode> ...
+    """
+    out = {"sent": 0, "last_ts": None, "nak": 0, "error_code": None}
+    try:
+        conn = _frames_db()
+        r = conn.execute(
+            "SELECT COUNT(*), MAX(ts) FROM signal_frames "
+            "WHERE src='self' AND code=?", (query_code,)).fetchone()
+        out["sent"] = int((r or [0])[0] or 0)
+        out["last_ts"] = (r or [None, None])[1]
+        dev, cmd = query_code[:2].upper(), query_code[2:].upper()
+        for (raw,) in conn.execute(
+                "SELECT raw FROM signal_frames WHERE code='0F81' AND cks_ok=1"):
+            b = str(raw or "").split()
+            # 位元組:AA BB seq FF FF len_hi len_lo 0F 81 <dev> <cmd> <err> ...
+            if len(b) >= 12 and b[9].upper() == dev and b[10].upper() == cmd:
+                out["nak"] += 1
+                out["error_code"] = int(b[11], 16)
+        conn.close()
+    except Exception:
+        pass
+    return out
+
+
 @router.get("/config", summary="號誌設定總覽(唯讀:各設定類別的最新回報與欄位)")
 async def signal_config(_user=Depends(get_current_user)):
     """把控制器各項設定的最新回報攤成欄位表。
@@ -1819,8 +1851,23 @@ async def signal_config(_user=Depends(get_current_user)):
         item = {k: sec[k] for k in ("key", "title", "query", "reply", "page")}
         fr = _latest_frame(sec["reply"])
         if not fr:
+            # 🛑 建議之前先看我方送過沒、有沒有被拒 —— 不要叫人去做已知會失敗的事。
+            att = _query_attempts(sec["query"])
+            if att["nak"]:
+                hint = ("尚未抄到 %s。查詢碼 %s 已送 %d 次,其中 %d 次被控制器拒收"
+                        "(ErrorCode=%s)—— 這台韌體不支援,再送也拿不到,需洽廠商。"
+                        % (sec["reply"], sec["query"], att["sent"], att["nak"],
+                           att["error_code"]))
+            elif att["sent"]:
+                hint = ("尚未抄到 %s。查詢碼 %s 已送 %d 次但從未收到回報 ——"
+                        "控制器未回應,再送前先確認它是否支援。"
+                        % (sec["reply"], sec["query"], att["sent"]))
+            else:
+                hint = "尚未抄到 %s;可送查詢碼 %s 取回(尚未試過)" % (
+                    sec["reply"], sec["query"])
             item.update({"received": False, "ts": None, "fields": None,
-                         "hint": f"尚未抄到 {sec['reply']};可送查詢碼 {sec['query']} 取回"})
+                         "query_sent": att["sent"], "query_nak": att["nak"],
+                         "query_error_code": att["error_code"], "hint": hint})
         else:
             item.update({"received": True, "ts": fr["ts"], "raw": fr["raw"],
                          "fields": _decode_fields(sec["reply"], fr["raw"])})
