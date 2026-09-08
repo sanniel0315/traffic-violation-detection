@@ -1033,3 +1033,42 @@ def test_degrade_bootstrap_noop_when_nothing_open(tmp_path, monkeypatch):
     n = conn.execute("SELECT COUNT(*) FROM signal_degrade_log").fetchone()[0]
     conn.close()
     assert n == 0
+
+
+def test_basis_plain_and_switch_matching():
+    """白話依據要用同一筆樣本的數字;5F1C 要優先配到判 SWITCH 的樣本。
+
+    🛑 2026-09-08 現場 08:00:25 那一列:送出了 5F1C,依據卻寫「續綠」——
+       取樣每 5 秒,單純取時間最近會配到前一筆 KEEP。
+    """
+    from api.routes import signal_shadow as S
+    w = {"green_phase": 2, "action": "SWITCH", "green_elapsed": 30.0,
+         "queue_m_1": 18.5, "queue_m_2": 0.0}
+    t = S._basis_plain(w)
+    assert "下匝道綠燈已亮 30 秒" in t
+    assert "上匝道排隊 18.5 m 在等" in t
+    assert "提早結束綠燈" in t
+    # 紅側沒車時要講出來,不可以省略成看不出有沒有車
+    t2 = S._basis_plain({"green_phase": 1, "action": "KEEP", "green_elapsed": 12.0,
+                         "queue_m_1": 0.0, "queue_m_2": 0.0})
+    assert "下匝道沒有車在等" in t2 and "續綠" in t2
+
+
+def test_cmd_and_by_plain_keep_original():
+    """白話是加在旁邊的,原始碼與原始來源字串都要留著。"""
+    from api.routes import signal_shadow as S
+    assert S._cmd_plain("5F1C") == "提早結束綠燈"
+    assert S._cmd_plain("0F10") == "重新啟動控制器"
+    assert S._cmd_plain("9999") == ""          # 不認得就留空,不要瞎掰
+    assert S._by_plain("algorithm(signal-daemon)") == "演算法自動"
+    assert S._by_plain("time-sync(manual(signal-daemon))") == "人工校時"
+    assert S._by_plain("remote-reboot(signal-daemon)") == "人工遠端重開機"
+    assert S._by_plain("something-else") == "something-else"
+
+
+def test_adjust_log_tolerates_direct_call_without_fastapi():
+    """行程內直接呼叫(spec_report 走這條)不可以因為 Query 物件而炸掉。"""
+    import asyncio
+    from api.routes import signal_shadow as S
+    r = asyncio.new_event_loop().run_until_complete(S.adjust_log(_user=None))
+    assert isinstance(r, dict)

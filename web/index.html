@@ -3975,6 +3975,8 @@
                     margin-bottom:10px; }
         .aj-page { display:flex; align-items:center; justify-content:center; gap:12px;
                    margin-top:10px; font-size:var(--fs-small); color:var(--gov-mute-2); }
+        .aj-raw { font-style:normal; font-family:var(--font-mono); font-size:var(--fs-caption);
+                  color:var(--gov-mute-2); margin-left:6px; }
         .aj-why { color:var(--gov-muted); }
         .aj-ts { font-family:var(--font-mono); white-space:nowrap; }
         .aj-m { font-style:normal; font-size:var(--fs-caption); color:var(--gov-mute-2);
@@ -8453,20 +8455,24 @@
                                 <span v-if="sigAdj.scan_capped" style="color:var(--gov-warn)">　🛑 掃描已達上限，請縮小區間</span>
                             </p>
                             <table class="data-table" id="sig-adj-tbl">
-                                <thead><tr><th>時間</th><th>命令</th><th>來源</th><th>結果</th>
-                                    <th>當時排隊 上/下</th><th>依據</th></tr></thead>
+                                <thead><tr><th>時間</th><th>做了什麼</th><th>誰下的</th><th>結果</th>
+                                    <th>當時已亮</th><th>當時排隊 上/下</th><th>依據</th></tr></thead>
                                 <tbody>
                                     <tr v-for="(r,ri) in (sigAdj.rows||[])" :key="'aj'+ri">
                                         <td class="aj-ts">{{ sigAdjTime(r) }}</td>
-                                        <td class="aj-code">{{ r.code }}</td>
-                                        <td>{{ r.by }}</td>
+                                        <!-- 🛑 白話在前、指令碼在後 —— 看的人不會背 TC3 碼,
+                                             但稽核要能從畫面回到訊框,所以碼不可以拿掉。 -->
+                                        <td>{{ r.code_plain || r.code }}<i class="aj-raw" v-if="r.code_plain">{{ r.code }}</i></td>
+                                        <td :title="r.by">{{ r.by_plain || r.by }}</td>
                                         <td><span class="aj-st" :class="r.likely_ack">{{ sigAdjAck(r) }}</span><i
                                                 class="aj-m" :title="sigAdjMatchTip(r)">{{ sigAdjMatch(r) }}</i></td>
+                                        <td class="aj-q">{{ r.green_elapsed==null?'—':(r.green_elapsed+' s') }}</td>
                                         <td class="aj-q">{{ sigAdjQ(r) }}</td>
-                                        <td class="aj-why">{{ r.reason || '—' }}</td>
+                                        <!-- 算式沒有消失,移到 title;白話只是換句話說,不是取代證據 -->
+                                        <td class="aj-why" :title="r.reason || ''">{{ r.basis_plain || r.reason || '—' }}</td>
                                     </tr>
                                     <tr v-if="!(sigAdj.rows||[]).length">
-                                        <td colspan="6" class="fl-none">這個條件下沒有時制調整紀錄。</td>
+                                        <td colspan="7" class="fl-none">這個條件下沒有時制調整紀錄。</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -9589,13 +9595,18 @@
                             </div>
                             <p class="analysis-setting-tip">依指令碼：{{ specByCode }}</p>
                             <table class="data-table" id="sig-spec-adj">
-                                <thead><tr><th>時間</th><th>命令</th><th>來源</th><th>結果</th><th>依據</th></tr></thead>
+                                <thead><tr><th>時間</th><th>做了什麼</th><th>誰下的</th><th>結果</th>
+                                    <th>當時已亮</th><th>依據</th></tr></thead>
                                 <tbody>
                                     <tr v-for="(r,ri) in specAdjRows" :key="'spr'+ri">
-                                        <td>{{ sigAdjTime(r) }}</td><td>{{ r.code }}</td><td>{{ r.by }}</td>
-                                        <td>{{ sigAdjAck(r) }}</td><td class="fl-reason">{{ r.basis||'—' }}</td>
+                                        <td>{{ sigAdjTime(r) }}</td>
+                                        <td>{{ r.code_plain || r.code }}<i class="aj-raw" v-if="r.code_plain">{{ r.code }}</i></td>
+                                        <td :title="r.by">{{ r.by_plain || r.by }}</td>
+                                        <td>{{ sigAdjAck(r) }}</td>
+                                        <td>{{ r.green_elapsed==null?'—':(r.green_elapsed+' s') }}</td>
+                                        <td class="fl-reason" :title="r.reason || ''">{{ r.basis_plain || r.reason || '—' }}</td>
                                     </tr>
-                                    <tr v-if="!specAdjRows.length"><td colspan="5" class="fl-none">此區間沒有調整紀錄。</td></tr>
+                                    <tr v-if="!specAdjRows.length"><td colspan="6" class="fl-none">此區間沒有調整紀錄。</td></tr>
                                 </tbody>
                             </table>
                             <p class="analysis-setting-tip" v-if="specAdjMore">表格只列最近 {{ SPEC_ADJ_SHOW }} 筆；匯出 CSV 為區間內全部 {{ specAdj.count }} 筆。</p>
@@ -24625,11 +24636,13 @@ const app=createApp({
             L.push(['# 區間', (d.since || '') + ' ~ ' + (d.until || '')].map(q).join(','));
             L.push(['# 本頁', (d.offset || 0) + 1, '至', (d.offset || 0) + (d.returned || 0),
                     '共', d.total].map(q).join(','));
-            L.push(['時間', '命令', '來源', '結果', '配對方式', 'ErrorCode',
-                    '當時排隊上(m)', '當時排隊下(m)', '依據'].map(q).join(','));
+            L.push(['時間', '命令碼', '做了什麼', '來源', '誰下的', '結果', '配對方式',
+                    'ErrorCode', '當時已亮(s)', '當時排隊上(m)', '當時排隊下(m)',
+                    '依據(白話)', '依據(算式)'].map(q).join(','));
             (d.rows || []).forEach((r) => L.push(
-                [r.ts, r.code, r.by, r.likely_ack, r.ack_match, r.error_code,
-                 r.queue_m_1, r.queue_m_2, r.reason].map(q).join(',')));
+                [r.ts, r.code, r.code_plain, r.by, r.by_plain, r.likely_ack, r.ack_match,
+                 r.error_code, r.green_elapsed, r.queue_m_1, r.queue_m_2,
+                 r.basis_plain, r.reason].map(q).join(',')));
             const blob = new Blob([String.fromCharCode(65279) + L.join(String.fromCharCode(13,10))], {type: 'text/csv;charset=utf-8'});
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
