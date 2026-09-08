@@ -3759,6 +3759,48 @@
                               transition:left .9s linear; }
         @keyframes fcFlow { to { background-position:22.6px 0; } }
 
+        /* ── 控制預估的動態表現(2026-09-08 使用者:「這裡美工動畫」)──────
+           🛑 每一個動作都要對應一件真的在發生的事,不做純裝飾:
+              · 保護期底色 = 0→最小綠,那段換相不可能發生,所以它是**靜止**的
+              · 已亮的流光 = 已進入可換相窗口、演算法隨時可能動作
+                (phase 只有 fire/blocked/wait/open;保護期與被擋時不流動)
+              · 現在位置的脈動 = 已經進入可換相窗口,隨時可能換相
+              · 斜紋流動 = 窗口內的不確定性(既有行為,保留)
+           反過來說:被擋住或還在保護期時**不可以**有東西在動 —— 那會讓人
+           以為系統正在做事。 */
+        .wr-fc-axis .fc-guard { left:0; background:rgba(138,93,0,.16);
+                                border-radius:7px 0 0 7px; transition:width .9s linear; }
+        /* 已亮的流光:一道很淡的高光沿著已完成段掃過 */
+        .wr-fc-axis .fc-done::after {
+            content:''; position:absolute; inset:0; border-radius:inherit;
+            background:linear-gradient(100deg, rgba(255,255,255,0) 30%,
+                       rgba(255,255,255,.38) 50%, rgba(255,255,255,0) 70%);
+            background-size:240% 100%; opacity:0;
+        }
+        .wr-fc.is-open .fc-done::after { opacity:1; }
+        @keyframes fcSheen { to { background-position:-240% 0; } }
+        /* 進入窗口後,現在位置會呼吸 —— 代表「隨時可能換相」 */
+        @keyframes fcNow { 0%,100% { box-shadow:0 0 0 2px rgba(255,255,255,.85),
+                                                 0 0 0 3px rgba(47,158,68,.55); }
+                           60%      { box-shadow:0 0 0 2px rgba(255,255,255,.85),
+                                                 0 0 0 8px rgba(47,158,68,0); } }
+        .wr-fc.is-open .fc-now { background:#1c7a3c; }
+        /* 秒數要對齊,跳動時不可以左右晃 */
+        .fc-st b { font-variant-numeric:tabular-nums; }
+        .fc-st b.cd { transition:color .3s ease; }
+        .wr-fc.is-open .fc-st b.ok { color:#1c7a3c; }
+
+        @media (prefers-reduced-motion: no-preference) {
+            .wr-fc.is-open .fc-done::after { animation:fcSheen 2.8s linear infinite; }
+            .wr-fc.is-open .fc-now { animation:fcNow 1.5s ease-out infinite; }
+        }
+        /* 🛑 使用者關掉動態效果時,顏色與位置仍然完整 —— 資訊不靠動畫傳達 */
+        @media (prefers-reduced-motion: reduce) {
+            .wr-fc.is-fire { animation:none; }
+            .wr-fc.is-open .fc-win { animation:none; }
+            .wr-fc-dot.go, .wr-fc-dot.run { animation:none; }
+        }
+
         .wr-fc-scale { position:relative; height:15px; margin-top:3px;
                        font-size:var(--fs-caption); color:var(--gov-mute-2); }
         .wr-fc-scale span { position:absolute; white-space:nowrap; }
@@ -8803,6 +8845,7 @@
                                          · 右端 = 最大綠,到了強制換相
                                          把不確定的那一段畫成窗口而不是一個點,是這張圖唯一的重點。 -->
                                     <div class="wr-fc-axis" :title="sigFc.note">
+                                        <i class="fc-guard" :style="{width:sigFc.wMin}"></i>
                                         <i class="fc-win" :style="{left:sigFc.wA,width:sigFc.wWin}"></i>
                                         <i class="fc-done" :style="{width:sigFc.wDone}"></i>
                                         <u class="fc-min" :style="{left:sigFc.wMin}"></u>
