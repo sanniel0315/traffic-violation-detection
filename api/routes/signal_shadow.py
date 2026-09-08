@@ -1527,8 +1527,8 @@ async def shadow_status(limit: int = Query(50, ge=1, le=500),
         "note": ("線上演算法控制:通訊已接上(中央經由我方中繼),我方依決策下發 5F1C 提早結束綠燈"
                  if _act["enabled"] else
                  "線上演算法比對:通訊已接上(中央經由我方中繼),但我方不下發任何控制命令;路口目前跑控制器內建時制"),
-        "actuate": {"enabled": _act["enabled"], "sent": _act["n"],
-                    "blocked": _act["blocked"], "last_ts": _act["last_ts"] or None},
+        "actuate": {"enabled": _act["enabled"], "blocked": _act["blocked"],
+                    **_actuate_counts()},
         **st,
         "agree_rate": round(sum(agree) / len(agree), 3) if agree else None,
         "recent": rows,
@@ -1823,10 +1823,12 @@ async def shadow_plan(_user=Depends(get_current_user)):
         # 🛑 would_send 與 note 以前是寫死的 False /「只記錄不下發」。
         #    演算法接上下發之後那就是謊 —— 這兩個欄位必須跟著實際狀態走。
         "would_send": bool(d.action == "SWITCH"),
+        # 🛑 畫面上的「控制計數板」讀的是**這一份**(P.actuate),不是 /actuate 端點。
+        #    2026-09-08 我先只改了 /actuate,現場回報「已下發、上次都沒變」——
+        #    因為看的根本不是同一個來源。兩邊都要用持久化值,不然還會再漂移。
         "actuate": {
             "enabled": _act["enabled"],
-            "sent": _act["n"],
-            "last_ts": _act["last_ts"] or None,
+            **_actuate_counts(),
             "last_reason": _act["last_reason"],
             "last_raw": _act["last_raw"],
             "last_error": _act["last_error"],
@@ -3019,6 +3021,22 @@ async def degrade_log(hours: int = Query(24, ge=1, le=720),
     }
 
 
+def _actuate_counts() -> dict:
+    """給畫面用的下發計數。持久化優先,取不到才退回行程內計數。
+
+    🛑 /actuate 端點與 /plan 的 actuate 區塊**共用這一份** —— 各寫一份就會漂移,
+       2026-09-08 已經因此讓現場看到「已下發 0 次」一次了。
+    """
+    pers = _actuate_persisted()
+    return {
+        "sent": pers["sent_total"] if pers["sent_total"] is not None else _act["n"],
+        "sent_24h": pers["sent_24h"],
+        "sent_process": _act["n"],
+        "last_ts": pers["last_sent_ts"] or _act["last_ts"] or None,
+        "last_ts_process": _act["last_ts"] or None,
+    }
+
+
 def _actuate_persisted() -> dict:
     """從 signal_frames 讀「真的送出過幾次、上一次何時」。
 
@@ -3057,15 +3075,10 @@ async def actuate_status(_user=Depends(get_current_user)):
     ev = list(_act["events"])[-20:]
     # 🛑 sent / last_ts 是**行程內**的,重啟歸零 —— 畫面要顯示的是持久化那組。
     #    兩組都回:sent_process 保留給「這次啟動之後送了幾次」的除錯用途。
-    pers = _actuate_persisted()
     return {
         "enabled": _act["enabled"],
         "min_gap_sec": ACTUATE_MIN_GAP_SEC,
-        "sent": pers["sent_total"] if pers["sent_total"] is not None else _act["n"],
-        "sent_24h": pers["sent_24h"],
-        "sent_process": _act["n"],
-        "last_ts": pers["last_sent_ts"] or _act["last_ts"] or None,
-        "last_ts_process": _act["last_ts"] or None,
+        **_actuate_counts(),
         "last_seq": _act["last_seq"],
         "last_reason": _act["last_reason"],
         "last_raw": _act["last_raw"],
