@@ -8333,13 +8333,11 @@
                                 <b>⚠ {{ (sigTime.auto||{}).last_error }}</b>
                             </p>
 
-                            <div class="tsy-note">
-                                🛑 對時會改變控制器的系統時間。控制器依<b>時間</b>查表決定跑哪一組時制計畫，
-                                若一次拉太大步，可能在時段邊界造成非預期的計畫切換 ——
-                                所以差距超過上限時<b>只告警、不自動校正</b>，那種情況要人工確認控制器時鐘。
-                                <br>紀錄同時保留兩個差值：我方算的（控制器 − 我方），以及控制器
-                                <code>0F92</code> 自己回報的 <code>SecDif</code>，可交叉查核。
-                            </div>
+                            <!-- 🛑 2026-09-08 使用者要求拿掉這段說明文字。
+                                 只是不顯示,**保護機制完全沒改**:差距超過
+                                 max_auto_sec 仍然只告警不自動校正,紀錄仍然同時
+                                 保留我方算的差值與控制器回報的 SecDif。
+                                 理由與風險寫在 docs/設備對時_PLANNING.md。 -->
                         </div>
                     </div>
 
@@ -8447,15 +8445,10 @@
                         <el-button size="small" plain @click="loadSigConfig"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
                     </div>
 
-                    <div class="card">
-                        <div class="card-body">
-                            <div class="analysis-setting-tip">
-                                🛑 沒抄到的類別會標「尚未收到」並附上該用哪個查詢碼，
-                                <b>不會回空表假裝控制器沒設定</b> —— 那是兩件完全不同的事。
-                                要把它查回來，到「號控下傳」頁執行自我抄錄（走 QUERY_ONLY 把關，只送查詢）。
-                            </div>
-                        </div>
-                    </div>
+                    <!-- 🛑 2026-09-08 使用者要求拿掉這張只有說明文字的卡。
+                         只是不顯示,**後端行為沒改**:沒抄到的類別仍然標「尚未收到」
+                         並附上該用哪個查詢碼(且會講明那個碼有沒有被控制器拒收過),
+                         不會回空表假裝控制器沒設定。 -->
 
                     <div class="card" v-for="sec in sigCfgSections" :key="sec.key">
                         <div class="card-header">
