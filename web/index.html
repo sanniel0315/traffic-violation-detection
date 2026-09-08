@@ -26009,6 +26009,21 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 if (c.ok) { sigAct.value = await c.json(); sigActOn.value = !!sigAct.value.enabled; }
             } catch (e) { /* 讀不到就維持上次的顯示 */ }
         };
+        // 🛑 2026-09-08:三個開關原本都只回報「已啟用/已關閉」,但那只是**我方的
+        //    意圖**,不是實際結果。當天現場切了演算法下發、toast 說「已啟用」,
+        //    實際上被閘門擋著一則都沒送(續約卡死 → control_mode=fixtime),
+        //    畫面上完全看不出來,只能來問。切換後一律把當下的阻擋原因一起講。
+        //    🛑 阻擋原因要在 loadSigDyn() 之後讀 —— 那時 sigAct/sigDyn 才是新的。
+        const sigBlockedNow = () => {
+            const a = (sigAct.value || {}).blocked || '';
+            const d = (sigDyn.value || {}).blocked || '';
+            return a || d || '';
+        };
+        const sigToggleToast = (okText, warnWhenBlocked) => {
+            const why = sigBlockedNow();
+            if (why) ElMessage.warning(okText + ' —— 但目前擋住:' + why);
+            else ElMessage[warnWhenBlocked ? 'warning' : 'success'](okText);
+        };
         const sigSetAct = async (v) => {
             sigActBusy.value = true;
             try {
@@ -26018,12 +26033,13 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                     body: JSON.stringify({enabled: !!v}),
                 });
                 if (!r.ok) throw new Error(r.status);
-                ElMessage[v ? 'warning' : 'success'](
+                await loadSigDyn();          // 先取回新狀態,toast 才講得出實際結果
+                sigToggleToast(
                     v ? '演算法下發已啟用:之後會自動送 5F1C 提早結束綠燈'
-                      : '演算法下發已關閉:回到只比對不下發');
+                      : '演算法下發已關閉:回到只比對不下發', !!v);
             } catch (e) {
-                ElMessage.error('切換失敗'); sigActOn.value = !v;
-            } finally { sigActBusy.value = false; await loadSigDyn(); }
+                ElMessage.error('切換失敗'); sigActOn.value = !v; await loadSigDyn();
+            } finally { sigActBusy.value = false; }
         };
         const sigSetDyn = async (v) => {
             sigDynBusy.value = true;
@@ -26034,10 +26050,11 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                     body: JSON.stringify({enabled: !!v}),
                 });
                 if (!r.ok) throw new Error(r.status);
-                ElMessage.success('動態控制已' + (v ? '啟用' : '關閉'));
+                await loadSigDyn();
+                sigToggleToast('動態控制已' + (v ? '啟用' : '關閉'), false);
             } catch (e) {
-                ElMessage.error('切換失敗'); sigDynOn.value = !v;
-            } finally { sigDynBusy.value = false; await loadSigDyn(); }
+                ElMessage.error('切換失敗'); sigDynOn.value = !v; await loadSigDyn();
+            } finally { sigDynBusy.value = false; }
         };
         const DL_MSG = {
             pass: '不介入:中央改回定時就留住',
@@ -26054,12 +26071,13 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                     body: JSON.stringify({policy: v}),
                 });
                 if (!r.ok) throw new Error(r.status);
-                ElMessage[v === 'hold_5f10' ? 'warning' : 'success'](DL_MSG[v] || v);
+                await loadSigDyn();
+                sigToggleToast('下控政策:' + (DL_MSG[v] || v), v === 'hold_5f10');
             } catch (e) {
                 // 🛑 切換失敗要撥回**後端回報的**上一個值,不是布林反向 ——
                 //    三選一沒有「反向」可言,猜錯會讓畫面顯示成沒生效的模式。
-                ElMessage.error('切換失敗'); sigDlPolicy.value = prev;
-            } finally { sigDynBusy.value = false; await loadSigDyn(); }
+                ElMessage.error('切換失敗'); sigDlPolicy.value = prev; await loadSigDyn();
+            } finally { sigDynBusy.value = false; }
         };
         const sigCtlWay = computed(() => {
             const d = sigPlan.value || {};
