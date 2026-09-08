@@ -8285,16 +8285,14 @@
                                  max_auto_sec 仍然只告警不自動校正,紀錄仍然同時
                                  保留我方算的差值與控制器回報的 SecDif。
                                  理由與風險寫在 docs/設備對時_PLANNING.md。 -->
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-list"/></svg>對時與量測紀錄</span>
-                            <el-button size="small" plain :loading="sigTimeBusy"
-                                       @click="loadSigTimeHistory">更新</el-button>
-                        </div>
-                        <div class="card-body">
+                            <!-- 🛑 2026-09-08 使用者:「對時與量測紀錄跟上面卡片合併」。
+                                 上面是現況與設定,下面是它做過什麼 —— 同一件事的兩面,
+                                 分兩張卡要捲一次才對得起來。 -->
+                            <h4 class="sc-h" style="margin-top:16px">對時與量測紀錄</h4>
+                            <div class="hr-head">
+                                <el-button size="small" :loading="sigTimeBusy"
+                                           @click="loadSigTimeHistory">更新</el-button>
+                            </div>
                             <el-table :data="sigTimeRows" size="small" empty-text="尚無紀錄"
                                       style="width:100%" max-height="360">
                                 <el-table-column label="時間" width="150">
@@ -9569,7 +9567,7 @@
                     </div>
 
                     <div class="card">
-                        <div class="card-header"><span><svg class="text-icon"><use href="#i-activity"/></svg>① 運作狀態</span></div>
+                        <div class="card-header"><span><svg class="text-icon"><use href="#i-activity"/></svg>運作狀態</span></div>
                         <div class="card-body">
                             <div class="sp-grid">
                                 <div class="sp-kv"><span>控制模式</span><b>{{ specOpMode }}</b></div>
@@ -9583,7 +9581,7 @@
 
                     <div class="card">
                         <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-zap"/></svg>② 歷史時制調整紀錄與調整次數</span>
+                            <span><svg class="text-icon"><use href="#i-zap"/></svg>歷史時制調整紀錄與調整次數</span>
                             <el-tag size="small" type="info">共 {{ specAdj.count||0 }} 次</el-tag>
                         </div>
                         <div class="card-body">
@@ -9615,7 +9613,7 @@
 
                     <div class="card">
                         <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-bar"/></svg>③ 平均綠燈時間與變異數</span>
+                            <span><svg class="text-icon"><use href="#i-bar"/></svg>平均綠燈時間與變異數</span>
                             <el-tag size="small" :type="specGreenOk?'success':'info'">{{ specGreenTag }}</el-tag>
                         </div>
                         <div class="card-body">
