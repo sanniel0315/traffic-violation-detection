@@ -1,8 +1,8 @@
 # 中央端 HardwareStatus 位元組順序不一致（含 swap 補償）
 
 **站點**：國道8號新市交流道（東向） **日期**：2026-09-08
-**狀態**：2026-09-08 18:26 定案 `hwstatus-mode = raw` ＋ 遮蔽 bit13
-（兩條路徑無法同時滿足，選「硬體狀態正常、承受一個假告警名稱」那一邊）
+**狀態**：2026-09-08 18:40 定案 `hwstatus-mode = swap` ＋ 遮蔽 bit13
+（兩條路徑無法同時滿足，選「告警欄乾淨」那一邊；代價見下表）
 
 ---
 
@@ -41,16 +41,22 @@
 這也解釋了 2026-09-07 那個一直對不上的舊實測：當時送 `0x4000` 中央顯示「正常」——
 那是**就緒旗標路徑**（正常讀 bit14）給的結論，與告警名稱路徑無關。
 
-### 定案：`raw` ＋ 遮蔽 bit13
+### 定案：`swap` ＋ 遮蔽 bit13
 
 兩條路徑無法同時滿足，只能選承受哪一種：
 
 | 模式 | 中央「硬體狀態」欄 | 中央 `eq_hw_status` |
 |---|---|---|
-| **`raw`（現行）** | **正常** | `SIGNAL_DRIVER_UNIT_ERROR`（假的） |
-| `swap` | **故障**（且無代碼） | 空 |
+| `raw` | 正常 | `SIGNAL_DRIVER_UNIT_ERROR`（假的） |
+| **`swap`（現行）** | **故障**（且無代碼） | **空** |
 
-選 `raw`：現場優先要「硬體狀態不要顯示故障」。
+當日兩邊都試過、也都被退回：18:26 切 `raw`（現場：「硬體狀態顯示故障」→
+其實是前一刻 swap 的殘留）、18:40 切回 `swap`（現場：「這個 ERROR 要拿掉」）。
+最後選 `swap`：告警欄有代碼、會進中央的告警清單、會被當成真故障處理，
+影響比一個沒有代碼的燈號大。
+
+🛑 這兩個狀態**互斥**。往後任何一方再抱怨，先看這張表再動手，
+不要又切一次 —— 切過去就是換成另一種抱怨。
 
 #### 🛑 本文件曾寫錯，記在這裡避免重演
 
@@ -151,7 +157,7 @@ bit1、bit5、bit6 **從未為 1** —— 控制器未曾回報過那三項故�
 使用者 2026-09-08 決定：**「這個不是暫時，重啟都必須維持」**、**「固定這樣，不要動」**。
 
 ```
-hwstatus_mode = raw     純通透(2026-09-08 18:26 定案)
+hwstatus_mode = swap    對調兩個位元組(2026-09-08 18:40 定案)
 hwstatus_mask = 0x2000  遮掉 bit13(外部時相控制進行中)
 ```
 
@@ -161,14 +167,14 @@ hwstatus_mask = 0x2000  遮掉 bit13(外部時相控制進行中)
 
 ```json
 config/system/signal_conn.json
-{ ..., "hwstatus_mode": "raw", "hwstatus_mask": 8192 }
+{ ..., "hwstatus_mode": "swap", "hwstatus_mask": 8192 }
 ```
 
 **第二層 — systemd drop-in**（設定檔遺失或換機部署時兜底）
 
 ```
 /etc/systemd/system/traffic-signal.service.d/zz-hwmode.conf
-Environment=SIGNAL_TC3_HWSTATUS_MODE=raw
+Environment=SIGNAL_TC3_HWSTATUS_MODE=swap
 Environment=SIGNAL_TC3_HWSTATUS_MASK=8192
 ```
 
@@ -223,7 +229,8 @@ curl -X POST --cookie "tvd_session=$TOK" \
 
 正解是中央端讓**兩條路徑用同一種位元組順序**（依協定應為 big-endian）。
 
-修好之後現行 `raw` 就是正確的，**我方不需要同步動作**。
+🛑 中央修好之後**必須同步切回 `raw`** —— 兩邊同時「修正」會再次錯開，
+方向相反。切換當下用 XML 端點量一次確認。
 
 🛑 但驗證時**不能只看 XML** —— 它沒有「硬體狀態」那個欄位。
 兩個都要看：XML 的 `eq_hw_status`，以及中央畫面上的硬體狀態燈號。
