@@ -852,3 +852,29 @@ def test_priority_keep_weight_only_when_red_is_priority():
 
     # 沒給 priority_keep_weight → 行為與從前完全相同(預設不改變現場行為)
     assert run(True, None).detail["keep_weight"] == 3.0
+
+
+def test_algorithm_never_switches_timing_plan():
+    """🛑 演算法不得自行切換時制計畫(5F18)。
+
+    規格 (C)(a) 要求動態號誌「無固定週期,**只做延長或結束綠燈**」。
+    時制計畫是機關核定的號誌設計,演算法自行切換等於改變核定內容,超出授權。
+    2026-09-08 我一度提議切到綠燈 40/60 的計畫 23 讓下匝道多放,使用者否決,
+    而且他是對的。5F18 的介面保留給**人工**操作(特勤等情境),演算法不得呼叫。
+
+    這條測試守住那條界線:shadow 模組送出的命令碼只能是 5F1C。
+    """
+    import ast
+    src = (ROOT / "api" / "routes" / "signal_shadow.py").read_text(encoding="utf-8")
+    fn = [n for n in ast.walk(ast.parse(src))
+          if isinstance(n, ast.FunctionDef) and n.name == "_actuate"][0]
+    codes = {n.value for n in ast.walk(fn)
+             if isinstance(n, ast.Constant) and isinstance(n.value, str)
+             and len(n.value) == 4 and n.value.upper().startswith("5F")}
+    assert codes == {"5F1C"}, "演算法只能送 5F1C,實際出現:%s" % codes
+
+    # 🛑 只檢查**送出路徑**。5F18 在本模組其他地方出現是合法的:
+    #    統計「調整次數」時要把人工切換時制也算進去,那是 SQL 讀取不是送出。
+    #    把「檔案裡不准出現 5F18」當測試會擋掉正當的讀取用途(第一版就踩到)。
+    fn_src = ast.get_source_segment(src, fn) or ""
+    assert "5F18" not in fn_src, "演算法不得切換時制計畫(5F18)"
