@@ -1336,7 +1336,16 @@ _downlink = {"seen": 0, "held": 0, "passed": 0, "last_held": None,
 #    授權會過期正是我方最重要的 fail-safe —— traffic-signal 掛掉、網路斷、
 #    使用者關掉總開關,控制器最多一分鐘後就自己回到定時,不需要任何人善後。
 #    EffectTime 設很大等於把這個保險拆掉。所以維持 1 分鐘,由我方每 45 秒續。
-AUTH_RENEW_SEC = float(os.getenv("SIGNAL_TC3_AUTH_RENEW_SEC", "45") or 45)
+# 🛑 續約週期必須遠小於授權有效期(REASSERT_EFFECT 分鐘 = 60 秒)。
+#    2026-09-08 實際失控 60 秒:週期 45 秒對 60 秒到期,餘裕只有 15 秒,
+#    一次部署重啟就斷了(14:07:05 重啟 → 14:08:00 授權到期 → 回定時控制)。
+#    改成 20 秒,一個週期內可以連掉兩次仍不失控。
+#    代價只是多送幾則 5F10;送的值固定 0x14,控制器不會來回跳。
+AUTH_RENEW_SEC = float(os.getenv("SIGNAL_TC3_AUTH_RENEW_SEC", "20") or 20)
+# 啟動後等抄到控制策略就立刻續約(每 2 秒探一次,最多等這麼久)。
+# 🛑 不可以直接等一個完整週期 —— 2026-09-08 重啟後第一次續約拖到 90 秒,
+#    授權在第 60 秒就到期了,路口白白退回定時控制一分鐘。
+AUTH_FIRST_WAIT_SEC = float(os.getenv("SIGNAL_TC3_AUTH_FIRST_WAIT", "30") or 30)
 _auth = {"n": 0, "last": None, "last_error": "", "thread": None}
 
 
@@ -1346,6 +1355,14 @@ def _auth_renew_loop() -> None:
     🛑 關掉總開關就不再續 —— 不需要送任何「歸還」命令,授權自己會在
        一分鐘內過期,控制器回到定時。失敗方向永遠是回到定時。
     """
+    # 🛑 啟動後先等「抄到控制策略」就立刻續約,不要空等一個完整週期。
+    #    2026-09-08:重啟後第一次續約拖到 90 秒,而授權 60 秒就到期,
+    #    路口退回定時控制整整一分鐘。這一段把那個空窗關掉。
+    _deadline = time.time() + AUTH_FIRST_WAIT_SEC
+    while not shutdown_event.is_set() and time.time() < _deadline:
+        if isinstance(_safety.get("strategy"), int):
+            break
+        shutdown_event.wait(2)
     while not shutdown_event.is_set():
         try:
             if _dyn.get("enabled") and _dyn.get("level") == "L0":

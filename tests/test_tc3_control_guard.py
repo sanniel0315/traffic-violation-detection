@@ -393,3 +393,27 @@ def test_設定總覽不得建議已被拒收的查詢(tc3, monkeypatch):
     fn = inspect.getsource(tc3._query_attempts)
     assert "0F81" in fn, "沒有解析 0F81(設定或查詢無效)"
     assert "src='self'" in fn, "沒有只算我方送出的"
+
+
+def test_續約週期要遠小於授權有效期(tc3):
+    """🛑 2026-09-08 實際失控 60 秒。
+
+    授權 EffectTime 是「分鐘」,REASSERT_EFFECT=1 → 60 秒到期。
+    原本續約週期 45 秒,餘裕只有 15 秒 —— 一次部署重啟就斷了:
+      14:07:00 續約 → 14:07:05 重啟 → 14:08:00 到期 → 回定時控制
+      → 14:08:37 新行程才第一次續約(啟動後 90 秒)
+    週期必須小到「連掉兩次仍不失控」。
+    """
+    expiry = tc3.REASSERT_EFFECT * 60.0
+    assert tc3.AUTH_RENEW_SEC * 3 <= expiry, (
+        "續約週期 %.0fs 對授權 %.0fs 餘裕不足 —— 掉一次就可能失控"
+        % (tc3.AUTH_RENEW_SEC, expiry))
+
+
+def test_啟動後不可空等一個完整週期(tc3):
+    """啟動後要等到抄得到控制策略就立刻續約,不是空等 AUTH_RENEW_SEC。"""
+    import inspect
+    src = inspect.getsource(tc3._auth_renew_loop)
+    assert "AUTH_FIRST_WAIT_SEC" in src, "啟動後沒有先探策略就直接進週期迴圈"
+    # 探測迴圈要在主迴圈之前
+    assert src.index("AUTH_FIRST_WAIT_SEC") < src.index("while not shutdown_event.is_set():\n        try:")
