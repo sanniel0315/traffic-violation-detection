@@ -74,7 +74,7 @@ def phase_role(phase_no: int) -> Optional[dict]:
 
 
 def storage_limit_m(phase_no: int) -> Optional[int]:
-    """該分相對應匝道的儲車上限(公尺)。分相2(下匝道)=600、分相1(上匝道)=210。"""
+    """該分相對應匝道的儲車上限(公尺)。分相1(下匝道)=600、分相2(上匝道)=210。"""
     p = phase_role(phase_no)
     return int(p["storage_m"]) if p else None
 
@@ -84,7 +84,7 @@ def priority_phase() -> int:
     for no, p in load_baseline()["phases"].items():
         if p.get("priority"):
             return int(no)
-    return 2
+    return 1
 
 
 def base_split(plan_id: int) -> Optional[tuple]:
