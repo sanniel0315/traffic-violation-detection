@@ -226,8 +226,8 @@ def test_現場已切手動時不再續約(tc3, monkeypatch):
     monkeypatch.setitem(tc3._dyn, "enabled", True)
     monkeypatch.setitem(tc3._dyn, "level", "L0")
 
-    # 控制器已清掉 bit4、亮起路口手動 → 不可以再送 5F10
-    monkeypatch.setitem(tc3._safety, "strategy", tc3._BIT_ROADSIDE | tc3._BIT_FIXTIME)
+    # 真手動 = 路側手動且**沒有**定時控制 → 不可以再送 5F10
+    monkeypatch.setitem(tc3._safety, "strategy", tc3._BIT_ROADSIDE)
     tc3._do_reassert(kind="續約")
     assert sent == [], "現場手動中卻仍送出續約,會把操作員的手動蓋掉"
     assert "手動" in tc3._reassert["last_error"]
@@ -262,3 +262,28 @@ def test_動態控制總開關要持久化(tc3, tmp_path, monkeypatch):
     monkeypatch.setitem(tc3._conn, "dynamic_control", True)
     tc3._load_conn_config()
     assert tc3._conn["dynamic_control"] is False, "關閉狀態也要能被持久化"
+
+
+def test_授權到期殘留的手動位元不可以擋住續約(tc3, monkeypatch):
+    """🛑 2026-09-08 實際把路口鎖死 35 分鐘的 bug,不可以再犯。
+
+    我方續約值是 0x14(含 bit2「允許路口手動」)。5F10 授權到期後控制器
+    **不會清掉 roadSideManual 位元**,會殘留為 1,策略變成
+    0x05 = 定時控制 + 殘留 bit2。若用 raw 位元判「有手動位元就不續約」,
+    等於在保護我方自己寫進去的位元 —— 續約永遠不會再送出,現場在系統上
+    怎麼切演算法下發都沒反應,而且看不出原因。
+
+    真手動的判定是「路側手動且**沒有**定時控制」(_control_mode 早就這樣寫)。
+    """
+    sent = []
+    monkeypatch.setattr(tc3, "_controller_send", lambda f: sent.append(f) or True)
+    monkeypatch.setattr(tc3, "_target_addr", lambda: 0x0001)
+    monkeypatch.setitem(tc3._dyn, "enabled", True)
+    monkeypatch.setitem(tc3._dyn, "level", "L0")
+
+    # 0x05 = 定時控制 + 授權到期殘留的路側手動位元 → 必須照常續約
+    monkeypatch.setitem(tc3._safety, "strategy",
+                        tc3._BIT_FIXTIME | tc3._BIT_ROADSIDE)
+    tc3._do_reassert(kind="續約")
+    assert len(sent) == 1, ("授權到期殘留的 bit2 擋住了續約 —— "
+                            "路口會永遠回不到動態控制")

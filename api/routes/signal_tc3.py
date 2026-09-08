@@ -1319,10 +1319,19 @@ def _do_reassert(kind: str = "重新宣告") -> None:
         #    降階要 MANUAL_CONFIRM_SEC(8 秒)確認才成立,而續約每 45 秒一次;
         #    若續約正好落在那 8 秒內,操作員的手動會在還沒被確認之前就被我方
         #    寫回去,現場看到的就是「切了沒用」。這一道把那個競態關掉。
-        #    判定:控制器已清掉 bit4(不再是我方接管)且有任一手動位元 → 不送。
+        #
+        # 🛑 判定一定要用 _control_mode(),**不可以自己看 bit2/bit3**。
+        #    2026-09-08 我第一版寫成 raw 位元判斷,結果把路口鎖死 35 分鐘:
+        #    我方續約值是 0x14(含 bit2「允許路口手動」),而 5F10 授權到期後
+        #    roadSideManual 位元**不會被清掉、會殘留為 1**(這一點檔案上方
+        #    早就記過)。授權一過期控制器變成 0x05 = 定時控制 + 殘留的 bit2,
+        #    raw 判斷就把它當成「現場手動中」而停止續約 —— 它保護的是我方
+        #    自己寫進去的位元,於是永遠回不來,現場在系統上怎麼切都沒反應。
+        #    _control_mode() 早就知道這個殘留:「路側手動且**沒有**定時控制」
+        #    才算真手動,0x05 會被判成 fixtime。用它就不會再犯。
         _cur = _safety.get("strategy")
-        if (isinstance(_cur, int) and not (_cur & _BIT_PHASE)
-                and (_cur & STRATEGY_MANUAL_MASK)):
+        _mode = _control_mode(_cur).get("code") if isinstance(_cur, int) else None
+        if _mode in ("roadside_manual", "center_manual"):
             _reassert["last_error"] = "現場/中央手動中,不續約(%s)" % _strategy_text(_cur)
             return
         addr = _target_addr()
