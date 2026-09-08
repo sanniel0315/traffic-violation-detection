@@ -84,6 +84,8 @@ def _load_conn_config() -> None:
                            "time_auto_threshold", "time_auto_max"):
                     if _k in d:
                         _conn[_k] = d.get(_k)
+                if "reassert_strategy" in d:
+                    _conn["reassert_strategy"] = int(d.get("reassert_strategy") or 0)
     except Exception as exc:
         print(f"[signal_tc3] 讀連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
 
@@ -102,7 +104,8 @@ def _save_conn_config() -> None:
                        "time_auto_enabled": bool(_conn.get("time_auto_enabled", False)),
                        "time_auto_interval": _conn.get("time_auto_interval", 3600),
                        "time_auto_threshold": _conn.get("time_auto_threshold", 5),
-                       "time_auto_max": _conn.get("time_auto_max", 60)},
+                       "time_auto_max": _conn.get("time_auto_max", 60),
+                       "reassert_strategy": int(_conn.get("reassert_strategy") or 0)},
                       f, ensure_ascii=False, indent=1)
     except Exception as exc:
         print(f"[signal_tc3] 存連線設定失敗 {_CONN_PATH}: {exc}", flush=True)
@@ -1323,7 +1326,27 @@ DOWNLINK_POLICIES = ("pass", "log_only", "reassert", "hold_5f10")
 #    就被我方的續約清掉,操作員會覺得手動根本沒有作用。
 #    把 bit2 一起包進去之後,現場隨時切得動;我方仍持有 bit4,動態控制照跑。
 #    🛑 這不是「宣告現在是手動」,是「允許現場切手動」——兩件事不同。
-REASSERT_STRATEGY = int(os.getenv("SIGNAL_TC3_REASSERT_STRATEGY", "20"))   # 0x14
+# 我方要**持續維持**的控制策略。續約每 AUTH_RENEW_SEC 送的就是這個值。
+#
+# 🛑 2026-09-08 改成可設定 + 持久化。原本寫死 0x14,而畫面上若讓人另外設一次
+#    5F10,20 秒內就會被續約蓋回去 —— 看起來像「設定沒生效」。
+#    所以介面設的就是**這個值**:設了之後續約持續維持它,設定才留得住。
+# 🛑 取消 bit4(時相控制)等於主動放棄控制權:演算法的下發閘門會擋
+#    (control_mode 不再是 external_dynamic),路口回到控制器自己的時制。
+#    那是合法操作,但畫面上必須講清楚,不可以讓人以為只是改個勾勾。
+_REASSERT_DEFAULT = int(os.getenv("SIGNAL_TC3_REASSERT_STRATEGY", "20"))   # 0x14
+_auth_strategy = {"v": int(_conn.get("reassert_strategy") or _REASSERT_DEFAULT) & 0xFF}
+
+
+def reassert_strategy() -> int:
+    """我方目前維持的控制策略值。"""
+    return _auth_strategy["v"] & 0xFF
+
+
+def strategy_bits(v: int) -> list:
+    """把策略值攤成逐位元清單,給畫面直接用。"""
+    return [{"bit": i, "name": STRATEGY_BITS[i] if i < len(STRATEGY_BITS) else "bit%d" % i,
+             "on": bool(v >> i & 1)} for i in range(8)]
 REASSERT_EFFECT = int(os.getenv("SIGNAL_TC3_REASSERT_EFFECT", "1"))
 REASSERT_DELAY = float(os.getenv("SIGNAL_TC3_REASSERT_DELAY", "1.2"))
 _reassert = {"n": 0, "last": None, "last_error": ""}
@@ -1461,7 +1484,7 @@ def _do_reassert(kind: str = "重新宣告") -> None:
             return
         # 序號與側錄都沿用既有下發那一套,不另造一份 —— 兩套會漂移。
         seq = (int(_seq_next.get("n", 0)) + 1) & 0xFF
-        info = bytes([0x5F, 0x10, REASSERT_STRATEGY & 0xFF, REASSERT_EFFECT & 0xFF])
+        info = bytes([0x5F, 0x10, reassert_strategy(), REASSERT_EFFECT & 0xFF])
         frame = build_frame(addr, seq, info)
         if _controller_send(frame):
             _seq_next["n"] = seq
@@ -1473,7 +1496,7 @@ def _do_reassert(kind: str = "重新宣告") -> None:
                             "cks_ok": True, "raw": frame.hex(" ").upper(),
                             "user": "reassert" if kind == "重新宣告" else "renew"})
             add_log("info", "授權%s:我方送 5F10 0x%02X(EffectTime=%d 分)"
-                    % (kind, REASSERT_STRATEGY, REASSERT_EFFECT), "signal")
+                    % (kind, reassert_strategy(), REASSERT_EFFECT), "signal")
             print("[signal-tc3][控制] user=%s code=5F10 seq=%d raw=%s"
                   % (("reassert" if kind == "重新宣告" else "renew"), seq, frame.hex(" ").upper()), flush=True)
         else:
@@ -2290,7 +2313,7 @@ async def downlink_status(_user=Depends(get_current_user)):
                          "這是改變權責歸屬,不是技術選項,要與中央談好才用。",
         },
         "reassert": {"count": _reassert["n"], "last": _reassert["last"],
-                     "strategy": REASSERT_STRATEGY, "effect_time": REASSERT_EFFECT,
+                     "strategy": reassert_strategy(), "effect_time": REASSERT_EFFECT,
                      "last_error": _reassert["last_error"]},
         "seen": _downlink["seen"], "passed": _downlink["passed"],
         "held": _downlink["held"], "last_held": _downlink["last_held"],
@@ -2539,6 +2562,83 @@ async def control_time_auto(request: Request, _user=Depends(get_current_user)):
     return {k: _time_auto[k] for k in
             ("enabled", "interval_sec", "threshold_sec", "max_auto_sec",
              "last_run", "last_error")}
+
+
+@router.get("/strategy", summary="控制策略:控制器現況 vs 我方維持的值")
+async def signal_strategy(_user=Depends(get_current_user)):
+    """兩個值要分開看,不可以混為一談:
+
+    · **控制器現況** —— 它實際回報的(5F00/5FC0)。這是事實。
+    · **我方維持的** —— 續約每 %.0f 秒送出去的值。這是意圖。
+
+    兩者不一致是正常的:剛設定完還沒續約、或現場切了手動把我方的清掉。
+    """ % AUTH_RENEW_SEC
+    cur = _safety.get("strategy")
+    ours = reassert_strategy()
+    mode = _control_mode(cur) if isinstance(cur, int) else {}
+    return {
+        "controller": ({"value": cur, "hex": "0x%02X" % cur,
+                        "text": _strategy_text(cur), "bits": strategy_bits(cur),
+                        "mode": mode.get("code"), "mode_label": mode.get("label"),
+                        "ts": _safety.get("strategy_ts")} if isinstance(cur, int) else None),
+        "ours": {"value": ours, "hex": "0x%02X" % ours,
+                 "text": _strategy_text(ours), "bits": strategy_bits(ours)},
+        "renew_sec": AUTH_RENEW_SEC,
+        "effect_min": REASSERT_EFFECT,
+        "dynamic_enabled": bool(_dyn.get("enabled")),
+        "note": "我方維持的值由續約每 %.0f 秒重送一次(EffectTime=%d 分)。"
+                "在這裡改的就是那個值 —— 改了之後續約持續維持它,不會被蓋回去。"
+                "🛑 取消 bit4 時相控制 = 主動放棄控制權,演算法會停止下發。"
+                % (AUTH_RENEW_SEC, REASSERT_EFFECT),
+    }
+
+
+@router.post("/control/strategy", summary="設定我方維持的控制策略(立即送出並持久化)")
+async def control_strategy(request: Request, _user=Depends(get_current_user)):
+    """body: {"value": 20} 或 {"bits": [0,4]}
+
+    🛑 這會改變路口的控制權歸屬,過 _control_guard 四道把關並寫操作紀錄。
+    🛑 設的是「我方**持續維持**的值」——續約會一直送它,所以設定留得住。
+       這與只送一次不同:只送一次的話 %.0f 秒內就被續約蓋回去。
+    """ % AUTH_RENEW_SEC
+    body = await request.json()
+    who = getattr(_user, "username", None) or str(_user)
+    if "value" in body:
+        v = int(body["value"]) & 0xFF
+    elif "bits" in body:
+        v = 0
+        for b in (body.get("bits") or []):
+            b = int(b)
+            if not (0 <= b <= 7):
+                raise HTTPException(status_code=400, detail="位元只能 0~7")
+            v |= (1 << b)
+    else:
+        raise HTTPException(status_code=400, detail="要帶 value 或 bits")
+    if v == 0:
+        # 🛑 全部關掉不是有意義的策略,而且控制器的反應未知 —— 不放行。
+        raise HTTPException(status_code=400,
+                            detail="至少要選一種控制方式,全部關閉不是有效的控制策略")
+
+    why = _control_guard(0x10, 0x5F)
+    if why:
+        raise HTTPException(status_code=403, detail=why)
+
+    prev = reassert_strategy()
+    _auth_strategy["v"] = v
+    _conn["reassert_strategy"] = v
+    _save_conn_config()
+    add_log("warning", "控制策略設定:%s → %s(操作者 %s)"
+            % (_strategy_text(prev), _strategy_text(v), who), "signal")
+    # 立刻送一次,不要等下一輪續約
+    _do_reassert(kind="設定")
+    return {"ok": True, "previous": {"value": prev, "hex": "0x%02X" % prev,
+                                     "text": _strategy_text(prev)},
+            "ours": {"value": v, "hex": "0x%02X" % v, "text": _strategy_text(v),
+                     "bits": strategy_bits(v)},
+            "phase_control": bool(v & _BIT_PHASE),
+            "note": ("已設定並立即送出;續約每 %.0f 秒維持這個值。" % AUTH_RENEW_SEC)
+                    + ("" if v & _BIT_PHASE else
+                       " 🛑 未含時相控制:我方不再持有控制權,演算法將停止下發。")}
 
 
 @router.get("/coverage", summary="TC3 命令覆蓋矩陣(規範 105 條 vs 實際抄到)")

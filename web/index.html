@@ -3939,28 +3939,29 @@
         .wr-sw-i em { font-style:normal; font-size:var(--fs-caption); color:var(--gov-muted); }
         .wr-sw-i em.warn { color:var(--gov-warn, #e8590c); font-weight:600; }
         .wr-sw-k { font-size:var(--fs-caption); color:var(--gov-mute-2); }
-        /* 遠端重開機:這顆是全畫面**唯一**會重開運轉中號誌控制器的按鈕,
-           要一眼認得出來、而且字要看得清楚。
-           🛑 原本用 el-button type=danger plain —— Element Plus 的 plain 是
-              淡紅底(#fef0f0)配淡紅字,在這張淺色卡片上對比不足,現場反映
-              「字看不清楚」。改成實心紅底白字,並自己指定字重與字級,
-              不吃 el-button 的預設。 */
+        /* 遠端重開機:沿用系統既有的按鈕風格,不另外配色。
+           🛑 2026-09-08 兩次調整的紀錄,避免有人再改回去:
+              初版 el-button type=danger plain → 淡紅底配淡紅字,現場反映
+              「字看不清楚」;第二版改成實心紅底白字,現場再反映
+              「恢復系統風格,不要用紅色」。最終沿用系統中性按鈕,
+              危險性靠**確認框**表達(它會顯示實際碼框與目標位址),
+              不靠顏色。 */
         .wr-sw-i .wr-reboot {
             display:inline-flex; align-items:center; gap:6px;
             height:28px; padding:0 12px; border-radius:6px;
-            background:#c92a2a; border:1px solid #a51111;
-            color:#fff; font-size:var(--fs-caption); font-weight:700;
-            letter-spacing:.4px; line-height:1; cursor:pointer;
-            box-shadow:0 1px 2px rgba(0,0,0,.18);
-            transition:background .15s ease, box-shadow .15s ease;
+            background:var(--gov-surface,#fff);
+            border:1px solid var(--gov-border-strong,#c3ccd8);
+            color:var(--gov-text); font-size:var(--fs-caption); font-weight:600;
+            line-height:1; cursor:pointer;
+            transition:background .15s ease, border-color .15s ease;
         }
         .wr-sw-i .wr-reboot:hover:not(:disabled) {
-            background:#a51111; box-shadow:0 2px 6px rgba(169,17,17,.35); }
-        .wr-sw-i .wr-reboot:active:not(:disabled) { background:#8c0d0d; }
+            background:var(--gov-bg-soft,#f1f5f9);
+            border-color:var(--gov-primary,#1f4e8c); }
+        .wr-sw-i .wr-reboot:active:not(:disabled) { background:var(--gov-border,#dbe2ea); }
         .wr-sw-i .wr-reboot:disabled { opacity:.55; cursor:not-allowed; }
         .wr-sw-i .wr-reboot svg { width:14px; height:14px; fill:currentColor; }
-        /* 說明字跟著加深 —— 旁邊那行原本用 muted 灰,在紅按鈕旁更顯得淡 */
-        .wr-sw-i em.danger { color:#c92a2a; font-weight:600; }
+        .wr-sw-i em.danger { color:var(--gov-mute-2); }
         /* 演算法下發的累計次數:開關旁邊直接看得到,不用滑鼠移上去 */
         .wr-sw-i .wr-actn {
             font-size:var(--fs-caption); font-weight:700; color:var(--gov-text);
@@ -3994,6 +3995,24 @@
         .tsy-note { font-size:var(--fs-caption); color:var(--gov-mute-2);
                     line-height:1.7; margin-top:10px; }
         .tsy-note b { color:#a86400; }
+        /* 控制策略 */
+        .cst-row { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:12px; }
+        .cst-box { flex:1 1 260px; border:1px solid var(--gov-border,#dbe2ea);
+                   border-radius:8px; padding:10px 12px; }
+        .cst-box.mine { background:var(--gov-bg-soft,#f8fafc); }
+        .cst-k { font-size:var(--fs-caption); color:var(--gov-mute-2); margin-bottom:4px; }
+        .cst-v { font-size:var(--fs-body); font-weight:600; font-family:var(--font-mono); }
+        .cst-t { font-size:var(--fs-caption); color:var(--gov-muted); margin-top:3px; }
+        .cst-bits { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+                    gap:6px 12px; margin:12px 0; }
+        .cst-bit { display:flex; align-items:center; gap:7px; font-size:var(--fs-small);
+                   padding:5px 8px; border-radius:6px;
+                   border:1px solid var(--gov-border,#dbe2ea); }
+        .cst-bit i { font-style:normal; font-family:var(--font-mono);
+                     font-size:var(--fs-caption); color:var(--gov-mute-2); }
+        .cst-bit.key { border-color:var(--gov-primary,#1f4e8c); }
+        .cst-act { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+        .cst-warn { font-size:var(--fs-caption); color:#a86400; font-weight:600; }
         .wr-ctlway { display:flex; flex-direction:column; gap:3px; margin:6px 0 12px;
                      padding:8px 12px; border-left:3px solid var(--gov-border-strong);
                      background:var(--gov-bg-soft,#f1f5f9); border-radius:0 8px 8px 0; }
@@ -8215,6 +8234,64 @@
                             <el-button size="small" type="primary" :loading="sigTpBusy" @click="sigTpSaveLabel">儲存</el-button>
                         </template>
                     </el-dialog>
+                </div>
+
+                <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
+                    <div class="sig-tab-bar">
+                        <span class="sig-tab-title">控制策略</span>
+                        <el-tag size="small" :type="sigCsSame?'success':'warning'">
+                            {{ sigCsSame ? '控制器與我方一致' : '尚未一致' }}
+                        </el-tag>
+                        <el-button size="small" plain :loading="sigCsBusy"
+                                   @click="loadSigStrategy">重新載入</el-button>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="cst-row">
+                                <div class="cst-box">
+                                    <div class="cst-k">控制器現況（它回報的）</div>
+                                    <div class="cst-v">{{ (sigCs.controller||{}).hex || '—' }}</div>
+                                    <div class="cst-t">{{ (sigCs.controller||{}).text || '尚未取得' }}</div>
+                                </div>
+                                <div class="cst-box mine">
+                                    <div class="cst-k">我方維持的（續約每 {{ sigCs.renew_sec||20 }} 秒重送）</div>
+                                    <div class="cst-v">{{ (sigCs.ours||{}).hex || '—' }}</div>
+                                    <div class="cst-t">{{ (sigCs.ours||{}).text || '—' }}</div>
+                                </div>
+                            </div>
+
+                            <div class="cst-bits">
+                                <label v-for="b in sigCsBits" :key="'cs'+b.bit"
+                                       class="cst-bit" :class="{key:b.bit===4}">
+                                    <el-checkbox v-model="b.on" size="small"></el-checkbox>
+                                    <span>{{ b.name }}</span>
+                                    <i>bit{{ b.bit }}</i>
+                                </label>
+                            </div>
+
+                            <div class="cst-act">
+                                <el-button size="small" type="primary" plain
+                                           :loading="sigCsBusy" :disabled="!sigCsDirty"
+                                           @click="sigSaveStrategy">套用並持續維持</el-button>
+                                <el-button size="small" plain :disabled="!sigCsDirty"
+                                           @click="sigResetStrategy">還原</el-button>
+                                <span v-if="!sigCsPhase" class="cst-warn">
+                                    ⚠ 未勾「時相控制」＝ 我方放棄控制權，演算法會停止下發
+                                </span>
+                            </div>
+
+                            <div class="tsy-note">
+                                🛑 這裡設的是<b>我方持續維持的值</b> —— 續約每
+                                {{ sigCs.renew_sec||20 }} 秒重送一次（EffectTime {{ sigCs.effect_min||1 }} 分）。
+                                所以設定留得住，不會像「只送一次」那樣在下一輪被蓋回去。
+                                <br>「控制器現況」與「我方維持的」不一致是正常的：剛設定完還沒續約、
+                                或現場切了手動把我方的清掉。以控制器回報的為準。
+                                <br>🛑 取消 <b>bit4 時相控制</b> 等於主動把路口交還給控制器自己的時制計畫，
+                                演算法的下發閘門會擋住所有命令。那是合法操作，但不是「改個勾勾」而已。
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
@@ -24607,7 +24684,8 @@ const app=createApp({
                             loadSigStats(); startSigStatTimer(); loadSigConsole(); },
             device: () => { loadSignal(); startSignalTimer(); loadSigDevice();
                             loadSigConfig(); loadSigTp();
-                            loadSigTime(0); loadSigTimeHistory(); },
+                            loadSigTime(0); loadSigTimeHistory();
+                            loadSigStrategy(); },
             lamp:   () => { loadSignal(); startSignalTimer(); loadSignalFrames(); },
             frames: () => { loadSignalFrames(); loadSigConsole(); },
         };
@@ -26256,6 +26334,74 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         //    blocked 是空字串代表引擎這一刻本來就判維持,不是被擋。
         // 🛑 一律取持久化值(後端 _actuate_counts),行程內計數重啟就歸零 ——
         //    2026-09-08 現場因此看到「已下發 0 次」而以為演算法從沒動過。
+        // ── 控制策略(逐位元) ─────────────────────────────────────────
+        // 🛑 這裡設的是「我方**持續維持**的值」,不是只送一次。
+        //    續約每 20 秒重送,所以只送一次的設定會在下一輪被蓋回去 ——
+        //    今天早上那個「切了沒反應」的 bug 就是同一類問題。
+        const sigCs = ref({});
+        const sigCsBits = ref([]);
+        const sigCsBusy = ref(false);
+        const sigCsBase = ref(0);
+        const sigCsValue = computed(() => (sigCsBits.value || [])
+            .reduce((a, b) => a | (b.on ? (1 << b.bit) : 0), 0));
+        const sigCsDirty = computed(() => sigCsValue.value !== sigCsBase.value);
+        const sigCsPhase = computed(() => !!(sigCsValue.value & 0x10));
+        const sigCsSame = computed(() => {
+            const c = (sigCs.value.controller || {}).value;
+            const o = (sigCs.value.ours || {}).value;
+            return c !== undefined && c !== null && c === o;
+        });
+        const loadSigStrategy = async () => {
+            sigCsBusy.value = true;
+            try {
+                const r = await fetch('/api/signal/strategy', {credentials: 'include'});
+                if (!r.ok) return;
+                sigCs.value = await r.json();
+                const ours = sigCs.value.ours || {};
+                sigCsBits.value = (ours.bits || []).map((b) => ({...b}));
+                sigCsBase.value = Number(ours.value || 0);
+            } catch (e) { /* 讀不到就維持上次顯示 */ }
+            finally { sigCsBusy.value = false; }
+        };
+        const sigResetStrategy = () => {
+            const ours = sigCs.value.ours || {};
+            sigCsBits.value = (ours.bits || []).map((b) => ({...b}));
+        };
+        const sigSaveStrategy = async () => {
+            const v = sigCsValue.value;
+            const names = (sigCsBits.value || []).filter((b) => b.on).map((b) => b.name);
+            const lines = ['這會改變路口的控制權歸屬，並由續約持續維持。',
+                           '要維持的策略：0x' + v.toString(16).toUpperCase().padStart(2, '0')
+                           + '（' + (names.join('＋') || '無') + '）'];
+            if (!(v & 0x10)) {
+                lines.push('');
+                lines.push('⚠ 未含「時相控制」：我方將放棄控制權，演算法停止下發，'
+                           + '路口回到控制器自己的時制計畫。');
+            }
+            try {
+                await ElementPlus.ElMessageBox.confirm(
+                    lines.join('\n'), '設定控制策略（5F10）',
+                    {confirmButtonText: '套用', cancelButtonText: '取消', type: 'warning'});
+            } catch (e) { ElMessage.info('已取消，未送出'); return; }
+            sigCsBusy.value = true;
+            try {
+                const r = await fetch('/api/signal/control/strategy', {
+                    method: 'POST', credentials: 'include',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({value: v}),
+                });
+                const d = await r.json();
+                if (!r.ok) throw new Error(d.detail || r.status);
+                ElMessage[d.phase_control ? 'success' : 'warning'](
+                    '控制策略已設為 ' + (d.ours || {}).hex + '，續約持續維持'
+                    + (d.phase_control ? '' : '；我方已放棄控制權'));
+            } catch (e) {
+                ElMessage.error('設定失敗：' + (e.message || e));
+            } finally {
+                sigCsBusy.value = false;
+                await loadSigStrategy(); await loadSigDyn();
+            }
+        };
         // ── 控制器校時 ───────────────────────────────────────────────
         // 🛑 差值有兩種:probe=1 用**送出時刻**比(精確);probe=0 用回報框落庫的
         //    時刻比,會多算 1~3 秒。畫面一定要標明看的是哪一種,否則會被當成
@@ -27762,7 +27908,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,sigFaultLevel,sigFaultTh,sigFaultKinds,sigFaultKindName,sigFaultCenter,sigDegDur,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNamed,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigActSent,sigActSent24h,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,sigFaultLevel,sigFaultTh,sigFaultKinds,sigFaultKindName,sigFaultCenter,sigDegDur,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNamed,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigActSent,sigActSent24h,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }

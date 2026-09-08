@@ -211,8 +211,10 @@ def test_續約策略必須包含路口手動位元(tc3):
     現場在控制箱切手動,最多撐 45 秒就被清掉,操作員會以為手動壞了。
     現場必須永遠切得動手動,所以續約值一定要含 bit2。
     """
-    assert tc3.REASSERT_STRATEGY & tc3._BIT_PHASE, "續約必須保有時相控制 bit4"
-    assert tc3.REASSERT_STRATEGY & tc3._BIT_ROADSIDE, \
+    # 🛑 2026-09-08 這個值改成可設定 + 持久化(畫面上的控制策略卡就是設它),
+    #    所以測的是預設值,不是寫死常數。
+    assert tc3._REASSERT_DEFAULT & tc3._BIT_PHASE, "續約預設必須保有時相控制 bit4"
+    assert tc3._REASSERT_DEFAULT & tc3._BIT_ROADSIDE, \
         "續約必須一併允許路口手動 bit2,否則現場切不了手動"
 
 
@@ -498,3 +500,37 @@ def test_定時對時預設關閉且有上限保護(tc3):
     # 門檻不可大於上限,否則永遠不會校正
     setsrc = inspect.getsource(tc3.control_time_auto)
     assert "門檻不可大於自動校正上限" in setsrc
+
+
+def test_控制策略設定的是持續維持的值(tc3):
+    """🛑 只送一次沒有意義 —— 續約每 AUTH_RENEW_SEC 秒會把它蓋回去。
+
+    今天早上「切了沒反應」就是同一類問題:設定被另一個機制覆蓋,
+    而畫面看不出來。所以介面設的必須是**續約要送的那個值**。
+    """
+    import inspect
+    src = inspect.getsource(tc3.control_strategy)
+    assert "_auth_strategy" in src, "沒有改到續約實際使用的值"
+    assert "_save_conn_config" in src, "沒有持久化,重啟就回舊值"
+    assert "_do_reassert" in src, "沒有立刻送出,要等下一輪續約"
+    # 續約必須用可變的值,不可以再讀寫死常數
+    rsrc = inspect.getsource(tc3._do_reassert)
+    assert "reassert_strategy()" in rsrc, "續約還在用寫死的常數"
+
+
+def test_控制策略全關要擋下來(tc3):
+    """全部關閉不是有效策略,而且控制器的反應未知 —— 不可以放行。"""
+    import inspect
+    src = inspect.getsource(tc3.control_strategy)
+    assert "if v == 0:" in src and "至少要選一種" in src
+
+
+def test_控制策略位元表要八位元齊全(tc3):
+    """現場給的定義:bit0 定時 / bit1 動態 / bit2 路口手動 / bit3 中央手動 /
+    bit4 時相 / bit5 即時 / bit6 觸動 / bit7 特勤路線。"""
+    assert tc3.STRATEGY_BITS[:8] == ["定時控制", "動態控制", "路口手動", "中央手動",
+                                     "時相控制", "即時控制", "觸動控制", "特勤路線"]
+    bits = tc3.strategy_bits(0x14)
+    assert len(bits) == 8
+    on = [b["bit"] for b in bits if b["on"]]
+    assert on == [2, 4], "0x14 應該是 bit2 路口手動 + bit4 時相控制"
