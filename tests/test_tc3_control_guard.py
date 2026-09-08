@@ -236,3 +236,29 @@ def test_現場已切手動時不再續約(tc3, monkeypatch):
     monkeypatch.setitem(tc3._safety, "strategy", tc3._BIT_PHASE)
     tc3._do_reassert(kind="續約")
     assert len(sent) == 1, "正常情況下應該要續約"
+
+
+def test_動態控制總開關要持久化(tc3, tmp_path, monkeypatch):
+    """🛑 2026-09-08:為了修機箱門上傳而重啟 traffic-signal,總開關是純記憶體
+    狀態,重啟後靜靜回到關閉 —— 路口退回固定時制、演算法停擺 45 分鐘,
+    畫面上沒有任何地方顯示那是重啟造成的。
+
+    存檔要把開關寫進去,讀檔要讀回來,重啟才會回到操作者最後設定的狀態。
+    """
+    cfg = tmp_path / "conn.json"
+    monkeypatch.setattr(tc3, "_CONN_PATH", str(cfg))
+
+    monkeypatch.setitem(tc3._conn, "dynamic_control", True)
+    tc3._save_conn_config()
+    assert '"dynamic_control": true' in cfg.read_text(encoding="utf-8")
+
+    # 讀回來:換成 False 再載入,應該被檔案裡的 True 蓋回去
+    monkeypatch.setitem(tc3._conn, "dynamic_control", False)
+    tc3._load_conn_config()
+    assert tc3._conn["dynamic_control"] is True, "重啟後沒有回到操作者最後設定的狀態"
+
+    monkeypatch.setitem(tc3._conn, "dynamic_control", False)
+    tc3._save_conn_config()
+    monkeypatch.setitem(tc3._conn, "dynamic_control", True)
+    tc3._load_conn_config()
+    assert tc3._conn["dynamic_control"] is False, "關閉狀態也要能被持久化"
