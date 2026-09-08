@@ -3019,17 +3019,53 @@ async def degrade_log(hours: int = Query(24, ge=1, le=720),
     }
 
 
+def _actuate_persisted() -> dict:
+    """從 signal_frames 讀「真的送出過幾次、上一次何時」。
+
+    🛑 為什麼不能只回 _act["n"] —— 那是**行程內**的計數,traffic-api 一重啟
+       (每次部署都會)就歸零。2026-09-08 現場實際踩到:資料庫裡明明有 51 次
+       下發紀錄,畫面卻顯示「已下發 0 次 / 上次 尚未下發」,看的人會以為
+       演算法從來沒有動作過。訊框是持久化的,以它為準。
+    🛑 只算 user 帶 algorithm 的 5F1C —— 人工下發與 step4 測試不是演算法的成績,
+       5F10 續約更不算(它維持授權,不改變運轉)。
+    """
+    import sqlite3 as _sq          # 與檔內其他讀 DB 的地方同一個寫法
+    out = {"sent_total": None, "sent_24h": None, "last_sent_ts": None}
+    try:
+        conn = _sq.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=5)
+        row = conn.execute(
+            "SELECT COUNT(*), MAX(ts) FROM signal_frames "
+            "WHERE src='self' AND code='5F1C' AND user LIKE 'algorithm%'").fetchone()
+        n24 = conn.execute(
+            "SELECT COUNT(*) FROM signal_frames "
+            "WHERE src='self' AND code='5F1C' AND user LIKE 'algorithm%' AND ts>?",
+            (time.time() - 86400,)).fetchone()
+        conn.close()
+        out["sent_total"] = int(row[0] or 0)
+        out["last_sent_ts"] = row[1]
+        out["sent_24h"] = int((n24 or [0])[0] or 0)
+    except Exception:
+        pass
+    return out
+
+
 @router.get("/actuate", summary="演算法下發:現況與把關結果")
 async def actuate_status(_user=Depends(get_current_user)):
     """看得到「有沒有在下發」「上一次送了什麼」「這一刻為什麼沒送」。
     🛑 blocked 是空字串代表「引擎這一刻本來就判 KEEP」,不是被擋 —— 兩者不同,
        畫面上不要混為一談。"""
     ev = list(_act["events"])[-20:]
+    # 🛑 sent / last_ts 是**行程內**的,重啟歸零 —— 畫面要顯示的是持久化那組。
+    #    兩組都回:sent_process 保留給「這次啟動之後送了幾次」的除錯用途。
+    pers = _actuate_persisted()
     return {
         "enabled": _act["enabled"],
         "min_gap_sec": ACTUATE_MIN_GAP_SEC,
-        "sent": _act["n"],
-        "last_ts": _act["last_ts"] or None,
+        "sent": pers["sent_total"] if pers["sent_total"] is not None else _act["n"],
+        "sent_24h": pers["sent_24h"],
+        "sent_process": _act["n"],
+        "last_ts": pers["last_sent_ts"] or _act["last_ts"] or None,
+        "last_ts_process": _act["last_ts"] or None,
         "last_seq": _act["last_seq"],
         "last_reason": _act["last_reason"],
         "last_raw": _act["last_raw"],
@@ -3037,7 +3073,9 @@ async def actuate_status(_user=Depends(get_current_user)):
         "last_error": _act["last_error"],
         "events": [dict(e) for e in reversed(ev)],
         "command": "5F1C(0,0,0)= 跳下一步階;清道由控制器自己走,我方只提早結束綠燈",
-        "note": "擋下來一律是安全的:不送 = 控制器照自己的時制跑。",
+        "note": "擋下來一律是安全的:不送 = 控制器照自己的時制跑。"
+                "sent/last_ts 取自持久化訊框(重啟不歸零);"
+                "sent_process/last_ts_process 只算這次啟動之後。",
     }
 
 

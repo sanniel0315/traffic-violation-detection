@@ -3931,6 +3931,28 @@
         .wr-sw-i em { font-style:normal; font-size:var(--fs-caption); color:var(--gov-muted); }
         .wr-sw-i em.warn { color:var(--gov-warn, #e8590c); font-weight:600; }
         .wr-sw-k { font-size:var(--fs-caption); color:var(--gov-mute-2); }
+        /* 遠端重開機:這顆是全畫面**唯一**會重開運轉中號誌控制器的按鈕,
+           要一眼認得出來、而且字要看得清楚。
+           🛑 原本用 el-button type=danger plain —— Element Plus 的 plain 是
+              淡紅底(#fef0f0)配淡紅字,在這張淺色卡片上對比不足,現場反映
+              「字看不清楚」。改成實心紅底白字,並自己指定字重與字級,
+              不吃 el-button 的預設。 */
+        .wr-sw-i .wr-reboot {
+            display:inline-flex; align-items:center; gap:6px;
+            height:28px; padding:0 12px; border-radius:6px;
+            background:#c92a2a; border:1px solid #a51111;
+            color:#fff; font-size:var(--fs-caption); font-weight:700;
+            letter-spacing:.4px; line-height:1; cursor:pointer;
+            box-shadow:0 1px 2px rgba(0,0,0,.18);
+            transition:background .15s ease, box-shadow .15s ease;
+        }
+        .wr-sw-i .wr-reboot:hover:not(:disabled) {
+            background:#a51111; box-shadow:0 2px 6px rgba(169,17,17,.35); }
+        .wr-sw-i .wr-reboot:active:not(:disabled) { background:#8c0d0d; }
+        .wr-sw-i .wr-reboot:disabled { opacity:.55; cursor:not-allowed; }
+        .wr-sw-i .wr-reboot svg { width:14px; height:14px; fill:currentColor; }
+        /* 說明字跟著加深 —— 旁邊那行原本用 muted 灰,在紅按鈕旁更顯得淡 */
+        .wr-sw-i em.danger { color:#c92a2a; font-weight:600; }
         .wr-ctlway { display:flex; flex-direction:column; gap:3px; margin:6px 0 12px;
                      padding:8px 12px; border-left:3px solid var(--gov-border-strong);
                      background:var(--gov-bg-soft,#f1f5f9); border-radius:0 8px 8px 0; }
@@ -8648,10 +8670,15 @@
                                              所以會先跳確認框,並把實際碼框與目標位址顯示出來再送。
                                              我方會自動站開(抄不到 5F03 → stale 閘門;策略不含時相
                                              控制 → 另一道),重開完 45 秒內續約自動取回授權。 -->
-                                        <el-button size="small" type="danger" plain
-                                                   :loading="sigRebootBusy"
-                                                   @click="sigRemoteReboot">遠端重開機</el-button>
-                                        <em class="warn">0F10 重開號誌控制器</em>
+                                        <button type="button" class="wr-reboot"
+                                                :disabled="sigRebootBusy"
+                                                @click="sigRemoteReboot">
+                                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                                <path d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/>
+                                            </svg>
+                                            <span>{{ sigRebootBusy ? '送出中…' : '遠端重開機' }}</span>
+                                        </button>
+                                        <em class="danger">0F10 重開號誌控制器</em>
                                     </span>
                                 </div>
                             </div>
@@ -8726,7 +8753,12 @@
                                             <em>可換相</em><b class="ok">窗口內</b>
                                         </span>
                                         <span class="fc-st"><em>強制換相</em><b>{{ sigFc.latest }}<i>s</i></b></span>
-                                        <span class="fc-st"><em>已下發</em><b>{{ sigFc.sent }}<i>次</i></b></span>
+                                        <span class="fc-st"
+                                              :title="'累計次數取自持久化訊框,服務重啟不會歸零。'
+                                                      + (sigFc.sent24h===null||sigFc.sent24h===undefined ? ''
+                                                         : ('　近 24 小時:' + sigFc.sent24h + ' 次'))">
+                                            <em>已下發</em><b>{{ sigFc.sent }}<i>次</i></b>
+                                        </span>
                                         <span class="fc-st"><em>上次</em><b class="t">{{ sigFc.lastText }}</b></span>
                                     </div>
                                     <div class="wr-fc-why" v-if="sigFc.reason">
@@ -25102,7 +25134,10 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 gate: gateName,
                 latest: Math.ceil(latest),
                 minG: Math.round(minG), maxG: Math.round(maxG),
-                sent: a.sent || 0, lastText: last,
+                // 🛑 sent/last_ts 現在是後端從持久化訊框算的(重啟不歸零)。
+                //    2026-09-08 現場踩過:這裡吃的是行程內計數,部署重啟後
+                //    顯示「已下發 0 次 / 上次 尚未下發」,但資料庫裡有 51 次。
+                sent: a.sent || 0, sent24h: a.sent_24h, lastText: last,
                 blocked: f.blocked || '',
                 reason: P.reason || '',
                 // 幾何:已亮 / 保護期終點 / 可換相窗口
