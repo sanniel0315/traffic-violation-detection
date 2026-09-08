@@ -2860,6 +2860,74 @@ async def fault_status(_user=Depends(get_current_user)):
     }
 
 
+# ── 白話化:命令 / 來源 / 依據 ────────────────────────────────────────
+# 🛑 現場看的人不會背 TC3 指令碼。白話**加在旁邊**,原始碼與原始算式一律保留 ——
+#    稽核要能從一句白話回到訊框,不能只剩一句好聽的話。
+RAMP_NAME = {1: "上匝道", 2: "下匝道"}
+CMD_PLAIN = {
+    "5F1C": "提早結束綠燈",
+    "5F10": "維持控制授權",
+    "5F18": "切換時制計畫",
+    "0F10": "重新啟動控制器",
+    "0F12": "校時",
+    "5F40": "查詢控制策略",
+    "0F42": "查詢設備時間",
+    "0F46": "查詢設備狀態",
+}
+# 依序比對,先中先用 —— time-sync(manual(...)) 這種巢狀字串要先中 time-sync
+BY_PLAIN = (
+    ("algorithm", "演算法自動"),
+    ("time-sync", "人工校時"),
+    ("remote-reboot", "人工遠端重開機"),
+    ("reassert", "授權重新宣告"),
+    ("renew", "授權續約"),
+    ("test", "人工測試"),
+    ("manual", "人工操作"),
+)
+
+
+def _cmd_plain(code: str) -> str:
+    return CMD_PLAIN.get((code or "").upper(), "")
+
+
+def _by_plain(user: str) -> str:
+    u = (user or "").lower()
+    for key, label in BY_PLAIN:
+        if key in u:
+            return label
+    return user or "—"
+
+
+def _basis_plain(w: dict) -> str:
+    """把成本算式翻成一句話。
+
+    🛑 只是換句話說,不加任何原本沒有的判斷 —— 數字全部來自同一筆樣本,
+       原始算式(reason)照樣保留在旁邊,兩個都給。
+    """
+    g = w.get("green_phase")
+    r = 2 if g == 1 else 1
+    ramp_g = RAMP_NAME.get(g, "綠燈側")
+    ramp_r = RAMP_NAME.get(r, "紅燈側")
+    qr = w.get("queue_m_%d" % r)
+    qg = w.get("queue_m_%d" % g) if g else None
+    el = w.get("green_elapsed")
+    part = []
+    if el is not None:
+        part.append("%s綠燈已亮 %g 秒" % (ramp_g, el))
+    if qr:
+        part.append("%s排隊 %g m 在等" % (ramp_r, qr))
+    elif el is not None:
+        part.append("%s沒有車在等" % ramp_r)
+    if qg:
+        part.append("%s還有 %g m 未消化" % (ramp_g, qg))
+    head = "、".join(part)
+    if w.get("action") == "SWITCH":
+        tail = "換過去比繼續放行划算,提早結束綠燈"
+    else:
+        tail = "繼續放行比換相划算,續綠"
+    return (head + " → " + tail) if head else tail
+
+
 @router.get("/adjust-log", summary="歷史時制調整紀錄(每一次下發:何時、為什麼、有沒有生效)")
 async def adjust_log(hours: int = Query(24, ge=1, le=168),
                      since: str = Query("", description="起(ISO);給了就蓋過 hours"),
@@ -2903,6 +2971,20 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
     🛑 「依據」只掛在**換相命令(5F1C)**上。把最近的決策理由套到 0F42 對時查詢
        上會變成「未滿最小綠 20s」,與那則命令毫無關係 —— 那是誤導,不是資訊。
     """
+    # 🛑 這支會被**行程內直接呼叫**(spec_report 就是)。那條路徑不經過 FastAPI
+    #    的依賴解析,沒帶的參數拿到的是 Query 物件而不是預設值 ——
+    #    `if code:` 對 Query 物件為真,於是走進 code.strip() 直接炸掉。
+    #    在這裡統一正規化,新的內部呼叫者就不必記得每個參數都要傳。
+    def _s(v) -> str:
+        return v if isinstance(v, str) else ""
+
+    def _i(v, d: int) -> int:
+        return v if isinstance(v, int) and not isinstance(v, bool) else d
+
+    since, until, code, by, ack = _s(since), _s(until), _s(code), _s(by), _s(ack)
+    hours, limit, offset = _i(hours, 24), _i(limit, 100), _i(offset, 0)
+    include_query = _i(include_query, 0)
+
     # 🛑 歷史查詢:since/until 給了就蓋過 hours。兩種都留著 ——
     #    hours 是「最近多久」(戰情用),since/until 是「查那一段」(稽核用)。
     def _epoch(v: str) -> Optional[float]:
@@ -2994,14 +3076,22 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
         iso = datetime.fromtimestamp(cut).isoformat(timespec="seconds")
         iso_e = datetime.fromtimestamp(end).isoformat(timespec="seconds")
         reasons = list(sconn.execute(
-            "SELECT ts,green_phase,ours,reason,queue_m_1,queue_m_2 "
+            "SELECT ts,green_phase,ours,reason,queue_m_1,queue_m_2,green_elapsed "
             "FROM signal_shadow_log WHERE ts>? AND ts<=? ORDER BY ts", (iso, iso_e)))
         sconn.close()
     except Exception:
         reasons = []
 
     def why(ts: float):
-        best, gap = None, 6.0
+        """對上這一則命令當時的決策樣本。
+
+        🛑 5F1C 要優先配**判 SWITCH** 的那一筆。取樣每 5 秒一次,下發就發生在
+           判 SWITCH 的那一輪;單純取「時間最近」會配到前一筆 KEEP,結果變成
+           「送了換相命令,依據卻寫續綠」(2026-09-08 現場 08:00:25 那一列)。
+           窗口內沒有 SWITCH 樣本才退回最近的一筆,並以 reason_match 標明。
+        """
+        best = best_sw = None
+        gap = gap_sw = 6.0
         for r in reasons:
             try:
                 rt = datetime.fromisoformat(r[0]).timestamp()
@@ -3010,10 +3100,18 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
             d = abs(rt - ts)
             if d <= gap:
                 gap, best = d, r
-        if not best:
+            if r[2] == "SWITCH" and d <= gap_sw:
+                gap_sw, best_sw = d, r
+        pick = best_sw or best
+        if not pick:
             return {}
-        return {"green_phase": best[1], "action": best[2], "reason": best[3],
-                "queue_m_1": best[4], "queue_m_2": best[5]}
+        el = pick[6]
+        out = {"green_phase": pick[1], "action": pick[2], "reason": pick[3],
+               "queue_m_1": pick[4], "queue_m_2": pick[5],
+               "green_elapsed": None if el is None else round(float(el), 1),
+               "reason_match": "switch" if best_sw else "nearest"}
+        out["basis_plain"] = _basis_plain(out)
+        return out
 
     def _is_query(code: str) -> bool:
         try:
@@ -3035,6 +3133,8 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
         item = {
             "ts": datetime.fromtimestamp(ts).isoformat(timespec="seconds"),
             "epoch": ts, "code": code, "by": user or "",
+            # 白話**加在旁邊**,原始碼與原始來源字串都留著 —— 稽核要回得去
+            "code_plain": _cmd_plain(code), "by_plain": _by_plain(user),
             "likely_ack": state, "ack_match": how, "error_code": err,
             "kind": "query" if is_q else "set", "raw": raw,
         }
