@@ -1839,34 +1839,49 @@ async def frames(limit: int = 50, _user=Depends(get_current_user)):
 # 設定項目「陳舊」門檻:超過這個時間沒再抄到,就不算現況(見 signal_config)。
 # 24 小時 —— 這些設定不是週期回報,只在主動查詢時才回一次。
 CONFIG_STALE_SEC = int(os.getenv("SIGNAL_TC3_CONFIG_STALE_SEC", "86400") or 86400)
+# 🛑 每一列標上驗收條文「遠端管理功能」的項次(A~J)。2026-09-09 逐項對照
+#    utc-tc3 的命令表時發現這張表**漏了條文明列的四項查詢**:
+#      B 時相排列     → 5F43/5FC3(時相資料)   ← 原本完全沒有
+#      C 時制計畫     → 5F44/5FC4(基本參數)、5F45/5FC5(計畫資料庫)
+#                        原本只有 5F48「目前時制計畫」,那只回「現在跑哪一個」,
+#                        不是條文要的「基本參數及計畫內容」
+#      F 觸動控制     → 5F4A/5FCA、5F4B/5FCB(一般日/特殊日觸動排程)
+#    另外 5F4C/5FCC(時相步階變換控制－查詢)是我方 5F1C 的對應查詢,一併納入。
+#    🛑 不要再把 5F42/5FC2 當成時相排列 —— 那是**特殊日車道調撥**(見下)。
 CONFIG_SECTIONS = [
-    {"key": "strategy",   "title": "控制策略",       "query": "5F40", "reply": "5FC0", "page": "5-8"},
-    {"key": "timing",     "title": "目前時制計畫",   "query": "5F48", "reply": "5FC8", "page": "5-43"},
+    {"key": "strategy",   "title": "控制策略",       "query": "5F40", "reply": "5FC0", "page": "5-8", "clause": "A"},
+    {"key": "phase_data", "title": "時相資料(時相排列)", "query": "5F43", "reply": "5FC3", "page": "5-25", "clause": "B"},
+    {"key": "plan_param", "title": "時制計畫基本參數", "query": "5F44", "reply": "5FC4", "page": "5-28", "clause": "C"},
+    {"key": "plan_db",    "title": "時制計畫資料庫",   "query": "5F45", "reply": "5FC5", "page": "5-32", "clause": "C"},
+    {"key": "timing",     "title": "目前時制計畫",   "query": "5F48", "reply": "5FC8", "page": "5-43", "clause": "E"},
+    {"key": "act_sched_n", "title": "一般日觸動排程", "query": "5F4A", "reply": "5FCA", "page": "5-51", "clause": "F"},
+    {"key": "act_sched_s", "title": "特殊日觸動排程", "query": "5F4B", "reply": "5FCB", "page": "5-55", "clause": "F"},
+    {"key": "step_change", "title": "時相步階變換控制", "query": "5F4C", "reply": "5FCC", "page": "5-59", "clause": "H"},
     # 🛑 2026-09-08 更正:這一格的標題本來寫「時相排列」,但 5F42/5FC2 是
     #    **特殊日車道調撥**(utc-tc3 的命令名就是這樣)。現場看到的
     #    DirectIn/DirectOut/ClearTime/FlashGreen/ReverseTimeType 正是車道調撥
     #    的欄位,標成時相排列會讓人以為那是分相順序 —— 兩件完全不同的事。
     #    真正的「時相步階排列」是 5F2F/5F5F/5FDF(選配項,見下)。
-    {"key": "reverse_special", "title": "特殊日車道調撥", "query": "5F42", "reply": "5FC2", "page": "5-21"},
-    {"key": "reverse_normal", "title": "一般日車道調撥", "query": "5F41", "reply": "5FC1", "page": "5-14"},
+    {"key": "reverse_special", "title": "特殊日車道調撥", "query": "5F42", "reply": "5FC2", "page": "5-21", "clause": "—"},
+    {"key": "reverse_normal", "title": "一般日車道調撥", "query": "5F41", "reply": "5FC1", "page": "5-14", "clause": "—"},
     # 🛑 時相步階排列是驗收條文明列的項目,但這台控制器**拒收**這則查詢:
     #    歷史上送過 16 次,每次都回 0F81 ErrorCode=1(參數 PhaseOrder=0 符合
     #    規範範圍 0~255,而且 5F03 回報的 phase_order 就是 0)。
     #    它是 level O 選配項,廠商可以不實作 —— 但 ErrorCode=1 的確切語意
     #    規範裡沒有依據,要向廠商確認是「不支援」還是別的原因,不要自行認定。
     {"key": "step_order", "title": "時相步階排列(控制器拒收,待廠商確認)",
-     "query": "5F5F", "reply": "5FDF", "page": "5-70"},
-    {"key": "day_type",   "title": "一般日時段型態", "query": "5F46", "reply": "5FC6", "page": "5-36"},
-    {"key": "special_day", "title": "特殊日時段型態", "query": "5F47", "reply": "5FC7", "page": "5-40"},
-    {"key": "actuated",   "title": "觸動控制組態",   "query": "5F49", "reply": "5FC9", "page": "5-47"},
-    {"key": "tx_period",  "title": "燈態步階傳輸週期", "query": "5F6F", "reply": "5FEF", "page": "5-86"},
-    {"key": "vip",        "title": "特勤路線控制(VIP)", "query": "5F4E", "reply": "5FCE", "page": "5-66"},
-    {"key": "hw_status",  "title": "設備硬體狀態",   "query": "0F41", "reply": "0FC1", "page": "4-21"},
-    {"key": "firmware",   "title": "韌體版本/燒錄日", "query": "0F43", "reply": "0FC3", "page": "4-30"},
+     "query": "5F5F", "reply": "5FDF", "page": "5-70", "clause": "H"},
+    {"key": "day_type",   "title": "一般日時段型態", "query": "5F46", "reply": "5FC6", "page": "5-36", "clause": "D"},
+    {"key": "special_day", "title": "特殊日時段型態", "query": "5F47", "reply": "5FC7", "page": "5-40", "clause": "D"},
+    {"key": "actuated",   "title": "觸動控制組態",   "query": "5F49", "reply": "5FC9", "page": "5-47", "clause": "F"},
+    {"key": "tx_period",  "title": "燈態步階傳輸週期", "query": "5F6F", "reply": "5FEF", "page": "5-86", "clause": "—"},
+    {"key": "vip",        "title": "特勤路線控制(VIP)", "query": "5F4E", "reply": "5FCE", "page": "5-66", "clause": "G"},
+    {"key": "hw_status",  "title": "設備硬體狀態",   "query": "0F41", "reply": "0FC1", "page": "4-21", "clause": "—"},
+    {"key": "firmware",   "title": "韌體版本/燒錄日", "query": "0F43", "reply": "0FC3", "page": "4-30", "clause": "—"},
     # 🛑 2026-09-08 更正:原本寫 0F52 / 0FD2,那兩個碼在協定 177 則裡**不存在**,
     #    所以這一列永遠顯示「尚未抄到」,即使我方已經抄到 0FC2 兩筆。
     #    正確是 0F42 設備日期時間－查詢 / 0FC2 回報(協定 4-26 / 4-27)。
-    {"key": "datetime",   "title": "設備日期時間",   "query": "0F42", "reply": "0FC2", "page": "4-27"},
+    {"key": "datetime",   "title": "設備日期時間",   "query": "0F42", "reply": "0FC2", "page": "4-27", "clause": "J"},
 ]
 
 
@@ -1932,6 +1947,8 @@ async def signal_config(_user=Depends(get_current_user)):
     out = []
     for sec in CONFIG_SECTIONS:
         item = {k: sec[k] for k in ("key", "title", "query", "reply", "page")}
+        # 驗收條文「遠端管理功能」的項次(A~J);"—" = 條文沒有明列,我方另外抄的
+        item["clause"] = sec.get("clause") or "—"
         fr = _latest_frame(sec["reply"])
         if not fr:
             # 🛑 建議之前先看我方送過沒、有沒有被拒 —— 不要叫人去做已知會失敗的事。
