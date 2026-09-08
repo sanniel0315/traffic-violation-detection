@@ -8134,10 +8134,11 @@
                             <el-tag size="small" type="info">已命名 {{ sigTpNamed.length }} 個</el-tag>
                         </div>
                         <div class="card-body">
-                            <div class="analysis-setting-tip">
-                                🛑 切換會**立刻改變路口運轉**。送出後請看上方「目前執行中」是否
-                                真的變成該計畫 —— 送出成功不等於已生效。
-                            </div>
+                            <!-- 🛑 2026-09-08 使用者要求拿掉這兩段文字:
+                                 「切換會立刻改變路口運轉…送出成功不等於已生效」與
+                                 「還沒有命名任何計畫…」的空狀態說明。
+                                 只是不顯示,**行為完全沒改**:切換仍走 sigTpRun,
+                                 送出後仍以「目前執行中」的實際回報為準。 -->
                             <div class="tp-quick" v-if="sigTpNamed.length">
                                 <button v-for="q in sigTpNamed" :key="'q'+q.id"
                                         class="tp-qbtn" :class="['p-'+q.purpose,{on:q.id===sigTp.running_plan_id}]"
@@ -8146,10 +8147,6 @@
                                     <span class="tp-qi">計畫 {{ q.id }} · 週期 {{ q.cycle }}s</span>
                                 </button>
                             </div>
-                            <p v-else class="tp-empty">
-                                還沒有命名任何計畫。在下面的清單把常用的計畫(平日尖峰、離峰、
-                                <b>VIP 特勤</b>…)命名之後,這裡就會出現一鍵切換的按鈕。
-                            </p>
                         </div>
                     </div>
 
