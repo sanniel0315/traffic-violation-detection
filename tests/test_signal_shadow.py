@@ -777,8 +777,11 @@ def test_auth_renew_only_when_dynamic_on(monkeypatch):
     monkeypatch.setitem(T._dyn, "level", "L0")
     T._do_reassert(kind="續約")
     assert len(sent) == 1
-    # 內容:5F10 + 策略 0x10(時相控制) + EffectTime
-    assert bytes([0x5F, 0x10, T.REASSERT_STRATEGY, T.REASSERT_EFFECT]) in sent[0]
+    # 內容:5F10 + 我方維持的策略 + EffectTime
+    # 🛑 2026-09-08 策略值改成可設定 + 持久化(畫面上的控制策略卡就是設它),
+    #    所以這裡要讀 reassert_strategy(),不可以再讀寫死常數 ——
+    #    續約若沒跟著改,畫面上設完會在 20 秒內被蓋回去。
+    assert bytes([0x5F, 0x10, T.reassert_strategy(), T.REASSERT_EFFECT]) in sent[0]
 
 
 def test_auth_renew_period_shorter_than_effect_time():
