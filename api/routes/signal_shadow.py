@@ -2787,6 +2787,103 @@ async def fault_status(_user=Depends(get_current_user)):
     }
 
 
+@router.get("/adjust-log", summary="歷史時制調整紀錄(每一次下發:何時、為什麼、有沒有生效)")
+async def adjust_log(hours: int = Query(24, ge=1, le=168),
+                     _user=Depends(get_current_user)):
+    """驗收條文的「歷史時制調整紀錄」。
+
+    一筆 = 我方送出的一則會改變運轉的命令,並回答三件事:
+      何時送、**為什麼**送(對上當時的決策理由)、控制器**有沒有接受**。
+
+    🛑 「有沒有接受」不能只看送出成功。5F1C 的 NAK 率實測 42% ——
+       只列送出紀錄會讓人以為每一次調整都生效了。
+    🛑 ACK 配對用「0F80/0F81 酬載帶的指令碼 + 時間鄰近」,不是 seq:
+       實測 0F80 的 seq 是控制器自己的計數(全是 1),不是回我方的 seq。
+       前提是同一時間只有我方在送同一種命令;外部若同時送會混淆,
+       所以標成 likely_ack 而不是斷定,欄位名就講清楚它的性質。
+    🛑 續約(5F10 renew)不算「時制調整」—— 它只是維持授權,不改變運轉,
+       列進來會把真正的調整淹沒。用 include_renew=1 才帶出來。
+    """
+    cut = time.time() - hours * 3600
+    out: list = []
+    try:
+        conn = _sqlite3.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=8)
+        sends = list(conn.execute(
+            "SELECT ts,code,user,raw FROM signal_frames WHERE src='self' AND ts>? "
+            "AND code<>'5F10' ORDER BY ts DESC LIMIT 500", (cut,)))
+        # ACK/NAK 一次撈完再比對,不要每筆去查一次 DB
+        replies = list(conn.execute(
+            "SELECT ts,code,raw FROM signal_frames WHERE code IN ('0F80','0F81') "
+            "AND ts>? ORDER BY ts", (cut,)))
+        conn.close()
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:160], "rows": []}
+
+    def replied(ts: float, code: str):
+        """送出後 ACK_WAIT_SEC 內,有沒有針對同一指令碼的 0F80/0F81。"""
+        want = bytes.fromhex(code)
+        for rts, rcode, raw in replies:
+            if rts < ts or rts > ts + ACK_WAIT_SEC:
+                continue
+            try:
+                b = bytes.fromhex(str(raw).replace(" ", ""))
+            except Exception:
+                continue
+            i = b.find(bytes([0x0F, 0x80 if rcode == "0F80" else 0x81]))
+            if i >= 0 and len(b) >= i + 4 and b[i + 2:i + 4] == want:
+                return ("accepted" if rcode == "0F80" else "rejected"), (
+                    b[i + 4] if len(b) > i + 4 else None)
+        return "no_reply", None
+
+    # 決策理由:用時間最近的一筆(取樣每 5 秒,所以允許 6 秒內)
+    reasons: list = []
+    try:
+        sconn = _db()
+        iso = datetime.fromtimestamp(cut).isoformat(timespec="seconds")
+        reasons = list(sconn.execute(
+            "SELECT ts,green_phase,ours,reason,queue_m_1,queue_m_2 "
+            "FROM signal_shadow_log WHERE ts>? ORDER BY ts", (iso,)))
+        sconn.close()
+    except Exception:
+        reasons = []
+
+    def why(ts: float):
+        best, gap = None, 6.0
+        for r in reasons:
+            try:
+                rt = datetime.fromisoformat(r[0]).timestamp()
+            except Exception:
+                continue
+            d = abs(rt - ts)
+            if d <= gap:
+                gap, best = d, r
+        if not best:
+            return {}
+        return {"green_phase": best[1], "action": best[2], "reason": best[3],
+                "queue_m_1": best[4], "queue_m_2": best[5]}
+
+    n_acc = n_rej = n_none = 0
+    for ts, code, user, raw in sends:
+        state, err = replied(ts, code)
+        n_acc += state == "accepted"
+        n_rej += state == "rejected"
+        n_none += state == "no_reply"
+        out.append({
+            "ts": datetime.fromtimestamp(ts).isoformat(timespec="seconds"),
+            "epoch": ts, "code": code, "by": user or "",
+            "likely_ack": state, "error_code": err,
+            "raw": raw, **why(ts),
+        })
+    return {
+        "available": True, "hours": hours, "rows": out,
+        "count": len(out), "accepted": n_acc, "rejected": n_rej,
+        "no_reply": n_none,
+        "note": "likely_ack 是用指令碼+時間鄰近推的,不是逐則精確配對"
+                "(0F80 的 seq 是控制器自己的計數,無法配對)。"
+                "續約 5F10 不列入 —— 它維持授權,不改變運轉。",
+    }
+
+
 @router.get("/degrade-log", summary="降階與故障歷史(驗收要查的「故障情形」)")
 async def degrade_log(hours: int = Query(24, ge=1, le=720),
                       _user=Depends(get_current_user)):
