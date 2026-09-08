@@ -8523,12 +8523,10 @@
                         </div>
                         <div class="card-body">
                             <div class="analysis-setting-tip">
-                                結果以 <b>seq 精確配對</b>為主（{{ sigAdj.matched_by_seq||0 }} 筆），
-                                配不到才退回「指令碼＋時間鄰近」的推定，每一列的結果欄都標明用哪一種。
-                                查詢類的回應是它自己的回報碼（<code>0F42</code>→<code>0FC2</code>），不是 <code>0F80</code>。
-                                <br>不改變運轉的命令不列入：續約 <code>5F10</code> 只維持授權、查詢類只讀資料<span
-                                    v-if="sigAdj.query_excluded">（已排除 {{ sigAdj.query_excluded }} 筆查詢）</span>。
-                                「依據」只掛在換相命令 <code>5F1C</code> 上。
+                                <b>seq 精確配對 {{ sigAdj.matched_by_seq||0 }} 筆</b>，其餘為時間鄰近推定（見各列結果欄）。
+                                不列入續約 <code>5F10</code> 與查詢類<span
+                                    v-if="sigAdj.query_excluded">（已排除 {{ sigAdj.query_excluded }} 筆）</span>；
+                                「依據」只掛 <code>5F1C</code>。
                             </div>
                             <table class="data-table" id="sig-adj-tbl">
                                 <thead><tr><th>時間</th><th>命令</th><th>來源</th><th>結果</th>
