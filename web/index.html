@@ -3864,6 +3864,19 @@
            整張表統一 fs-small,依據欄只用顏色區分主次,不再改字級。 */
         /* 🛑 降階表要與調整紀錄表同一個字級 —— 兩張表相鄰,字級不同看起來像
               兩套系統(2026-09-08 現場反映)。共用同一組規則,不要各寫一份。 */
+        /* ── 統計報表 ─────────────────────────────────────────────── */
+        .sp-act { display:flex; gap:8px; }
+        .sp-range { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+        .sp-dash { color:var(--gov-text-secondary); }
+        .sp-meta { font-size:12px; color:var(--gov-text-secondary); margin-left:auto; }
+        .sp-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
+        .sp-kv { background:var(--gov-surface-2); border-radius:6px; padding:10px 12px; }
+        .sp-kv span { display:block; font-size:12px; color:var(--gov-text-secondary); }
+        .sp-kv b { font-size:17px; font-variant-numeric:tabular-nums; }
+        #sig-spec-adj, #sig-spec-green, #sig-spec-fault { font-size:var(--fs-small); }
+        #sig-spec-adj th, #sig-spec-adj td,
+        #sig-spec-green th, #sig-spec-green td,
+        #sig-spec-fault th, #sig-spec-fault td { padding:8px 12px; }
         #sig-adj-tbl, #sig-deg-tbl { font-size:var(--fs-small); }
         #sig-adj-tbl th, #sig-adj-tbl td,
         #sig-deg-tbl th, #sig-deg-tbl td { padding:8px 12px; }
@@ -8136,28 +8149,6 @@
 
                     <div class="card">
                         <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-zap"/></svg>快速切換</span>
-                            <el-tag size="small" type="info">已命名 {{ sigTpNamed.length }} 個</el-tag>
-                        </div>
-                        <div class="card-body">
-                            <!-- 🛑 2026-09-08 使用者要求拿掉這兩段文字:
-                                 「切換會立刻改變路口運轉…送出成功不等於已生效」與
-                                 「還沒有命名任何計畫…」的空狀態說明。
-                                 只是不顯示,**行為完全沒改**:切換仍走 sigTpRun,
-                                 送出後仍以「目前執行中」的實際回報為準。 -->
-                            <div class="tp-quick" v-if="sigTpNamed.length">
-                                <button v-for="q in sigTpNamed" :key="'q'+q.id"
-                                        class="tp-qbtn" :class="['p-'+q.purpose,{on:q.id===sigTp.running_plan_id}]"
-                                        :disabled="sigTpBusy" @click="sigTpRun(q.id)">
-                                    <span class="tp-qn">{{ q.name }}</span>
-                                    <span class="tp-qi">計畫 {{ q.id }} · 週期 {{ q.cycle }}s</span>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-list"/></svg>全部時制計畫</span>
                             <el-switch v-model="sigTpRealOnly" size="small" active-text="只看已設定" inline-prompt></el-switch>
                         </div>
@@ -8393,18 +8384,6 @@
                 </div>
 
                 <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
-                    <div class="sig-tab-bar">
-                        <span class="sig-tab-title">設備狀態</span>
-                        <el-switch v-model="sigDevFaultsOnly" size="small" active-text="只看異常" inline-prompt></el-switch>
-                        <el-button size="small" plain @click="loadSigDevice"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-body">
-                            <p v-if="!sigDev.available" class="xn-unavail">{{ sigDev.reason||'尚未取得設備狀態' }}</p>
-                        </div>
-                    </div>
-
                     <!-- 圖示化磚牆:一個位元一塊磚。群組用圖示代表功能,狀態用顏色與形狀,
                          文字降到最少 —— 原本每列掛兩個標籤、16 列 32 個標籤在搶注意力。 -->
                     <div class="card">
@@ -8414,8 +8393,11 @@
                                 <i class="dv-dot ok"></i>正常
                                 <i class="dv-dot bad"></i>異常
                             </span>
+                            <el-switch v-model="sigDevFaultsOnly" size="small" active-text="只看異常" inline-prompt></el-switch>
+                            <el-button size="small" plain @click="loadSigDevice"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
                         </div>
                         <div class="card-body">
+                            <p v-if="!sigDev.available" class="xn-unavail">{{ sigDev.reason||'尚未取得設備狀態' }}</p>
                             <div class="dv-group" v-for="g in (sigDev.groups||[])" :key="g.key">
                                 <div class="dv-gh">
                                     <svg class="dv-gi"><use :href="'#'+sigDevIcon(g.key)"/></svg>
@@ -9602,6 +9584,166 @@
                         </details>
                     </div>
                 </div>
+                <!-- ══ 統計報表:驗收條文列舉的統計項目集中在一頁 ══
+                     條文:「系統介面查詢或產出運作狀態、歷史時制調整紀錄、調整次數、
+                     平均綠燈時間、變異數等、執行績效及故障情形等相關統計資料,
+                     並可視機關需求調整。」
+                     🛑 五個區塊由 /spec-report **一支**端點供資料 —— 分頭打五支的話
+                        匯出時各段的時間範圍可能不一致,那份報表就沒有意義。
+                     🛑 「可視機關需求調整」= 區間可自訂,不是讓人改統計定義;
+                        定義改了就不能跨期比較。 -->
+                <div v-if="page==='signal_hub'" v-show="signalTab==='spec'">
+                    <div class="ds-page-hero">
+                        <div class="ds-page-hero-row">
+                            <div style="min-width:0;flex:1">
+                                <div class="ds-section-num"><svg class="text-icon" aria-hidden="true"><use :href="'#'+currentPageIcon"/></svg></div>
+                                <h2 class="ds-page-title">統計報表</h2>
+                                <p class="ds-page-sub">運作狀態、歷史時制調整紀錄、調整次數、平均綠燈時間與變異數、執行績效、故障情形</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>統計區間</span>
+                            <span class="sp-act">
+                                <el-button size="small" @click="loadSpec" :loading="specLoading">查詢</el-button>
+                                <el-button size="small" type="primary" plain @click="specExport" :disabled="!spec.since">匯出 CSV</el-button>
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <div class="sp-range">
+                                <el-radio-group v-model="specQuick" size="small" @change="specPick">
+                                    <el-radio-button label="1440">近 24 小時</el-radio-button>
+                                    <el-radio-button label="4320">近 3 天</el-radio-button>
+                                    <el-radio-button label="10080">近 7 天</el-radio-button>
+                                    <el-radio-button label="custom">自訂</el-radio-button>
+                                </el-radio-group>
+                                <template v-if="specQuick==='custom'">
+                                    <el-date-picker v-model="specFrom" type="datetime" size="small" placeholder="起"
+                                        value-format="YYYY-MM-DDTHH:mm:ss" style="width:190px"></el-date-picker>
+                                    <span class="sp-dash">→</span>
+                                    <el-date-picker v-model="specTo" type="datetime" size="small" placeholder="訖"
+                                        value-format="YYYY-MM-DDTHH:mm:ss" style="width:190px"></el-date-picker>
+                                </template>
+                                <span class="sp-meta" v-if="spec.since">{{ spec.since }} → {{ spec.until }}（{{ spec.hours }} 小時）</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header"><span><svg class="text-icon"><use href="#i-activity"/></svg>① 運作狀態</span></div>
+                        <div class="card-body">
+                            <div class="sp-grid">
+                                <div class="sp-kv"><span>控制模式</span><b>{{ specOpMode }}</b></div>
+                                <div class="sp-kv"><span>演算法下發</span><b>{{ specActText }}</b></div>
+                                <div class="sp-kv"><span>降階級數</span><b>{{ specDegLevel }}</b></div>
+                                <div class="sp-kv"><span>決策引擎</span><b>{{ specEngine }}</b></div>
+                            </div>
+                            <p class="analysis-setting-tip" v-if="specDegReason">降階原因：{{ specDegReason }}</p>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-zap"/></svg>② 歷史時制調整紀錄與調整次數</span>
+                            <el-tag size="small" type="info">共 {{ specAdj.count||0 }} 次</el-tag>
+                        </div>
+                        <div class="card-body">
+                            <div class="sp-grid">
+                                <div class="sp-kv"><span>調整次數</span><b>{{ specAdj.count||0 }}</b></div>
+                                <div class="sp-kv"><span>控制器接受</span><b>{{ specAdj.accepted||0 }}</b></div>
+                                <div class="sp-kv"><span>遭拒</span><b>{{ specAdj.rejected||0 }}</b></div>
+                                <div class="sp-kv"><span>無回應</span><b>{{ specAdj.no_reply||0 }}</b></div>
+                            </div>
+                            <p class="analysis-setting-tip">依指令碼：{{ specByCode }}</p>
+                            <table class="data-table" id="sig-spec-adj">
+                                <thead><tr><th>時間</th><th>命令</th><th>來源</th><th>結果</th><th>依據</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="(r,ri) in specAdjRows" :key="'spr'+ri">
+                                        <td>{{ sigAdjTime(r) }}</td><td>{{ r.code }}</td><td>{{ r.by }}</td>
+                                        <td>{{ sigAdjAck(r) }}</td><td class="fl-reason">{{ r.basis||'—' }}</td>
+                                    </tr>
+                                    <tr v-if="!specAdjRows.length"><td colspan="5" class="fl-none">此區間沒有調整紀錄。</td></tr>
+                                </tbody>
+                            </table>
+                            <p class="analysis-setting-tip" v-if="specAdjMore">表格只列最近 {{ SPEC_ADJ_SHOW }} 筆；匯出 CSV 為區間內全部 {{ specAdj.count }} 筆。</p>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-bar"/></svg>③ 平均綠燈時間與變異數</span>
+                            <el-tag size="small" :type="specGreenOk?'success':'info'">{{ specGreenTag }}</el-tag>
+                        </div>
+                        <div class="card-body">
+                            <table class="data-table" id="sig-spec-green">
+                                <thead><tr><th>分相</th><th>段數</th><th>平均綠燈</th><th>變異數</th><th>標準差</th><th>最短</th><th>最長</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="(d,di) in specGreenRows" :key="'spg'+di">
+                                        <td>分相 {{ d.phase_no }}　{{ d.ramp }}</td>
+                                        <td>{{ specNum(d.n) }}</td><td>{{ specSec(d.avg) }}</td>
+                                        <td>{{ specNum(d.variance) }}</td><td>{{ specSec(d.stddev) }}</td>
+                                        <td>{{ specSec(d.min_observed) }}</td><td>{{ specSec(d.max_observed) }}</td>
+                                    </tr>
+                                    <tr v-if="!specGreenRows.length"><td colspan="7" class="fl-none">此區間樣本不足，各項統計不給值（不以 0 代表）。</td></tr>
+                                </tbody>
+                            </table>
+                            <div class="sp-grid" style="margin-top:10px">
+                                <div class="sp-kv"><span>換相次數</span><b>{{ specNum(specGreen.switch_count) }}</b></div>
+                                <div class="sp-kv"><span>其中最大綠強制</span><b>{{ specNum(specGreen.forced_count) }}</b></div>
+                            </div>
+                            <p class="analysis-setting-tip" v-if="specGreen.note">{{ specGreen.note }}</p>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header"><span><svg class="text-icon"><use href="#i-bar"/></svg>④ 執行績效</span></div>
+                        <div class="card-body">
+                            <div class="sp-grid">
+                                <div class="sp-kv"><span>總延滯</span><b>{{ specNum(specPerf.total_delay_veh_sec) }} 車·秒</b></div>
+                                <div class="sp-kv"><span>上匝道平均排隊</span><b>{{ specNum(specPerf.avg_queue_m_1) }} m</b></div>
+                                <div class="sp-kv"><span>下匝道平均排隊</span><b>{{ specNum(specPerf.avg_queue_m_2) }} m</b></div>
+                                <div class="sp-kv"><span>下匝道最大排隊</span><b>{{ specNum(specPerf.max_queue_m_2) }} m</b></div>
+                                <div class="sp-kv"><span>主線回堵次數</span><b>{{ specNum(specPerf.spillback_events_2) }}</b></div>
+                                <div class="sp-kv"><span>每分鐘換相</span><b>{{ specNum(specPerf.switch_per_min) }}</b></div>
+                            </div>
+                            <p class="analysis-setting-tip">
+                                🛑 這是控制器<b>實際運轉</b>下的結果，是現況基準；不是「我方演算法的成效」——
+                                我方沒有全程控制過，那是反事實，量不到。
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-alert"/></svg>⑤ 故障情形</span>
+                            <el-tag size="small" :type="specFaultOk?'success':'danger'">{{ specFaultOk?'無確認故障':'降階中' }}</el-tag>
+                        </div>
+                        <div class="card-body">
+                            <div class="sp-grid">
+                                <div class="sp-kv"><span>降階段數</span><b>{{ specFault.span_count||0 }}</b></div>
+                                <div class="sp-kv"><span>累計降階</span><b>{{ specDur(specFault.degraded_sec) }}</b></div>
+                                <div class="sp-kv"><span>降階時間占比</span><b>{{ specPct(specFault.degraded_ratio) }}</b></div>
+                                <div class="sp-kv"><span>目前狀態</span><b>{{ specFault.ongoing?'仍在降階中':'正常' }}</b></div>
+                            </div>
+                            <table class="data-table" id="sig-spec-fault">
+                                <thead><tr><th>開始</th><th>級數</th><th>類別</th><th>持續</th><th>原因</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="(fs,fi) in specFaultSpans" :key="'spf'+fi">
+                                        <td>{{ fs.start_ts }}</td>
+                                        <td><span class="fl-lv" :class="'lv-'+fs.level">{{ fs.level }}</span></td>
+                                        <td>{{ (fs.kinds||[fs.kind]).map(sigFaultKindName).join('、') }}</td>
+                                        <td>{{ sigDegDur(fs) }}</td>
+                                        <td class="fl-reason">{{ fs.reason }}</td>
+                                    </tr>
+                                    <tr v-if="!specFaultSpans.length"><td colspan="5" class="fl-none">此區間沒有降階事件。</td></tr>
+                                </tbody>
+                            </table>
+                            <p class="analysis-setting-tip" v-if="specCenterReport">回傳中心：{{ specCenterReport }}</p>
+                        </div>
+                    </div>
+                </div>
                 <!-- ══ 號誌燈態:獨立分頁(使用者決定)══
                      原本併在「設備與設定」裡,但燈態是**運轉中的即時資訊**,
                      跟設定/參數不是同一類東西,混在一頁要捲很久才找得到。 -->
@@ -9770,16 +9912,13 @@
 
                     <div class="card">
                         <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-alert"/></svg>安全網(手動/故障/異動監看)</span>
+                            <span><svg class="text-icon"><use href="#i-alert"/></svg>目前控制策略監看</span>
                             <div style="display:flex;gap:8px;align-items:center">
                                 <el-tag size="small" :type="sigSafety.manual?'danger':'success'">{{ sigSafety.manual?'手動介入中':'自動運轉' }}</el-tag>
                                 <el-tag v-if="sigSafety.abnormal_text" size="small" type="danger">{{ sigSafety.abnormal_text }}</el-tag>
                             </div>
                         </div>
                         <div class="card-body">
-                            <div class="analysis-setting-tip">
-                                唯讀監看號誌控制器回報:控制策略異動(5F00/5FC0)、現場面板操作(5F08)、現場資料異動(5F0A)、異常步階(故障全紅/各種閃光)。值改變才記事件,不對號誌下任何命令。
-                            </div>
                             <h4 class="sc-h">目前控制策略（8 位元）</h4>
                             <div class="cs-block">
                                 <div class="cs-flags">
@@ -24364,7 +24503,10 @@ const app=createApp({
                 else{ sigCenterRelay.value=!val; ElementPlus.ElMessage.error(d.detail||'設定失敗'); }
             }catch(e){ sigCenterRelay.value=!val; ElementPlus.ElMessage.error('設定失敗'); }
         };
-        // 安全網(Phase 0):手動/故障/異動監看狀態與事件(唯讀)+推播開關
+        // 目前控制策略監看(原名「安全網」,2026-09-08 使用者改名)——
+        // 手動/故障/異動的唯讀監看狀態與事件 + 推播開關。
+        // 🛑 只改顯示名稱,ref/端點名稱維持 sigSafety / safety —— 改那些
+        //    要動後端與既有紀錄,而使用者要的是畫面上的名字。
         // ── 影子決策比對 ──────────────────────────────────────────────
         // 影子跑了很久沒人知道結果,因為它只寫 DB、推播只進 App 告警面板,
         // 網頁上完全沒有入口。這裡把它搬上號誌頁。
@@ -24426,22 +24568,6 @@ const app=createApp({
             });
         });
 
-        // 快速切換只列**已命名而且真的有內容**的計畫。
-        // 🛑 未命名的不放快速鍵:一排「計畫 22 / 計畫 23」按鈕看不出按下去會發生
-        //    什麼事,那正是誤操作的來源。要出現在這裡就先命名。
-        const sigTpNamed = computed(() => {
-            const src = (sigTp.value || {}).field || [];
-            const out = [];
-            src.forEach((r) => {
-                const lb = sigTpLabelOf(r.plan_id);
-                if (!lb.name || !sigTpIsReal(r)) return;
-                out.push({id: r.plan_id, name: lb.name, purpose: lb.purpose || 'other',
-                          cycle: r.cycle});
-            });
-            // VIP 特勤排最前面 —— 要用到它的時候通常很急
-            const rank = (p) => (p === 'vip' ? 0 : 1);
-            return out.sort((a, b) => rank(a.purpose) - rank(b.purpose) || a.id - b.id);
-        });
 
         const sigTpNow = computed(() => {
             const d = sigTp.value || {};
@@ -24593,9 +24719,137 @@ const app=createApp({
             if (!n) return '0 秒';
             return (n < 90) ? (Math.round(n) + ' 秒') : (Math.round(n / 60) + ' 分鐘');
         });
+        // ── 統計報表(驗收條文列舉的統計項目)────────────────────────
+        // 🛑 全部資料來自 /spec-report **一支**端點:區間鎖定一次,五個區塊
+        //    才會是同一段時間。分頭打五支會讓匯出的報表各段範圍不一致。
+        const spec = ref({});
+        const specLoading = ref(false);
+        const specQuick = ref('1440');
+        const specFrom = ref('');
+        const specTo = ref('');
+        const SPEC_ADJ_SHOW = 50;      // 表格只列最近 N 筆,匯出仍是全部
+        const specPick = () => { if (specQuick.value !== 'custom') loadSpec(); };
+        const specParams = () => {
+            if (specQuick.value === 'custom') {
+                if (!specFrom.value || !specTo.value) return null;
+                return new URLSearchParams({since: specFrom.value, until: specTo.value});
+            }
+            return new URLSearchParams({minutes: String(specQuick.value)});
+        };
+        const loadSpec = async () => {
+            const p = specParams();
+            if (!p) { ElMessage.warning('自訂區間要同時填起訖'); return; }
+            specLoading.value = true;
+            try {
+                const r = await fetch('/api/signal/shadow/spec-report?' + p.toString());
+                if (r.ok) spec.value = await r.json();
+                else ElMessage.error('統計報表查詢失敗');
+            } catch (e) { ElMessage.error('統計報表查詢失敗'); }
+            finally { specLoading.value = false; }
+        };
+        // 匯出:在前端把已取回的 JSON 攤平成 CSV。
+        // 🛑 調整紀錄匯出**全部**筆數(表格只顯示前 N 筆)—— 報表要能對回原始列。
+        const specExport = () => {
+            const d = spec.value || {};
+            const q = (v) => '"' + String(v === null || v === undefined ? '' : v).replace(/"/g, '""') + '"';
+            const L = [];
+            L.push(['# 條文', d.clause || ''].map(q).join(','));
+            L.push(['# 區間', (d.since || '') + ' ~ ' + (d.until || ''), (d.hours || '') + ' 小時'].map(q).join(','));
+            L.push(['# 產出時間', d.generated_at || ''].map(q).join(','));
+            L.push('');
+            const op = d.operation || {};
+            L.push('# 一、運作狀態');
+            L.push(['項目', '值'].map(q).join(','));
+            [['控制模式', op.control_mode], ['演算法下發', op.actuate_enabled ? '已啟用' : '未啟用'],
+             ['降階級數', op.degrade_level || 'L0'], ['降階原因', op.degrade_reason],
+             ['決策引擎', op.engine && op.engine.running ? '運轉中' : '停止'],
+             ['取樣數', op.engine && op.engine.samples]].forEach((r) => L.push(r.map(q).join(',')));
+            L.push('');
+            const aj = d.adjust || {};
+            L.push('# 二、歷史時制調整紀錄與調整次數');
+            L.push(['調整次數', aj.count, '接受', aj.accepted, '遭拒', aj.rejected, '無回應', aj.no_reply].map(q).join(','));
+            L.push(['時間', '命令', '來源', '結果', '配對方式', '依據'].map(q).join(','));
+            (aj.rows || []).forEach((r) => L.push(
+                [r.ts, r.code, r.by, r.ack_text || r.ack, r.ack_match, r.basis].map(q).join(',')));
+            L.push('');
+            const g = d.green || {};
+            L.push('# 三、平均綠燈時間與變異數');
+            L.push(['分相', '匝道', '段數', '平均綠燈(秒)', '變異數', '標準差', '最短', '最長'].map(q).join(','));
+            (g.by_direction || []).forEach((x) => L.push(
+                [x.phase_no, x.ramp, x.n, x.avg, x.variance, x.stddev, x.min_observed, x.max_observed].map(q).join(',')));
+            L.push(['換相次數', g.switch_count, '最大綠強制', g.forced_count].map(q).join(','));
+            L.push('');
+            const pf = d.performance || {};
+            L.push('# 四、執行績效(控制器實際運轉的現況基準,非我方演算法成效)');
+            L.push(['指標', '值'].map(q).join(','));
+            [['總延滯(車·秒)', pf.total_delay_veh_sec], ['上匝道平均排隊(m)', pf.avg_queue_m_1],
+             ['下匝道平均排隊(m)', pf.avg_queue_m_2], ['下匝道最大排隊(m)', pf.max_queue_m_2],
+             ['主線回堵次數', pf.spillback_events_2], ['每分鐘換相', pf.switch_per_min]
+            ].forEach((r) => L.push(r.map(q).join(',')));
+            L.push('');
+            const ft = d.faults || {};
+            L.push('# 五、故障情形');
+            L.push(['降階段數', ft.span_count, '累計降階(秒)', ft.degraded_sec, '占比', ft.degraded_ratio].map(q).join(','));
+            L.push(['開始', '級數', '類別', '持續(秒)', '原因'].map(q).join(','));
+            (ft.spans || []).forEach((x) => L.push(
+                [x.start_ts, x.level, (x.kinds || [x.kind]).join('|'),
+                 x.duration_sec == null ? '進行中' : x.duration_sec, x.reason].map(q).join(',')));
+            // BOM 讓 Excel 認得 UTF-8,否則中文全變亂碼
+            const blob = new Blob(['﻿' + L.join('\r\n')], {type: 'text/csv;charset=utf-8'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = '號誌統計報表_' + String(d.since || '').slice(0, 10) + '.csv';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        };
+        // 🛑 樣本不足時顯示「—」不顯示 0 —— 後端刻意回 null,前端不可以把它變成 0。
+        const specNum = (v) => (v === null || v === undefined) ? '—' : v;
+        const specSec = (v) => (v === null || v === undefined) ? '—' : (v + ' 秒');
+        const specPct = (v) => (v === null || v === undefined) ? '—' : ((v * 100).toFixed(2) + '%');
+        const specDur = (v) => {
+            if (v === null || v === undefined) return '—';
+            if (!v) return '0 秒';
+            return (v < 90) ? (Math.round(v) + ' 秒') : (Math.round(v / 60) + ' 分鐘');
+        };
+        const specOpMode = computed(() => {
+            const m = (spec.value.operation || {}).control_mode;
+            return ({external_dynamic: '動態控制(時相控制)', fixtime: '定時控制',
+                     roadside_manual: '路口手動', center_manual: '中央手動'})[m] || (m || '—');
+        });
+        const specActText = computed(() =>
+            (spec.value.operation || {}).actuate_enabled ? '已啟用' : '未啟用');
+        const specDegLevel = computed(() => (spec.value.operation || {}).degrade_level || 'L0');
+        const specDegReason = computed(() => (spec.value.operation || {}).degrade_reason || '');
+        const specEngine = computed(() => {
+            const e = (spec.value.operation || {}).engine || {};
+            return e.running ? ('運轉中 · ' + (e.samples || 0) + ' 次取樣') : '停止';
+        });
+        const specAdj = computed(() => spec.value.adjust || {});
+        const specAdjRows = computed(() => (specAdj.value.rows || []).slice(0, SPEC_ADJ_SHOW));
+        const specAdjMore = computed(() => (specAdj.value.rows || []).length > SPEC_ADJ_SHOW);
+        const specByCode = computed(() => {
+            const b = specAdj.value.by_code || {};
+            const k = Object.keys(b);
+            return k.length ? k.map((c) => c + ' ' + b[c] + ' 次').join('　') : '—';
+        });
+        const specGreen = computed(() => spec.value.green || {});
+        const specGreenRows = computed(() => specGreen.value.by_direction || []);
+        const specGreenOk = computed(() => !specGreen.value.insufficient_data);
+        const specGreenTag = computed(() =>
+            specGreenOk.value ? ((specGreen.value.runs_used || 0) + ' 段') : '樣本不足');
+        const specPerf = computed(() => spec.value.performance || {});
+        const specFault = computed(() => spec.value.faults || {});
+        const specFaultSpans = computed(() => specFault.value.spans || []);
+        const specFaultOk = computed(() => !Object.keys(specFault.value.active || {}).length);
+        const specCenterReport = computed(() => {
+            const c = specFault.value.center_report;
+            if (!c) return '';
+            return typeof c === 'string' ? c : (c.channel || '');
+        });
         const sigTabs = ref([
             {key: 'live',   label: '即時戰情',   icon: 'i-activity'},
             {key: 'eval',   label: '運作統計',   icon: 'i-bar'},
+            {key: 'spec',   label: '統計報表',   icon: 'i-list'},
             {key: 'lamp',   label: '號誌燈態',   icon: 'i-zap'},
             {key: 'device', label: '設備與設定', icon: 'i-list'},
             {key: 'frames', label: '通訊紀錄',   icon: 'i-zap'},
@@ -24618,6 +24872,7 @@ const app=createApp({
                             loadSigConfig(); loadSigTp();
                             loadSigTime(0); loadSigTimeHistory();
                             loadSigStrategy(); },
+            spec:   () => { loadSpec(); },
             lamp:   () => { loadSignal(); startSignalTimer(); loadSignalFrames(); },
             frames: () => { loadSignalFrames(); loadSigConsole(); },
         };
@@ -27854,7 +28109,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNamed,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigActSent,sigActSent24h,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigGateName,sigKeepW,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigDev,sigDevFaultsOnly,sigDevFaults,sigDevSummary,sigDevGroupBad,sigDevItems,sigDevStateType,sigDevStateText,sigDevPolarity,sigDevEvidence,sigDevIcon,sigDevDot,sigDevTileCls,loadSigDevice,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigActSent,sigActSent24h,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzMins,vzLive,vzLoading,vzData,vzPaired,vzPower,vzPowerCls,vzPowerWarn,vzDay,vzHourly,vzHourlyLoading,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,specQuick,specFrom,specTo,SPEC_ADJ_SHOW,loadSpec,specPick,specExport,specNum,specSec,specPct,specDur,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specAdj,specAdjRows,specAdjMore,specByCode,specGreen,specGreenRows,specGreenOk,specGreenTag,specPerf,specFault,specFaultSpans,specFaultOk,specCenterReport,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }

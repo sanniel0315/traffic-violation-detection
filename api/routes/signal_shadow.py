@@ -2757,59 +2757,11 @@ async def count_check(camera_id: int = Query(..., ge=1),
 async def fault_status(_user=Depends(get_current_user)):
     """驗收條文的「故障情形」查詢入口。
 
-    三類故障各自獨立判定,任何一類確認成立就停止下發與續約 ——
-    時相控制授權在一分鐘內過期,控制器自己回到固定時制計畫。
-    🛑 「回復固定時制」不是靠我方送命令達成的,是靠**不送**。連線斷、行程掛、
-       機器沒電,失敗方向都一樣,不依賴故障當下還能成功送出一則命令。
-    """
-    from api.routes import signal_tc3 as T
-    now = time.time()
-
-    def rows(src, confirmed):
-        out = []
-        for k, v in src.items():
-            out.append({
-                "kind": k, "label": FAULT_KINDS.get(k, k),
-                "detail": v.get("detail", ""),
-                "since": v.get("since"),
-                "elapsed_sec": round(now - v["since"], 1) if v.get("since") else None,
-                "confirmed": confirmed,
-            })
-        return out
-
-    active = rows(_fault["active"], True)
-    pending = [r for r in rows(_fault["pending"], False)
-               if r["kind"] not in _fault["active"]]
-    ev = list(_fault["events"])[-30:]
-    return {
-        "healthy": not active,
-        "active": active,
-        "pending": pending,          # 正在發生但還沒撐過確認時間
-        "kinds": FAULT_KINDS,
-        "thresholds": {
-            "hold_sec": FAULT_HOLD_SEC,
-            "clear_sec": FAULT_CLEAR_SEC,
-            "send_fails": FAULT_SEND_FAILS,
-            "logic_fails": FAULT_LOGIC_FAILS,
-        },
-        "counters": {"send_fails": _fault["send_fails"],
-                     "logic_fails": _fault["logic_fails"]},
-        "degrade": {"level": T._dyn.get("level"),
-                    "reason": T._dyn.get("reason"),
-                    "since": T._dyn.get("since")},
-        "events": [dict(e) for e in reversed(ev)],
-        "fallback": "確認故障 → 停止下發與續約 → 授權 1 分鐘內過期 → "
-                    "控制器回復固定時制計畫(2026-09-07 實測)",
-        "center_report": "故障訊息回傳中心尚未實作 —— TC3 的硬體狀態位元描述的是"
-                         "**控制器**的狀態,不是我方分析器的。要回傳我方故障必須先與"
-                         "中心約定用哪個欄位或哪條通道,不可自行挪用既有位元(那會讓"
-                         "中心把我方故障誤讀成號誌機故障)。",
-    }
-
-
-@router.get("/faults", summary="故障檢核:現況、歷史與降階紀錄")
-async def fault_status(_user=Depends(get_current_user)):
-    """驗收條文的「故障情形」查詢入口。
+    🛑 2026-09-08:這支曾經有**兩個同路由的 handler**,舊的在前、新的在後。
+       FastAPI 路由給先註冊的那一個,所以後面那份(把 center_report 從
+       「尚未實作」更正成 0F04 bit13 的實際路徑)整段是死碼,從來沒有生效 ——
+       畫面一直顯示已經被推翻的舊說法。舊的已刪除,只留這一份。
+       加新端點前先 grep 路徑字串,不要靠「新的寫在後面就會贏」。
 
     三類故障各自獨立判定,任何一類確認成立就停止下發與續約 ——
     時相控制授權在一分鐘內過期,控制器自己回到固定時制計畫。
@@ -3872,4 +3824,114 @@ async def shadow_timeline(minutes: int = Query(15, ge=1, le=1440),
         "gaps": gaps,
         "note": "t 是距 t0 的秒數,不要假設等距;gaps 標出取樣斷點,"
                 "那些區間要畫成斷線不要內插 —— 抄錄過期時影子會跳過取樣。",
+    }
+
+
+# ── 條文統計報表:一支端點回答條文列舉的全部項目 ────────────────────
+# 條文原文:「系統介面查詢或產出運作狀態、歷史時制調整紀錄、調整次數、
+#           平均綠燈時間、變異數等、執行績效及故障情形等相關統計資料,
+#           並可視機關需求調整。」
+#
+# 🛑 為什麼要另做一支而不是叫畫面打五支:條文是「一份可查詢/可產出的統計資料」,
+#    分散在五個端點的話,匯出時各段的時間範圍可能不一致 —— 那份報表就沒有意義。
+#    這支把區間鎖定一次,轉發給既有的實作,不重寫任何統計邏輯。
+#
+# 🛑 「可視機關需求調整」= 區間自訂(since/until),不是讓人改統計定義。
+#    定義改了就不能跨期比較,那是報表最基本的要求。
+SPEC_CLAUSE = ("系統介面查詢或產出運作狀態、歷史時制調整紀錄、調整次數、"
+               "平均綠燈時間、變異數等、執行績效及故障情形等相關統計資料,"
+               "並可視機關需求調整。")
+
+
+def _spec_hours(since_iso: str, until_iso: str) -> float:
+    try:
+        a = datetime.fromisoformat(since_iso).timestamp()
+        b = datetime.fromisoformat(until_iso).timestamp()
+        return max(0.0, (b - a) / 3600.0)
+    except Exception:
+        return 0.0
+
+
+@router.get("/spec-report", summary="條文統計報表(運作狀態/調整紀錄/綠燈統計/績效/故障)")
+async def spec_report(since: str = Query("", description="起(ISO);空 = 依 minutes 回推"),
+                      until: str = Query("", description="訖(ISO);空 = 現在"),
+                      minutes: int = Query(1440, ge=5, le=43200),
+                      _user=Depends(get_current_user)):
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    if since:
+        since_iso, until_iso = since, (until or now_iso)
+    else:
+        since_iso = datetime.fromtimestamp(
+            time.time() - minutes * 60).isoformat(timespec="seconds")
+        until_iso = now_iso
+    hours = _spec_hours(since_iso, until_iso)
+    hr = max(1, min(720, int(round(hours)) or 1))
+
+    stats = await shadow_stats(minutes=5, since=since_iso, until=until_iso,
+                               trend_limit=10, _user=_user)
+    adj = await adjust_log(hours=hr, include_query=False, _user=_user)
+    deg = await degrade_log(hours=hr, _user=_user)
+    faults = await fault_status(_user=_user)
+    outcome = _outcome_window(since_iso, until_iso)
+
+    # 運作狀態:當下的控制模式與資料源(條文的「運作狀態」問的是現在怎麼運轉)
+    live = _live_phase() or {}
+    with _lock:
+        run = {"running": bool(_thread and _thread.is_alive()),
+               "samples": _stats.get("samples"),
+               "last_at": _stats.get("last_at")}
+
+    # 🛑 每一段都要標「資料夠不夠」。條文要的是統計資料,
+    #    樣本不足時給一個數字比不給更糟 —— 看的人無從判斷可信度。
+    return {
+        "clause": SPEC_CLAUSE,
+        "since": since_iso, "until": until_iso, "hours": round(hours, 2),
+        "generated_at": now_iso,
+        "operation": {
+            "control_mode": live.get("control_mode"),
+            "green_phase": live.get("sub_phase_id"),
+            "step_id": live.get("step_id"),
+            "stale": bool(live.get("stale")),
+            "actuate_enabled": bool(_act["enabled"]),
+            "actuate_blocked": _act.get("blocked") or "",
+            "degrade_level": (faults.get("degrade") or {}).get("level"),
+            "degrade_reason": (faults.get("degrade") or {}).get("reason") or "",
+            "engine": run,
+        },
+        "adjust": {
+            "count": adj.get("count", 0),
+            "accepted": adj.get("accepted", 0),
+            "rejected": adj.get("rejected", 0),
+            "no_reply": adj.get("no_reply", 0),
+            "matched_by_seq": adj.get("matched_by_seq", 0),
+            "query_excluded": adj.get("query_excluded", 0),
+            "by_code": stats.get("adjust_by_code") or {},
+            "rows": adj.get("rows") or [],
+        },
+        "green": {
+            "insufficient_data": bool(stats.get("insufficient_data")),
+            "runs": stats.get("runs"),
+            "runs_used": stats.get("runs_used"),
+            "switch_count": stats.get("switch_count"),
+            "forced_count": stats.get("forced_count"),
+            "forced_ratio": stats.get("forced_ratio"),
+            "by_direction": stats.get("by_direction") or [],
+            "note": stats.get("note") or "",
+        },
+        "performance": outcome,
+        "faults": {
+            "active": faults.get("active") or {},
+            "pending": faults.get("pending") or {},
+            "kinds": faults.get("kinds") or {},
+            "counters": faults.get("counters") or {},
+            "center_report": faults.get("center_report"),
+            "spans": deg.get("spans") or [],
+            "span_count": deg.get("count", 0),
+            "degraded_sec": deg.get("degraded_sec", 0),
+            "degraded_ratio": deg.get("degraded_ratio"),
+            "ongoing": bool(deg.get("ongoing")),
+        },
+        "note": "區間可自訂(條文的「可視機關需求調整」);統計定義固定不變,"
+                "否則跨期比較不成立。各段的樣本數皆一併回傳,樣本不足時"
+                "指標為 null 而非 0。",
     }
