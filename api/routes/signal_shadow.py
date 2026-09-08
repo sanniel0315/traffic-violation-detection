@@ -178,6 +178,14 @@ MAX_GREEN_SEC = float(os.getenv("SIGNAL_MAX_GREEN_SEC", "100") or 0)
 #    也不會因為某台機器忘了設而悄悄跑回舊行為。要臨時回退才用環境變數。
 KEEP_WEIGHT = float(os.getenv("SIGNAL_KEEP_WEIGHT", "3.0") or 3.0)
 KEEP_WEIGHT_SINCE = "2026-09-06"   # 這之前的逐時/配對數字是 keep_weight=1.0,不可並列
+# 🛑 紅側是主線保護相(下匝道)在等時改用的 keep_weight。現場 2026-09-08:
+#    「下匝道要放多點,很塞」。實測佐證:下匝道排隊 >30m 的時段,上匝道拿到
+#    2094 秒綠燈、下匝道只有 1354 秒 —— 下匝道在塞時上匝道反而放得更多。
+#    3.0 → 2.0 只影響「下匝道在等」這一種情況,其他決策完全不變。
+# 🛑 這個值沒有經過 KEEP_WEIGHT 那樣的參數搜尋驗證,要用上線後的實測回頭驗:
+#    下匝道綠燈占比有沒有上升、換相次數有沒有增加太多(每次換相損失 5 秒)。
+PRIORITY_KEEP_WEIGHT = float(os.getenv("SIGNAL_PRIORITY_KEEP_WEIGHT", "2.0") or 2.0)
+PRIORITY_KEEP_SINCE = "2026-09-08T08:00"   # 這之前的統計不可與之後並列
 
 # ── 評估範圍 ───────────────────────────────────────────────────────────
 # 🛑 2026-09-07 改變定位:從「影子比對」變成「線上評估」。
@@ -1178,6 +1186,7 @@ def _loop():
                 meters_per_vehicle=_mpv(),
                 lost_time_sec=_lost_time_for(g_no),
                 keep_weight=KEEP_WEIGHT,
+                priority_keep_weight=PRIORITY_KEEP_WEIGHT,
             )
 
             # 🛑 先下發再寫這一筆 log —— 反過來的話這一筆決策的執行結果
