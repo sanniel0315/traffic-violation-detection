@@ -8157,6 +8157,94 @@
 
                 <!-- 設備狀態併入「燈態與設備」分頁:兩者都是控制器硬體層的東西,
                      分兩個分頁只是讓人多點一次(2026-09-07 融合)。 -->
+                <!-- ══ 時制計畫選擇(驗收條文「遠端管理功能」E)══════════
+                     E:可選擇執行之時制計畫及查詢目前時制計畫內容。
+                     🛑 TC3 的時制計畫**只有編號沒有名稱**(5FC5/5FC8 都只回 PlanID)。
+                        「哪一個是 VIP 特勤」控制器裡查不到,只有機關自己知道,
+                        所以由使用者標記。絕對不用「週期短、綠燈偏袒某一側」去猜 ——
+                        猜錯的代價是有人按下「特勤」卻切到別的計畫。
+                     🛑 切換用 5F18(PlanID)。送出成功 ≠ 已生效 ——
+                        以控制器 5FC8 回報的為準,所以「目前執行中」單獨顯示。
+                     🛑 2026-09-08 整區移除,09-09 依條文 E 重建為**一張卡**
+                        (原本是兩張:目前執行中 / 全部計畫)。 -->
+                <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
+                    <div class="sig-tab-bar">
+                        <span class="sig-tab-title">時制計畫選擇</span>
+                        <el-tag size="small" :type="sigTpAgeType">{{ sigTpAgeText }}</el-tag>
+                        <el-button size="small" :loading="sigTpLoading" @click="loadSigTp">重新載入</el-button>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-list"/></svg>目前執行中</span>
+                            <el-switch v-model="sigTpRealOnly" size="small" active-text="只看已設定" inline-prompt></el-switch>
+                        </div>
+                        <div class="card-body">
+                            <div class="tp-now">
+                                <div class="tp-now-id">
+                                    <em>計畫</em><b>{{ sigTpNow.id }}</b>
+                                    <span class="tp-badge" :class="'p-'+sigTpNow.purpose"
+                                          v-if="sigTpNow.name">{{ sigTpNow.name }}</span>
+                                    <span class="tp-badge unnamed" v-else>未命名</span>
+                                </div>
+                                <div class="tp-now-k"><em>週期</em><b>{{ sigTpNow.cycle }}</b><i>s</i></div>
+                                <div class="tp-now-k"><em>時差</em><b>{{ sigTpNow.offset }}</b><i>s</i></div>
+                                <div class="tp-now-k" v-for="g in sigTpNow.greens" :key="'g'+g.idx">
+                                    <em>分相 {{ g.idx }} 綠燈</em><b>{{ g.green }}</b><i>s</i>
+                                </div>
+                            </div>
+                            <p class="tp-note">{{ sigTpNow.note }}</p>
+
+                            <h4 class="sc-h" style="margin-top:16px">可選擇的時制計畫</h4>
+                            <table class="data-table tp-tb">
+                                <thead><tr>
+                                    <th>計畫</th><th>用途名稱</th><th>週期</th><th>綠燈</th>
+                                    <th>最小綠</th><th>操作</th>
+                                </tr></thead>
+                                <tbody>
+                                    <tr v-for="r in sigTpRows" :key="'tp'+r.id" :class="{on:r.id===sigTp.running_plan_id}">
+                                        <td><b class="tp-id">{{ r.id }}</b>
+                                            <span class="tp-run" v-if="r.id===sigTp.running_plan_id">執行中</span></td>
+                                        <td>
+                                            <span class="tp-badge" :class="'p-'+r.purpose" v-if="r.name">{{ r.name }}</span>
+                                            <span class="tp-badge unnamed" v-else>—</span>
+                                        </td>
+                                        <td class="num">{{ r.cycle }}</td>
+                                        <td class="num">{{ r.greenText }}</td>
+                                        <td class="num">{{ r.minText }}</td>
+                                        <td class="tp-ops">
+                                            <el-button size="small" @click="sigTpEditOpen(r)">命名</el-button>
+                                            <el-button size="small" :disabled="sigTpBusy || r.id===sigTp.running_plan_id"
+                                                       @click="sigTpRun(r.id)">切換</el-button>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="!sigTpRows.length"><td colspan="6" class="tp-empty">尚未抄到任何時制計畫。</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <el-dialog v-model="sigTpEdit.open" title="時制計畫命名" width="440px">
+                        <div class="tp-form">
+                            <div class="tp-fr"><span class="k">計畫編號</span><b>{{ sigTpEdit.id }}</b></div>
+                            <div class="tp-fr"><span class="k">用途名稱</span>
+                                <el-input v-model="sigTpEdit.name" size="small" maxlength="24"
+                                          placeholder="例:平日尖峰 / VIP 特勤"></el-input></div>
+                            <div class="tp-fr"><span class="k">分類</span>
+                                <el-select v-model="sigTpEdit.purpose" size="small" style="width:150px">
+                                    <el-option v-for="o in SIG_TP_PURPOSES" :key="o.v" :label="o.t" :value="o.v"></el-option>
+                                </el-select></div>
+                            <div class="tp-fr"><span class="k">備註</span>
+                                <el-input v-model="sigTpEdit.note" size="small" maxlength="80"></el-input></div>
+                            <p class="tp-note">名稱留空並儲存,等於清除這個計畫的命名。</p>
+                        </div>
+                        <template #footer>
+                            <el-button size="small" @click="sigTpEdit.open=false">取消</el-button>
+                            <el-button size="small" type="primary" :loading="sigTpBusy" @click="sigTpSaveLabel">儲存</el-button>
+                        </template>
+                    </el-dialog>
+                </div>
+
                 <div v-if="page==='signal_hub'" v-show="signalTab==='device'">
                     <div class="sig-tab-bar">
                         <span class="sig-tab-title">控制策略</span>
@@ -24662,11 +24750,10 @@ const app=createApp({
             // 🛑 統計報表已併入 eval(2026-09-08 使用者:「不要這樣設計,要以使用者
             //    角度」)—— 同一份調整紀錄出現在兩頁,第一個問題就是「我該看哪個」。
             //    現在是:選一次區間 → 統計、報表、調整紀錄、匯出全部跟著走。
-            // 🛑 2026-09-08 拿掉「時制計畫控制」區塊後,這裡不再呼叫 loadSigTp()——
-            //    留著只會每次進分頁多打一次沒人看的請求。sigTp 那組 ref/函式
-            //    暫時保留(要恢復那個區塊時直接重畫模板即可),但不再被觸發。
+            // 🛑 09-08 拿掉整區、09-09 依驗收條文 E 重建為「時制計畫選擇」,
+            //    所以 loadSigTp() 又回來了。JS 當初刻意保留,重畫模板就接上。
             device: () => { loadSignal(); startSignalTimer();
-                            loadSigConfig();
+                            loadSigConfig(); loadSigTp();
                             loadSigTime(0); loadSigTimeHistory();
                             loadSigStrategy(); },
             lamp:   () => { loadSignal(); startSignalTimer(); loadSignalFrames(); },
