@@ -3759,11 +3759,62 @@ def _hourly_tick() -> None:
 
 @router.get("/hourly", summary="逐時評估(配對/成效/一致率/參數),每整點自動算前一小時")
 async def shadow_hourly(date: str = Query("", description="YYYY-MM-DD,空 = 今天"),
+                        minutes: int = Query(0, ge=0, le=43200),
+                        since: str = Query(""), until: str = Query(""),
                         _user=Depends(get_current_user)):
-    day = date or datetime.now().strftime("%Y-%m-%d")
-    out = hourly_rows(day)
-    out["date"] = day
-    return out
+    """逐時評估。給 date = 單日;給 minutes 或 since/until = 跨區間。
+
+    🛑 加區間版的理由:畫面是「選一次區間,整頁跟著走」,逐時表如果只能查
+       單日,使用者選了「近 7 天」卻看到一天 —— 那一頁就有兩個時段並存。
+    🛑 上限 14 天。逐時表一天 24 列,再多就不是給人看的表了,
+       要更長區間應該用匯出。
+    """
+    def _ep(v):
+        try:
+            return datetime.fromisoformat(v).timestamp()
+        except Exception:
+            return None
+
+    date = date if isinstance(date, str) else ""
+    since = since if isinstance(since, str) else ""
+    until = until if isinstance(until, str) else ""
+    minutes = minutes if isinstance(minutes, int) and not isinstance(minutes, bool) else 0
+
+    if not (minutes or since or until):
+        day = date or datetime.now().strftime("%Y-%m-%d")
+        out = hourly_rows(day)
+        out["date"] = day
+        out["days"] = [day]
+        return out
+
+    a = _ep(since) if since else None
+    b = _ep(until) if until else None
+    if b is None:
+        b = time.time()
+    if a is None:
+        a = b - (minutes * 60 if minutes else 3600)
+    DAY_CAP = 14
+    d0 = datetime.fromtimestamp(a).date()
+    d1 = datetime.fromtimestamp(b).date()
+    days, cur = [], d0
+    while cur <= d1 and len(days) < DAY_CAP:
+        days.append(cur.strftime("%Y-%m-%d"))
+        cur += timedelta(days=1)
+    rows = []
+    for d in days:
+        # 🛑 跨日不要每一天都同步補算 —— 缺的丟背景,畫面先給已經有的,
+        #    否則選 7 天會卡在那裡算一整晚的空資料。
+        rows.extend((hourly_rows(d, compute_missing=True, max_sync=0) or {}).get("rows") or [])
+    # 只留落在區間內的小時
+    lo = datetime.fromtimestamp(a).isoformat(timespec="seconds")
+    hi = datetime.fromtimestamp(b).isoformat(timespec="seconds")
+    rows = [r for r in rows if lo[:13] <= str(r.get("hour"))[:13] <= hi[:13]]
+    rows.sort(key=lambda r: str(r.get("hour")))
+    return {"rows": rows, "days": days, "date": days[-1] if days else "",
+            "since": lo, "until": hi,
+            "capped": (d1 - d0).days + 1 > DAY_CAP,
+            "note": "跨區間版:每一天的逐時列合併後依小時排序;"
+                    "缺的小時丟背景補算,不擋畫面。最多 %d 天。" % DAY_CAP}
 
 
 @router.get("/paired", summary="逐次綠燈配對(精確比對:我方會早幾秒切)")
