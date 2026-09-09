@@ -2369,7 +2369,9 @@
         /* collapse toggle button (floating on right edge) */
         .sidebar-toggle {
             position: absolute;
-            top: 26px; right: -13px;
+            /* 🛑 2026-09-10 使用者:「收折要最上面」。原本 top:26px 會落在品牌列
+               中間,視覺上像是掛在 logo 旁邊而不是側欄的控制項。 */
+            top: 10px; right: -13px;
             width: 26px; height: 26px;
             background: var(--gov-surface);
             border: 1px solid var(--gov-border);
@@ -15099,6 +15101,9 @@ const app=createApp({
                 syncRoleFromAuth();
                 authReady.value=true;
                 page.value=loginLandingPage();
+                // 🛑 登入成功才會渲染出 .sidebar —— 這裡要再 init 一次,
+                //    否則收合鈕/拖拉拉寬在本次登入的整個 session 都是死的。
+                nextTick(()=>setTimeout(initSidebarUX,0));
                 load();
                 loadCameras();
                 if(String(currentUser.role||'').toLowerCase()==='admin'){
@@ -28024,9 +28029,18 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         };
 
         // sidebar 收合 + 拖拉拉寬 (含 localStorage 記住偏好)
+        // 🛑 2026-09-10 使用者:「收折按下沒反應」。原因不是 CSS,是這支
+        //    **只在 onMounted 之後跑一次**(setTimeout 100ms):
+        //    那一刻若還沒登入,畫面上只有登入頁,`.sidebar` 根本不存在 ——
+        //    `if(!sb) return` 直接退出,登入後 Vue 才渲染出側欄,但沒有人
+        //    再來綁事件,於是收合鈕與拖拉拉寬**兩個都是死的**。
+        //    (`toggle?.addEventListener` 的可選鏈讓它連錯都不報。)
+        //    改成:可重入 + 登入成功後再呼叫一次;用 dataset 旗標防重複綁定。
         const initSidebarUX=()=>{
             const sb=document.querySelector('.sidebar');
             if(!sb) return;
+            if(sb.dataset.uxBound==='1') return;   // 已綁過就不要再綁一次
+            sb.dataset.uxBound='1';
             const SIDEBAR_MIN=180, SIDEBAR_MAX=420;
             const savedW=parseInt(localStorage.getItem('sidebarWidth')||'',10);
             if(!Number.isNaN(savedW) && savedW>=SIDEBAR_MIN && savedW<=SIDEBAR_MAX){
