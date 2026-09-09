@@ -3782,6 +3782,43 @@
         .wr-fc-act.run  { background:#e3edf9; color:#14539a; }
         .wr-fc-sub { margin:6px 0 0; font-size:var(--fs-small); color:var(--gov-muted); }
 
+        /* ── 控制權現況的三格狀態 chip(2026-09-09)────────────────────
+           🛑 與控制預估那條軸同一個原則:動畫是**狀態的一部分**,不是裝飾。
+              放行中才呼吸、清道中才閃、環只在拿得到 forecast 時走。
+              停止不動 = 真的沒有在動,不要讓人以為系統在做事。 */
+        .xn-foot--live { gap:10px; flex-wrap:wrap; }
+        .xn-chip.xc-big { display:inline-flex; align-items:center; gap:9px;
+                          padding:6px 12px 6px 9px; border-radius:10px; }
+        .xc-txt { display:flex; flex-direction:column; line-height:1.15; }
+        .xc-txt em { font-style:normal; font-size:var(--fs-caption);
+                     color:var(--gov-mute-2); letter-spacing:var(--ls-label); }
+        .xc-txt b { font:700 15px var(--font-mono); color:var(--gov-text);
+                    display:flex; align-items:baseline; gap:6px; }
+        .xc-txt b i { font-style:normal; font-size:var(--fs-caption); font-weight:600;
+                      font-family:var(--font-sans); color:var(--gov-muted); }
+
+        /* 燈頭:三顆燈,只有「現在真的亮的那顆」有顏色 */
+        .xc-head { width:15px; height:36px; flex:none; }
+        .xc-head .xc-box { fill:#2b3442; stroke:#1b2330; stroke-width:1; }
+        .xc-head circle { fill:#454f5e; }              /* 暗燈 */
+        .xc-big.is-go   .xc-g { fill:#2f9e44; animation:xcBreath 1.8s ease-in-out infinite; }
+        .xc-big.is-clr  .xc-y { fill:#e8a33d; animation:xcBlink 0.9s steps(1,end) infinite; }
+        @keyframes xcBreath { 0%,100% { opacity:1; } 50% { opacity:.55; } }
+        @keyframes xcBlink  { 0%,49% { opacity:1; } 50%,100% { opacity:.2; } }
+
+        /* 步階:目前那格填滿;清道中整條走斜紋 */
+        .xc-steps { width:62px; height:14px; flex:none; }
+        .xc-step { fill:#dfe4ec; transition:fill .3s ease; }
+        .xc-step.past { fill:#b9c3d1; }
+        .xc-step.now  { fill:#2f9e44; }
+        .xc-big.is-clr .xc-step.now { fill:#e8a33d; animation:xcBlink .9s steps(1,end) infinite; }
+
+        /* 週期環:依本次綠燈已亮/最大綠前進(每秒重算,見 sigCycleDash) */
+        .xc-ring { width:20px; height:20px; flex:none; transform:rotate(-90deg); }
+        .xc-ring-bg { fill:none; stroke:#dfe4ec; stroke-width:3; }
+        .xc-ring-fg { fill:none; stroke:#1971c2; stroke-width:3; stroke-linecap:round;
+                      transition:stroke-dasharray .9s linear; }
+
         .wr-fc-axis { position:relative; height:14px; margin:11px 0 0;
                       border-radius:7px; background:#dfe4ec; overflow:hidden; }
         .wr-fc-axis i { position:absolute; top:0; bottom:0; display:block; }
@@ -9090,10 +9127,49 @@
                                         <span class="k">依據</span>{{ sigFc.reason }}
                                     </div>
                                 </div>
-                                <div class="xn-foot">
-                                    <span class="xn-chip"><span class="k">綠燈分相</span><b>{{ sigPlan.green_phase||'—' }}</b><span class="k">{{ sigCtlGreenRamp }}</span></span>
-                                    <span class="xn-chip"><span class="k">步階</span><b>{{ sigPlan.step_id }}</b><span class="k">{{ sigPlan.clearance?'清道中':'放行中' }}</span></span>
-                                    <span class="xn-chip"><span class="k">時制計畫</span><b>{{ sigCtlPlanId }}</b></span>
+                                <!-- 🛑 這三格是值班的人最常掃的一行,原本只有文字。
+                                     加上 SVG,但每一個動作都必須對應**真的在發生的事**
+                                     (與控制預估那條軸同一個原則,不做純裝飾):
+                                       · 燈頭   放行中 = 綠燈呼吸;清道中 = 黃燈閃
+                                       · 步階   目前那格填滿,清道中走琥珀斜紋
+                                       · 週期環 依本次綠燈已亮/最大綠的比例前進(每秒推進)
+                                     資料源都是既有的 sigPlan / sigFc,沒有新增請求。 -->
+                                <div class="xn-foot xn-foot--live">
+                                    <span class="xn-chip xc-big" :class="sigPlan.clearance?'is-clr':'is-go'">
+                                        <svg class="xc-head" viewBox="0 0 16 38" aria-hidden="true">
+                                            <rect x="1" y="1" width="14" height="36" rx="4" class="xc-box"></rect>
+                                            <circle cx="8" cy="9"  r="4.2" class="xc-r"></circle>
+                                            <circle cx="8" cy="19" r="4.2" class="xc-y"></circle>
+                                            <circle cx="8" cy="29" r="4.2" class="xc-g"></circle>
+                                        </svg>
+                                        <span class="xc-txt">
+                                            <em>綠燈分相</em>
+                                            <b>{{ sigPlan.green_phase||'—' }}<i>{{ sigCtlGreenRamp }}</i></b>
+                                        </span>
+                                    </span>
+                                    <span class="xn-chip xc-big" :class="sigPlan.clearance?'is-clr':'is-go'">
+                                        <svg class="xc-steps" viewBox="0 0 62 14" aria-hidden="true">
+                                            <g v-for="c in sigStepCells" :key="'sc'+c.i">
+                                                <rect :x="c.x" y="2" width="9" height="10" rx="2"
+                                                      class="xc-step" :class="c.cls"></rect>
+                                            </g>
+                                        </svg>
+                                        <span class="xc-txt">
+                                            <em>步階</em>
+                                            <b>{{ sigPlan.step_id }}<i>{{ sigPlan.clearance?'清道中':'放行中' }}</i></b>
+                                        </span>
+                                    </span>
+                                    <span class="xn-chip xc-big">
+                                        <svg class="xc-ring" viewBox="0 0 20 20" aria-hidden="true">
+                                            <circle cx="10" cy="10" r="7" class="xc-ring-bg"></circle>
+                                            <circle cx="10" cy="10" r="7" class="xc-ring-fg"
+                                                    :stroke-dasharray="sigCycleDash"></circle>
+                                        </svg>
+                                        <span class="xc-txt">
+                                            <em>時制計畫</em>
+                                            <b>{{ sigCtlPlanId }}<i>{{ sigCycleText }}</i></b>
+                                        </span>
+                                    </span>
                                 </div>
                                 <div class="cs-block">
                                     <div class="cs-flags">
@@ -25594,6 +25670,34 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         //    現場一直有這個欄位所以看不出來,但端點回傳不完整(重啟中、查表失敗)
         //    就會白畫面。統一走這個保底物件。
         const sigPlanTiming=computed(()=>sigPlan.value.plan||{});
+        // 步階格:目前那一格填滿,之前的淡色。TC3 這一站實際只走到步階 5。
+        // 🛑 用 computed 不用 watch —— watch 會立即求值,而它讀的 sigPlan
+        //    在前面幾行才宣告(CLAUDE.md 記過一次白畫面)。
+        const SIG_STEP_MAX = 5;
+        const sigStepCells = computed(() => {
+            const cur = Number((sigPlan.value || {}).step_id) || 0;
+            const out = [];
+            for (let i = 1; i <= SIG_STEP_MAX; i++) {
+                out.push({i: i, x: (i - 1) * 13 + 1,
+                          cls: (i === cur) ? 'now' : (i < cur ? 'past' : '')});
+            }
+            return out;
+        });
+        // 週期環:本次綠燈已亮 / 最大綠。sigFc 每秒重算(sigLiveTick),所以環會走。
+        // 🛑 拿不到 forecast 就回 null → 環不畫,不要用假進度騙人。
+        const SIG_RING_C = 2 * Math.PI * 7;
+        const sigCycleDash = computed(() => {
+            const f = sigFc.value || {};
+            if (!f.on) return null;
+            const maxG = Number(f.maxG) || 0;
+            if (maxG <= 0) return null;
+            const p = Math.min(1, Math.max(0, (Number(f.elapsed) || 0) / maxG));
+            return (SIG_RING_C * p).toFixed(2) + ' ' + SIG_RING_C.toFixed(2);
+        });
+        const sigCycleText = computed(() => {
+            const f = sigFc.value || {};
+            return f.on ? ('已亮 ' + Math.round(Number(f.elapsed) || 0) + 's') : '';
+        });
         const sigCtlPlanId=computed(()=>{
             const pl=sigPlan.value.plan; return pl?pl.plan_id:'—';
         });
@@ -28085,7 +28189,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigStepCells,sigCycleDash,sigCycleText,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
