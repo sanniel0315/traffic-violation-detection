@@ -8606,13 +8606,17 @@
                         停掉授權續約,時相控制授權一分鐘內過期,控制器自己回到
                         內建時制。這句話要寫在畫面上 —— 驗收一定會問。 -->
                 <div v-if="page==='signal_hub'" v-show="signalTab==='eval'">
+                    <!-- 🛑 2026-09-10 使用者:「歷史時制調整紀錄 上面不要是降階與故障」。
+                         原本一個「降階與故障」標題列同時罩著調整紀錄與降階歷史兩張卡,
+                         但這兩件事無關 —— 調整紀錄是「我方下了什麼命令」,
+                         降階是「系統健康」。標題掛錯會讓人以為那些調整是故障造成的。
+                         拆成兩段:各自的標題列只罩自己那張卡。 -->
                     <div class="sig-tab-bar">
-                        <span class="sig-tab-title">降階與故障</span>
-                        <el-tag size="small" :type="sigFault.healthy?'success':'danger'">
-                            {{ sigFault.healthy ? '運轉正常' : ('降階中 '+(sigFaultLevel||'')) }}
-                        </el-tag>
-                        <el-tag size="small" type="info">近 24 小時降階 {{ sigDeg.count||0 }} 次</el-tag>
-                        <el-button size="small" plain :loading="sigFaultLoading" @click="loadSigFaults">重新載入</el-button>
+                        <span class="sig-tab-title">歷史時制調整紀錄</span>
+                        <!-- 🛑 次數/接受/遭拒不放這裡 —— 卡片自己的標題列(aj-sum)
+                             已經有同一組數字,放兩次會讓人懷疑哪個才準。 -->
+                        <el-tag size="small" type="info" v-if="sigAdj.since">{{ sigAdj.since }} ～ {{ sigAdj.until }}</el-tag>
+                        <el-button size="small" plain :loading="sigAdjLoading" @click="sigAdjSearch">重新查詢</el-button>
                     </div>
 
                     <!-- ══ 歷史時制調整紀錄 ══════════════════════════════
@@ -8694,6 +8698,15 @@
                                 <el-button size="small" :disabled="!sigAdjHasNext" @click="sigAdjGo(1)">下一頁</el-button>
                             </div>
                         </div>
+                    </div>
+
+                    <div class="sig-tab-bar" style="margin-top:18px">
+                        <span class="sig-tab-title">降階與故障</span>
+                        <el-tag size="small" :type="sigFault.healthy?'success':'danger'">
+                            {{ sigFault.healthy ? '運轉正常' : ('降階中 '+(sigFaultLevel||'')) }}
+                        </el-tag>
+                        <el-tag size="small" type="info">近 24 小時降階 {{ sigDeg.count||0 }} 次</el-tag>
+                        <el-button size="small" plain :loading="sigFaultLoading" @click="loadSigFaults">重新載入</el-button>
                     </div>
 
                     <div class="card">
