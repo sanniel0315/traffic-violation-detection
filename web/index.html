@@ -24876,8 +24876,11 @@ const app=createApp({
             // 🛑 驗收清單 2026-09-07 拆成獨立分頁(使用者:驗收清單跟運作統計分開)——
             //    驗收是「對規格逐條交代」,運作統計是「這段時間跑得怎樣」,
             //    兩件事的讀者與時機都不同,混在一頁會互相稀釋。
+            // 🛑 eval 也有即時決策盤,所以輪詢(5s)與每秒 tick 兩個計時器都要起 ——
+            //    原本只呼叫 loadSigConsole(),等於載入一次就凍住。
             eval:   () => { loadSigFaults(); loadViz(); startVizTimer(); loadVizHourly();
-                            loadSigStats(); startSigStatTimer(); loadSigConsole(); },
+                            loadSigStats(); startSigStatTimer();
+                            loadSigConsole(); startSigConsoleTimer(); startSigLiveTimer(); },
             // 🛑 統計報表已併入 eval(2026-09-08 使用者:「不要這樣設計,要以使用者
             //    角度」)—— 同一份調整紀錄出現在兩頁,第一個問題就是「我該看哪個」。
             //    現在是:選一次區間 → 統計、報表、調整紀錄、匯出全部跟著走。
@@ -25629,6 +25632,16 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             {id:'L5', state:'todo',  title:'接管控制(bypass OPAC)',
              desc:'我方送 5F10 接管 + 每 60 秒續約,逐步階下 5F1C。需前置條件全數達成'},
         ]);
+        // 🛑 2026-09-09:即時決策盤同時出現在「即時戰情(live)」與「運作統計(eval)」
+        //    兩個分頁,但輪詢與每秒 tick 的守衛都只認 live —— 在 eval 打開時面板
+        //    載入一次之後就**完全凍住**(已亮秒數不動、軸不前進、判定不更新),
+        //    看起來像沒有動畫,實際上是死的。
+        //    這已經是同一類錯誤的第三次(前兩次:守衛留著舊的 'signal_control'、
+        //    'plan' 分頁名,註解就寫在下面幾行)。所以這次把分頁清單抽成一個常數,
+        //    以後決策盤搬到哪一頁,只要改這一行。
+        const SIG_PLAN_TABS = ['live', 'eval'];
+        const sigPlanTabOn = () => page.value === 'signal_hub'
+                                   && SIG_PLAN_TABS.includes(signalTab.value);
         const loadSigPlan=async()=>{
             try{
                 const r=await fetch('/api/signal/shadow/plan',{credentials:'include'});
@@ -25648,7 +25661,8 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //    後果不只是數字舊:路口圖的重畫是掛在 watch(sigPlan) 上的,
                 //    所以地圖的號誌燈也跟著凍結,現場看到「實際綠燈、圖上紅燈」。
                 //    決策盤已併入「即時戰情」,條件跟著改成 live。
-                if(page.value==='signal_hub'&&signalTab.value==='live') loadSigPlan();
+                //    2026-09-09 再一次:決策盤也在 eval,守衛改吃 SIG_PLAN_TABS。
+                if(sigPlanTabOn()) loadSigPlan();
             }, 5000);
         };
         const sigShadow=ref({});
@@ -26960,8 +26974,8 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 // 🛑 不要被影像開關關掉:這個 tick 驅動的是綠燈倒數,屬於
                 //    「即時演變狀態」,關掉影像的時候更需要它 —— 那正是
                 //    使用者只想看狀態不想看影像的情境。
-                if (page.value !== 'signal_hub' || signalTab.value !== 'live'
-                    || !isPageVisible()) return;
+                // 🛑 決策盤在 live 與 eval 都會顯示,兩邊都要跳(見 SIG_PLAN_TABS)。
+                if (!sigPlanTabOn() || !isPageVisible()) return;
                 sigLiveTick.value = Date.now();
             }, 1000);
         };
