@@ -546,7 +546,10 @@ def test_timeline_stride_keeps_switch_events(tmp_path, monkeypatch):
         ss.shadow_timeline(minutes=1440, since="2026-09-05T00:00:00",
                            until="2026-09-05T23:59:59", max_points=3,
                            _user=None))
-    assert r["available"] and r["stride"] >= 10
+    # 🛑 2026-09-09 抽樣移到 SQL(整段撈回 Python 太慢:三天 49,236 列要 6.3 秒)。
+    #    總抽樣率 = SQL 的 sql_step × Python 分桶的 stride。
+    #    保證不變的是下面兩行:換相不可以被抽掉。
+    assert r["available"] and r["sql_step"] * r["stride"] >= 10
     assert sum(r["ours_switch"]) == 1, "抽樣把我方換相抽掉了"
     assert sum(r["actual_switch"]) == 1, "抽樣把實際換相抽掉了"
 

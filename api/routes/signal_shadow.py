@@ -4039,17 +4039,30 @@ async def shadow_timeline(minutes: int = Query(15, ge=1, le=1440),
         since_iso = datetime.fromtimestamp(
             time.time() - int(minutes) * 60).isoformat(timespec="seconds")
         until_iso = datetime.now().isoformat(timespec="seconds")
+    COLS = ("SELECT ts,green_phase,green_elapsed,queue_m_1,queue_m_2,"
+            "flow_vpm_1,flow_vpm_2,ours,actual,agree,switch_gain,keep_gain,"
+            "change_cost,reason,clearance,step_id FROM signal_shadow_log ")
     try:
         conn = _db()
-        rows = conn.execute(
-            "SELECT ts,green_phase,green_elapsed,queue_m_1,queue_m_2,"
-            "flow_vpm_1,flow_vpm_2,ours,actual,agree,switch_gain,keep_gain,"
-            "change_cost,reason,clearance,step_id "
-            "FROM signal_shadow_log WHERE ts>=? AND ts<=? "
+        # 🛑 抽樣要在 SQL 做,不要把整段撈回 Python 再丟掉。
+        #    2026-09-09 實測:三天區間 49,236 列全撈回來要 6.3 秒,
+        #    而畫面只用得到 1,200 點。先數筆數、算好間隔,再讓 SQLite 抽。
+        #    🛑 但**換相那幾列一定要留**(ours/actual = SWITCH)——
+        #       換相正是這張圖要看的東西,被抽掉就白畫了。
+        n_all = conn.execute(
+            "SELECT COUNT(*) FROM signal_shadow_log WHERE ts>=? AND ts<=?",
+            (since_iso, until_iso)).fetchone()[0]
+        step = max(1, (int(n_all) + max_points - 1) // max_points)
+        if step > 1:
+            rows = conn.execute(
+                COLS + "WHERE ts>=? AND ts<=? AND (rowid % ? = 0 "
+                "OR ours='SWITCH' OR actual='SWITCH') ORDER BY ts",
+                (since_iso, until_iso, step)).fetchall()
+        else:
             # 🛑 不再限定 external_dynamic(見檔頭 EVAL_MODE_ALL):時間軸若只畫
             #    外部控制期間,對方停控後整張圖是空的。
-            "ORDER BY ts",
-            (since_iso, until_iso)).fetchall()
+            rows = conn.execute(COLS + "WHERE ts>=? AND ts<=? ORDER BY ts",
+                                (since_iso, until_iso)).fetchall()
         conn.close()
     except Exception as e:
         return {"available": False, "error": str(e)}
@@ -4060,6 +4073,7 @@ async def shadow_timeline(minutes: int = Query(15, ge=1, le=1440),
     # 抽樣:視窗拉長時筆數會爆(24 小時約 17000 筆)。
     # 🛑 抽樣不能只是每 N 筆取一筆 —— 那會把換相事件抽掉,而換相正是要看的東西。
     #    改成分桶,桶內的換相(ours/actual)用 OR 保留,其餘取桶內最後一筆。
+    # SQL 已經抽過一輪,這裡通常是 1;仍保留分桶,萬一換相很密還能再收斂。
     stride = max(1, (len(rows) + max_points - 1) // max_points)
     t0_dt = datetime.fromisoformat(rows[0][0])
     t0_ts = t0_dt.timestamp()
@@ -4108,7 +4122,7 @@ async def shadow_timeline(minutes: int = Query(15, ge=1, le=1440),
         "available": True,
         "t0": rows[0][0], "since": since_iso, "until": until_iso,
         "interval_sec": nominal, "stride": stride,
-        "samples_raw": len(rows), "points": len(T),
+        "samples_raw": int(n_all), "fetched": len(rows), "sql_step": step, "points": len(T),
         "t": T,
         "green_phase": GP,
         "queue_m_1": Q1, "queue_m_2": Q2,
