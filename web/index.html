@@ -3662,8 +3662,18 @@
         .st-trend .st-bar:hover { opacity:1; }
         /* 依真實時間定位的長條(2026-09-10)。等距排列會把「夜間十分鐘一段、
            尖峰一分鐘好幾段」的差異抹平,那是在騙讀者。 */
-        .st-bar--abs { position:absolute; bottom:8px; width:6px; margin-left:-3px;
+        /* 🛑 bottom 從 8px 改成 0:折線 SVG 用 inset:0 鋪滿,長條若還吊在 8px
+           以上,兩者的基準線就差 8px —— 線會整條低於柱頂,看起來像量錯。 */
+        .st-bar--abs { position:absolute; bottom:0; width:6px; margin-left:-3px;
                        flex:none; transition:height .2s ease; }
+        .st-line { position:absolute; inset:0; width:100%; height:100%;
+                   pointer-events:none; overflow:visible; }
+        .st-line polyline { fill:none; stroke-width:1.6; vector-effect:non-scaling-stroke;
+                            stroke-linejoin:round; stroke-linecap:round; opacity:.95; }
+        .st-line polyline.p1 { stroke:#0b3d6b; }
+        .st-line polyline.p2 { stroke:#7c3aed; }
+        .st-key.ln1 { background:#0b3d6b; height:3px; border-radius:2px; }
+        .st-key.ln2 { background:#7c3aed; height:3px; border-radius:2px; }
         .st-bar.p2 { background:var(--gov-primary-strong); }
         .st-bar.forced { background:var(--gov-warn); }
         .st-bar.trunc { background:var(--gov-border-strong); }
@@ -8791,33 +8801,9 @@
                          🛑 即時與歷史是同一份統計、只差區間,所以放同一列:
                             相對區間(最近 N)=即時,可自動更新;
                             固定區間(尖峰/昨日/自訂)=歷史,自動更新沒有意義會直接關掉。 -->
-                    <div class="card">
-                        <div class="card-header"><span><svg class="text-icon"><use href="#i-activity"/></svg>運作狀態</span></div>
-                        <div class="card-body">
-                            <div class="sp-grid">
-                                <div class="sp-kv"><span>控制模式</span><b>{{ specOpMode }}</b></div>
-                                <div class="sp-kv"><span>演算法下發</span><b>{{ specActText }}</b></div>
-                                <div class="sp-kv"><span>降階級數</span><b>{{ specDegLevel }}</b></div>
-                                <div class="sp-kv"><span>決策引擎</span><b>{{ specEngine }}</b></div>
-                            </div>
-                            <p class="analysis-setting-tip" v-if="specDegReason">降階原因：{{ specDegReason }}</p>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header"><span><svg class="text-icon"><use href="#i-bar"/></svg>執行績效</span></div>
-                        <div class="card-body">
-                            <div class="sp-grid">
-                                <div class="sp-kv"><span>總延滯</span><b>{{ specNum(specPerf.total_delay_veh_sec) }} 車·秒</b></div>
-                                <div class="sp-kv"><span>上匝道平均排隊</span><b>{{ specNum(specPerf.avg_queue_m_1) }} m</b></div>
-                                <div class="sp-kv"><span>下匝道平均排隊</span><b>{{ specNum(specPerf.avg_queue_m_2) }} m</b></div>
-                                <div class="sp-kv"><span>下匝道最大排隊</span><b>{{ specNum(specPerf.max_queue_m_2) }} m</b></div>
-                                <div class="sp-kv"><span>主線回堵次數</span><b>{{ specNum(specPerf.spillback_events_2) }}</b></div>
-                                <div class="sp-kv"><span>每分鐘換相</span><b>{{ specNum(specPerf.switch_per_min) }}</b></div>
-                            </div>
-                        </div>
-                    </div>
-
+                    <!-- 🛑 查詢列放**最上面**:這一頁是「選一次區間,底下全部跟著走」。
+                         原本它夾在運作狀態與執行績效之間,看起來像只管下半頁 ——
+                         使用者因此以為綠燈統計不能選時間(2026-09-10 的回饋)。 -->
                     <div class="card st-query-card">
                         <div class="card-body">
                             <div class="st-query">
@@ -8906,7 +8892,34 @@
                                 這段時間沒有可用樣本。線上演算法比對需要抄錄器連線正常，且控制模式為外部動態才會納入。</p>
                         </div>
                     </div>
-
+                    <!-- 🛑 2026-09-10 版面整合:運作狀態與執行績效原本是兩張卡,
+                         但它們是同一件事的兩面(現在怎麼跑 / 這段跑得怎樣),
+                         而且都只有一排 sp-kv —— 兩張卡各佔一塊,中間還夾著查詢列。
+                         併成一張,用小節標題分。 -->
+                    <div class="card">
+                        <div class="card-header ch-fold">
+                            <span><svg class="text-icon"><use href="#i-activity"/></svg>運作狀態與執行績效</span>
+                        </div>
+                        <div class="card-body">
+                            <h4 class="sc-h" style="margin-top:0">運作狀態</h4>
+                            <div class="sp-grid">
+                                <div class="sp-kv"><span>控制模式</span><b>{{ specOpMode }}</b></div>
+                                <div class="sp-kv"><span>演算法下發</span><b>{{ specActText }}</b></div>
+                                <div class="sp-kv"><span>降階級數</span><b>{{ specDegLevel }}</b></div>
+                                <div class="sp-kv"><span>決策引擎</span><b>{{ specEngine }}</b></div>
+                            </div>
+                            <p class="analysis-setting-tip" v-if="specDegReason">降階原因：{{ specDegReason }}</p>
+                            <h4 class="sc-h">執行績效</h4>
+                            <div class="sp-grid">
+                                <div class="sp-kv"><span>總延滯</span><b>{{ specNum(specPerf.total_delay_veh_sec) }} 車·秒</b></div>
+                                <div class="sp-kv"><span>上匝道平均排隊</span><b>{{ specNum(specPerf.avg_queue_m_1) }} m</b></div>
+                                <div class="sp-kv"><span>下匝道平均排隊</span><b>{{ specNum(specPerf.avg_queue_m_2) }} m</b></div>
+                                <div class="sp-kv"><span>下匝道最大排隊</span><b>{{ specNum(specPerf.max_queue_m_2) }} m</b></div>
+                                <div class="sp-kv"><span>主線回堵次數</span><b>{{ specNum(specPerf.spillback_events_2) }}</b></div>
+                                <div class="sp-kv"><span>每分鐘換相</span><b>{{ specNum(specPerf.switch_per_min) }}</b></div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card" v-if="sigStatOk">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-bar"/></svg>綠燈時間統計（依方向）</span>
@@ -8965,7 +8978,6 @@
                             </div>
                         </div>
                     </div>
-
                     <div class="card" v-if="sigStatOk">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-activity"/></svg>綠燈秒數趨勢</span>
@@ -8999,6 +9011,16 @@
                                          class="st-bar st-bar--abs" :class="b.cls"
                                          :style="{left:b.left, height:b.h}"
                                          :title="b.tip"></div>
+                                    <!-- 🛑 2026-09-10 使用者:「要多個趨勢圖跟現在直方圖一起」。
+                                         折線與長條**共用同一組座標**(同一個 x 百分比、同一個
+                                         y 尺規),疊在同一張圖上 —— 分開畫兩張圖的話,兩邊的
+                                         y 軸不一定一樣,讀者會把兩張圖的高度互相比較而讀錯。
+                                         每個分相一條線,只連該分相自己的點。 -->
+                                    <svg class="st-line" viewBox="0 0 100 100"
+                                         preserveAspectRatio="none" aria-hidden="true">
+                                        <polyline v-for="ln in sigStatTrendLines" :key="ln.k"
+                                                  :class="ln.cls" :points="ln.pts"></polyline>
+                                    </svg>
                                 </div>
                             </div>
                             <!-- 時間軸:只標頭/中/尾三點。柱子寬度只有 6px,
@@ -9011,6 +9033,8 @@
                                 <span class="xn-chip"><span class="st-key p2"></span>分相2 下匝道</span>
                                 <span class="xn-chip"><span class="st-key forced"></span>強制切換</span>
                                 <span class="xn-chip"><span class="st-key trunc"></span>被斷點截斷(長度不可信)</span>
+                                <span class="xn-chip"><span class="st-key ln1"></span>分相1 趨勢線</span>
+                                <span class="xn-chip"><span class="st-key ln2"></span>分相2 趨勢線</span>
                             </div>
                         </div>
                     </div>
@@ -25690,6 +25714,25 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             a.click();
             URL.revokeObjectURL(a.href);
         };
+        // 趨勢折線:每個分相一條,與長條共用同一組座標。
+        // 🛑 只連**該分相自己的點**。把兩個分相連成一條會畫出一條上下鋸齒的線,
+        //    那條線不代表任何真實的量 —— 純粹是兩組資料交錯排列的假象。
+        const sigStatTrendLines = computed(() => {
+            const bars = sigStatTrendBars.value || [];
+            if (bars.length < 2) return [];
+            const out = [];
+            [1, 2].forEach((ph) => {
+                const pts = bars
+                    .filter((b) => (b.cls.p2 ? 2 : 1) === ph)
+                    .map((b) => {
+                        const x = parseFloat(b.left);
+                        const y = 100 - parseFloat(b.h);
+                        return x.toFixed(2) + ',' + y.toFixed(2);
+                    });
+                if (1 < pts.length) out.push({k: 'ln' + ph, cls: 'p' + ph, pts: pts.join(' ')});
+            });
+            return out;
+        });
         // 分桶寬度的白話。秒→分→小時,超過一天就講天。
         const sigStatBucketText = computed(() => {
             const w = Number((sigStats.value || {}).trend_bucket_sec) || 0;
@@ -28440,7 +28483,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgSectionsOrdered,sigCfgOrder,sigCfgDragKey,sigCfgDragStart,sigCfgDrop,sigCfgResetOrder,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgBusy,sigCfgRefreshOne,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatTrendBars,sigStatBucketText,sigGreenExport,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigStepCells,sigCycleDash,sigCycleText,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgSectionsOrdered,sigCfgOrder,sigCfgDragKey,sigCfgDragStart,sigCfgDrop,sigCfgResetOrder,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgBusy,sigCfgRefreshOne,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatTrendBars,sigStatTrendLines,sigStatBucketText,sigGreenExport,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigStepCells,sigCycleDash,sigCycleText,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
