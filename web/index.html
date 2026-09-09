@@ -4727,6 +4727,36 @@
         .st-live:not(.st-live--off) .st-dot { animation:stPulse 1.6s ease-in-out infinite; }
         @keyframes stPulse { 0%,100%{opacity:1} 50%{opacity:.25} }
 
+        /* —— 號誌設定：19 個類別的網格版面(2026-09-09 整合) —— */
+        .sc-grid { display:grid; gap:14px; align-items:start;
+                   grid-template-columns:repeat(auto-fill,minmax(430px,1fr)); }
+        @media (max-width:900px) { .sc-grid { grid-template-columns:1fr; } }
+        .sc-grid .card.sc-card { margin-bottom:0; border-left:3px solid transparent; }
+        .sc-card.sc-success { border-left-color:#2f9e44; }
+        .sc-card.sc-warning { border-left-color:#e8a33d; }
+        .sc-card.sc-danger  { border-left-color:#d64545; }
+        .sc-card-h { padding:10px 14px; font-size:13.5px; }
+        .sc-state { font-size:11px; font-weight:600; padding:1px 9px; border-radius:99px;
+                    white-space:nowrap; }
+        .sc-state.sc-success { background:#e9f7ee; color:#1f7a34; }
+        .sc-state.sc-warning { background:#fdf3e3; color:#96631a; }
+        .sc-state.sc-danger  { background:#fdecec; color:#a92c2c; }
+        /* 卡頭原本掛四個 el-tag 互搶注意力，壓成一行灰階 meta */
+        .sc-meta { display:flex; flex-wrap:wrap; gap:3px 10px; padding:6px 14px;
+                   font-size:11.5px; color:var(--gov-mute-2); background:#fbfcfe;
+                   border-bottom:1px solid var(--gov-border); }
+        .sc-m-code { font-family:var(--font-mono); color:var(--gov-muted); }
+        .sc-m-clause { color:#b45309; }
+        .sc-card-b { padding:10px 14px 12px; }
+        .sc-hint { font-size:12.5px; color:#b45309; margin:0 0 8px; }
+        .sc-raw { font-size:12.5px; color:var(--gov-mute-2); margin:0; }
+        .sc-raw-hex { font-family:var(--font-mono); font-size:11.5px; word-break:break-all; }
+        .sc-none { font-size:12.5px; color:var(--gov-mute-2); margin:0; }
+        .sc-decode { color:#2563eb; font-weight:400; margin-left:8px; }
+        .sc-card .sc-table { min-width:0; }
+        .sc-card .sc-table th { font-size:11.5px; letter-spacing:.04em; }
+        .sc-card .sc-table td.sc-num { font-family:var(--font-mono); font-weight:600; }
+        .sc-card .sc-table tbody tr:hover td { background:rgba(11,94,168,.04); }
         .sc-wrap { overflow-x:auto; }
         .sc-table { width:100%; border-collapse:collapse; font-size:13px; min-width:520px; }
         .sc-table th, .sc-table td { padding:6px 10px; text-align:left;
@@ -8473,35 +8503,51 @@
                          並附上該用哪個查詢碼(且會講明那個碼有沒有被控制器拒收過),
                          不會回空表假裝控制器沒設定。 -->
 
-                    <div class="card" v-for="sec in sigCfgSections" :key="sec.key">
-                        <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-list"/></svg>{{ sec.title }}</span>
-                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                                <el-tag size="small" type="warning" v-if="sec.clause && sec.clause!=='—'"
-                                        title="驗收條文「遠端管理功能」的項次">條文 {{ sec.clause }}</el-tag>
-                                <el-tag size="small" type="info">{{ sec.query }} → {{ sec.reply }}</el-tag>
-                                <el-tag size="small" type="info">規範 {{ sec.page }}</el-tag>
-                                <el-tag size="small" :type="sigCfgSecType(sec)">{{ sigCfgSecText(sec) }}</el-tag>
-                                <span v-if="sec.ts" style="font-size:12px;color:var(--gov-muted)">{{ sigFrameTime(sec.ts) }}<span v-if="sec.age_sec"> · {{ sigCfgAge(sec) }}</span></span>
+                    <!-- 🛑 2026-09-09 版面整合。原本是 19 個類別 = 19 張全寬卡片直式
+                         堆疊，每張卡頭掛四個 el-tag(條文/查詢碼/規範頁/狀態)+時間，
+                         掃一遍要捲很久，而且四個標籤顏色互搶，看不出哪個才是重點。
+                         改法(**只動版面，資料與行為沒有任何改變**)：
+                         · 網格排列 —— 寬螢幕自動兩欄以上，縱向長度砍半
+                         · 卡頭只留「標題 + 狀態」，其餘壓成一行低調 meta
+                         · 狀態同時用左側色條表示，不用掃文字就知道哪幾張要注意
+                         · 表格對齊 .data-table 的設計
+                         卡片收折(點標題列)照舊可用。 -->
+                    <div class="sc-grid">
+                        <div class="card sc-card" :class="'sc-'+sigCfgSecType(sec)"
+                             v-for="sec in sigCfgSections" :key="sec.key">
+                            <div class="card-header sc-card-h">
+                                <span><svg class="text-icon"><use href="#i-list"/></svg>{{ sec.title }}</span>
+                                <span class="sc-state" :class="'sc-'+sigCfgSecType(sec)">{{ sigCfgSecText(sec) }}</span>
                             </div>
-                        </div>
-                        <div class="card-body">
-                            <p v-if="sec.hint" style="font-size:13px;color:#b45309;margin:0 0 8px">{{ sec.hint }}</p>
-                            <div v-if="sigCfgHasFields(sec)" class="sc-wrap">
-                                <table class="sc-table">
-                                    <thead><tr><th>欄位</th><th>值</th><th>說明</th></tr></thead>
-                                    <tbody>
-                                        <tr v-for="(f,fi) in sec.fields" :key="sec.key+'f'+fi">
-                                            <td>{{ f.name }}</td>
-                                            <td class="sc-num" style="font-family:monospace;white-space:pre-line">{{ sigCfgVal(f.value) }}<span v-if="sigDecodeValue(f.name,f.value)" style="color:#2563eb;font-weight:400;margin-left:8px">= {{ sigDecodeValue(f.name,f.value) }}</span></td>
-                                            <td class="sc-sub">{{ f.desc }}</td>
-                                        </tr>
-                                    </tbody>
-                                </table>
+                            <div class="sc-meta">
+                                <span class="sc-m-code">{{ sec.query }} → {{ sec.reply }}</span>
+                                <span class="sc-m-clause" v-if="sec.clause && sec.clause!=='—'"
+                                      title="驗收條文「遠端管理功能」的項次">條文 {{ sec.clause }}</span>
+                                <span class="sc-m-dim">規範 {{ sec.page }}</span>
+                                <span class="sc-m-dim" v-if="sec.ts">{{ sigFrameTime(sec.ts) }}<span v-if="sec.age_sec"> · {{ sigCfgAge(sec) }}</span></span>
                             </div>
-                            <p v-else-if="sec.received" style="font-size:13px;color:#64748b;margin:0">
-                                抄到訊框但沒有欄位定義，只能看原始框：<span style="font-family:monospace;font-size:12px">{{ sec.raw }}</span>
-                            </p>
+                            <div class="card-body sc-card-b">
+                                <p v-if="sec.hint" class="sc-hint">{{ sec.hint }}</p>
+                                <div v-if="sigCfgHasFields(sec)" class="sc-wrap">
+                                    <table class="sc-table">
+                                        <thead><tr><th>欄位</th><th>值</th><th>說明</th></tr></thead>
+                                        <tbody>
+                                            <tr v-for="(f,fi) in sec.fields" :key="sec.key+'f'+fi">
+                                                <td>{{ f.name }}</td>
+                                                <td class="sc-num" style="white-space:pre-line">{{ sigCfgVal(f.value) }}<span class="sc-decode" v-if="sigDecodeValue(f.name,f.value)">= {{ sigDecodeValue(f.name,f.value) }}</span></td>
+                                                <td class="sc-sub">{{ f.desc }}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <p v-else-if="sec.received" class="sc-raw">
+                                    抄到訊框但沒有欄位定義，只能看原始框：<span class="sc-raw-hex">{{ sec.raw }}</span>
+                                </p>
+                                <!-- 🛑 只在連 hint 都沒有時才顯示 —— 後端對「沒抄到」的類別
+                                     已經給了具體 hint(該用哪個查詢碼、有沒有被控制器拒收),
+                                     再加一句泛用的「尚未抄到」是重複。 -->
+                                <p v-else-if="!sec.hint" class="sc-none">尚未抄到這個類別的回報。</p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -8554,9 +8600,16 @@
                                      設成「那一天 00:00 ~ 隔日 00:00」,上面的統計、報表、
                                      降階全部跟著換。一頁兩組區間會讓人不知道自己在看哪一段,
                                      所以它只是「跳到某一天」的捷徑,不是獨立的篩選條件。 -->
-                                <el-date-picker v-model="sigAdjDay" type="date" size="small"
-                                    style="width:150px" value-format="YYYY-MM-DD"
-                                    placeholder="查某一天" @change="sigAdjPickDay"></el-date-picker>
+                                <!-- 🛑 2026-09-09 從「查某一天」改成起訖(含時間)。
+                                     只能選整天的話,查「昨天早尖峰 07:00~09:00 那幾則
+                                     下發」得先撈一整天再自己用眼睛找。條文要的是可查詢
+                                     的歷史紀錄,區間本來就該由查的人決定。
+                                     它仍然是**整頁那一組區間**(不是第二組),所以上面的
+                                     統計、報表、降階會一起跟著換。 -->
+                                <el-date-picker v-model="sigAdjRange" type="datetimerange" size="small"
+                                    style="width:340px" value-format="YYYY-MM-DDTHH:mm:ss"
+                                    start-placeholder="起" end-placeholder="訖" range-separator="→"
+                                    :shortcuts="SIG_ADJ_SHORTCUTS" unlink-panels></el-date-picker>
                                 <el-input v-model="sigAdjFCode" size="small" style="width:118px" placeholder="命令碼 5F1C" clearable></el-input>
                                 <el-select v-model="sigAdjFAck" size="small" style="width:118px" placeholder="結果">
                                     <el-option label="結果 全部" value=""></el-option>
@@ -24582,21 +24635,43 @@ const app=createApp({
         const sigAdjFBy = ref('');
         const sigAdjWithQuery = ref(false);
         const sigAdjLoading = ref(false);
-        // 「查某一天」= 把整頁區間設成那一天,而不是另外開一組區間。
-        const sigAdjDay = ref('');
-        const sigAdjPickDay = (d) => {
-            if (!d) return;
-            const nx = new Date(d + 'T00:00:00');
-            nx.setDate(nx.getDate() + 1);
-            const pad = (n) => String(n).padStart(2, '0');
-            sigStatFrom.value = d + 'T00:00:00';
-            sigStatTo.value = nx.getFullYear() + '-' + pad(nx.getMonth() + 1)
-                              + '-' + pad(nx.getDate()) + 'T00:00:00';
-            sigStatRange.value = 'custom';
-            sigStatLive.value = false;      // 看歷史就不要自動更新
-            sigAdjOffset.value = 0;         // 換天一定回第一頁
-            loadSigStats();                 // 統計/報表/調整紀錄/降階一起跟上
+        // 起訖(含時間)= 直接讀寫**整頁那一組區間**,不另外開第二組。
+        // 🛑 用 computed 的 getter/setter 而不是另存一個 ref:兩份狀態一定會漂 ——
+        //    別處(快捷鍵、統計頁)改了區間,這個選擇器要跟著顯示成一樣的值。
+        // 🛑 computed 是惰性的,即使 sigStatFrom 在後面幾百行才宣告也不會踩到
+        //    暫時死區(TDZ);這裡不可以改用 watch —— watch 會立即求值(見 CLAUDE.md)。
+        const sigAdjRange = computed({
+            get: () => (sigStatFrom.value && sigStatTo.value)
+                       ? [sigStatFrom.value, sigStatTo.value] : [],
+            set: (v) => {
+                if (!v || v.length < 2 || !v[0] || !v[1]) return;
+                sigStatFrom.value = v[0];
+                sigStatTo.value = v[1];
+                sigStatRange.value = 'custom';
+                sigStatLive.value = false;   // 看歷史就不要自動更新
+                sigAdjOffset.value = 0;      // 換區間一定回第一頁
+                loadSigStats();              // 統計/報表/調整紀錄/降階一起跟上
+            },
+        });
+        // 常用區間。value 要跟 value-format 一致(不帶時區的本地 ISO)。
+        const sigAdjIso = (d) => {
+            const p = (n) => String(n).padStart(2, '0');
+            return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+                   + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
         };
+        const sigAdjSpan = (fromDays, toDays, h0, h1) => {
+            const a = new Date(); a.setDate(a.getDate() + fromDays); a.setHours(h0, 0, 0, 0);
+            const b = new Date(); b.setDate(b.getDate() + toDays); b.setHours(h1, 0, 0, 0);
+            return [sigAdjIso(a), sigAdjIso(b)];
+        };
+        const SIG_ADJ_SHORTCUTS = [
+            {text: '今天', value: () => sigAdjSpan(0, 1, 0, 0)},
+            {text: '昨天', value: () => sigAdjSpan(-1, 0, 0, 0)},
+            {text: '今天早尖峰 07–09', value: () => sigAdjSpan(0, 0, 7, 9)},
+            {text: '昨天早尖峰 07–09', value: () => sigAdjSpan(-1, -1, 7, 9)},
+            {text: '近 7 天', value: () => sigAdjSpan(-6, 1, 0, 0)},
+            {text: '近 30 天', value: () => sigAdjSpan(-29, 1, 0, 0)},
+        ];
         const sigAdjOffset = ref(0);
         const sigAdjParams = () => {
             // 區間吃整頁那一組(sigStatQuery);這裡只加「在區間內再篩什麼」
@@ -27996,7 +28071,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjDay,sigAdjPickDay,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
