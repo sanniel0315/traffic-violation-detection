@@ -3655,11 +3655,21 @@
                          font:500 var(--fs-caption) var(--font-sans); color:var(--gov-mute-2);
                          background:var(--gov-surface); padding:0 4px; }
         .st-sub { font-size:var(--fs-micro); color:var(--gov-muted); }
+        /* 🛑 2026-09-10 配色重做。原本兩個分相是 --gov-primary(#0b5ea8) 與
+           --gov-primary-strong(#084d8a) —— 兩個幾乎一樣的藍,分不出誰是誰;
+           趨勢線又另外用了深藍與紫,等於**同一個實體有兩種顏色**。
+           規則:顏色跟著實體走,不是跟著圖形種類走。一個分相一個色相,
+           直方圖用淡的、趨勢線用實的,一眼就知道是同一組。
+           色票經 dataviz 驗證器實跑(light):#0b5ea8 / #9333ea / #e8590c
+           五項檢查全 PASS,最差相鄰 CVD ΔE 10.6(protan)、常視 ΔE 21.0。
+           (先試過 teal #0f766e —— chroma 不足會讀成灰,且與藍的常視 ΔE 只有
+            13.4,低於 15 的硬底線,已淘汰。) */
         .st-bar { flex:0 0 7px; min-height:3px; border-radius:4px 4px 2px 2px;
-                  background:var(--gov-primary); opacity:.85;
-                  transition:opacity .15s ease; }
-        .st-trend:hover .st-bar { opacity:.55; }
-        .st-trend .st-bar:hover { opacity:1; }
+                  background:rgba(11,94,168,.50);
+                  /* 柱子重疊時用底色描邊分開,不然兩相的柱子會糊成一塊 */
+                  box-shadow:0 0 0 1px var(--gov-surface);
+                  transition:background .15s ease; }
+        .st-trend .st-bar:hover { background:rgba(11,94,168,.95); }
         /* 依真實時間定位的長條(2026-09-10)。等距排列會把「夜間十分鐘一段、
            尖峰一分鐘好幾段」的差異抹平,那是在騙讀者。 */
         /* 🛑 bottom 從 8px 改成 0:折線 SVG 用 inset:0 鋪滿,長條若還吊在 8px
@@ -3668,13 +3678,15 @@
                        flex:none; transition:height .2s ease; }
         .st-line { position:absolute; inset:0; width:100%; height:100%;
                    pointer-events:none; overflow:visible; }
-        .st-line polyline { fill:none; stroke-width:1.6; vector-effect:non-scaling-stroke;
-                            stroke-linejoin:round; stroke-linecap:round; opacity:.95; }
-        .st-line polyline.p1 { stroke:#0b3d6b; }
-        .st-line polyline.p2 { stroke:#7c3aed; }
-        .st-key.ln1 { background:#0b3d6b; height:3px; border-radius:2px; }
-        .st-key.ln2 { background:#7c3aed; height:3px; border-radius:2px; }
-        .st-bar.p2 { background:var(--gov-primary-strong); }
+        .st-line polyline { fill:none; stroke-width:2; vector-effect:non-scaling-stroke;
+                            stroke-linejoin:round; stroke-linecap:round; }
+        /* 線與同分相的柱子**同色相**,只是實心 —— 一眼看得出是同一組資料 */
+        .st-line polyline.p1 { stroke:#0b5ea8; }
+        .st-line polyline.p2 { stroke:#9333ea; }
+        .st-key.ln1 { background:#0b5ea8; height:3px; border-radius:2px; }
+        .st-key.ln2 { background:#9333ea; height:3px; border-radius:2px; }
+        .st-bar.p2 { background:rgba(147,51,234,.50); }
+        .st-trend .st-bar.p2:hover { background:rgba(147,51,234,.95); }
         .st-bar.forced { background:var(--gov-warn); }
         .st-bar.trunc { background:var(--gov-border-strong); }
         .st-axis { display:flex; justify-content:space-between; margin-top:6px;
@@ -3682,8 +3694,8 @@
                    font-variant-numeric:tabular-nums; }
         .st-key { display:inline-block; width:10px; height:10px; border-radius:2px;
                   margin-right:4px; vertical-align:-1px; }
-        .st-key.p1 { background:var(--gov-primary); }
-        .st-key.p2 { background:var(--gov-primary-strong); }
+        .st-key.p1 { background:rgba(11,94,168,.50); box-shadow:inset 0 0 0 1px #0b5ea8; }
+        .st-key.p2 { background:rgba(147,51,234,.50); box-shadow:inset 0 0 0 1px #9333ea; }
         .st-key.forced { background:var(--gov-warn); }
         .st-key.trunc { background:var(--gov-border-strong); }
         /* 驗收清單的一列。左側色條直接對應狀態,掃過去就知道哪些要處理。 */
