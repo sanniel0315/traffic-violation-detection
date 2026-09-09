@@ -2929,7 +2929,12 @@ def _basis_plain(w: dict) -> str:
 
 
 @router.get("/adjust-log", summary="歷史時制調整紀錄(每一次下發:何時、為什麼、有沒有生效)")
-async def adjust_log(hours: int = Query(24, ge=1, le=168),
+# 🛑 2026-09-09 從 async def 改成 def。這支整段**沒有任何 await** —— 它是純
+#    阻塞的 sqlite + CPU 工作,掛在 async 上等於在事件迴圈裡跑,查詢期間整個
+#    API 都被卡住(實測查 9 天時 /api/health 也要 0.5 秒才回)。
+#    FastAPI 對同步端點會自動丟執行緒池,所以改一個關鍵字就把它移出迴圈。
+#    🛑 行程內呼叫者(spec_report)要同步改掉 await,見 4209 行。
+def adjust_log(hours: int = Query(24, ge=1, le=168),
                      minutes: int = Query(0, ge=0, le=43200,
                                           description="給了就蓋過 hours;讓畫面三支查詢共用同一組區間參數"),
                      since: str = Query("", description="起(ISO);給了就蓋過 minutes/hours"),
@@ -3037,11 +3042,26 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
             if q:
                 want_codes.add(q)
         ph = ",".join("?" * len(want_codes))
+        # 🛑 2026-09-09 再加一層:只取**命令時間點附近**的回應,不要整段全撈。
+        #    上一版已經把碼縮到 ACK/NAK + 查詢回報碼,但筆數仍與**區間長度**
+        #    成正比:9 天區間撈回 56,921 筆回應,而 217 則命令真正用得到的
+        #    只有各自 ±ACK_WAIT_SEC 秒那幾筆。實測 24 小時 1.3 秒、9 天 11~22 秒,
+        #    成本跟結果筆數(163 筆)完全無關 —— 那就是撈太多的徵狀。
+        #    用命令時戳建暫存表求交集後,成本只跟**命令數**有關,與區間長度脫鉤。
+        conn.execute("CREATE TEMP TABLE _send_ts (ts REAL)")
+        conn.executemany("INSERT INTO _send_ts VALUES (?)",
+                         [(r[0],) for r in sends])
+        conn.execute("CREATE INDEX _ix_send_ts ON _send_ts(ts)")
         # 回應要多看 ACK_WAIT_SEC 秒,否則區間邊界那幾筆會被判成無回應。
         replies = list(conn.execute(
-            "SELECT ts,code,raw,seq FROM signal_frames "
-            "WHERE src='controller' AND ts>? AND ts<=? AND code IN (" + ph + ") "
-            "ORDER BY ts", (cut, end + ACK_WAIT_SEC) + tuple(sorted(want_codes))))
+            "SELECT f.ts,f.code,f.raw,f.seq FROM signal_frames f "
+            "WHERE f.src='controller' AND f.ts>? AND f.ts<=? "
+            "AND f.code IN (" + ph + ") "
+            "AND EXISTS (SELECT 1 FROM _send_ts s "
+            "            WHERE f.ts>=s.ts AND f.ts<=s.ts+?) "
+            "ORDER BY f.ts",
+            (cut, end + ACK_WAIT_SEC) + tuple(sorted(want_codes))
+            + (ACK_WAIT_SEC,)))
         conn.close()
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:160], "rows": []}
@@ -3096,11 +3116,23 @@ async def adjust_log(hours: int = Query(24, ge=1, le=168),
         if not _need_reason:
             raise StopIteration
         sconn = _db()
-        iso = datetime.fromtimestamp(cut).isoformat(timespec="seconds")
-        iso_e = datetime.fromtimestamp(end).isoformat(timespec="seconds")
+        # 🛑 同一個問題:整段撈會拿回 9 天 114,579 筆樣本,而「依據」只配
+        #    5F1C 各自 ±REASON_WIN_SEC 秒那幾筆。改成用每則 5F1C 的時間窗
+        #    去 join,成本與區間長度脫鉤。ts 是 ISO 字串且可字典序比較,
+        #    所以窗界也用 ISO 表示(ix_shadow_ts 吃得到)。
+        REASON_WIN_SEC = 6.0
+        wins = [(datetime.fromtimestamp(r[0] - REASON_WIN_SEC).isoformat(
+                     timespec="seconds"),
+                 datetime.fromtimestamp(r[0] + REASON_WIN_SEC).isoformat(
+                     timespec="seconds"))
+                for r in sends if r[1] == "5F1C"]
+        sconn.execute("CREATE TEMP TABLE _w (lo TEXT, hi TEXT)")
+        sconn.executemany("INSERT INTO _w VALUES (?,?)", wins)
         reasons = list(sconn.execute(
-            "SELECT ts,green_phase,ours,reason,queue_m_1,queue_m_2,green_elapsed "
-            "FROM signal_shadow_log WHERE ts>? AND ts<=? ORDER BY ts", (iso, iso_e)))
+            "SELECT DISTINCT l.ts,l.green_phase,l.ours,l.reason,"
+            "l.queue_m_1,l.queue_m_2,l.green_elapsed "
+            "FROM signal_shadow_log l JOIN _w w "
+            "  ON l.ts>=w.lo AND l.ts<=w.hi ORDER BY l.ts"))
         sconn.close()
     except StopIteration:
         reasons = []
@@ -4179,7 +4211,7 @@ async def spec_report(since: str = Query("", description="起(ISO);空 = 依 min
 
     stats = await shadow_stats(minutes=5, since=since_iso, until=until_iso,
                                trend_limit=10, _user=_user)
-    adj = await adjust_log(hours=hr, include_query=False, _user=_user)
+    adj = adjust_log(hours=hr, include_query=False, _user=_user)  # 已改同步,見其定義
     deg = await degrade_log(hours=hr, _user=_user)
     faults = await fault_status(_user=_user)
     outcome = _outcome_window(since_iso, until_iso)
