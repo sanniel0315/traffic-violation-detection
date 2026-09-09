@@ -798,6 +798,14 @@ _fault = {
 
 
 ACK_WAIT_SEC = float(os.getenv("SIGNAL_ACK_WAIT_SEC", "5") or 5)
+
+# 🛑 2026-09-09:本檔的端點一律用 `def`(同步),不要寫成 `async def`。
+#    這裡沒有任何 I/O 是 awaitable 的 —— 全部是 sqlite 與 CPU 計算。
+#    寫成 async def 會讓它們在**事件迴圈**上跑,一支慢查詢就把整個 API 卡住:
+#    實測 stats 查 9 天,行程內只要 0.68 秒,經 HTTP 卻要 14.9 秒;
+#    同時 /api/health(根本不碰 DB)也要 0.5 秒才回。
+#    改成 def 之後 FastAPI 會自動把它丟到執行緒池,不再擋住別人。
+#    🛑 日後在本檔新增端點:除非真的要 await 什麼,否則一律 def。
 # 該分相的第一個綠燈步階。在這一階送「跳下一步階」會跳進感應延長段(步階2),
 # 反而延長綠燈 —— 見 _actuate_gates 的說明。實測兩相都是步階 1。
 FIRST_GREEN_STEP = int(os.getenv("SIGNAL_FIRST_GREEN_STEP", "1") or 1)
@@ -1534,7 +1542,7 @@ def stop_shadow() -> None:
 
 
 @router.get("", summary="影子模式狀態與最近決策")
-async def shadow_status(limit: int = Query(50, ge=1, le=500),
+def shadow_status(limit: int = Query(50, ge=1, le=500),
                         _user=Depends(get_current_user)):
     rows = []
     try:
@@ -1611,7 +1619,7 @@ def _outcome_window(since_iso: str, until_iso: str) -> dict:
 
 
 @router.get("/outcome/compare", summary="兩時段成效對比(A/B)")
-async def shadow_outcome_compare(
+def shadow_outcome_compare(
         a_since: str = Query(..., description="A 段起(ISO)"),
         a_until: str = Query(..., description="A 段訖(ISO)"),
         b_since: str = Query(..., description="B 段起(ISO)"),
@@ -1642,7 +1650,7 @@ async def shadow_outcome_compare(
 
 
 @router.get("/outcome", summary="成效基準(總延滯/排隊/回堵次數)")
-async def shadow_outcome(minutes: int = Query(60, ge=1, le=1440),
+def shadow_outcome(minutes: int = Query(60, ge=1, le=1440),
                          since: str = Query("", description="起(ISO),給了就用固定時段"),
                          until: str = Query("", description="訖(ISO)"),
                          _user=Depends(get_current_user)):
@@ -1666,20 +1674,20 @@ async def shadow_outcome(minutes: int = Query(60, ge=1, le=1440),
 
 
 @router.post("/start", summary="啟動影子模式(只記錄不下發)")
-async def shadow_start(_user=Depends(get_current_user)):
+def shadow_start(_user=Depends(get_current_user)):
     started = start_shadow()
     return {"started": started, "running": True,
             "note": "影子模式不會對號誌控制器送出任何指令"}
 
 
 @router.post("/stop", summary="停止影子模式")
-async def shadow_stop(_user=Depends(get_current_user)):
+def shadow_stop(_user=Depends(get_current_user)):
     stop_shadow()
     return {"stopped": True}
 
 
 @router.get("/summary", summary="影子結果摘要(有車/無車分開算一致率,可指定時段)")
-async def shadow_summary(minutes: int = Query(60, ge=5, le=1440),
+def shadow_summary(minutes: int = Query(60, ge=5, le=1440),
                          since: str = Query("", description="起(ISO,例 2026-09-04T06:00:00)"),
                          until: str = Query("", description="訖(ISO)"),
                          _user=Depends(get_current_user)):
@@ -1688,7 +1696,7 @@ async def shadow_summary(minutes: int = Query(60, ge=5, le=1440),
 
 
 @router.get("/plan", summary="即時決策盤(輸入/算式/安全閘門逐項攤開)")
-async def shadow_plan(_user=Depends(get_current_user)):
+def shadow_plan(_user=Depends(get_current_user)):
     """回傳「這一刻我方演算法在想什麼」的完整快照。
 
     🛑 摘要頁只給一個一致率,看不出演算法憑什麼這樣判。要接管控制權之前,
@@ -2044,7 +2052,7 @@ def _stat(vals: list) -> dict:
 
 
 @router.get("/stats", summary="運作統計(綠燈長度/切換次數/滯留,依方向)")
-async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
+def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
                        since: str = Query("", description="起(ISO)"),
                        until: str = Query("", description="訖(ISO)"),
                        trend_limit: int = Query(120, ge=10, le=1000),
@@ -2193,7 +2201,7 @@ async def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
     return out
 
 @router.get("/simulate", summary="模擬驗證(先校準,校準過才給比較結果)")
-async def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
+def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
                           since: str = Query(""), until: str = Query(""),
                           _user=Depends(get_current_user)):
     """用同一份到達流量餵兩套演算法,比較成效。
@@ -2664,7 +2672,7 @@ def _is_peak(ts: float) -> bool:
 
 
 @router.get("/count-check", summary="人工計數對照表(90% 準確度條款的證據產生器)")
-async def count_check(camera_id: int = Query(..., ge=1),
+def count_check(camera_id: int = Query(..., ge=1),
                       since: str = Query(...), until: str = Query(...),
                       manual: int = Query(-1, description="人工數到的通過車輛數;不給就只列機器量測"),
                       _user=Depends(get_current_user)):
@@ -2793,7 +2801,7 @@ async def count_check(camera_id: int = Query(..., ge=1),
 
 
 @router.get("/faults", summary="故障檢核:現況、歷史與降階紀錄")
-async def fault_status(_user=Depends(get_current_user)):
+def fault_status(_user=Depends(get_current_user)):
     """驗收條文的「故障情形」查詢入口。
 
     🛑 2026-09-08:這支曾經有**兩個同路由的 handler**,舊的在前、新的在後。
@@ -3250,7 +3258,7 @@ def adjust_log(hours: int = Query(24, ge=1, le=168),
 
 
 @router.get("/degrade-log", summary="降階與故障歷史(驗收要查的「故障情形」)")
-async def degrade_log(hours: int = Query(24, ge=1, le=720),
+def degrade_log(hours: int = Query(24, ge=1, le=720),
                       minutes: int = Query(0, ge=0, le=43200),
                       since: str = Query(""), until: str = Query(""),
                       _user=Depends(get_current_user)):
@@ -3393,7 +3401,7 @@ def _actuate_persisted() -> dict:
 
 
 @router.get("/actuate", summary="演算法下發:現況與把關結果")
-async def actuate_status(_user=Depends(get_current_user)):
+def actuate_status(_user=Depends(get_current_user)):
     """看得到「有沒有在下發」「上一次送了什麼」「這一刻為什麼沒送」。
     🛑 blocked 是空字串代表「引擎這一刻本來就判 KEEP」,不是被擋 —— 兩者不同,
        畫面上不要混為一談。"""
@@ -3418,7 +3426,7 @@ async def actuate_status(_user=Depends(get_current_user)):
 
 
 @router.post("/actuate", summary="開關演算法下發")
-async def actuate_set(body: dict, _user=Depends(get_current_user)):
+def actuate_set(body: dict, _user=Depends(get_current_user)):
     """🛑 這一支會讓演算法真的去改路口號誌。關掉是立即生效的(下一次取樣就不送)。
     另外它只是最外層開關 —— 號控總開關、只准查詢、降階三道仍然各自有效。"""
     want = bool(body.get("enabled"))
@@ -3427,11 +3435,11 @@ async def actuate_set(body: dict, _user=Depends(get_current_user)):
         _act["blocked"] = "演算法下發未啟用"
     add_log("warning" if want else "info",
             "演算法下發已%s(操作者切換)" % ("啟用" if want else "關閉"), "signal")
-    return await actuate_status(_user)
+    return actuate_status(_user)  # 已改同步
 
 
 @router.get("/benchmark", summary="演算法驗收:我方 vs 公認基準(固定時制/Webster/感應/MaxPressure)")
-async def shadow_benchmark(minutes: int = Query(360, ge=30, le=1440),
+def shadow_benchmark(minutes: int = Query(360, ge=30, le=1440),
                            since: str = Query(""), until: str = Query(""),
                            _user=Depends(get_current_user)):
     """把我方演算法跟交通工程的公認基準比,**現行控制(OPAC)不在對照組**。
@@ -3558,7 +3566,7 @@ async def shadow_benchmark(minutes: int = Query(360, ge=30, le=1440),
 
 
 @router.get("/report", summary="成效報告:工程(min)/技術(standard)/完整(full),可 A/B 兩時段")
-async def shadow_report(since: str = Query(...), until: str = Query(...),
+def shadow_report(since: str = Query(...), until: str = Query(...),
                         b_since: str = Query(""), b_until: str = Query(""),
                         tier: str = Query("full"),
                         _user=Depends(get_current_user)):
@@ -3597,7 +3605,7 @@ async def shadow_report(since: str = Query(...), until: str = Query(...),
 
 # ── TDX eTag 旅行時間(國道主線,實測)────────────────────────────────
 @router.get("/tdx", summary="TDX eTag 站間旅行時間:抓取狀態與時段平均")
-async def shadow_tdx(since: str = Query(""), until: str = Query(""),
+def shadow_tdx(since: str = Query(""), until: str = Query(""),
                      _user=Depends(get_current_user)):
     from services import tdx_travel as T
     out = {"status": T.status()}
@@ -3612,7 +3620,7 @@ SITE_LON = float(os.getenv("SIGNAL_SITE_LON", "120.279169") or 120.279169)
 
 
 @router.get("/tdx/discover", summary="用站點座標找最近的 eTag 配對(挑 TDX_ETAG_PAIRS 用)")
-async def shadow_tdx_discover(lat: float = Query(None), lng: float = Query(None),
+def shadow_tdx_discover(lat: float = Query(None), lng: float = Query(None),
                               km: float = Query(None, description="(選用)交流道里程,只當交叉驗證"),
                               road_id: str = Query(""), radius_km: float = Query(8.0),
                               _user=Depends(get_current_user)):
@@ -3795,7 +3803,7 @@ def _hourly_tick() -> None:
 
 
 @router.get("/hourly", summary="逐時評估(配對/成效/一致率/參數),每整點自動算前一小時")
-async def shadow_hourly(date: str = Query("", description="YYYY-MM-DD,空 = 今天"),
+def shadow_hourly(date: str = Query("", description="YYYY-MM-DD,空 = 今天"),
                         minutes: int = Query(0, ge=0, le=43200),
                         since: str = Query(""), until: str = Query(""),
                         _user=Depends(get_current_user)):
@@ -3855,7 +3863,7 @@ async def shadow_hourly(date: str = Query("", description="YYYY-MM-DD,空 = 今�
 
 
 @router.get("/paired", summary="逐次綠燈配對(精確比對:我方會早幾秒切)")
-async def shadow_paired(minutes: int = Query(180, ge=5, le=10080),
+def shadow_paired(minutes: int = Query(180, ge=5, le=10080),
                         since: str = Query(""), until: str = Query(""),
                         include_runs: int = Query(0, ge=0, le=1),
                         mode: str = Query(EVAL_MODE_ALL,
@@ -3906,7 +3914,7 @@ async def shadow_paired(minutes: int = Query(180, ge=5, le=10080),
 
 
 @router.get("/local-metrics", summary="局部可觀測指標(不需反事實模型)")
-async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
+def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
                                since: str = Query(""), until: str = Query(""),
                                _user=Depends(get_current_user)):
     """三個「當下那一刻可直接觀測」的指標,以及我方引擎在同一刻的判定。
@@ -4054,7 +4062,7 @@ async def shadow_local_metrics(minutes: int = Query(360, ge=30, le=10080),
     }
 
 @router.get("/timeline", summary="時間軸(壓縮平行陣列,給即時總覽畫圖用)")
-async def shadow_timeline(minutes: int = Query(15, ge=1, le=1440),
+def shadow_timeline(minutes: int = Query(15, ge=1, le=1440),
                           since: str = Query(""), until: str = Query(""),
                           max_points: int = Query(900, ge=100, le=5000),
                           _user=Depends(get_current_user)):
@@ -4200,7 +4208,7 @@ def _spec_hours(since_iso: str, until_iso: str) -> float:
 
 
 @router.get("/spec-report", summary="條文統計報表(運作狀態/調整紀錄/綠燈統計/績效/故障)")
-async def spec_report(since: str = Query("", description="起(ISO);空 = 依 minutes 回推"),
+def spec_report(since: str = Query("", description="起(ISO);空 = 依 minutes 回推"),
                       until: str = Query("", description="訖(ISO);空 = 現在"),
                       minutes: int = Query(1440, ge=5, le=43200),
                       _user=Depends(get_current_user)):
@@ -4214,11 +4222,11 @@ async def spec_report(since: str = Query("", description="起(ISO);空 = 依 min
     hours = _spec_hours(since_iso, until_iso)
     hr = max(1, min(720, int(round(hours)) or 1))
 
-    stats = await shadow_stats(minutes=5, since=since_iso, until=until_iso,
+    stats = shadow_stats(minutes=5, since=since_iso, until=until_iso,
                                trend_limit=10, _user=_user)
     adj = adjust_log(hours=hr, include_query=False, _user=_user)  # 已改同步,見其定義
-    deg = await degrade_log(hours=hr, _user=_user)
-    faults = await fault_status(_user=_user)
+    deg = degrade_log(hours=hr, _user=_user)
+    faults = fault_status(_user=_user)
     outcome = _outcome_window(since_iso, until_iso)
 
     # 運作狀態:當下的控制模式與資料源(條文的「運作狀態」問的是現在怎麼運轉)

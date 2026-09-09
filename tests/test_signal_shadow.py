@@ -541,11 +541,9 @@ def test_timeline_stride_keeps_switch_events(tmp_path, monkeypatch):
     _tl_rows(conn, specs)
     conn.close()
 
-    import asyncio
-    r = asyncio.new_event_loop().run_until_complete(
-        ss.shadow_timeline(minutes=1440, since="2026-09-05T00:00:00",
+    r = ss.shadow_timeline(minutes=1440, since="2026-09-05T00:00:00",
                            until="2026-09-05T23:59:59", max_points=3,
-                           _user=None))
+                           _user=None)
     # 🛑 2026-09-09 抽樣移到 SQL(整段撈回 Python 太慢:三天 49,236 列要 6.3 秒)。
     #    總抽樣率 = SQL 的 sql_step × Python 分桶的 stride。
     #    保證不變的是下面兩行:換相不可以被抽掉。
@@ -573,11 +571,9 @@ def test_timeline_marks_sampling_gaps(tmp_path, monkeypatch):
     _tl_rows(conn, specs)
     conn.close()
 
-    import asyncio
-    r = asyncio.new_event_loop().run_until_complete(
-        ss.shadow_timeline(minutes=1440, since="2026-09-05T00:00:00",
+    r = ss.shadow_timeline(minutes=1440, since="2026-09-05T00:00:00",
                            until="2026-09-05T23:59:59", max_points=900,
-                           _user=None))
+                           _user=None)
     assert r["gaps"], "取樣斷點沒有被標出來"
     g = r["gaps"][0]
     assert g[1] - g[0] >= 20, f"斷點區間看起來不對: {g}"
@@ -976,7 +972,6 @@ def test_degrade_span_kind_follows_latest_fault(tmp_path, monkeypatch):
        類別「指令傳輸錯誤」/ 原因「偵測器故障:分相 1、2 的排隊與流量都取不到」。
        成因是 spans 的續接分支更新了 level 與 reason 卻沒更新 kind。
     """
-    import asyncio
     from api.routes import signal_shadow as S
 
     db = tmp_path / "shadow.db"
@@ -986,8 +981,7 @@ def test_degrade_span_kind_follows_latest_fault(tmp_path, monkeypatch):
     S._degrade_persist("L2", "指令傳輸錯誤:連續 3 次未被接受", "transmit")
     S._degrade_persist("L3", "偵測器故障:分相 1、2 的排隊與流量都取不到", "detector")
 
-    out = asyncio.new_event_loop().run_until_complete(
-        S.degrade_log(hours=24, _user=None))
+    out = S.degrade_log(hours=24, _user=None)
     sp = out["spans"][0]
     assert sp["duration_sec"] is None          # 仍在降階中 → 不是 0 秒
     assert sp["level"] == "L3"
@@ -1002,7 +996,6 @@ def test_degrade_bootstrap_closes_open_span_on_restart(tmp_path, monkeypatch):
        但同一頁的運作狀態是 L0 —— 降階狀態在記憶體,重啟就回 L0,
        DB 那一段卻永遠開著。
     """
-    import asyncio
     from api.routes import signal_shadow as S
 
     db = tmp_path / "shadow.db"
@@ -1012,8 +1005,7 @@ def test_degrade_bootstrap_closes_open_span_on_restart(tmp_path, monkeypatch):
     S._degrade_persist("L2", "偵測器故障:兩相都取不到", "detector")
     S._degrade_bootstrap()
 
-    out = asyncio.new_event_loop().run_until_complete(
-        S.degrade_log(hours=24, _user=None))
+    out = S.degrade_log(hours=24, _user=None)
     assert out["count"] == 1
     sp = out["spans"][0]
     assert sp["duration_sec"] is not None       # 已關閉,不再是「進行中」
@@ -1021,8 +1013,7 @@ def test_degrade_bootstrap_closes_open_span_on_restart(tmp_path, monkeypatch):
     assert out["ongoing"] is False
     # 再跑一次不可以重複補(最後一筆已經是 L0)
     S._degrade_bootstrap()
-    again = asyncio.new_event_loop().run_until_complete(
-        S.degrade_log(hours=24, _user=None))
+    again = S.degrade_log(hours=24, _user=None)
     assert again["count"] == 1
 
 
@@ -1071,7 +1062,6 @@ def test_cmd_and_by_plain_keep_original():
 
 def test_adjust_log_tolerates_direct_call_without_fastapi():
     """行程內直接呼叫(spec_report 走這條)不可以因為 Query 物件而炸掉。"""
-    import asyncio
     from api.routes import signal_shadow as S
-    r = asyncio.new_event_loop().run_until_complete(S.adjust_log(_user=None))
+    r = S.adjust_log(_user=None)
     assert isinstance(r, dict)

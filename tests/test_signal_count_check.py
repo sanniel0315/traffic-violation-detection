@@ -29,13 +29,12 @@ def _mk_viol_db(path):
     conn.close()
 
 
-@pytest.mark.asyncio
-async def test_count_check_lists_every_machine_measurement(tmp_path, monkeypatch):
+def test_count_check_lists_every_machine_measurement(tmp_path, monkeypatch):
     from api.routes import signal_shadow as S
     db = tmp_path / "v.db"
     _mk_viol_db(db)
     monkeypatch.setattr(S, "_VIOL_DB", str(db))
-    r = await S.count_check(camera_id=3, since="2026-09-06T10:00:00",
+    r = S.count_check(camera_id=3, since="2026-09-06T10:00:00",
                             until="2026-09-06T10:10:00", manual=-1, _user=None)
     keys = {m["key"] for m in r["methods"]}
     assert {"events_all", "events_exit", "events_in"} <= keys
@@ -50,14 +49,13 @@ async def test_count_check_lists_every_machine_measurement(tmp_path, monkeypatch
     assert r["playback"]["camera"] == "cam_3"
 
 
-@pytest.mark.asyncio
-async def test_count_check_judges_against_manual(tmp_path, monkeypatch):
+def test_count_check_judges_against_manual(tmp_path, monkeypatch):
     """人工計數是唯一的裁判:10 台 → 只取 EXIT 完全命中,全部列差 6 倍。"""
     from api.routes import signal_shadow as S
     db = tmp_path / "v2.db"
     _mk_viol_db(db)
     monkeypatch.setattr(S, "_VIOL_DB", str(db))
-    r = await S.count_check(camera_id=3, since="2026-09-06T10:00:00",
+    r = S.count_check(camera_id=3, since="2026-09-06T10:00:00",
                             until="2026-09-06T10:10:00", manual=10, _user=None)
     by = {m["key"]: m for m in r["methods"]}
     assert by["events_exit"]["accuracy_pct"] == 100.0 and by["events_exit"]["meets_90"] is True
@@ -66,14 +64,13 @@ async def test_count_check_judges_against_manual(tmp_path, monkeypatch):
     assert "只取 EXIT" in r["verdict"]
 
 
-@pytest.mark.asyncio
-async def test_count_check_says_so_when_nothing_meets_90(tmp_path, monkeypatch):
+def test_count_check_says_so_when_nothing_meets_90(tmp_path, monkeypatch):
     """沒有任何一種達標時要明講,不可以挑一個最接近的當答案。"""
     from api.routes import signal_shadow as S
     db = tmp_path / "v3.db"
     _mk_viol_db(db)
     monkeypatch.setattr(S, "_VIOL_DB", str(db))
-    r = await S.count_check(camera_id=3, since="2026-09-06T10:00:00",
+    r = S.count_check(camera_id=3, since="2026-09-06T10:00:00",
                             until="2026-09-06T10:10:00", manual=100, _user=None)
     assert all(not m.get("meets_90") for m in r["methods"])
     assert "沒有任何一種量測達到" in r["verdict"]
