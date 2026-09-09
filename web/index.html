@@ -3363,6 +3363,48 @@
             letter-spacing: 0.04em;
             border-bottom-width: 1px;
         }
+
+        /* —— el-table 對齊自家 .data-table 的設計 ——
+           全站有 54 個 el-table 與 30 個手刻 .data-table,兩種表格長得不一樣。
+           這裡只改樣式不動 template:逐一把 el-table 改寫成 <table> 需要動
+           數百行 inline template,而 index.html 的 HTML parser 對標籤平衡極
+           敏感(見 CLAUDE.md 的 SOP),風險與收益不成比例。
+           Element Plus 的顏色走 CSS 變數,所以覆寫變數就能整批對齊。 */
+        .el-table {
+            --el-table-border-color: #edf1f6;
+            --el-table-header-bg-color: var(--gov-surface-2);
+            --el-table-header-text-color: var(--gov-muted);
+            --el-table-row-hover-bg-color: rgba(11, 94, 168, 0.04);
+            --el-table-bg-color: var(--gov-surface);
+            --el-table-tr-bg-color: var(--gov-surface);
+            --el-table-text-color: var(--gov-text);
+            font-feature-settings: "tnum","ss01";
+            font-variant-numeric: tabular-nums;
+        }
+        .el-table th.el-table__cell {
+            font-weight: 700;
+            font-size: 12px;
+            letter-spacing: 0.06em;
+            border-bottom: 2px solid var(--gov-border);
+            white-space: nowrap;
+        }
+        .el-table th.el-table__cell,
+        .el-table td.el-table__cell {
+            padding: 8px 0;                 /* 配合 .cell 的左右 14px */
+            vertical-align: middle;
+        }
+        .el-table .cell {
+            padding: 0 14px;
+            line-height: 1.55;
+            word-break: normal;             /* 預設 break-all 會把中文詞切斷 */
+        }
+        /* 數字欄:與 .data-table td.num 同一套(等寬 + 右對齊) */
+        .el-table .cell.is-num,
+        .el-table td.num .cell {
+            font-family: var(--font-mono);
+            text-align: right;
+        }
+
         .thumbnail { width: 80px; height: 50px; object-fit: cover; border-radius: 4px; cursor: pointer; }
         /* 違規詳情: 車牌裁切大圖 + 4 張時間軸 grid */
         .detail-plate-row { padding: 10px 16px 14px; border-bottom: 1px solid var(--gov-border); }
