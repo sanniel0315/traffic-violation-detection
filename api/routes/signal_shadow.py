@@ -2181,13 +2181,79 @@ def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
         })
 
     out["trend_total"] = len(runs)
-    out["trend"] = [{"ts": r["start_ts"], "phase_no": r["phase"],
-                     "green_sec": round(r["green_sec"], 1),
-                     # 真值落在 [green_sec, green_sec + 取樣週期)
-                     "green_sec_upper": round(r["green_sec"] + SHADOW_INTERVAL_SEC, 1),
-                     "forced": r["forced"],
-                     "truncated": bool(r.get("max_inner_gap") or _run_after_gap(r))}
-                    for r in runs[-trend_limit:]]
+
+    def _one(r: dict) -> dict:
+        return {"ts": r["start_ts"], "phase_no": r["phase"],
+                "green_sec": round(r["green_sec"], 1),
+                # 真值落在 [green_sec, green_sec + 取樣週期)
+                "green_sec_upper": round(r["green_sec"] + SHADOW_INTERVAL_SEC, 1),
+                "forced": r["forced"],
+                "truncated": bool(r.get("max_inner_gap") or _run_after_gap(r)),
+                "n": 1, "agg": False}
+
+    # 🛑 2026-09-10 分桶聚合。原本一律回「最近 trend_limit 段」,查 9 天時
+    #    那 200 段只涵蓋區間的最後一小時 —— 畫面上柱子全部擠在右側,
+    #    看起來像整段時間只有結尾有資料。
+    #    段數超過上限就改成:沿**查詢區間**等分時間桶,每桶每分相各出一根,
+    #    高度 = 該桶該分相的平均綠燈長度。這樣整個區間都畫得出來,
+    #    而且橫軸位置仍然是真實時間(與前端的相對刻度是同一套座標)。
+    #
+    #    🛑 聚合過的柱子**必須標明**(agg + n):它是 N 段的平均,不是某一段的
+    #       實際長度。把平均畫成跟原始段一模一樣、讓人以為讀到的是單段值,
+    #       就是在騙讀者 —— 前端的 tooltip 依 agg 改寫措辭。
+    #    🛑 forced/truncated 在聚合後改成「該桶有幾段是」,不是布林。
+    #       只要有一段被截斷,那一桶的平均就不完全可信,顏色照樣要標出來。
+    if len(runs) <= trend_limit:
+        out["trend"] = [_one(r) for r in runs]
+        out["trend_agg"] = False
+    else:
+        def _ep(v: str):
+            try:
+                return datetime.fromisoformat(str(v)).timestamp()
+            except Exception:
+                return None
+
+        t0, t1 = _ep(since_iso), _ep(until_iso)
+        if t0 is None or t1 is None or t1 <= t0:
+            out["trend"] = [_one(r) for r in runs[-trend_limit:]]
+            out["trend_agg"] = False
+        else:
+            # 每分相各佔一半的柱子數,兩相加起來才是 trend_limit
+            nb = max(2, int(trend_limit // 2))
+            width = (t1 - t0) / nb
+            buckets: dict = {}
+            for r in runs:
+                ts = _ep(r["start_ts"])
+                if ts is None:
+                    continue
+                bi = min(nb - 1, max(0, int((ts - t0) // width)))
+                key = (bi, r["phase"])
+                b = buckets.setdefault(key, {"vals": [], "forced": 0, "trunc": 0})
+                b["vals"].append(float(r["green_sec"]))
+                if r["forced"]:
+                    b["forced"] += 1
+                if r.get("max_inner_gap") or _run_after_gap(r):
+                    b["trunc"] += 1
+            tr = []
+            for (bi, ph), b in sorted(buckets.items()):
+                vals = b["vals"]
+                if not vals:
+                    continue
+                avg = sum(vals) / len(vals)
+                # 桶的代表時間取桶中點 —— 用桶起點會讓柱子整體左偏半個桶寬
+                mid = datetime.fromtimestamp(t0 + width * (bi + 0.5))
+                tr.append({"ts": mid.isoformat(timespec="seconds"),
+                           "phase_no": ph,
+                           "green_sec": round(avg, 1),
+                           "green_sec_upper": round(avg + SHADOW_INTERVAL_SEC, 1),
+                           "forced": b["forced"], "truncated": b["trunc"],
+                           "n": len(vals), "agg": True,
+                           "min_sec": round(min(vals), 1),
+                           "max_sec": round(max(vals), 1)})
+            tr.sort(key=lambda x: (x["ts"], x["phase_no"]))
+            out["trend"] = tr
+            out["trend_agg"] = True
+            out["trend_bucket_sec"] = round(width, 1)
 
     # 出口(下匝道 = 分相2)滯留:取區間內的平均與最大,這是主線回堵的前哨
     q2 = [float(r[5]) for r in rows if r[5] is not None]
