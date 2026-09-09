@@ -1,8 +1,13 @@
 # 中央端 HardwareStatus 位元組順序不一致（含 swap 補償）
 
 **站點**：國道8號新市交流道（東向） **日期**：2026-09-08
-**狀態**：2026-09-08 18:40 定案 `hwstatus-mode = swap` ＋ 遮蔽 bit13
-（兩條路徑無法同時滿足，選「告警欄乾淨」那一邊；代價見下表）
+**狀態**：🛑 **2026-09-09 14:48 改定案 `hwstatus-mode = raw` ＋ 遮蔽 bit13**
+（改選「燈號綠」那一邊；代價是告警欄有假的 `SIGNAL_DRIVER_UNIT_ERROR`）
+
+> 2026-09-08 的 `swap` 定案已作廢。改變的理由不是偏好，是**證據變了**：
+> 09-09 完成 16 位逐位實測，那條告警確定是中央讀法造成的假故障，
+> 有完整對照表可證（`docs/HardwareStatus_逐位實測紀錄.md`）。
+> 使用者 09-09 決定：「測完要給綠燈的封包」。
 
 ---
 
@@ -30,6 +35,30 @@
 | `0x4000` | 1 | 就緒 → **不故障** | `0x0040` → bit6 | `SIGNAL_DRIVER_UNIT_ERROR` |
 | `0x0040` | 0 | **故障** | `0x4000` → bit14（錯誤表無此項） | **故障，沒代碼** |
 | `0x0020` | 0 | **故障** | `0x2000` → bit13 | **`TIMMING_PLAN_ON_TRANSITION`** |
+
+### 🛑 2026-09-09 更新：不只是順序，是**同一個實體位元**
+
+逐位實測（`docs/HardwareStatus_逐位實測紀錄.md`）之後，這件事可以講得更死：
+
+```
+封包 offset 9 這一個位元組:   0 1 0 0 0 0 0 0     ← 值為 0x40 時
+                                 ↑
+              我方叫它 bit14 controllerReady（它是我方高位元組的 bit6）
+              中央叫它 bit6  signalDriverUnitError（中央把這個位元組當 bit0~7）
+```
+
+**就緒旗標與 `SIGNAL_DRIVER_UNIT_ERROR` 讀的是同一個位元。**
+不是找不到對的值，是**這一個位元不可能同時是 1 和 0**。
+四個角 2026-09-09 全部由現場畫面確認：
+
+| offset 9 的 bit6 | 硬體狀態燈 | 告警欄 | 確認時間 |
+|---|---|---|---|
+| **1**（送 `40 00`） | **綠色／正常** | `SIGNAL_DRIVER_UNIT_ERROR` | 13:58 / 14:01 |
+| **0**（送 `00 40`） | **紅色／異常** | 空 | 13:38 起 |
+
+`0x4040` 也救不了：告警只看 offset 9 那個位元組，它照樣是
+`SIGNAL_DRIVER_UNIT_ERROR`。（原本以為 `0x4040` 是「可行但不誠實」的第三條路，
+實測之後連可行都不是。）
 
 ### 為什麼我方無解
 
@@ -157,9 +186,12 @@ bit1、bit5、bit6 **從未為 1** —— 控制器未曾回報過那三項故�
 使用者 2026-09-08 決定：**「這個不是暫時，重啟都必須維持」**、**「固定這樣，不要動」**。
 
 ```
-hwstatus_mode = swap    對調兩個位元組(2026-09-08 18:40 定案)
+hwstatus_mode = raw     純通透(2026-09-09 14:48 定案,取代 09-08 的 swap)
 hwstatus_mask = 0x2000  遮掉 bit13(外部時相控制進行中)
 ```
+
+三層已同步一致(2026-09-09 14:48 實地確認):設定檔 `raw` / 執行期 `raw` /
+systemd drop-in `raw`。
 
 兩層保險：
 
@@ -167,14 +199,14 @@ hwstatus_mask = 0x2000  遮掉 bit13(外部時相控制進行中)
 
 ```json
 config/system/signal_conn.json
-{ ..., "hwstatus_mode": "swap", "hwstatus_mask": 8192 }
+{ ..., "hwstatus_mode": "raw", "hwstatus_mask": 8192 }
 ```
 
 **第二層 — systemd drop-in**（設定檔遺失或換機部署時兜底）
 
 ```
 /etc/systemd/system/traffic-signal.service.d/zz-hwmode.conf
-Environment=SIGNAL_TC3_HWSTATUS_MODE=swap
+Environment=SIGNAL_TC3_HWSTATUS_MODE=raw
 Environment=SIGNAL_TC3_HWSTATUS_MASK=8192
 ```
 
@@ -246,7 +278,9 @@ curl http://10.105.6.73/api/smg/r24a/device/scmXMLData.xmL
 開啟機箱門時中央應顯示「機箱門開啟」而非「記憶體異常」。
 
 🛑 若日後有人想改回 `swap`，先讀上面的「兩條路徑」—— `swap` 只會把問題
-   從告警欄搬到故障燈，兩者不可能同時對。
+   從告警欄搬到故障燈，兩者不可能同時對。2026-09-08 與 09-09 兩天各切過一次，
+   兩種抱怨都聽過了；現行是 `raw`（燈號綠 + 假告警），這是**使用者選定的取捨**，
+   不要再自行切換。
 
 ---
 
