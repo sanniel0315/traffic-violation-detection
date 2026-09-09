@@ -3053,15 +3053,20 @@ def adjust_log(hours: int = Query(24, ge=1, le=168),
                          [(r[0],) for r in sends])
         conn.execute("CREATE INDEX _ix_send_ts ON _send_ts(ts)")
         # 回應要多看 ACK_WAIT_SEC 秒,否則區間邊界那幾筆會被判成無回應。
+        # 🛑 一定要 CROSS JOIN,不可以寫成 EXISTS 或普通 JOIN。
+        #    那兩種寫法 SQLite 都會挑 signal_frames 當外層(ix_sf_src_ts),
+        #    等於對區間內**全部**回應逐筆去問「附近有沒有命令」——
+        #    30 天區間就是 44,144 筆,實測 1.02 秒,而且跟區間長度成正比。
+        #    CROSS JOIN 會**固定**由左表(命令,324 筆)驅動,每筆用 ts 索引取
+        #    5 秒的小範圍:同一份資料實測 0.006 秒(170 倍)。
+        #    左表是命令、右表是訊框,順序不可以對調。
         replies = list(conn.execute(
-            "SELECT f.ts,f.code,f.raw,f.seq FROM signal_frames f "
-            "WHERE f.src='controller' AND f.ts>? AND f.ts<=? "
-            "AND f.code IN (" + ph + ") "
-            "AND EXISTS (SELECT 1 FROM _send_ts s "
-            "            WHERE f.ts>=s.ts AND f.ts<=s.ts+?) "
+            "SELECT DISTINCT f.ts,f.code,f.raw,f.seq "
+            "FROM _send_ts s CROSS JOIN signal_frames f "
+            "  ON f.ts>=s.ts AND f.ts<=s.ts+? "
+            "WHERE f.src='controller' AND f.code IN (" + ph + ") "
             "ORDER BY f.ts",
-            (cut, end + ACK_WAIT_SEC) + tuple(sorted(want_codes))
-            + (ACK_WAIT_SEC,)))
+            (ACK_WAIT_SEC,) + tuple(sorted(want_codes))))
         conn.close()
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:160], "rows": []}
