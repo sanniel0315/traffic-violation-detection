@@ -3660,6 +3660,10 @@
                   transition:opacity .15s ease; }
         .st-trend:hover .st-bar { opacity:.55; }
         .st-trend .st-bar:hover { opacity:1; }
+        /* 依真實時間定位的長條(2026-09-10)。等距排列會把「夜間十分鐘一段、
+           尖峰一分鐘好幾段」的差異抹平,那是在騙讀者。 */
+        .st-bar--abs { position:absolute; bottom:8px; width:6px; margin-left:-3px;
+                       flex:none; transition:height .2s ease; }
         .st-bar.p2 { background:var(--gov-primary-strong); }
         .st-bar.forced { background:var(--gov-warn); }
         .st-bar.trunc { background:var(--gov-border-strong); }
@@ -8870,6 +8874,15 @@
                     <div class="card" v-if="sigStatOk">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-bar"/></svg>綠燈時間統計（依方向）</span>
+                            <!-- 🛑 2026-09-10 使用者:「要完整地紀錄查詢、報表可輸出、
+                                 可選日期時間查詢」。日期時間查詢用的是**整頁那一組區間**
+                                 (上面的快捷/自訂起訖),這裡把它顯示出來 —— 原本這張卡
+                                 看不出自己在統計哪一段,所以才會覺得不能選時間。 -->
+                            <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                                <span class="st-sub" v-if="sigStats.since">{{ sigStats.since }} ～ {{ sigStats.until }}</span>
+                                <el-button size="small" @click="sigGreenExport"
+                                           :disabled="!(sigStats.by_direction||[]).length">匯出 CSV</el-button>
+                            </span>
                         </div>
                         <div class="card-body">
                             <div class="analysis-setting-tip">
@@ -8920,7 +8933,7 @@
                     <div class="card" v-if="sigStatOk">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-activity"/></svg>綠燈秒數趨勢</span>
-                            <span class="st-sub">顯示最近 {{ (sigStats.trend||[]).length }} 段（區間共 {{ sigStats.trend_total }} 段）</span>
+                            <span class="st-sub">顯示最近 {{ (sigStats.trend||[]).length }} 段（區間共 {{ sigStats.trend_total }} 段）· 橫軸為查詢區間的實際時間</span>
                         </div>
                         <div class="card-body">
                             <div class="st-wrap">
@@ -8931,10 +8944,16 @@
                                     <div v-for="r in sigStatRefLines" :key="'rf'+r.name"
                                          class="st-ref" :class="r.cls" :style="r.style"
                                          :data-lbl="r.name + ' ' + r.sec + 's'"></div>
-                                    <div v-for="(t,ti) in (sigStats.trend||[])" :key="'t'+ti"
-                                         class="st-bar" :class="{p2:t.phase_no===2, forced:t.forced, trunc:t.truncated}"
-                                         :style="{height: sigStatBarH(t)}"
-                                         :title="t.ts+' 分相'+t.phase_no+' '+t.green_sec+'~'+t.green_sec_upper+'s'+(t.forced?' 強制切換':'')+(t.truncated?' 被斷點截斷':'')"></div>
+                                    <!-- 🛑 2026-09-10:長條改成**依真實時間定位**。
+                                         原本是等距排列(flex),每根柱子佔一樣寬 ——
+                                         那等於把「最近 N 段」畫成等距序列,讀者會以為
+                                         綠燈是均勻分佈的。實際上夜間十分鐘才一段、
+                                         尖峰一分鐘好幾段,等距畫法把這個差異抹掉了。
+                                         改成 left = (該段時間 − 區間起) / 區間長度。 -->
+                                    <div v-for="b in sigStatTrendBars" :key="b.k"
+                                         class="st-bar st-bar--abs" :class="b.cls"
+                                         :style="{left:b.left, height:b.h}"
+                                         :title="b.tip"></div>
                                 </div>
                             </div>
                             <!-- 時間軸:只標頭/中/尾三點。柱子寬度只有 6px,
@@ -25469,12 +25488,81 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         });
         // 頭/中/尾三個時間點。趨勢是「最近 N 段」,不是等距時間軸,
         // 所以標的是該根柱子的實際時間,不是均分刻度。
+        // 🛑 2026-09-10:長條改成依查詢區間定位之後,軸也必須是**區間的時間**,
+        //    不能再標「第一段/中間段/最後一段」的時戳 —— 那兩套座標不一樣,
+        //    混在一起會讓人把柱子的位置對到錯的時間。
+        //    跨日就把日期一起標出來,不然「08:30」是哪一天看不出來。
         const sigStatTrendAxis = computed(() => {
-            const t = (sigStats.value && sigStats.value.trend) || [];
-            if (t.length < 2) return [];
-            const hhmm = (x) => (x && x.ts) ? String(x.ts).slice(11, 16) : '';
-            return [hhmm(t[0]), hhmm(t[Math.floor(t.length / 2)]), hhmm(t[t.length - 1])];
+            const st = sigStats.value || {};
+            const a = Date.parse(st.since || ''), b = Date.parse(st.until || '');
+            if (!isFinite(a) || !isFinite(b) || (b - a) <= 0) return [];
+            const sameDay = String(st.since).slice(0, 10) === String(st.until).slice(0, 10);
+            const fmt = (ms) => {
+                const d = new Date(ms), p = (n) => String(n).padStart(2, '0');
+                const hm = p(d.getHours()) + ':' + p(d.getMinutes());
+                return sameDay ? hm : (p(d.getMonth() + 1) + '/' + p(d.getDate()) + ' ' + hm);
+            };
+            return [0, 0.25, 0.5, 0.75, 1].map((f) => fmt(a + (b - a) * f));
         });
+        // 趨勢長條:依真實時間定位(left = 該段落在查詢區間的百分比)。
+        // 🛑 trend 只回最近 trend_limit 段。如果那些段只涵蓋區間的尾巴,
+        //    圖上就會擠在右側 —— 那是**誠實的呈現**(它確實只有那一段有資料),
+        //    不要為了好看改成等距,那會讓人以為整個區間都均勻有量到。
+        const sigStatTrendBars = computed(() => {
+            const st = sigStats.value || {};
+            const t = st.trend || [];
+            if (!t.length) return [];
+            const a = Date.parse(st.since || ''), b = Date.parse(st.until || '');
+            const span = (isFinite(a) && isFinite(b) && 0 < (b - a)) ? (b - a) : 0;
+            return t.map((x, i) => {
+                const ts = Date.parse(x.ts || '');
+                let pct = 50;
+                if (span && isFinite(ts)) {
+                    pct = Math.min(100, Math.max(0, (ts - a) / span * 100));
+                } else if (1 < t.length) {
+                    pct = i / (t.length - 1) * 100;   // 取不到區間才退回等距
+                }
+                return {
+                    k: 't' + i,
+                    left: pct.toFixed(3) + '%',
+                    h: sigStatBarH(x),
+                    cls: {p2: x.phase_no === 2, forced: x.forced, trunc: x.truncated},
+                    tip: x.ts + ' 分相' + x.phase_no + ' ' + x.green_sec + '~'
+                         + x.green_sec_upper + 's'
+                         + (x.forced ? ' 強制切換' : '')
+                         + (x.truncated ? ' 被斷點截斷' : ''),
+                };
+            });
+        });
+        // 綠燈時間統計匯出。🛑 匯出的是**畫面上這一組區間**的同一份資料,
+        //    不另外去撈 —— 兩者不同時段的話,那份報表不能拿去交。
+        const sigGreenExport = () => {
+            const st = sigStats.value || {};
+            const rows = st.by_direction || [];
+            const q = (v) => '"' + String(v === null || v === undefined ? '' : v)
+                                    .replace(/"/g, '""') + '"';
+            const L = [];
+            L.push(['# 綠燈時間統計(依方向)'].map(q).join(','));
+            L.push(['# 區間', (st.since || '') + ' ~ ' + (st.until || '')].map(q).join(','));
+            L.push(['# 綠燈長度為區間量測,取樣週期內的真值落在 [量到, 量到+週期)'].map(q).join(','));
+            L.push(['分相', '方向', '段數', '綠燈平均(估計,秒)', '綠燈平均(量到,秒)',
+                    '變異數', '標準差(秒)', '最短觀測(秒)', '最長觀測(秒)',
+                    '最小綠(秒)', '最大綠(秒)', '低於最小綠(次)',
+                    '長度不可信(次)'].map(q).join(','));
+            rows.forEach((b) => L.push(
+                [b.phase_no, b.ramp || b.label, b.n, b.avg_estimated, b.avg,
+                 b.variance, b.stddev, b.min_observed, b.max_observed,
+                 b.min_green_sec, b.max_green_sec, b.below_min_green,
+                 b.uncertain_truncated].map(q).join(',')));
+            const blob = new Blob([String.fromCharCode(65279)
+                                   + L.join(String.fromCharCode(13, 10))],
+                                  {type: 'text/csv;charset=utf-8'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = '綠燈時間統計_' + String(st.since || '').slice(0, 10) + '.csv';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        };
         const sigStatBarH = (t) => {
             const pct = Math.max(4, 100 * (t.green_sec || 0) / sigStatMaxGreen.value);
             return pct.toFixed(1) + '%';
@@ -28216,7 +28304,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigStepCells,sigCycleDash,sigCycleText,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgTotal,sigCfgReceived,sigCfgFresh,sigCfgStale,sigCfgMissing,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatTrendBars,sigGreenExport,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigStepCells,sigCycleDash,sigCycleText,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
