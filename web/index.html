@@ -20967,15 +20967,10 @@ const app=createApp({
         // 類型分布 + 最早/最近時間 + 罰款總額 (原本只是純前端 group violations.value 半成品)
         const loadRepeatOffenders=async()=>{
             try{
-                const _toIso=(d,t)=>{
-                    if(!d)return null;
-                    const dt=new Date(d);
-                    if(t){const tt=new Date(t); dt.setHours(tt.getHours(),tt.getMinutes(),0,0);}
-                    return dt.toISOString();
-                };
                 const params=new URLSearchParams({threshold:String(repeatThreshold.value||1)});
-                const sf=_toIso(repeatDateFrom.value,repeatTimeFrom.value);
-                const st=_toIso(repeatDateTo.value,repeatTimeTo.value);
+                // 共用 violIso:只選日期不選時間時,訖要補到當天 23:59:59
+                const sf=violIso(repeatDateFrom.value,repeatTimeFrom.value,false);
+                const st=violIso(repeatDateTo.value,repeatTimeTo.value,true);
                 if(sf)params.set('start_time',sf);
                 if(st)params.set('end_time',st);
                 if(repeatViolationType.value)params.set('violation_type',repeatViolationType.value);
@@ -22291,24 +22286,49 @@ const app=createApp({
         };
         const pollLprResults=()=>{if(lprPollTimer)clearInterval(lprPollTimer);lprPollTimer=setInterval(async()=>{if(!lprStreamRunning.value||!lprCameraId.value){clearInterval(lprPollTimer);return;}if(page.value!=='lpr' || !isPageVisible())return;try{const id=Number(lprCameraId.value);const d=await syncLprStatusByCamera(id);await refreshLprDebugStatuses();if(!d?.running){clearInterval(lprPollTimer);return;}const r2=await fetch('/api/lpr/stream/results/'+id+'?limit=100');const d2=await r2.json().catch(()=>({}));const rows=Array.isArray(d2?.results)?d2.results:[];const newestId=Number(rows?.[0]?.id||0);if(newestId && newestId!==lprHistoryLatestSeen.value){loadLprHistory();}}catch(e){console.error(e);}},3000);};
         const recognizeFromCamera=async()=>{if(!lprCameraId.value)return;lprLoading.value=true;try{const r=await fetch('/api/lpr/recognize-camera/'+lprCameraId.value,{method:'POST'});const d=await r.json();Object.assign(lprResult,d);if(d.plate_number){ElementPlus.ElMessage.success('辨識成功: '+d.plate_number);}else{ElementPlus.ElMessage.warning('未偵測到車牌');}}catch(e){ElementPlus.ElMessage.error('辨識失敗');}finally{lprLoading.value=false;}};
+        // 日期 + 時間 → ISO(UTC)。資料庫存的是 UTC(models 用 datetime.utcnow),
+        // toISOString() 正好也是 UTC,兩邊一致。
+        // 🛑 只有日期沒有時間時,起訖分別補 00:00 與 23:59:59 ——
+        //    否則「選 9/8 到 9/8」會變成同一瞬間,查出來永遠是空的。
+        const violIso = (d, t, endOfDay) => {
+            if (!d) return null;
+            const dt = new Date(d);
+            if (t) { const tt = new Date(t); dt.setHours(tt.getHours(), tt.getMinutes(), endOfDay ? 59 : 0, 0); }
+            else if (endOfDay) dt.setHours(23, 59, 59, 999);
+            else dt.setHours(0, 0, 0, 0);
+            return dt.toISOString();
+        };
         const loadViolations=async()=>{
+            // 🛑 2026-09-09 修:日期/時間/攝影機三個篩選器綁在 filters 上,
+            //    但這支**完全沒有把它們帶進查詢** —— 選了等於沒選,
+            //    畫面永遠是最新 100 筆;再配上其他條件就變成一筆都沒有。
             let u='/api/violations?page_size=100';
             if(filters.plate)u+=`&license_plate=${filters.plate}`;
             if(filters.type)u+=`&violation_type=${filters.type}`;
             if(filters.status)u+=`&status=${filters.status}`;
-            violations.value=(await(await fetch(u)).json()).items||[];
+            if(filters.camera)u+=`&camera_id=${filters.camera}`;
+            const _sf=violIso(filters.dateFrom,filters.timeFrom,false);
+            const _st=violIso(filters.dateTo,filters.timeTo,true);
+            if(_sf)u+=`&start_date=${encodeURIComponent(_sf)}`;
+            if(_st)u+=`&end_date=${encodeURIComponent(_st)}`;
+            let items=(await(await fetch(u)).json()).items||[];
+            // 後端沒有 location 參數,點位在前端過濾(與開單管理同一個做法)
+            if(filters.location)items=items.filter(v=>v.location===filters.location);
+            violations.value=items;
             // 接 LPR 車牌裁切圖 (跟 LPR 歷史一致): batch match plate+camera+time
             enrichPlateSnaps(violations.value);
         };
         const loadPendingViolations=async()=>{
             if(!(cameras.value||[]).length)loadCameras();   // 補:開單管理頁進入不會自動載攝影機,下拉需要完整清單
-            const _toIso=(d,t)=>{ if(!d)return null; const dt=new Date(d); if(t){const tt=new Date(t); dt.setHours(tt.getHours(),tt.getMinutes(),0,0);} return dt.toISOString(); };
+
             let u=`/api/violations?status=${reviewStatus.value||'pending'}&page_size=100`;
             if(reviewPlate.value)u+=`&license_plate=${reviewPlate.value}`;
             if(reviewType.value)u+=`&violation_type=${reviewType.value}`;
             if(reviewCamera.value)u+=`&camera_id=${reviewCamera.value}`;   // 後端支援 camera_id,選攝影機真的會篩
-            const sf=_toIso(reviewDateFrom.value,reviewTimeFrom.value);    // 時間區間:後端支援 start_date/end_date
-            const st=_toIso(reviewDateTo.value,reviewTimeTo.value);
+            // 時間區間:後端支援 start_date/end_date。用共用的 violIso ——
+            // 原本這裡自己寫一份,只選日期不選時間時起訖會撞在同一瞬間。
+            const sf=violIso(reviewDateFrom.value,reviewTimeFrom.value,false);
+            const st=violIso(reviewDateTo.value,reviewTimeTo.value,true);
             if(sf)u+=`&start_date=${encodeURIComponent(sf)}`;
             if(st)u+=`&end_date=${encodeURIComponent(st)}`;
             let items=(await(await fetch(u)).json()).items||[];
