@@ -3962,6 +3962,64 @@ def _run_self_probe(user: str, plan_lo: int, plan_hi: int) -> None:
         _self_probe_busy["on"] = False
 
 
+@router.post("/config/refresh", summary="更新某一類設定(送它自己的查詢碼)")
+def config_refresh(key: str = "", _user=Depends(get_current_user)):
+    """把某一類設定重新抄一次。
+
+    「資料陳舊」不是故障:這些設定**不是週期回報**,控制器只在我方主動送查詢碼
+    時才回一次。沒人查,年齡就一路累積(實測有到 19 天的)。這支就是那個「查」。
+
+    🛑 只送**查詢類**(指令碼 0x40~0x7F)。查詢只讀資料、不改運轉;設定類一律
+       不從這裡走 —— 那條路要經過 prepare→send 的預覽與 token,不能被一顆
+       「更新」按鈕繞過去。
+    🛑 送之前先看歷史:這個查詢碼若曾被控制器拒收(0F81),直接回報原因而不
+       再送。再送一次也只會再被拒一次,徒然在線路上製造雜訊,還會讓看的人
+       以為「按了沒反應」。
+    """
+    if not CONTROL_ENABLED:
+        raise HTTPException(status_code=403, detail="號控未啟用(SIGNAL_TC3_CONTROL)")
+    if _sock_ref.get("sock") is None:
+        raise HTTPException(status_code=409, detail="號誌通道未連線,無法查詢")
+    sec = next((x for x in CONFIG_SECTIONS if x["key"] == str(key or "").strip()), None)
+    if sec is None:
+        raise HTTPException(status_code=404, detail=f"沒有這個設定類別: {key}")
+    code = sec["query"]
+    try:
+        cmd = int(code[2:], 16)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"查詢碼不合法: {code}")
+    if not (0x40 <= cmd < 0x80):
+        raise HTTPException(status_code=403, detail=f"{code} 不是查詢類,這支只送查詢")
+
+    att = _query_attempts(code)
+    if att.get("nak"):
+        return {"ok": False, "sent": False, "code": code,
+                "reason": ("這台控制器拒收 %s(已送 %d 次,其中 %d 次回 ErrorCode=%s)。"
+                           "再送也拿不到,需洽廠商。"
+                           % (code, att.get("sent", 0), att.get("nak", 0),
+                              att.get("error_code")))}
+
+    # 5F44/5F45 要帶 PlanID,不帶會被拒。用目前執行中的計畫;查不到就用 1。
+    payload = b""
+    if code in ("5F44", "5F45"):
+        pid = None
+        try:
+            pid = (_current_running_plan() or {}).get("plan_id")
+        except Exception:
+            pid = None
+        payload = bytes(((int(pid) if pid else 1) & 0xFF,))
+
+    user = getattr(_user, "username", None) or "web"
+    ok = _send_query_to_controller(code, payload, user)
+    if not ok:
+        return {"ok": False, "sent": False, "code": code,
+                "reason": "送出失敗(通道異常),請看通訊紀錄"}
+    return {"ok": True, "sent": True, "code": code, "reply": sec["reply"],
+            "title": sec["title"],
+            "msg": ("已送 %s,控制器回 %s 後這一類就會更新。"
+                    "回報需要一點時間,稍候按「更新」重讀。" % (code, sec["reply"]))}
+
+
 @router.post("/control/self-probe", summary="自我查詢比對:主動抄錄控制器 控制策略/時制計畫(全)/基本參數/硬體狀態")
 def control_self_probe(_user=Depends(get_current_user), plan_lo: int = 1, plan_hi: int = 40):
     """一鍵抄錄控制器:5F40(控制策略)/5F48(目前時制計畫)/0F41(硬體狀態) +
