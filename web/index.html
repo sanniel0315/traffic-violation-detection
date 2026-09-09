@@ -3663,9 +3663,15 @@
            色票經 dataviz 驗證器實跑(light):#0b5ea8 / #9333ea / #e8590c
            五項檢查全 PASS,最差相鄰 CVD ΔE 10.6(protan)、常視 ΔE 21.0。
            (先試過 teal #0f766e —— chroma 不足會讀成灰,且與藍的常視 ΔE 只有
-            13.4,低於 15 的硬底線,已淘汰。) */
+            13.4,低於 15 的硬底線,已淘汰。)
+           🛑 2026-09-10 後續:現場覺得紫偏搶,但**不要改色相** ——
+              較深的紫全部在紅綠色覺下與藍撞在一起(實跑:#7e22ce ΔE 5.7、
+              #a21caf ΔE 5.4,都是 FAIL;#6d28d9 7.5 只有 WARN),
+              較淺的 #a855f7 反而更亮更搶。#9333ea 是兩種色覺下最平衡的。
+              要收斂請調**份量**(填色不透明度),不是色相 —— 改色相會賠掉
+              可辨識性,那是拿讀者看不看得懂去換好看。 */
         .st-bar { flex:0 0 7px; min-height:3px; border-radius:4px 4px 2px 2px;
-                  background:rgba(11,94,168,.50);
+                  background:rgba(11,94,168,.40);
                   /* 柱子重疊時用底色描邊分開,不然兩相的柱子會糊成一塊 */
                   box-shadow:0 0 0 1px var(--gov-surface);
                   transition:background .15s ease; }
@@ -3685,7 +3691,7 @@
         .st-line polyline.p2 { stroke:#9333ea; }
         .st-key.ln1 { background:#0b5ea8; height:3px; border-radius:2px; }
         .st-key.ln2 { background:#9333ea; height:3px; border-radius:2px; }
-        .st-bar.p2 { background:rgba(147,51,234,.50); }
+        .st-bar.p2 { background:rgba(147,51,234,.40); }
         .st-trend .st-bar.p2:hover { background:rgba(147,51,234,.95); }
         .st-bar.forced { background:var(--gov-warn); }
         .st-bar.trunc { background:var(--gov-border-strong); }
@@ -3694,8 +3700,8 @@
                    font-variant-numeric:tabular-nums; }
         .st-key { display:inline-block; width:10px; height:10px; border-radius:2px;
                   margin-right:4px; vertical-align:-1px; }
-        .st-key.p1 { background:rgba(11,94,168,.50); box-shadow:inset 0 0 0 1px #0b5ea8; }
-        .st-key.p2 { background:rgba(147,51,234,.50); box-shadow:inset 0 0 0 1px #9333ea; }
+        .st-key.p1 { background:rgba(11,94,168,.40); box-shadow:inset 0 0 0 1px #0b5ea8; }
+        .st-key.p2 { background:rgba(147,51,234,.40); box-shadow:inset 0 0 0 1px #9333ea; }
         .st-key.forced { background:var(--gov-warn); }
         .st-key.trunc { background:var(--gov-border-strong); }
         /* 驗收清單的一列。左側色條直接對應狀態,掃過去就知道哪些要處理。 */
