@@ -9455,8 +9455,7 @@
                                             </div>
                                         </div>
                                         <div class="wr-cam-veh" v-if="sigVd[cam.camera_id]">
-                                            近 5 分鐘 小車 <i>{{ sigVd[cam.camera_id].small }}</i>
-                                            · 大車 <i>{{ sigVd[cam.camera_id].large }}</i> 輛
+                                            近 5 分鐘 總流量 <i>{{ sigVd[cam.camera_id].total }}</i> 輛
                                         </div>
                                         <!-- 🛑 純原始畫面,**不疊任何東西**(使用者 2026-09-06:「原始影像沒 roi」)。
                                              走 go2rtc 的共用基礎串流 cam_N,traffic-api 完全不參與編碼。 -->
@@ -26402,8 +26401,10 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                                 + ' ' + pad(bk.getHours()) + ':' + pad(bk.getMinutes());
                     const it = items.find((x) => String(x.timeText || '').slice(0, 16) < cur) || items[0];
                     sigVd.value[id] = {
-                        small: Number(it.smallFlow) || 0,
-                        large: Number(it.largeFlow) || 0,
+                        // 🛑 用端點回的 totalFlow,不要自己加 small+large ——
+                        //    車種分類會漏(未歸類的既不算小車也不算大車),
+                        //    自己加出來的總數會比實際少。
+                        total: Number(it.totalFlow) || 0,
                         occ: (it.avgOccupancyPct == null) ? '—' : Number(it.avgOccupancyPct).toFixed(0) + '%',
                         at: String(it.timeText || '').slice(11),
                     };
