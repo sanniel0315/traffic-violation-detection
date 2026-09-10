@@ -4773,6 +4773,59 @@
         @media (prefers-reduced-motion: reduce) {
             .cs-flag.on .cs-flag-dot, .cs-flag.flip::after { animation:none; }
         }
+        /* ── 運作狀態 / 執行績效(兩張卡,2026-09-10 拆開重做) ──
+           動畫一律**低調且有意義**:
+             · 狀態點只在「真的在跑」時脈動 —— 全部都在動就等於都沒在動
+             · 格子進場錯開 70ms,眼睛才跟得上是四格不是一塊
+             · 績效卡底線由左長出來,表達「這是一段區間累積的量」
+           全部包在 prefers-reduced-motion 的關閉條款裡。 */
+        .ops-live { font-size:11px; font-weight:700; letter-spacing:.06em;
+                    color:var(--gov-mute-2); padding:2px 8px; border-radius:99px;
+                    background:var(--gov-surface-2); }
+        .ops-grid, .pfm-grid { display:grid; gap:10px;
+                               grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); }
+        .ops-cell { position:relative; display:grid;
+                    grid-template-columns:10px 1fr; grid-template-rows:auto auto;
+                    column-gap:9px; row-gap:2px; align-items:center;
+                    padding:11px 13px; border-radius:8px;
+                    background:var(--gov-surface-2);
+                    border:1px solid transparent;
+                    animation:opsIn .38s ease both;
+                    transition:border-color .25s ease, background .25s ease; }
+        .ops-dot { grid-row:1 / span 2; width:10px; height:10px; border-radius:50%;
+                   background:var(--gov-border-strong); }
+        .ops-k { font-size:12px; color:var(--gov-text-secondary); }
+        .ops-v { font-size:16px; font-variant-numeric:tabular-nums; line-height:1.35; }
+        .ops-cell.ok   { border-color:#cfe8d6; background:#f5fbf7; }
+        .ops-cell.ok   .ops-dot { background:#2f9e44; animation:opsPulse 1.9s ease-in-out infinite; }
+        .ops-cell.warn { border-color:#f2dcae; background:#fffaf0; }
+        .ops-cell.warn .ops-dot { background:var(--gov-warn); animation:opsPulse 1.1s ease-in-out infinite; }
+        .ops-cell.idle .ops-v { color:var(--gov-text-secondary); }
+        .ops-reason { display:flex; align-items:center; gap:6px; margin:12px 0 0;
+                      font-size:12.5px; color:#8a4b00; }
+        @keyframes opsIn { from { opacity:0; transform:translateY(6px); } }
+        @keyframes opsPulse {
+            0%,100% { box-shadow:0 0 0 0 rgba(47,158,68,.42); }
+            50%     { box-shadow:0 0 0 5px rgba(47,158,68,0); }
+        }
+        .pfm-cell { position:relative; overflow:hidden; padding:12px 13px 14px;
+                    border-radius:8px; background:var(--gov-surface-2);
+                    animation:opsIn .38s ease both; }
+        .pfm-k { display:block; font-size:12px; color:var(--gov-text-secondary); }
+        .pfm-v { display:block; margin-top:3px; font-size:20px; line-height:1.2;
+                 font-variant-numeric:tabular-nums; font-family:var(--font-mono); }
+        .pfm-v i { margin-left:4px; font-style:normal; font-size:12px; font-weight:600;
+                   font-family:var(--font-sans); color:var(--gov-text-secondary); }
+        .pfm-bar { position:absolute; left:0; bottom:0; height:2px; width:100%;
+                   transform-origin:left center;
+                   background:linear-gradient(90deg,var(--gov-primary),rgba(11,94,168,.15));
+                   animation:pfmGrow .7s cubic-bezier(.22,.61,.36,1) both; }
+        @keyframes pfmGrow { from { transform:scaleX(0); } to { transform:scaleX(1); } }
+        @media (prefers-reduced-motion: reduce) {
+            .ops-cell, .pfm-cell, .pfm-bar { animation:none; }
+            .ops-cell.ok .ops-dot, .ops-cell.warn .ops-dot { animation:none; }
+        }
+
         /* ── 運作統計:查詢列 ── */
         .st-query-card { margin-bottom:12px; }
         .st-query { display:flex; flex-direction:column; gap:10px; }
@@ -8931,31 +8984,43 @@
                                 這段時間沒有可用樣本。線上演算法比對需要抄錄器連線正常，且控制模式為外部動態才會納入。</p>
                         </div>
                     </div>
-                    <!-- 🛑 2026-09-10 版面整合:運作狀態與執行績效原本是兩張卡,
-                         但它們是同一件事的兩面(現在怎麼跑 / 這段跑得怎樣),
-                         而且都只有一排 sp-kv —— 兩張卡各佔一塊,中間還夾著查詢列。
-                         併成一張,用小節標題分。 -->
-                    <div class="card">
-                        <div class="card-header ch-fold">
-                            <span><svg class="text-icon"><use href="#i-activity"/></svg>運作狀態與執行績效</span>
+                    <!-- 🛑 2026-09-10 拆回兩張卡(使用者:「分開就是分開,不可以混和」)。
+                         前一版把它們併成一張、用小節標題分,但那兩件事的性質不同:
+                         左邊是「此刻的狀態」(會亮會跳),右邊是「這段區間的量測值」
+                         (跟著上面的查詢區間走)。併在一起會讓人以為狀態也受區間影響。 -->
+                    <div class="card ops-card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-activity"/></svg>運作狀態</span>
+                            <span class="ops-live">此刻</span>
                         </div>
                         <div class="card-body">
-                            <h4 class="sc-h" style="margin-top:0">運作狀態</h4>
-                            <div class="sp-grid">
-                                <div class="sp-kv"><span>控制模式</span><b>{{ specOpMode }}</b></div>
-                                <div class="sp-kv"><span>演算法下發</span><b>{{ specActText }}</b></div>
-                                <div class="sp-kv"><span>降階級數</span><b>{{ specDegLevel }}</b></div>
-                                <div class="sp-kv"><span>決策引擎</span><b>{{ specEngine }}</b></div>
+                            <div class="ops-grid">
+                                <div class="ops-cell" v-for="(c,ci) in specCells" :key="'oc'+c.k"
+                                     :class="c.s" :style="{animationDelay: (ci*70)+'ms'}">
+                                    <span class="ops-dot"></span>
+                                    <span class="ops-k">{{ c.k }}</span>
+                                    <b class="ops-v">{{ c.v }}</b>
+                                </div>
                             </div>
-                            <p class="analysis-setting-tip" v-if="specDegReason">降階原因：{{ specDegReason }}</p>
-                            <h4 class="sc-h">執行績效</h4>
-                            <div class="sp-grid">
-                                <div class="sp-kv"><span>總延滯</span><b>{{ specNum(specPerf.total_delay_veh_sec) }} 車·秒</b></div>
-                                <div class="sp-kv"><span>上匝道平均排隊</span><b>{{ specNum(specPerf.avg_queue_m_1) }} m</b></div>
-                                <div class="sp-kv"><span>下匝道平均排隊</span><b>{{ specNum(specPerf.avg_queue_m_2) }} m</b></div>
-                                <div class="sp-kv"><span>下匝道最大排隊</span><b>{{ specNum(specPerf.max_queue_m_2) }} m</b></div>
-                                <div class="sp-kv"><span>主線回堵次數</span><b>{{ specNum(specPerf.spillback_events_2) }}</b></div>
-                                <div class="sp-kv"><span>每分鐘換相</span><b>{{ specNum(specPerf.switch_per_min) }}</b></div>
+                            <p class="ops-reason" v-if="specDegReason">
+                                <svg class="text-icon"><use href="#i-alert"/></svg>降階原因：{{ specDegReason }}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="card pfm-card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-bar"/></svg>執行績效</span>
+                            <span class="st-sub" v-if="sigStats.since">{{ sigStats.since }} ～ {{ sigStats.until }}</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="pfm-grid">
+                                <div class="pfm-cell" v-for="(c,pi) in specPerfCells" :key="'pf'+c.k"
+                                     :style="{animationDelay: (pi*60)+'ms'}">
+                                    <span class="pfm-k">{{ c.k }}</span>
+                                    <b class="pfm-v">{{ c.v }}<i v-if="c.u">{{ c.u }}</i></b>
+                                    <span class="pfm-bar"></span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -25096,6 +25161,32 @@ const app=createApp({
             return e.running ? ('運轉中 · ' + (e.samples || 0) + ' 次取樣') : '停止';
         });
         const specPerf = computed(() => spec.value.performance || {});
+        // 運作狀態四格。🛑 狀態色只由既有值推導,不新增後端欄位;
+        //    也不把比較式寫進模板(CLAUDE.md 的 HTML parser 規則)。
+        const specCells = computed(() => {
+            const op = spec.value.operation || {};
+            const deg = specDegLevel.value;
+            return [
+                {k: '控制模式',   v: specOpMode.value,
+                 s: (op.control_mode === 'external_dynamic') ? 'ok' : 'idle'},
+                {k: '演算法下發', v: specActText.value, s: op.actuate_enabled ? 'ok' : 'idle'},
+                {k: '降階級數',   v: deg, s: (deg === 'L0') ? 'ok' : 'warn'},
+                {k: '決策引擎',   v: specEngine.value,
+                 s: ((op.engine || {}).running) ? 'ok' : 'idle'},
+            ];
+        });
+        // 執行績效六格。數值與單位分開存,單位才能用小字排在數字後面。
+        const specPerfCells = computed(() => {
+            const d = specPerf.value || {};
+            return [
+                {k: '總延滯',         v: specNum(d.total_delay_veh_sec), u: '車·秒'},
+                {k: '上匝道平均排隊', v: specNum(d.avg_queue_m_1),       u: 'm'},
+                {k: '下匝道平均排隊', v: specNum(d.avg_queue_m_2),       u: 'm'},
+                {k: '下匝道最大排隊', v: specNum(d.max_queue_m_2),       u: 'm'},
+                {k: '主線回堵次數',   v: specNum(d.spillback_events_2),  u: ''},
+                {k: '每分鐘換相',     v: specNum(d.switch_per_min),      u: ''},
+            ];
+        });
         const sigRawOpen = ref(false);   // 原始訊框預設收起(佐證用,平常不占版面)
         const sigTabs = ref([
             {key: 'live',   label: '即時戰情',   icon: 'i-activity'},
@@ -28686,7 +28777,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgSectionsOrdered,sigCfgOrder,sigCfgDragKey,sigCfgDragStart,sigCfgDrop,sigCfgResetOrder,sigCfgReceived,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgBusy,sigCfgRefreshOne,sigCfgAutoOn,sigCfgAutoHours,sigCfgAutoBusy,sigCfgAutoText,sigCfgSetAuto,sigCfgRunAuto,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigAbOn,sigAbMin,sigAbBusy,sigAbText,sigAbSet,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBitsShown,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatTrendBars,sigStatTrendLines,sigStatBucketText,sigGreenExport,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigStepCells,sigCycleDash,sigCycleText,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgSectionsOrdered,sigCfgOrder,sigCfgDragKey,sigCfgDragStart,sigCfgDrop,sigCfgResetOrder,sigCfgReceived,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgBusy,sigCfgRefreshOne,sigCfgAutoOn,sigCfgAutoHours,sigCfgAutoBusy,sigCfgAutoText,sigCfgSetAuto,sigCfgRunAuto,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigAbOn,sigAbMin,sigAbBusy,sigAbText,sigAbSet,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBitsShown,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatTrendBars,sigStatTrendLines,sigStatBucketText,sigGreenExport,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigStepCells,sigCycleDash,sigCycleText,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,specCells,specPerfCells,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
