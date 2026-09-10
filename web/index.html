@@ -4215,7 +4215,24 @@
                    border:1px solid var(--gov-border,#dbe2ea); }
         .cst-bit i { font-style:normal; font-family:var(--font-mono);
                      font-size:var(--fs-caption); color:var(--gov-mute-2); }
+        /* 🛑 勾選中的要跟即時戰情那排 .cs-flag.on 長一樣(使用者 2026-09-10):
+           同一件事(某個控制策略正在生效)在兩個畫面上不該是兩種樣子。
+           這裡沿用同一組視覺 —— 實心藍底、白字、白色脈動點、關鍵位多一圈內框,
+           連 keyframes 都共用 csPulse,不另外造一個。 */
+        .cst-dot { width:8px; height:8px; border-radius:50%; flex:0 0 8px;
+                   background:var(--gov-border-strong); transition:background .25s ease; }
+        .cst-bit.on { background:var(--gov-primary); border-color:var(--gov-primary);
+                      color:#fff; font-weight:600; }
+        .cst-bit.on i { color:rgba(255,255,255,.72); }
+        .cst-bit.on .cst-dot { background:#fff; animation:csPulse 1.8s ease-in-out infinite; }
+        /* 🛑 勾選框本身也要換色:預設是「藍底白勾」,疊在藍卡上會整個看不見。
+           反過來做成「白底藍勾」。 */
+        .cst-bit.on .el-checkbox__inner { background:#fff; border-color:#fff; }
+        .cst-bit.on .el-checkbox__inner::after { border-color:var(--gov-primary); }
         .cst-bit.key { border-color:var(--gov-primary,#1f4e8c); }
+        .cst-bit.key:not(.on) { border-style:dashed; }
+        .cst-bit.key.on { box-shadow:0 0 0 2px var(--gov-primary-line) inset; }
+        @media (prefers-reduced-motion: reduce) { .cst-bit.on .cst-dot { animation:none; } }
         .cst-act { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
         .cst-warn { font-size:var(--fs-caption); color:#a86400; font-weight:600; }
         .wr-ctlway { display:flex; flex-direction:column; gap:3px; margin:6px 0 12px;
@@ -8485,8 +8502,9 @@
 
                             <div class="cst-bits">
                                 <label v-for="b in sigCsBitsShown" :key="'cs'+b.bit"
-                                       class="cst-bit" :class="{key:b.bit===4}">
+                                       class="cst-bit" :class="{key:b.bit===4, on:b.on}">
                                     <el-checkbox v-model="b.on" size="small"></el-checkbox>
+                                    <span class="cst-dot"></span>
                                     <span>{{ b.name }}</span>
                                     <i>bit{{ b.bit }}</i>
                                 </label>
