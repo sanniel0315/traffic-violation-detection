@@ -4799,6 +4799,9 @@
         @keyframes stPulse { 0%,100%{opacity:1} 50%{opacity:.25} }
 
         /* —— 號誌設定：19 個類別的網格版面(2026-09-09 整合) —— */
+        .sc-auto { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+                   font-size:var(--fs-small); color:var(--gov-muted); }
+        .sc-auto label { display:flex; align-items:center; gap:5px; white-space:nowrap; }
         .sc-grid { display:grid; gap:14px; align-items:start;
                    grid-template-columns:repeat(auto-fill,minmax(430px,1fr)); }
         @media (max-width:900px) { .sc-grid { grid-template-columns:1fr; } }
@@ -8585,6 +8588,22 @@
                         <el-button size="small" plain @click="loadSigConfig"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>更新</el-button>
                         <el-button size="small" plain v-if="sigCfgOrder.length"
                                    @click="sigCfgResetOrder">還原預設順序</el-button>
+                        <!-- 🛑 2026-09-10:定期抄錄。這些設定不是週期回報,沒人查就一路
+                             變舊(實測到 19 天)。開關預設關閉 —— 自動行為要對應使用者的
+                             設定,不 hardcode(專案規範)。 -->
+                        <span class="sc-auto">
+                            <el-switch v-model="sigCfgAutoOn" size="small" :loading="sigCfgAutoBusy"
+                                       active-text="定期抄錄" inline-prompt
+                                       @change="sigCfgSetAuto"></el-switch>
+                            <label>每
+                                <el-input-number v-model="sigCfgAutoHours" size="small" :min="1" :max="720"
+                                                 :step="1" controls-position="right" style="width:96px"
+                                                 @change="sigCfgSetAuto"></el-input-number>
+                                小時</label>
+                            <el-button size="small" plain :loading="sigCfgAutoBusy"
+                                       @click="sigCfgRunAuto">立刻抄一輪</el-button>
+                            <span class="st-sub" v-if="sigCfgAutoText">{{ sigCfgAutoText }}</span>
+                        </span>
                     </div>
 
                     <!-- 🛑 2026-09-08 使用者要求拿掉這張只有說明文字的卡。
@@ -25235,6 +25254,66 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             sigCfgOrder.value = [];
             try { localStorage.removeItem(SIG_CFG_ORDER_KEY); } catch (e) {}
         };
+        // ── 設定定期抄錄(開關 + 週期 + 立刻抄一輪)──────────────────
+        // 🛑 狀態以**後端回的為準**:這個開關是持久化在 signal_conn.json 的,
+        //    別台機器改了、或服務重啟,這裡都要跟著。不要只信本地的 ref。
+        const sigCfgAutoOn = ref(false);
+        const sigCfgAutoHours = ref(24);
+        const sigCfgAutoBusy = ref(false);
+        const sigCfgAutoText = ref('');
+        const sigCfgAutoApply = (a) => {
+            if (!a) return;
+            sigCfgAutoOn.value = !!a.enabled;
+            if (a.interval_hours) sigCfgAutoHours.value = Number(a.interval_hours);
+            const parts = [];
+            if (a.last_run) {
+                const m = Math.round((Date.now() / 1000 - a.last_run) / 60);
+                parts.push('上次 ' + (m < 60 ? (m + ' 分鐘前')
+                                             : ((m / 60).toFixed(1) + ' 小時前')));
+                if (a.last_sent !== undefined) {
+                    parts.push('送 ' + a.last_sent + ' 則'
+                               + (a.last_skipped ? '、跳過 ' + a.last_skipped : ''));
+                }
+            } else if (a.enabled) {
+                parts.push('尚未抄過');
+            }
+            if (a.last_error) parts.push('⚠ ' + a.last_error);
+            sigCfgAutoText.value = parts.join(' · ');
+        };
+        const sigCfgPostAuto = async (qs) => {
+            sigCfgAutoBusy.value = true;
+            try {
+                const r = await fetch('/api/signal/config/auto?' + qs,
+                                      {method: 'POST', credentials: 'include'});
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(d?.detail || ('HTTP ' + r.status));
+                sigCfgAutoApply(d);
+                return d;
+            } catch (e) {
+                ElementPlus.ElMessage.error('設定失敗: ' + (e?.message || e));
+                await loadSigConfig();      // 失敗就回讀,別讓畫面停在沒生效的狀態
+                return null;
+            } finally {
+                sigCfgAutoBusy.value = false;
+            }
+        };
+        const sigCfgSetAuto = async () => {
+            const d = await sigCfgPostAuto('enabled=' + (sigCfgAutoOn.value ? 1 : 0)
+                                           + '&hours=' + Number(sigCfgAutoHours.value || 24));
+            if (d) {
+                ElementPlus.ElMessage.success(
+                    d.enabled ? ('定期抄錄已開啟,每 ' + d.interval_hours + ' 小時一輪')
+                              : '定期抄錄已關閉');
+            }
+        };
+        const sigCfgRunAuto = async () => {
+            const d = await sigCfgPostAuto('run_now=1');
+            if (!d) return;
+            ElementPlus.ElMessage.success(d.msg || '已抄一輪');
+            // 🛑 一輪 19 則要送完 + 控制器逐則回報,馬上重讀一定還是舊的。
+            await new Promise((ok) => setTimeout(ok, 5000));
+            await loadSigConfig();
+        };
         // 更新單一設定類別:送它自己的查詢碼,等控制器回報後重讀。
         // 🛑 不做「送完立刻重讀」—— 控制器回報要時間,馬上讀一定還是舊的,
         //    使用者會以為按了沒用。等 2.5 秒再讀一次,並把後端的訊息如實顯示。
@@ -25301,7 +25380,10 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         const loadSigConfig = async () => {
             try {
                 const r = await fetch('/api/signal/config', {credentials: 'include'});
-                if (r.ok) sigCfg.value = await r.json();
+                if (r.ok) {
+                    sigCfg.value = await r.json();
+                    sigCfgAutoApply(sigCfg.value.auto);   // 開關以後端為準
+                }
             } catch (e) {}
         };
 
@@ -28502,7 +28584,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
             addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwSetMode,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
-            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgSectionsOrdered,sigCfgOrder,sigCfgDragKey,sigCfgDragStart,sigCfgDrop,sigCfgResetOrder,sigCfgReceived,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgBusy,sigCfgRefreshOne,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatTrendBars,sigStatTrendLines,sigStatBucketText,sigGreenExport,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigStepCells,sigCycleDash,sigCycleText,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
+            signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgSectionsOrdered,sigCfgOrder,sigCfgDragKey,sigCfgDragStart,sigCfgDrop,sigCfgResetOrder,sigCfgReceived,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgBusy,sigCfgRefreshOne,sigCfgAutoOn,sigCfgAutoHours,sigCfgAutoBusy,sigCfgAutoText,sigCfgSetAuto,sigCfgRunAuto,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatTrendBars,sigStatTrendLines,sigStatBucketText,sigGreenExport,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigStepCells,sigCycleDash,sigCycleText,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
             pushDevices,pushCategories,pushCams,pushSaving,loadPushDevices,savePushDevice,deletePushDevice,testPushDevice};
     }
