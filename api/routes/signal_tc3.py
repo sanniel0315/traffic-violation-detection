@@ -80,8 +80,13 @@ def _load_conn_config() -> None:
                     _conn["hwstatus_mode"] = str(d.get("hwstatus_mode"))
                 if "hwstatus_mask" in d:
                     _conn["hwstatus_mask"] = int(d.get("hwstatus_mask") or 0)
+                # 🛑 讀取端也是白名單(與 _save_conn_config 對稱)。新增設定要**兩邊都補**
+                #    —— 2026-09-10 踩過:cfg_auto 只補了寫入端,結果檔案裡有
+                #    cfg_auto_enabled:true,重啟後卻仍是 false,因為根本沒讀進來。
+                #    寫得進去、讀不回來,比完全沒存還難查。
                 for _k in ("time_auto_enabled", "time_auto_interval",
-                           "time_auto_threshold", "time_auto_max"):
+                           "time_auto_threshold", "time_auto_max",
+                           "cfg_auto_enabled", "cfg_auto_interval"):
                     if _k in d:
                         _conn[_k] = d.get(_k)
                 if "reassert_strategy" in d:
