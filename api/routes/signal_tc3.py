@@ -105,6 +105,13 @@ def _save_conn_config() -> None:
                        "time_auto_interval": _conn.get("time_auto_interval", 3600),
                        "time_auto_threshold": _conn.get("time_auto_threshold", 5),
                        "time_auto_max": _conn.get("time_auto_max", 60),
+                       # 🛑 這裡是**明列白名單**,不是把 _conn 整包寫出去。
+                       #    新增設定時務必補進來 —— 漏了不會報錯,只是重啟後
+                       #    悄悄回到預設值(2026-09-10 的 cfg_auto 就這樣被吞掉:
+                       #    端點回 enabled:true、執行緒也真的在跑,但設定檔裡
+                       #    根本沒有那兩個鍵,重啟就關掉了)。
+                       "cfg_auto_enabled": bool(_conn.get("cfg_auto_enabled", False)),
+                       "cfg_auto_interval": _conn.get("cfg_auto_interval", 86400),
                        "reassert_strategy": int(_conn.get("reassert_strategy") or 0)},
                       f, ensure_ascii=False, indent=1)
     except Exception as exc:
