@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import csv
 import io
+import json
+import os
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Optional
 
 from urllib.parse import quote
@@ -365,6 +368,109 @@ def _meta(fmt: str = "json") -> dict:
 # 專案規則:未細分的 truck 視為小車(保守估計,避免誤算為大車)。
 
 
+# ── 偵測器綁車道 ────────────────────────────────────────────────────
+# 🛑 為什麼需要:對外一直是「一台相機 = 一個偵測器」,但現場有相機在同一個
+#    畫面裡放了兩塊分屬**不同道路**的計數區 —— 國8 cam3:車道1 是上匝道停等
+#    (NE-2)、車道2 是下匝道後平面道路。相機層的 total_flow 把兩條路加在一起,
+#    NE-2 的流量因此混進了下匝道的車(2026-09-09 全日:上匝道 5,333、
+#    下匝道 5,392,加起來 10,725 —— 正好是先前 NE-1 5,902 的兩倍)。
+#    兩塊區域都要留(兩條路都要算壅塞與流量),要分開的是**報出去的身分**。
+#
+# 🛑 這張表是**明列**的,不是用啟發式猜的。猜錯會讓某條路的流量整個歸零或翻倍,
+#    而且沒有人會馬上發現。沒列進來的相機一律維持原本的相機層行為。
+# 🛑 可用環境變數 EXTERNAL_LANE_DETECTORS 覆寫(JSON:{"名稱":[camera_id, lane_no]}),
+#    現場改名或加線不必改程式。
+_LANE_DETECTORS_DEFAULT = {
+    "CCTV-N8-E-9-L-NE-2-SIG": (3, 1),   # 上匝道停等(分相1約束)
+    "CCTV-N8-E-9-L-WN-3-SIG": (3, 2),   # 下匝道後平面道路
+}
+
+
+@lru_cache(maxsize=1)
+def _lane_detectors() -> dict:
+    raw = (os.getenv("EXTERNAL_LANE_DETECTORS") or "").strip()
+    if not raw:
+        return dict(_LANE_DETECTORS_DEFAULT)
+    try:
+        data = json.loads(raw)
+        return {str(k): (int(v[0]), int(v[1])) for k, v in data.items()}
+    except Exception:
+        # 設錯就退回預設,不要因為一個環境變數讓對外報表整個壞掉
+        return dict(_LANE_DETECTORS_DEFAULT)
+
+
+def _lane_detectors_by_cam() -> dict:
+    out: dict = {}
+    for name, (cam, lane) in _lane_detectors().items():
+        out.setdefault(int(cam), []).append((int(lane), name))
+    for cam in out:
+        out[cam].sort()
+    return out
+
+
+def _split_lane_detectors(records: list) -> list:
+    """把「一台相機兩條路」的記錄拆成每條路各一筆,身分改用綁車道的偵測器名稱。
+
+    🛑 值一律取**該車道自己的**數字,不是相機總和 —— 這才是拆開的意義。
+       車道層沒有的欄位(road_name / status / 時間)沿用相機層,那些本來就一樣。
+    🛑 沒被列進 _lane_detectors() 的相機原樣通過,行為完全不變。
+    """
+    by_cam = _lane_detectors_by_cam()
+    if not by_cam:
+        return records
+    # 相機層 detector_id 是相機名稱;先把「相機名稱 → 要拆成哪幾條」建好
+    name_to_lanes: dict = {}
+    for cam, lanes in by_cam.items():
+        for lane_no, det_name in lanes:
+            name_to_lanes.setdefault(cam, []).append((lane_no, det_name))
+
+    # 相機名稱查不到 camera_id,只能靠「這筆記錄本來的 detector_id」比對:
+    # 綁車道的偵測器名稱裡一定有一個等於原本的相機名稱(例 NE-2),用它認相機。
+    cam_name_of: dict = {}
+    for cam, lanes in name_to_lanes.items():
+        for _, det_name in lanes:
+            cam_name_of.setdefault(det_name, cam)
+
+    out = []
+    for rec in records:
+        cam = cam_name_of.get(rec.get("detector_id"))
+        if cam is None:
+            out.append(rec)
+            continue
+        lanes_idx = {int(l.get("lane_no")): l for l in (rec.get("lanes") or [])
+                     if l.get("lane_no") is not None}
+        for lane_no, det_name in name_to_lanes[cam]:
+            ld = lanes_idx.get(int(lane_no))
+            if ld is None:
+                continue
+            dc = ld.get("direction_counts") or {}
+            new = dict(rec)
+            new.update({
+                "detector_id": det_name,
+                "lane_bound": {"camera_detector": rec.get("detector_id"),
+                               "lane_no": int(lane_no),
+                               "lane_name": ld.get("lane_name")},
+                "total_flow": ld.get("flow", 0),
+                "small_vehicle_flow": ld.get("small_vehicle_flow", 0),
+                "large_vehicle_flow": ld.get("large_vehicle_flow", 0),
+                "avg_speed_kmh": ld.get("avg_speed_kmh"),
+                "avg_occupancy_pct": ld.get("avg_occupancy_pct"),
+                "avg_queue_length_m": ld.get("avg_queue_length_m"),
+                "max_queue_length_m": ld.get("max_queue_length_m"),
+                "queue_duration_sec": ld.get("queue_duration_sec"),
+                "max_queue_duration_sec": ld.get("max_queue_duration_sec"),
+                "direction_counts": dc,
+                "lane_count": 1,
+                "lanes": [ld],
+            })
+            # in/out 同樣改成這條車道自己的;該相機沒畫進出線就維持沒有這兩個欄位
+            if "in_flow" in rec:
+                new["in_flow"] = int(dc.get("IN", 0))
+                new["out_flow"] = int(dc.get("OUT", 0)) + int(dc.get("EXIT", 0))
+            out.append(new)
+    return out
+
+
 def _resolve_detector_id(db: Session, raw) -> Optional[int]:
     """detector_id 同時接受 camera_id 數字與回應裡的偵測器名稱。
 
@@ -379,6 +485,10 @@ def _resolve_detector_id(db: Session, raw) -> Optional[int]:
         return None
     if s.isdigit():
         return int(s)
+    lane_map = _lane_detectors()
+    if s in lane_map:
+        # 綁車道的偵測器:SQL 仍以相機為單位撈,拆分在 _split_lane_detectors 做
+        return int(lane_map[s][0])
     cam = db.query(Camera).filter(Camera.name == s).first()
     if cam is None:
         raise HTTPException(
@@ -461,6 +571,7 @@ def _realtime_rows(db: Session, since: datetime, start: datetime,
                     "flow": 0, "smallFlow": 0, "largeFlow": 0, "avgSpeed": None,
                     "avgOccupancyPct": None, "avgQueueLengthM": None, "maxQueueLengthM": None,
                     "queueDurationSec": None, "maxQueueDurationSec": None,
+                    "directionCounts": {},
                     "_sp_sum": 0.0, "_sp_n": 0, "_oc_sum": 0.0, "_oc_n": 0,
                 } for ln in (meta.get("lane_nos") or [])},
                 "_sp_sum": 0.0, "_sp_n": 0, "_oc_sum": 0.0, "_oc_n": 0,
@@ -474,6 +585,20 @@ def _realtime_rows(db: Session, since: datetime, start: datetime,
         n, large = int(r[3] or 0), int(r[6] or 0)
         direction = normalize_direction(r[2])
         d["directionCounts"][direction] = d["directionCounts"].get(direction, 0) + n
+        # 🛑 車道層的方向計數要在 continue **之前**記,否則進出場事件永遠
+        #    不會落到車道層 —— 偵測器綁車道時就分不出進出量是哪一條路的。
+        _ln = int(r[1] or 0)
+        if _ln > 0:
+            _lane = d["lanes"].setdefault(_ln, {
+                "laneName": (camera_by_id.get(int(r[0]), {}).get("lane_names") or {}).get(_ln),
+                "flow": 0, "smallFlow": 0, "largeFlow": 0, "avgSpeed": None,
+                "avgOccupancyPct": None, "avgQueueLengthM": None, "maxQueueLengthM": None,
+                "queueDurationSec": None, "maxQueueDurationSec": None,
+                "directionCounts": {},
+                "_sp_sum": 0.0, "_sp_n": 0, "_oc_sum": 0.0, "_oc_n": 0,
+            })
+            _lane.setdefault("directionCounts", {})
+            _lane["directionCounts"][direction] = _lane["directionCounts"].get(direction, 0) + n
         if direction in ("IN", "EXIT", "OUT"):
             continue          # 進出場事件只進 directionCounts,不進總流量
         d["totalFlow"] += n
@@ -492,6 +617,7 @@ def _realtime_rows(db: Session, since: datetime, start: datetime,
                 "flow": 0, "smallFlow": 0, "largeFlow": 0, "avgSpeed": None,
                 "avgOccupancyPct": None, "avgQueueLengthM": None, "maxQueueLengthM": None,
                 "queueDurationSec": None, "maxQueueDurationSec": None,
+                "directionCounts": {},
                 "_sp_sum": 0.0, "_sp_n": 0, "_oc_sum": 0.0, "_oc_n": 0,
             })
             lane["flow"] += n
@@ -603,6 +729,7 @@ def external_realtime(
 
     要存檔請改用 /vd-report/latest：那是不重疊的固定分鐘桶，一分鐘只有一個答案。
     """
+    _raw_det = detector_id            # 綁車道的名稱要留著,拆分後才濾得掉另一條
     detector_id = _resolve_detector_id(db, detector_id)  # 數字或名稱都收
     now = datetime.now(timezone.utc).replace(microsecond=0)
 
@@ -618,7 +745,8 @@ def external_realtime(
             b_end = b_start + timedelta(minutes=1)
             rows_i = _realtime_rows(db, b_start.replace(tzinfo=None), b_start,
                                     detector_id, until=b_end.replace(tzinfo=None))
-            recs_i = _vd_rows_to_records(rows_i, "1m", span=timedelta(minutes=1))
+            recs_i = _finalize_records(
+                _vd_rows_to_records(rows_i, "1m", span=timedelta(minutes=1)), _raw_det)
             for rec in recs_i:
                 # 整分桶固定 60 秒,車流率不用外推
                 rec["flow_per_hour"] = round(rec["total_flow"] * 60.0, 1)
@@ -655,7 +783,7 @@ def external_realtime(
 
     out_rows = _realtime_rows(db, since, start, detector_id)
 
-    records = _vd_rows_to_records(out_rows, "1m", span=span)
+    records = _finalize_records(_vd_rows_to_records(out_rows, "1m", span=span), _raw_det)
     # 即時特有:換算每小時車流率,呼叫端不必知道視窗多長就能直接顯示
     for rec in records:
         # 用實際經過秒數換算 —— mode=minute 時經過秒數會一直變,
@@ -718,6 +846,20 @@ def _num(value, digits: int = 1):
     return None if value is None else round(float(value), digits)
 
 
+def _finalize_records(records: list, raw_detector=None) -> list:
+    """對外回傳前的最後一步:把綁車道的偵測器拆出來,再依呼叫端指定的名稱過濾。
+
+    🛑 過濾一定要在**拆分之後**做。SQL 只能以相機為單位撈,呼叫端若指定的是
+       綁車道的名稱(例 WN-3),撈回來的是整台 cam3;不在這裡濾掉另一條車道,
+       它會拿到兩筆、其中一筆根本不是它要的路。
+    """
+    out = _split_lane_detectors(records)
+    name = str(raw_detector or "").strip()
+    if name and not name.isdigit() and name in _lane_detectors():
+        out = [r for r in out if r.get("detector_id") == name]
+    return out
+
+
 def _vd_rows_to_records(rows: list, bucket: str, span: timedelta | None = None) -> list:
     """把 build_vd_report_rows 的原始列轉成對外 JSON 記錄。
 
@@ -748,6 +890,8 @@ def _vd_rows_to_records(rows: list, bucket: str, span: timedelta | None = None) 
                 "max_queue_length_m": _num_or_none(ld.get("maxQueueLengthM")),
                 "queue_duration_sec": _num_or_none(ld.get("queueDurationSec")),
                 "max_queue_duration_sec": _num_or_none(ld.get("maxQueueDurationSec")),
+                # 車道層的方向計數 —— 偵測器綁車道時要靠它算這條路自己的進出量
+                "direction_counts": ld.get("directionCounts") or {},
             })
 
         records.append({
@@ -855,6 +999,7 @@ async def external_vd_report(
     api_key: ApiKey = Depends(require_scope("vd_report")),
     db: Session = Depends(get_db),
 ):
+    _raw_det = detector_id            # 綁車道的名稱要留著,拆分後才濾得掉另一條
     detector_id = _resolve_detector_id(db, detector_id)  # 數字或名稱都收
     bucket = normalize_bucket_size(interval)
     _validate_time_range(start_time, end_time, bucket)
@@ -862,7 +1007,7 @@ async def external_vd_report(
     # 只讀聚合表（背景 job 每分鐘增量維護），不在請求當下重建 — 重建的 DELETE
     # 會與即時事件寫入搶鎖，正是報表 0 筆/500 的根因。
     rows = build_vd_report_rows(db, start_time, end_time, bucket, camera_id=detector_id)
-    records = _vd_rows_to_records(rows, bucket)
+    records = _finalize_records(_vd_rows_to_records(rows, bucket), _raw_det)
 
     if len(records) > _MAX_RECORDS:
         raise HTTPException(status_code=413, detail={
@@ -895,6 +1040,7 @@ async def external_vd_report_latest(
 ):
     """快捷查詢:免自己算時間/UTC,自動回最近 N 個「已結束」的桶 + 統計摘要。
     上層每分鐘輪詢就打這個(建議 minutes 給 3~5 容忍聚合延遲,以 time_start 去重 upsert)。"""
+    _raw_det = detector_id            # 綁車道的名稱要留著,拆分後才濾得掉另一條
     detector_id = _resolve_detector_id(db, detector_id)  # 數字或名稱都收
     bucket = normalize_bucket_size(interval)
     step = BUCKET_SECONDS[bucket]
@@ -917,7 +1063,7 @@ async def external_vd_report_latest(
     start = end - timedelta(seconds=step * minutes)
 
     rows = build_vd_report_rows(db, start, end, bucket, camera_id=detector_id)
-    records = _vd_rows_to_records(rows, bucket)
+    records = _finalize_records(_vd_rows_to_records(rows, bucket), _raw_det)
     stats = _vd_stats(records)
 
     data = {
@@ -1066,6 +1212,7 @@ async def external_congestion_report(
     api_key: ApiKey = Depends(require_scope("congestion_report")),
     db: Session = Depends(get_db),
 ):
+    _raw_det = detector_id            # 綁車道的名稱要留著,拆分後才濾得掉另一條
     detector_id = _resolve_detector_id(db, detector_id)  # 數字或名稱都收
     bucket = normalize_bucket_size(interval)
     _validate_time_range(start_time, end_time, bucket)
@@ -1157,6 +1304,7 @@ def external_congestion_realtime(
 
     只回「已結束」的分鐘:當前分鐘還在累積,數字會變,拿去存檔會前後不一致。
     """
+    _raw_det = detector_id            # 綁車道的名稱要留著,拆分後才濾得掉另一條
     detector_id = _resolve_detector_id(db, detector_id)  # 數字或名稱都收
     now = datetime.now(timezone.utc).replace(microsecond=0)
     cur_min = now.replace(second=0)
@@ -1277,6 +1425,7 @@ async def external_congestion_report_latest(
 ):
     """壅塞統計報表快捷:免自己算時間/UTC,自動回最近 N 個「已結束」的桶 + 統計摘要。
     上層每分鐘輪詢就打這個(建議 minutes 給 3~5 容忍聚合延遲,以 time_start 去重 upsert)。"""
+    _raw_det = detector_id            # 綁車道的名稱要留著,拆分後才濾得掉另一條
     detector_id = _resolve_detector_id(db, detector_id)  # 數字或名稱都收
     bucket = normalize_bucket_size(interval)
     step = BUCKET_SECONDS[bucket]

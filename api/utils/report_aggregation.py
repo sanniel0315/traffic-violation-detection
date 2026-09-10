@@ -699,6 +699,10 @@ def build_vd_report_rows(
                 "_occupancy_count": 0,
                 "_queue_sum": 0.0,
                 "_queue_count": 0,
+                # 🛑 車道層的進出計數。原本只有相機層有,所以「一台相機上兩塊
+                #    計數區各屬不同道路」時分不開(國8 cam3:車道1 上匝道停等、
+                #    車道2 下匝道後平面道路)。加這一層才有辦法讓偵測器綁車道。
+                "directionCounts": {},
             }
         return row["lanes"][lane_key]
 
@@ -719,6 +723,12 @@ def build_vd_report_rows(
         row = ensure_row(device_id, agg.bucket_start)
         direction = normalize_direction(agg.direction)
         row["directionCounts"][direction] = row["directionCounts"].get(direction, 0) + int(agg.total_flow or 0)
+        # 🛑 車道層的方向計數要在 IN/EXIT 的 continue **之前**累加,
+        #    否則進出場事件永遠不會進到車道層。
+        _ln = int(agg.lane_no) if agg.lane_no is not None else 0
+        if _ln > 0:
+            _lane_dc = ensure_lane(row, _ln)["directionCounts"]
+            _lane_dc[direction] = _lane_dc.get(direction, 0) + int(agg.total_flow or 0)
         if direction in ("IN", "EXIT"):
             # 進/出框事件只計入 directionCounts(進出流量),不進總流量。
             # 總流量由該 zone 的一般流量事件(direction=INOUT)負責 —— 那條路徑
