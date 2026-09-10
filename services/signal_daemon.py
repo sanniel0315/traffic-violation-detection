@@ -49,6 +49,9 @@ def _startup() -> None:
         # 設定定期抄錄:同樣常駐但預設關閉 —— 這些設定不是週期回報,沒人查就一路
         # 變舊(實測到 19 天)。開了才會定期送查詢碼,只讀不改運轉。
         signal_tc3.start_config_auto()
+        # A/B 交替:同樣常駐預設關閉。開了才會週期性把控制權在我方與
+        # 控制器內建時制之間輪替(B 段是停止續約,授權自己過期)。
+        signal_tc3.start_ab_schedule()
         print("📶 [signal-daemon] 已啟動 recorder + 中央中繼 + 持久化 writer + 授權續約 + 定時對時 + 設定定期抄錄", flush=True)
     except Exception as exc:
         print(f"⚠️ [signal-daemon] 啟動失敗: {exc}", flush=True)
