@@ -10604,10 +10604,7 @@
                     <div class="card">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-list"/></svg>原始訊框 · 5F03</span>
-                            <span style="display:flex;gap:8px;align-items:center">
-                                <el-tag size="small" type="info">佐證:畫面每個數字的來源</el-tag>
-                                <el-button size="small" @click="sigRawOpen=!sigRawOpen">{{ sigRawOpen?'收合':'展開' }}</el-button>
-                            </span>
+                            <el-button size="small" @click="sigRawOpen=!sigRawOpen">{{ sigRawOpen?'收合':'展開' }}</el-button>
                         </div>
                         <div class="card-body" v-show="sigRawOpen">
                             <div class="wr-log">
