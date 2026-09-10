@@ -37,7 +37,7 @@ from collections import Counter, deque
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from api.routes.auth import get_current_user
 from api.routes.logs import add_log
@@ -87,7 +87,7 @@ def _load_conn_config() -> None:
                 for _k in ("time_auto_enabled", "time_auto_interval",
                            "time_auto_threshold", "time_auto_max",
                            "cfg_auto_enabled", "cfg_auto_interval",
-                           "ab_enabled", "ab_slot_min"):
+                           "ab_enabled", "ab_slot_min", "ui_cfg_order"):
                     if _k in d:
                         _conn[_k] = d.get(_k)
                 if "reassert_strategy" in d:
@@ -120,6 +120,11 @@ def _save_conn_config() -> None:
                        "cfg_auto_interval": _conn.get("cfg_auto_interval", 86400),
                        "ab_enabled": bool(_conn.get("ab_enabled", False)),
                        "ab_slot_min": _conn.get("ab_slot_min", 60),
+                       # 卡片排序是**使用者偏好**,存後端不存瀏覽器 ——
+                       # localStorage 綁在來源網域上,這台機器有好幾個位址
+                       # (10.42.x / 192.168.x / Tailscale / Cloudflare),
+                       # 換個位址或換台電腦進來就是另一個儲存區,順序當然「跑掉」。
+                       "ui_cfg_order": list(_conn.get("ui_cfg_order") or []),
                        "reassert_strategy": int(_conn.get("reassert_strategy") or 0)},
                       f, ensure_ascii=False, indent=1)
     except Exception as exc:
@@ -2002,6 +2007,8 @@ async def signal_config(_user=Depends(get_current_user)):
             "stale_count": sum(1 for x in out if x["received"] and x["stale"]),
             "missing_count": sum(1 for x in out if not x["received"]),
             "stale_after_sec": CONFIG_STALE_SEC,
+            # 卡片排序跟著 /config 一起回,前端載入時就有,不必再多打一支
+            "order": list(_conn.get("ui_cfg_order") or []),
             # 定期抄錄的現況,讓畫面知道「陳舊」是不是已經有人在處理
             "auto": {"enabled": _cfg_auto["enabled"],
                      "interval_hours": round(_cfg_auto["interval_sec"] / 3600, 2),
@@ -4227,6 +4234,33 @@ def start_config_auto() -> None:
     th = threading.Thread(target=_cfg_auto_loop, daemon=True, name="signal-cfg-auto")
     _cfg_auto["thread"] = th
     th.start()
+
+
+@router.post("/config/order", summary="號誌設定卡片排序(持久化,跨瀏覽器)")
+def config_order(body: dict = Body(default={}), _user=Depends(get_current_user)):
+    """存/清「號誌設定」那一頁的卡片順序。
+
+    🛑 為什麼不放 localStorage:它綁在**來源網域**上。這台機器同時有
+       10.42.x、192.168.x、Tailscale 與 Cloudflare 幾個進入點,從不同位址
+       進來就是不同的儲存區;換一台電腦、換個瀏覽器也一樣。
+       使用者看到的現象就是「明明拖好了,重登又跑掉」。
+
+    🛑 只存**鍵的順序**,不存卡片內容 —— 後端新增/移除設定類別時仍要顯示得
+       出來;不在清單裡的一律排在後面,順序照後端原本的。
+    body: {"order": ["basic","plan",...]},order 給空陣列或不給 = 還原預設。
+    """
+    raw = body.get("order")
+    order = [str(x) for x in raw if isinstance(x, str)] if isinstance(raw, list) else []
+    known = {sec["key"] for sec in CONFIG_SECTIONS}
+    # 只留認得的鍵,而且去重 —— 前端傳什麼都不該讓這份設定變成垃圾場
+    seen, clean = set(), []
+    for k in order:
+        if k in known and k not in seen:
+            seen.add(k)
+            clean.append(k)
+    _conn["ui_cfg_order"] = clean
+    _save_conn_config()
+    return {"ok": True, "order": clean}
 
 
 @router.post("/config/auto", summary="設定定期抄錄開關與週期(持久化)")
