@@ -1987,6 +1987,13 @@ async def signal_config(_user=Depends(get_current_user)):
             "stale_count": sum(1 for x in out if x["received"] and x["stale"]),
             "missing_count": sum(1 for x in out if not x["received"]),
             "stale_after_sec": CONFIG_STALE_SEC,
+            # 定期抄錄的現況,讓畫面知道「陳舊」是不是已經有人在處理
+            "auto": {"enabled": _cfg_auto["enabled"],
+                     "interval_hours": round(_cfg_auto["interval_sec"] / 3600, 2),
+                     "last_run": _cfg_auto["last_run"],
+                     "last_sent": _cfg_auto["last_sent"],
+                     "last_skipped": _cfg_auto["last_skipped"],
+                     "last_error": _cfg_auto["last_error"]},
             "note": "唯讀總覽。時間為我方最後一次收到該回報的時刻,不是控制器的當下值 —— "
                     "要最新值請先送查詢。fresh_count 只計 %d 小時內抄到的;"
                     "「收到過」不等於「現在是這樣」。"
@@ -3960,6 +3967,132 @@ def _run_self_probe(user: str, plan_lo: int, plan_hi: int) -> None:
             pass
     finally:
         _self_probe_busy["on"] = False
+
+
+# ── 設定定期抄錄 ────────────────────────────────────────────────────
+# 🛑 為什麼需要:這些設定**不是週期回報**,控制器只在收到查詢碼時才回一次。
+#    中央近 30 天只固定輪詢 4 支(5F40/0F41/5F48 + 下控 5F10),其餘各只在
+#    42.7 小時前的一次性盤點出現過 1~2 次;我方也沒排程去查 —— 其中
+#    5F43/5F46/5F47/5F49/5F4C **一次都沒送過**(畫面上有資料是側錄中央的)。
+#    結果就是除了那 4 支之外全部一路變舊(實測到 19 天)。
+#    這支就是那個「定期去查」。
+#
+# 🛑 只送**查詢類**,不改運轉。與手動的 /config/refresh 走同一支發送函式。
+# 🛑 跳過被控制器拒收過的碼(5F4A/5F4B/5F5F,ErrorCode 8/1)——
+#    排進去只會每天固定產生三筆 NAK,對誰都沒好處。
+# 🛑 預設**關閉**。自動行為要對應使用者的開關,不 hardcode(專案規範)。
+_cfg_auto = {
+    "enabled": bool(_conn.get("cfg_auto_enabled", False)),
+    "interval_sec": float(_conn.get("cfg_auto_interval", 86400) or 86400),
+    "gap_sec": 0.12,          # 每則之間的間隔,一輪 19 則約 2.3 秒
+    "thread": None, "last_run": None, "last_sent": 0, "last_skipped": 0,
+    "last_error": "",
+}
+
+
+def _cfg_auto_round(user: str = "config-auto") -> dict:
+    """抄一輪:每個設定類別各送一次它的查詢碼。回傳送了幾則、跳過幾則。"""
+    sent = skipped = 0
+    for sec in CONFIG_SECTIONS:
+        if shutdown_event.is_set():
+            break
+        code = sec["query"]
+        try:
+            cmd = int(code[2:], 16)
+        except ValueError:
+            skipped += 1
+            continue
+        if not (0x40 <= cmd < 0x80):      # 只送查詢類
+            skipped += 1
+            continue
+        if _query_attempts(code).get("nak"):   # 這台拒收過就別再送
+            skipped += 1
+            continue
+        payload = b""
+        if code in ("5F44", "5F45"):
+            pid = None
+            try:
+                pid = (_current_running_plan() or {}).get("plan_id")
+            except Exception:
+                pid = None
+            payload = bytes(((int(pid) if pid else 1) & 0xFF,))
+        if _send_query_to_controller(code, payload, user):
+            sent += 1
+        else:
+            skipped += 1
+        time.sleep(_cfg_auto["gap_sec"])
+    return {"sent": sent, "skipped": skipped}
+
+
+def _cfg_auto_loop() -> None:
+    """定期抄錄設定。🛑 用「距上次超過 interval」判斷,不綁時鐘 ——
+    綁固定時刻的話,服務剛好在那個時刻沒起來就整天不會抄。"""
+    while not shutdown_event.is_set():
+        shutdown_event.wait(300.0)          # 五分鐘檢查一次就夠,不必更密
+        if shutdown_event.is_set() or not _cfg_auto["enabled"]:
+            continue
+        last = _cfg_auto["last_run"]
+        if last and (time.time() - last) < _cfg_auto["interval_sec"]:
+            continue
+        if _sock_ref.get("sock") is None:
+            _cfg_auto["last_error"] = "號誌通道未連線,這一輪略過"
+            continue
+        try:
+            r = _cfg_auto_round()
+            _cfg_auto.update({"last_run": time.time(), "last_error": "",
+                              "last_sent": r["sent"], "last_skipped": r["skipped"]})
+            add_log("info", "設定定期抄錄完成:送出 %d 則、跳過 %d 則"
+                    % (r["sent"], r["skipped"]), "signal")
+        except Exception as exc:
+            _cfg_auto["last_error"] = str(exc)[:160]
+
+
+def start_config_auto() -> None:
+    """啟動設定定期抄錄執行緒(冪等)。"""
+    t = _cfg_auto.get("thread")
+    if t is not None and t.is_alive():
+        return
+    th = threading.Thread(target=_cfg_auto_loop, daemon=True, name="signal-cfg-auto")
+    _cfg_auto["thread"] = th
+    th.start()
+
+
+@router.post("/config/auto", summary="設定定期抄錄開關與週期(持久化)")
+def config_auto(enabled: Optional[int] = None, hours: Optional[float] = None,
+                run_now: int = 0, _user=Depends(get_current_user)):
+    """開/關定期抄錄、設定週期(小時)、或立刻抄一輪。
+
+    🛑 週期下限 1 小時。查詢雖然只讀不改運轉,但一輪 19 則仍會佔線路;
+       設成幾分鐘一次沒有意義 —— 這些設定本來就很少變。
+    """
+    if enabled is not None:
+        _cfg_auto["enabled"] = bool(int(enabled))
+        _conn["cfg_auto_enabled"] = _cfg_auto["enabled"]
+    if hours is not None:
+        h = max(1.0, min(720.0, float(hours)))
+        _cfg_auto["interval_sec"] = h * 3600.0
+        _conn["cfg_auto_interval"] = _cfg_auto["interval_sec"]
+    if enabled is not None or hours is not None:
+        _save_conn_config()
+        start_config_auto()
+    out = {"ok": True, "enabled": _cfg_auto["enabled"],
+           "interval_hours": round(_cfg_auto["interval_sec"] / 3600, 2),
+           "last_run": _cfg_auto["last_run"],
+           "last_sent": _cfg_auto["last_sent"],
+           "last_skipped": _cfg_auto["last_skipped"],
+           "last_error": _cfg_auto["last_error"]}
+    if int(run_now or 0):
+        if _sock_ref.get("sock") is None:
+            raise HTTPException(status_code=409, detail="號誌通道未連線,無法查詢")
+        r = _cfg_auto_round("config-auto(manual)")
+        _cfg_auto.update({"last_run": time.time(), "last_sent": r["sent"],
+                          "last_skipped": r["skipped"], "last_error": ""})
+        out.update({"ran": True, "sent": r["sent"], "skipped": r["skipped"],
+                    "last_run": _cfg_auto["last_run"],
+                    "msg": ("已抄一輪:送出 %d 則、跳過 %d 則(拒收或非查詢類)。"
+                            "控制器回報需要一點時間,稍候按「更新」重讀。"
+                            % (r["sent"], r["skipped"]))})
+    return out
 
 
 @router.post("/config/refresh", summary="更新某一類設定(送它自己的查詢碼)")

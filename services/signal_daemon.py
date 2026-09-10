@@ -46,7 +46,10 @@ def _startup() -> None:
         signal_tc3.start_auth_renew()
         # 定時對時:執行緒常駐,但預設關閉 —— 只有使用者在畫面上開了才會真的送 0F12。
         signal_tc3.start_time_auto()
-        print("📶 [signal-daemon] 已啟動 recorder + 中央中繼 + 持久化 writer + 授權續約 + 定時對時", flush=True)
+        # 設定定期抄錄:同樣常駐但預設關閉 —— 這些設定不是週期回報,沒人查就一路
+        # 變舊(實測到 19 天)。開了才會定期送查詢碼,只讀不改運轉。
+        signal_tc3.start_config_auto()
+        print("📶 [signal-daemon] 已啟動 recorder + 中央中繼 + 持久化 writer + 授權續約 + 定時對時 + 設定定期抄錄", flush=True)
     except Exception as exc:
         print(f"⚠️ [signal-daemon] 啟動失敗: {exc}", flush=True)
 
