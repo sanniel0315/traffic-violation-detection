@@ -1649,6 +1649,113 @@ def shadow_outcome_compare(
                     "在我方真的接管控制權之前,兩段量到的都是現行控制方的成效。"}
 
 
+@router.get("/ab-report", summary="A/B 交替的成效比較(同一天內、共享外在條件)")
+def ab_report(since: str = Query("", description="起(ISO);空=全部"),
+              until: str = Query("", description="訖(ISO)"),
+              guard_sec: int = Query(90, ge=0, le=600,
+                                     description="每段開頭要排除的交接秒數"),
+              _user=Depends(get_current_user)):
+    """把 A/B 交替排程記下來的分段,逐段算成效再依 side 彙總。
+
+    🛑 這是**目前唯一**能拿來主張「優於現行控制」的比較 —— 兩組樣本來自同一天、
+       同樣的車流與天候,差別只有誰在控制。跨日比較不行(見成效實績報告第四節)。
+
+    🛑 每段開頭 guard_sec 秒一律排除:
+       B 段開頭那一分鐘授權還沒過期,控制器還沒真的接手;
+       A 段開頭我方剛拿回控制權,也還沒進入穩態。
+       不扣掉的話,兩邊都摻進對方的尾巴。
+
+    🛑 曾降階的分段整段排除(degraded=1):那段既不是 A 也不是 B。
+    🛑 樣本不足不給結論。這種比較最怕的是「兩三段就宣布贏了」——
+       每邊至少要 3 段、而且合計時數要夠,否則只回資料不下判斷。
+    """
+    import sqlite3 as _sq
+    from api.routes.signal_tc3 import _QDB_PATH
+    rows = []
+    try:
+        conn = _sq.connect("file:%s?mode=ro" % _QDB_PATH, uri=True, timeout=10)
+        q = "SELECT side,start_ts,end_ts,degraded FROM signal_ab_slots WHERE 1=1"
+        args = []
+        def _ep(v):
+            try:
+                return datetime.fromisoformat(v).timestamp()
+            except Exception:
+                return None
+        a, b = _ep(since) if since else None, _ep(until) if until else None
+        if a is not None:
+            q += " AND start_ts>=?"; args.append(a)
+        if b is not None:
+            q += " AND end_ts<=?"; args.append(b)
+        rows = list(conn.execute(q + " ORDER BY start_ts", tuple(args)))
+        conn.close()
+    except Exception as exc:
+        return {"available": False, "reason": "讀不到 A/B 分段:%s" % str(exc)[:120],
+                "hint": "A/B 交替排程還沒跑過就不會有分段(POST /api/signal/control/ab)"}
+
+    per = {"A": [], "B": []}
+    excluded = {"degraded": 0, "too_short": 0}
+    for side, st, en, deg in rows:
+        if deg:
+            excluded["degraded"] += 1
+            continue
+        st2 = st + guard_sec
+        if (en - st2) < 300:            # 扣掉交接後不足 5 分鐘的段不算
+            excluded["too_short"] += 1
+            continue
+        o = _outcome_window(datetime.fromtimestamp(st2).isoformat(timespec="seconds"),
+                            datetime.fromtimestamp(en).isoformat(timespec="seconds"))
+        if o.get("insufficient_data"):
+            excluded["too_short"] += 1
+            continue
+        o["_minutes"] = round((en - st2) / 60, 1)
+        per.setdefault(side, []).append(o)
+
+    KEYS = ("total_delay_veh_sec", "avg_queue_m_1", "avg_queue_m_2",
+            "max_queue_m_2", "spillback_events_2", "switch_per_min")
+
+    def _agg(lst):
+        if not lst:
+            return {"slots": 0, "minutes": 0}
+        out = {"slots": len(lst), "minutes": round(sum(x["_minutes"] for x in lst), 1)}
+        for k in KEYS:
+            vals = [x[k] for x in lst if isinstance(x.get(k), (int, float))]
+            # 🛑 每段長度不一定相同,平均要用**時間加權**,不是把各段平均再平均。
+            if vals:
+                wsum = sum(x[k] * x["_minutes"] for x in lst
+                           if isinstance(x.get(k), (int, float)))
+                msum = sum(x["_minutes"] for x in lst
+                           if isinstance(x.get(k), (int, float)))
+                out[k] = round(wsum / msum, 2) if msum else None
+            else:
+                out[k] = None
+        return out
+
+    A, B = _agg(per["A"]), _agg(per["B"])
+    MIN_SLOTS, MIN_MIN = 3, 90
+    enough = (A["slots"] >= MIN_SLOTS and B["slots"] >= MIN_SLOTS
+              and A.get("minutes", 0) >= MIN_MIN and B.get("minutes", 0) >= MIN_MIN)
+    delta = {}
+    for k in KEYS:
+        va, vb = A.get(k), B.get(k)
+        if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
+            delta[k] = {"A_我方": va, "B_內建時制": vb, "diff": round(va - vb, 2),
+                        "pct": (round((va - vb) / vb * 100, 1) if vb else None)}
+    return {
+        "available": True,
+        "A_我方控制": A, "B_控制器內建時制": B, "delta": delta,
+        "slots_total": len(rows), "excluded": excluded, "guard_sec": guard_sec,
+        "conclusive": enough,
+        "note": ("越小越好(switch_per_min 除外:太頻繁代表浪費在換相損失)。"
+                 "diff = A − B,負值代表我方較低。"),
+        "caveat": (None if enough else
+                   ("🛑 樣本不足,**不下結論**:每邊至少要 %d 段且合計 %d 分鐘,"
+                    "目前 A %d 段/%.0f 分、B %d 段/%.0f 分。上面的數字只是現況,"
+                    "不可拿來宣稱誰比較好。"
+                    % (MIN_SLOTS, MIN_MIN, A["slots"], A.get("minutes", 0),
+                       B["slots"], B.get("minutes", 0)))),
+    }
+
+
 @router.get("/outcome", summary="成效基準(總延滯/排隊/回堵次數)")
 def shadow_outcome(minutes: int = Query(60, ge=1, le=1440),
                          since: str = Query("", description="起(ISO),給了就用固定時段"),

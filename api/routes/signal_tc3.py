@@ -86,7 +86,8 @@ def _load_conn_config() -> None:
                 #    寫得進去、讀不回來,比完全沒存還難查。
                 for _k in ("time_auto_enabled", "time_auto_interval",
                            "time_auto_threshold", "time_auto_max",
-                           "cfg_auto_enabled", "cfg_auto_interval"):
+                           "cfg_auto_enabled", "cfg_auto_interval",
+                           "ab_enabled", "ab_slot_min"):
                     if _k in d:
                         _conn[_k] = d.get(_k)
                 if "reassert_strategy" in d:
@@ -117,6 +118,8 @@ def _save_conn_config() -> None:
                        #    根本沒有那兩個鍵,重啟就關掉了)。
                        "cfg_auto_enabled": bool(_conn.get("cfg_auto_enabled", False)),
                        "cfg_auto_interval": _conn.get("cfg_auto_interval", 86400),
+                       "ab_enabled": bool(_conn.get("ab_enabled", False)),
+                       "ab_slot_min": _conn.get("ab_slot_min", 60),
                        "reassert_strategy": int(_conn.get("reassert_strategy") or 0)},
                       f, ensure_ascii=False, indent=1)
     except Exception as exc:
@@ -2294,6 +2297,163 @@ async def signal_heads_set(request: Request, _user=Depends(get_current_user)):
     add_log("info", "號誌燈頭位置更新: %s" % ("清除全部" if body.get("reset") else
                                               "燈 %s" % body.get("id")), "signal")
     return {"ok": True, "placed_count": len(saved), "total": len(SIGNAL_HEAD_PHASE)}
+
+
+# ── A/B 交替排程 ────────────────────────────────────────────────────
+# 🛑 為什麼需要:要主張「我方控制優於現行控制」,唯一站得住的作法是**同一天內
+#    交替**,讓兩組樣本共享同樣的車流、天候與事件。跨日比較(有控制的日子 vs
+#    沒控制的日子)等於把日期差異整包算進控制效果 —— 2026-09-10 的成效實績
+#    報告就是因為缺這個,結論只能寫「無法主張成效」。
+#
+# 🛑 切換的槓桿是 _dyn["enabled"],不是送命令:
+#      A 段(我方) enabled=True  → 續約 5F10,我方逐步階下 5F1C
+#      B 段(對照) enabled=False → **停止續約**,授權一分鐘內自己過期,
+#                                 控制器回到內建時制
+#    失敗方向永遠是回到定時 —— 排程掛掉、服務被殺、機器斷電,結果都一樣安全。
+#
+# 🛑 降階時不切換,並把當下這一段標記為不可用:降階期間本來就不下發,
+#    那段資料既不是 A 也不是 B,拿去比較會污染兩邊。
+#
+# 🛑 排程切換**不寫進設定檔**。dynamic_control 是操作者的設定,不是排程的
+#    暫存狀態;若讓排程去改它,服務剛好在 B 段重啟就會永久關閉動態控制。
+#    排程停止時一律把 _dyn 還原成設定檔裡操作者最後設定的值。
+_AB_SLOT_MIN, _AB_SLOT_MAX = 5.0, 240.0
+_ab = {
+    "enabled": bool(_conn.get("ab_enabled", False)),
+    "slot_min": float(_conn.get("ab_slot_min", 60) or 60),
+    "side": None,            # 目前這一段是 'A'(我方) 還是 'B'(對照)
+    "since": None,           # 這一段開始時間
+    "degraded_seen": False,  # 這一段期間有沒有降階過
+    "thread": None, "last_error": "", "slots": 0,
+}
+
+
+def _ab_db():
+    """A/B 分段紀錄。與訊框同一個 DB,方便比較時一起查。"""
+    conn = _sqlite3.connect(_QDB_PATH, timeout=20)
+    conn.execute("PRAGMA busy_timeout=20000")
+    conn.execute("""CREATE TABLE IF NOT EXISTS signal_ab_slots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        side TEXT, start_ts REAL, end_ts REAL,
+                        degraded INTEGER DEFAULT 0, slot_min REAL)""")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_ab_start ON signal_ab_slots(start_ts)")
+    return conn
+
+
+def _ab_close_slot(end_ts: float) -> None:
+    """把目前這一段收尾寫進 DB。"""
+    if not _ab["side"] or not _ab["since"]:
+        return
+    try:
+        conn = _ab_db()
+        conn.execute("INSERT INTO signal_ab_slots(side,start_ts,end_ts,degraded,slot_min) "
+                     "VALUES(?,?,?,?,?)",
+                     (_ab["side"], _ab["since"], end_ts,
+                      1 if _ab["degraded_seen"] else 0, _ab["slot_min"]))
+        conn.commit()
+        conn.close()
+        _ab["slots"] += 1
+    except Exception as exc:
+        _ab["last_error"] = "分段寫入失敗:%s" % str(exc)[:80]
+
+
+def _ab_start_slot(side: str, ts: float) -> None:
+    _ab.update({"side": side, "since": ts, "degraded_seen": False})
+    _dyn["enabled"] = (side == "A")     # 🛑 只改記憶體,不落檔(見上)
+
+
+def _ab_loop() -> None:
+    while not shutdown_event.is_set():
+        shutdown_event.wait(5.0)
+        if shutdown_event.is_set():
+            continue
+        if not _ab["enabled"]:
+            continue
+        now = time.time()
+        # 降階期間:不切換,但記下這一段被污染了
+        if _dyn.get("level") != "L0":
+            _ab["degraded_seen"] = True
+            continue
+        if _ab["side"] is None:
+            _ab_start_slot("A", now)
+            continue
+        if (now - _ab["since"]) < _ab["slot_min"] * 60.0:
+            continue
+        try:
+            _ab_close_slot(now)
+            nxt = "B" if _ab["side"] == "A" else "A"
+            _ab_start_slot(nxt, now)
+            add_log("info", "A/B 交替:切換到 %s 段(%s)"
+                    % (nxt, "我方控制" if nxt == "A" else "控制器內建時制"), "signal")
+        except Exception as exc:
+            _ab["last_error"] = str(exc)[:160]
+
+
+def start_ab_schedule() -> None:
+    """啟動 A/B 交替執行緒(冪等)。"""
+    t = _ab.get("thread")
+    if t is not None and t.is_alive():
+        return
+    th = threading.Thread(target=_ab_loop, daemon=True, name="signal-ab")
+    _ab["thread"] = th
+    th.start()
+
+
+@router.post("/control/ab", summary="A/B 交替排程(我方控制 vs 控制器內建時制)")
+def ab_set(enabled: Optional[int] = None, minutes: Optional[float] = None,
+           _user=Depends(get_current_user)):
+    """開/關 A/B 交替、設定每段長度(分鐘)。
+
+    🛑 開啟後排程會**接管** dynamic_control 的開關 —— B 段會把它關掉,
+       讓控制器回到內建時制。關閉排程時還原成設定檔裡操作者最後設定的值。
+    🛑 每段下限 5 分鐘:授權過期要一分鐘,加上車流反應的時間,再短的話兩段
+       之間全是交接期,量到的不是穩態。
+    """
+    if minutes is not None:
+        _ab["slot_min"] = max(_AB_SLOT_MIN, min(_AB_SLOT_MAX, float(minutes)))
+        _conn["ab_slot_min"] = _ab["slot_min"]
+    if enabled is not None:
+        want = bool(int(enabled))
+        if want and not _ab["enabled"]:
+            _ab.update({"enabled": True, "side": None, "since": None,
+                        "degraded_seen": False, "last_error": ""})
+        elif not want and _ab["enabled"]:
+            _ab_close_slot(time.time())
+            _ab.update({"enabled": False, "side": None, "since": None})
+            # 🛑 還原操作者的設定,不要停在排程當下的暫存狀態
+            _dyn["enabled"] = bool(_conn.get("dynamic_control"))
+        _conn["ab_enabled"] = _ab["enabled"]
+    if enabled is not None or minutes is not None:
+        _save_conn_config()
+        start_ab_schedule()
+    return {"ok": True, "enabled": _ab["enabled"], "slot_minutes": _ab["slot_min"],
+            "side": _ab["side"], "since": _ab["since"], "slots_recorded": _ab["slots"],
+            "dynamic_now": _dyn["enabled"], "degrade_level": _dyn["level"],
+            "last_error": _ab["last_error"],
+            "note": ("A 段=我方控制(續約 5F10 並下發 5F1C);"
+                     "B 段=停止續約,授權一分鐘內過期,控制器回內建時制。"
+                     "降階期間不切換,該段會標記為不可用。")}
+
+
+@router.get("/control/ab", summary="A/B 交替排程狀態與分段清單")
+def ab_status(limit: int = 200, _user=Depends(get_current_user)):
+    rows = []
+    try:
+        conn = _ab_db()
+        for r in conn.execute("SELECT side,start_ts,end_ts,degraded,slot_min "
+                              "FROM signal_ab_slots ORDER BY id DESC LIMIT ?",
+                              (max(1, min(2000, int(limit))),)):
+            rows.append({"side": r[0], "start": r[1], "end": r[2],
+                         "degraded": bool(r[3]), "slot_min": r[4],
+                         "minutes": round((r[2] - r[1]) / 60, 1)})
+        conn.close()
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:160], "slots": []}
+    return {"available": True, "enabled": _ab["enabled"],
+            "slot_minutes": _ab["slot_min"], "side": _ab["side"],
+            "since": _ab["since"], "dynamic_now": _dyn["enabled"],
+            "degrade_level": _dyn["level"], "slots": rows,
+            "note": "degraded=true 的分段不可用於比較(該段期間曾降階,既不是 A 也不是 B)。"}
 
 
 @router.get("/control/dynamic", summary="動態控制總開關與降階狀態")
