@@ -9140,7 +9140,7 @@
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <tr v-for="b in (sigStats.by_direction||[])" :key="'d'+b.phase_no">
+                                        <tr v-for="b in sigPhDesc(sigStats.by_direction)" :key="'d'+b.phase_no">
                                             <td class="sc-th-dir">
                                                 <span class="st-key" :class="b.phase_no===2?'p2':'p1'"></span>分相 {{ b.phase_no }}
                                                 <span class="sc-sub">{{ b.ramp }}</span>
@@ -9212,12 +9212,12 @@
                                 <span v-for="(a,ai) in sigStatTrendAxis" :key="'ax'+ai">{{ a }}</span>
                             </div>
                             <div class="xn-foot" style="margin-top:8px">
-                                <span class="xn-chip"><span class="st-key p1"></span>分相1 上匝道</span>
                                 <span class="xn-chip"><span class="st-key p2"></span>分相2 下匝道</span>
+                                <span class="xn-chip"><span class="st-key p1"></span>分相1 上匝道</span>
                                 <span class="xn-chip"><span class="st-key forced"></span>強制切換</span>
                                 <span class="xn-chip"><span class="st-key trunc"></span>被斷點截斷(長度不可信)</span>
-                                <span class="xn-chip"><span class="st-key ln1"></span>分相1 趨勢線</span>
                                 <span class="xn-chip"><span class="st-key ln2"></span>分相2 趨勢線</span>
+                                <span class="xn-chip"><span class="st-key ln1"></span>分相1 趨勢線</span>
                             </div>
                         </div>
                     </div>
@@ -9780,8 +9780,8 @@
                                 <div v-if="vzCursor" class="vz-tip" :style="vzTipStyle">
                                     <b>{{ vzCursor.time }}</b>
                                     <div class="vz-tip-row"><i class="vz-sw" style="background:var(--gov-ok)"></i><span>綠燈</span><em>分相 {{ vzCursor.gp }}{{ vzCursor.clr?'(清道)':'' }}</em></div>
-                                    <div class="vz-tip-row"><i class="vz-sw" style="background:#7c3aed"></i><span>排隊 分相 1</span><em>{{ vzNum(vzCursor.q1) }} m</em></div>
                                     <div class="vz-tip-row"><i class="vz-sw" style="background:#0e7490"></i><span>排隊 分相 2</span><em>{{ vzNum(vzCursor.q2) }} m</em></div>
+                                    <div class="vz-tip-row"><i class="vz-sw" style="background:#7c3aed"></i><span>排隊 分相 1</span><em>{{ vzNum(vzCursor.q1) }} m</em></div>
                                     <div class="vz-tip-row"><i class="vz-sw" style="background:var(--gov-fault)"></i><span>裕度</span><em>{{ vzNum(vzCursor.margin) }}</em></div>
                                     <div class="vz-tip-row sub"><span>紅側延滯 {{ vzNum(vzCursor.sg) }}</span><em>門檻 {{ vzNum(vzCursor.thr) }}</em></div>
                                     <span :class="vzCursor.ours?'vz-tip-sw':''">我方 {{ vzCursor.ours?'應換相':'續綠' }}{{ vzCursor.actual?' · 實際此刻換相':'' }}</span>
@@ -9789,11 +9789,11 @@
                                 </div>
                             </div>
                             <div class="xn-foot" style="margin-top:8px">
-                                <span class="xn-chip"><span class="st-key" style="background:var(--gov-ok)"></span>分相 1 綠燈</span>
                                 <span class="xn-chip"><span class="st-key" style="background:var(--gov-primary)"></span>分相 2 綠燈</span>
+                                <span class="xn-chip"><span class="st-key" style="background:var(--gov-ok)"></span>分相 1 綠燈</span>
                                 <span class="xn-chip"><span class="st-key" style="background:var(--gov-warn)"></span>清道</span>
-                                <span class="xn-chip"><span class="st-key" style="background:#7c3aed"></span>排隊 分相 1</span>
                                 <span class="xn-chip"><span class="st-key" style="background:#0e7490"></span>排隊 分相 2</span>
+                                <span class="xn-chip"><span class="st-key" style="background:#7c3aed"></span>排隊 分相 1</span>
                                 <span class="xn-chip"><span class="st-key" style="background:var(--gov-warn);clip-path:polygon(50% 0,100% 100%,0 100%)"></span>我方判切</span>
                                 <span class="xn-chip"><span class="st-key" style="background:var(--gov-text);width:2px"></span>實際換相</span>
                                 <span class="xn-chip"><span class="st-key" style="background:var(--gov-fault)"></span>裕度(正 = 我方要切)</span>
