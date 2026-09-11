@@ -220,8 +220,14 @@ class PD3R3:
         # 等 echo 完全傳完（worst case 8 bytes @ 9600 ≈ 9 ms）+ inter-frame
         time.sleep(0.020)
         # drain echo bytes, don't validate
+        # 🛑 2026-09-11:這裡原本讀 16 bytes,但 echo 就是把整個 request 回一份
+        #    (FC05 是 8 bytes)—— 永遠讀不滿,每次都白等滿一個 read timeout(0.3s)。
+        #    一次 _apply_do 要寫三顆 relay = 白等 0.9 秒,net-health 每 5 秒
+        #    re-assert 一次就一直佔著 RS-485 匯流排的鎖,連 DI 取樣都被卡住
+        #    (py-spy 實測:io-di-monitor 卡在 io_module._call 的 with self._lock)。
+        #    改成讀「這一幀自己的長度」,讀滿就返回 —— 與 _txrx 既有作法一致。
         try:
-            self._ser.read(16)
+            self._ser.read(len(frame))
         except Exception:
             pass
         time.sleep(self.inter_frame_pause)
