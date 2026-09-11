@@ -26498,8 +26498,15 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         const sigCtlModeNote='模式碼由控制器回報,不是我方驗證過的行為。'
                             +'現行控制的類型尚未定性 —— 舊結論「固定時制+時段計畫」已於 2026-09-06 推翻'
                             +'(上線報告 §7.13a);對外一律寫「相對於現行控制」。';
+        // 🛑 2026-09-11:這裡原本只看 /plan 的 green_side.ramp,端點沒帶那個欄位
+        //    時就是空字串 —— 畫面上「綠燈分相」只剩一個裸數字「1」,看的人不知道
+        //    分相 1 是哪一條匝道(現場回報「分相 1 2 代表?」)。
+        //    改成退回查表(SIG_PHASE_META),分相編號一定帶得出對應的匝道名。
         const sigCtlGreenRamp=computed(()=>{
-            const g=sigPlan.value.green_side; return g?('('+(g.ramp||'')+')'):'';
+            const g=sigPlan.value.green_side;
+            const ph=sigPlan.value.green_phase;
+            const name=(g&&g.ramp)||((SIG_PHASE_META[ph]||{}).ramp)||'';
+            return name?('('+name+')'):'';
         });
         // 🛑 /plan 沒帶 plan 欄位時,模板裡的 sigPlan.plan.plan_id 會直接
         //    TypeError: Cannot read properties of undefined → 整頁掛掉。
