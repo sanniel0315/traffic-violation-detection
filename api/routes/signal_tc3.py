@@ -1191,6 +1191,9 @@ def _should_suppress_to_center(code: Optional[str]) -> bool:
 #    不會清掉控制器自己報的任何位元。
 # 🛑 只加不減:控制器若自己報 bit9=1,我們不會把它蓋掉。
 CABINET_BIT = 9
+# raw 模式下要放的位元:中央反讀,bit1 會被它讀成 bit9(機箱門開啟)。
+# 9 與 1 在位元組交換下互換 —— 見 _hw_for_center 的說明。
+CABINET_BIT_ON_WIRE = 1
 CABINET_UPLOAD = os.getenv("SIGNAL_TC3_CABINET_TO_CENTER", "1") != "0"
 _cab_cache = {"open": False, "ts": 0.0, "err": ""}
 
@@ -1246,7 +1249,17 @@ def _hw_for_center(raw_hs: int, mode: str, force_value: int = 0,
         #    force/zero 也照遮:那兩個是測試模式,遮了才跟正式行為一致。
         hs &= ~mask_out & 0xFFFF
     if cabinet_open:
-        hs |= (1 << CABINET_BIT)           # 只加不減
+        # 🛑 機箱位元要放在「中央讀得到」的位置,不是我方語意的位置。
+        #    中央產生告警名稱時是**反讀**這個欄位(見 docs/中央HardwareStatus
+        #    位元組順序.md)。所以中央看到的是 swap(線路值):
+        #      · raw  模式:線路值 = hs,要讓中央讀到 bit9 → hs 必須設 **bit1**
+        #      · swap 模式:線路值 = swap(hs),中央讀回 hs → hs 設 bit9(原本的)
+        #    2026-09-11 現場實證:raw 模式下設 bit9 送出 0x4200,中央反讀成
+        #    0x0042 顯示「記憶體異常」—— 機箱門開啟變成記憶體故障。bit9 與
+        #    bit1 在反讀下剛好互換,所以這不是偶發,是每次門開都會發生。
+        #    已向中央/廠商報備(2026-09-11);在對方修正之前,我方按中央的讀法擺位,
+        #    讓「機箱門開啟」這個**真實告警**能正確顯示 —— 不是遮掉它。
+        hs |= (1 << (CABINET_BIT_ON_WIRE if mode == "raw" else CABINET_BIT))
     if mode == "swap":
         hs = ((hs & 0xFF) << 8) | ((hs >> 8) & 0xFF)
     return hs & 0xFFFF
