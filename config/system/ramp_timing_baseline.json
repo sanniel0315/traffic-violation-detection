@@ -44,8 +44,8 @@
   "plans": {
     "1": {
       "cycle": 85,
-      "phase1_green": 35,
-      "phase2_green": 40,
+      "phase1_green": 40,
+      "phase2_green": 35,
       "min_green": [
         10,
         20
@@ -53,7 +53,13 @@
       "max_green": 210,
       "yellow": 3,
       "all_red": 2,
-      "use": "scheduled"
+      "use": "scheduled",
+      "official_0814": {
+        "phase1_green": 35,
+        "phase2_green": 40,
+        "note": "中央官方時制表 0814 原值;2026-09-10 現場將分相1/分相2 綠燈對調"
+      },
+      "green_source": "field_5F45_20260910"
     },
     "9": {
       "cycle": 94,
@@ -122,8 +128,8 @@
     },
     "35": {
       "cycle": 80,
-      "phase1_green": 45,
-      "phase2_green": 25,
+      "phase1_green": 25,
+      "phase2_green": 45,
       "min_green": [
         10,
         20
@@ -131,11 +137,36 @@
       "max_green": 210,
       "yellow": 3,
       "all_red": 2,
-      "use": "scheduled"
+      "use": "scheduled",
+      "official_0814": {
+        "phase1_green": 45,
+        "phase2_green": 25,
+        "note": "中央官方時制表 0814 原值;2026-09-10 現場將分相1/分相2 綠燈對調"
+      },
+      "green_source": "field_5F45_20260910"
     },
     "36": {
       "cycle": 70,
-      "phase1_green": 35,
+      "phase1_green": 25,
+      "phase2_green": 35,
+      "min_green": [
+        10,
+        20
+      ],
+      "max_green": 210,
+      "yellow": 3,
+      "all_red": 2,
+      "use": "scheduled",
+      "official_0814": {
+        "phase1_green": 35,
+        "phase2_green": 25,
+        "note": "中央官方時制表 0814 原值;2026-09-10 現場將分相1/分相2 綠燈對調"
+      },
+      "green_source": "field_5F45_20260910"
+    },
+    "37": {
+      "cycle": 75,
+      "phase1_green": 40,
       "phase2_green": 25,
       "min_green": [
         10,
@@ -144,20 +175,13 @@
       "max_green": 210,
       "yellow": 3,
       "all_red": 2,
-      "use": "scheduled"
-    },
-    "37": {
-      "cycle": 75,
-      "phase1_green": 25,
-      "phase2_green": 40,
-      "min_green": [
-        10,
-        20
-      ],
-      "max_green": 210,
-      "yellow": 3,
-      "all_red": 2,
-      "use": "scheduled"
+      "use": "scheduled",
+      "official_0814": {
+        "phase1_green": 25,
+        "phase2_green": 40,
+        "note": "中央官方時制表 0814 原值;2026-09-10 現場將分相1/分相2 綠燈對調"
+      },
+      "green_source": "field_5F45_20260910"
     }
   },
   "schedule": {
@@ -263,5 +287,6 @@
     "params_missing_in_controller": [
       23
     ]
-  }
+  },
+  "note_green_swap": "🛑 2026-09-10 計畫 1/35/36/37 的分相1、分相2 綠燈在控制器上對調(5F15 寫入、5F45 查回核對)。本檔 phase1_green/phase2_green 已同步為**現場實際值**,官方 0814 原值保留在各計畫的 official_0814。決策引擎與模擬對照組要用現場值,否則對照組不是現在真的在跑的時制。"
 }
