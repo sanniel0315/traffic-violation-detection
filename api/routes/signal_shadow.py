@@ -765,6 +765,7 @@ def _live_phase() -> Optional[dict]:
 #   也就是說**每一道把關擋下來都是安全的**,失敗方向就是回到定時。
 ACTUATE_DEFAULT = os.getenv("SIGNAL_SHADOW_ACTUATE", "0") != "0"
 ACTUATE_MIN_GAP_SEC = float(os.getenv("SIGNAL_SHADOW_ACTUATE_GAP", "20") or 20)
+_blocked_ready = False
 _act = {"enabled": ACTUATE_DEFAULT, "n": 0, "last_ts": 0.0, "last_seq": None,
         "last_reason": "", "last_raw": "", "blocked": "", "last_error": "",
         "events": deque(maxlen=100)}
@@ -1086,6 +1087,52 @@ def _forecast(d, live: dict, green_elapsed: float,
     }
 
 
+def _blocked_db_ready() -> None:
+    """想換相卻沒送出的紀錄表(冪等建表)。"""
+    global _blocked_ready
+    if _blocked_ready:
+        return
+    conn = _db()
+    conn.execute("""CREATE TABLE IF NOT EXISTS signal_actuate_blocked (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts TEXT, epoch REAL, green_phase INTEGER, step_id INTEGER,
+                        reason TEXT, decide_reason TEXT,
+                        queue_m_1 REAL, queue_m_2 REAL, green_elapsed REAL)""")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_blocked_ts ON signal_actuate_blocked(ts)")
+    conn.commit()
+    conn.close()
+    _blocked_ready = True
+
+
+def _log_blocked(why: str, g_no: int, live: dict, d) -> None:
+    """引擎判「該換相」但下發層擋下來 → 留一筆。
+
+    🛑 為什麼要留:歷史時制調整紀錄原本只收「送出去的命令」,被擋的完全沒有
+       紀錄。實測 27 小時內引擎判 SWITCH 309 次、只送出 97 次 —— 有 212 次
+       (69%) 想切卻沒送,而報表上一筆都看不到。那等於只交出成績好的部分,
+       看報表的人會以為演算法只判斷了 97 次。
+    🛑 擋下來的理由本身是有價值的資訊(還在第一個綠階 / 節流 / 清道中 /
+       抄錄過期),那正是「為什麼沒動作」的答案,不能只活在即時畫面上。
+    """
+    try:
+        _blocked_db_ready()
+        now = time.time()
+        conn = _db()
+        conn.execute(
+            "INSERT INTO signal_actuate_blocked"
+            "(ts,epoch,green_phase,step_id,reason,decide_reason,"
+            " queue_m_1,queue_m_2,green_elapsed) VALUES(?,?,?,?,?,?,?,?,?)",
+            (datetime.now().isoformat(timespec="seconds"), now, int(g_no or 0),
+             live.get("step_id"), why, getattr(d, "reason", "") or "",
+             live.get("queue_m_1"), live.get("queue_m_2"),
+             live.get("green_elapsed")))
+        conn.commit()
+        conn.close()
+    except Exception:
+        # 🛑 紀錄失敗不可以影響控制本身 —— 這支只是稽核,不是控制路徑
+        pass
+
+
 def _actuate(d, g_no: int, live: dict) -> None:
     """引擎判 SWITCH → 送 5F1C。每一道把關的結果都寫進 _act['blocked'],
     畫面上要看得出「這次為什麼沒送」,不能只是靜靜地不動作。
@@ -1107,6 +1154,7 @@ def _actuate(d, g_no: int, live: dict) -> None:
     now = time.time()
     why = _actuate_gates(live, now)
     if why:
+        _log_blocked(why, g_no, live, d)
         return stop(why)
     # 送出:prepare 取 token → send。daemon 端的 _control_guard 會再擋一次
     #    (號控總開關 / 只准查詢 / 動態總開關 / 降階),被擋會回 403,原因照抄。
@@ -3135,6 +3183,8 @@ def adjust_log(hours: int = Query(24, ge=1, le=168),
                      limit: int = Query(100, ge=1, le=1000),
                      offset: int = Query(0, ge=0),
                      include_query: int = 0,
+                     include_blocked: int = Query(
+                         1, description="把「引擎判該換相但沒送出」的紀錄一併列出(預設開)"),
                      _user=Depends(get_current_user)):
     """驗收條文的「歷史時制調整紀錄」。
 
@@ -3405,6 +3455,35 @@ def adjust_log(hours: int = Query(24, ge=1, le=168),
             item.update(why(ts))
         out.append(item)
 
+    # 🛑 把「想切卻沒送出」併進來 —— 報表原本只收送出去的命令,被擋的完全
+    #    看不到。實測 27 小時判 SWITCH 309 次、只送 97 次,那 212 次(69%)
+    #    在報表上一筆都沒有,看的人會以為演算法只判斷了 97 次。
+    #    這些列的 likely_ack 給 'not_sent',與 accepted/rejected/no_reply 分開,
+    #    既有的三個統計數字不受影響(它們只數那三種)。
+    if int(include_blocked or 0):
+        try:
+            _blocked_db_ready()
+            _c = _db()
+            for _b in _c.execute(
+                    "SELECT ts,epoch,green_phase,step_id,reason,decide_reason,"
+                    "queue_m_1,queue_m_2,green_elapsed FROM signal_actuate_blocked "
+                    "WHERE epoch>=? AND epoch<=? ORDER BY epoch",
+                    (cut, min(end, time.time()))):
+                out.append({
+                    "ts": _b[0], "epoch": _b[1], "code": "5F1C", "by": "algorithm",
+                    "code_plain": "提早結束綠燈(未送出)", "by_plain": "演算法",
+                    "likely_ack": "not_sent", "ack_match": "", "error_code": None,
+                    "kind": "blocked", "raw": "",
+                    "green_phase": _b[2], "step_id": _b[3],
+                    "blocked_reason": _b[4], "reason": _b[5],
+                    "queue_m_1": _b[6], "queue_m_2": _b[7], "green_elapsed": _b[8],
+                    "basis_plain": "引擎判該換相,但下發層擋下:" + str(_b[4] or ""),
+                })
+            _c.close()
+            out.sort(key=lambda r: r.get("epoch") or 0, reverse=True)
+        except Exception:
+            pass
+
     # 🛑 來源/結果的過濾放在這裡(不是 SQL):結果要先配對完才知道。
     #    統計數字用**過濾後、分頁前**的集合算 —— 摘要必須對得上正在查的東西,
     #    不然「共 N 次」會跟表格裡的列數對不起來。
@@ -3423,7 +3502,10 @@ def adjust_log(hours: int = Query(24, ge=1, le=168),
         "available": True, "hours": hours,
         "since": datetime.fromtimestamp(cut).isoformat(timespec="seconds"),
         "until": datetime.fromtimestamp(min(end, time.time())).isoformat(timespec="seconds"),
-        "filters": {"code": code, "by": by, "ack": ack, "include_query": int(include_query or 0)},
+        "filters": {"code": code, "by": by, "ack": ack,
+                    "include_query": int(include_query or 0),
+                    "include_blocked": int(include_blocked or 0)},
+        "not_sent": sum(1 for r in out if r.get("likely_ack") == "not_sent"),
         "rows": page, "limit": limit, "offset": offset,
         "total": total, "returned": len(page),
         "scan_capped": len(sends) >= SCAN_CAP,

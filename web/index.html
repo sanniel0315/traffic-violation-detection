@@ -8877,6 +8877,9 @@
                             <p class="analysis-setting-tip" v-if="sigAdj.since">
                                 {{ sigAdj.since }} → {{ sigAdj.until }}
                                 <span v-if="sigAdj.query_excluded">　已排除查詢類 {{ sigAdj.query_excluded }} 筆</span>
+                                <!-- 🛑 把「想切卻沒送出」的次數放在標題列:這是報表最容易
+                                     被誤讀的地方 —— 只看送出的筆數會以為演算法只判斷了那麼多次。 -->
+                                <span v-if="sigAdj.not_sent">　其中未送出 {{ sigAdj.not_sent }} 筆（引擎判該換相但被下發層擋下）</span>
                                 <span v-if="sigAdj.scan_capped" style="color:var(--gov-warn)">　🛑 掃描已達上限，請縮小區間</span>
                             </p>
                             <table class="data-table" id="sig-adj-tbl">
@@ -8890,7 +8893,9 @@
                                         <td>{{ r.code_plain || r.code }}<i class="aj-raw" v-if="r.code_plain">{{ r.code }}</i></td>
                                         <td :title="r.by">{{ r.by_plain || r.by }}</td>
                                         <td><span class="aj-st" :class="r.likely_ack">{{ sigAdjAck(r) }}</span><i
-                                                class="aj-m" :title="sigAdjMatchTip(r)">{{ sigAdjMatch(r) }}</i></td>
+                                                class="aj-m" v-if="r.blocked_reason"
+                                                :title="r.blocked_reason">{{ r.blocked_reason }}</i><i
+                                                class="aj-m" v-else :title="sigAdjMatchTip(r)">{{ sigAdjMatch(r) }}</i></td>
                                         <td class="aj-q">{{ r.green_elapsed==null?'—':(r.green_elapsed+' s') }}</td>
                                         <td class="aj-q">{{ sigAdjQ(r) }}</td>
                                         <!-- 算式沒有消失,移到 title;白話只是換句話說,不是取代證據 -->
@@ -25009,6 +25014,10 @@ const app=createApp({
             accepted: '已接受',
             rejected: '被拒' + (r.error_code == null ? '' : '(ErrorCode ' + r.error_code + ')'),
             no_reply: '無回應',
+            // 🛑 「未送出」與 accepted/rejected/no_reply 是不同層的事:前三者是
+            //    控制器的回應,這個是我方下發層自己擋下來、根本沒送出去。
+            //    理由直接寫在後面 —— 那正是「為什麼沒動作」的答案。
+            not_sent: '未送出',
         }[r.likely_ack] || '—');
         const sigAdjQ = (r) => {
             if (r.queue_m_1 == null && r.queue_m_2 == null) return '—';
@@ -25139,11 +25148,12 @@ const app=createApp({
             // 🛑 標頭要說出「這份檔案裡有幾筆 / 區間內共幾筆」,兩個數字不同就是漏了,
             //    看檔的人才有辦法自己發現。
             L.push(['# 匯出筆數', (d.rows || []).length, '區間內共', d.total].map(q).join(','));
-            L.push(['時間', '命令碼', '做了什麼', '來源', '誰下的', '結果', '配對方式',
-                    'ErrorCode', '當時已亮(s)', '當時排隊上(m)', '當時排隊下(m)',
+            L.push(['時間', '命令碼', '做了什麼', '來源', '誰下的', '結果', '未送出原因',
+                    '配對方式', 'ErrorCode', '當時已亮(s)', '當時排隊上(m)', '當時排隊下(m)',
                     '依據(白話)', '依據(算式)'].map(q).join(','));
             (d.rows || []).forEach((r) => L.push(
-                [r.ts, r.code, r.code_plain, r.by, r.by_plain, r.likely_ack, r.ack_match,
+                [r.ts, r.code, r.code_plain, r.by, r.by_plain, r.likely_ack,
+                 r.blocked_reason || '', r.ack_match,
                  r.error_code, r.green_elapsed, r.queue_m_1, r.queue_m_2,
                  r.basis_plain, r.reason].map(q).join(',')));
             const blob = new Blob([String.fromCharCode(65279) + L.join(String.fromCharCode(13,10))], {type: 'text/csv;charset=utf-8'});
@@ -25181,6 +25191,7 @@ const app=createApp({
                 ['時間', (r) => r.ts], ['命令碼', (r) => r.code],
                 ['做了什麼', (r) => r.code_plain], ['來源', (r) => r.by],
                 ['誰下的', (r) => r.by_plain], ['結果', (r) => r.likely_ack],
+                ['未送出原因', (r) => r.blocked_reason],
                 ['配對方式', (r) => r.ack_match], ['ErrorCode', (r) => r.error_code],
                 ['已亮(s)', (r) => r.green_elapsed], ['排隊上(m)', (r) => r.queue_m_1],
                 ['排隊下(m)', (r) => r.queue_m_2], ['依據', (r) => r.basis_plain],
