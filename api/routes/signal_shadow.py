@@ -3537,6 +3537,7 @@ def _actuate_counts() -> dict:
     return {
         "sent": pers["sent_total"] if pers["sent_total"] is not None else _act["n"],
         "sent_24h": pers["sent_24h"],
+        "sent_today": pers["sent_today"],
         "sent_process": _act["n"],
         "last_ts": pers["last_sent_ts"] or _act["last_ts"] or None,
         "last_ts_process": _act["last_ts"] or None,
@@ -3554,7 +3555,7 @@ def _actuate_persisted() -> dict:
        5F10 續約更不算(它維持授權,不改變運轉)。
     """
     import sqlite3 as _sq          # 與檔內其他讀 DB 的地方同一個寫法
-    out = {"sent_total": None, "sent_24h": None, "last_sent_ts": None}
+    out = {"sent_total": None, "sent_24h": None, "sent_today": None, "last_sent_ts": None}
     try:
         conn = _sq.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=5)
         row = conn.execute(
@@ -3564,10 +3565,19 @@ def _actuate_persisted() -> dict:
             "SELECT COUNT(*) FROM signal_frames "
             "WHERE src='self' AND code='5F1C' AND user LIKE 'algorithm%' AND ts>?",
             (time.time() - 86400,)).fetchone()
+        # 🛑 「當日」= 本地午夜到現在,不是滾動 24 小時。現場看的是「今天做了幾次」,
+        #    滾動 24 小時會把昨天晚上的算進來,跨日之後數字不會歸零,對不上日報。
+        _midnight = datetime.now().replace(hour=0, minute=0, second=0,
+                                           microsecond=0).timestamp()
+        nday = conn.execute(
+            "SELECT COUNT(*) FROM signal_frames "
+            "WHERE src='self' AND code='5F1C' AND user LIKE 'algorithm%' AND ts>=?",
+            (_midnight,)).fetchone()
         conn.close()
         out["sent_total"] = int(row[0] or 0)
         out["last_sent_ts"] = row[1]
         out["sent_24h"] = int((n24 or [0])[0] or 0)
+        out["sent_today"] = int((nday or [0])[0] or 0)
     except Exception:
         pass
     return out
