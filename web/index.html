@@ -14375,6 +14375,15 @@
 
 <script>
 const{createApp,ref,reactive,computed,onMounted,onUnmounted,nextTick,watch,defineComponent}=Vue;
+// 🛑 2026-09-11 現場回報「時制計畫按了沒反應」。真因:全站有 25 處直接寫
+//    ElMessage / ElMessageBox,但這兩個名稱**從來沒有定義過** ——
+//    Element Plus 的 UMD 版只掛在 ElementPlus 底下,沒有全域同名變數。
+//    sigTpRun 第一行就是 await ElMessageBox.confirm(...),丟 ReferenceError
+//    後被下一行的 catch(e){return;} 吃掉 —— 沒對話框、沒 toast、請求也沒送出,
+//    看起來就是「按了沒反應」。
+//    這裡補上兩個別名,一次解決那 25 處(另外 285 處用 ElementPlus.* 的不受影響)。
+const ElMessage = ElementPlus.ElMessage;
+const ElMessageBox = ElementPlus.ElMessageBox;
 const NxCameraViewer=defineComponent({
     name:'NxCameraViewer',
     template:'#nx-camera-viewer-tpl',
@@ -24961,7 +24970,27 @@ const app=createApp({
                 });
                 const j = await r.json().catch(() => ({}));
                 if (!r.ok) throw new Error(j.detail || r.status);
-                ElMessage.success('已送出切換 ' + who + ' —— 請確認上方「目前執行中」是否變更');
+                // 🛑 送出成功 ≠ 已生效。控制器的 ACK/NAK 是幾百毫秒後才回來的
+                //    **另一則訊框** —— 2026-09-11 實測:策略沒有 bit3 中央手動時,
+                //    5F18 一律被回 0F81 ErrorCode=2,但送出這一步照樣成功。
+                //    所以這裡等一下,直接拿控制器回報的「目前執行中」來判定。
+                const info = ElMessage.info({message: '已送出，等控制器回應…', duration: 0});
+                let ok = false;
+                for (let i = 0; i < 6; i++) {          // 最多等 ~9 秒
+                    await new Promise((rs) => setTimeout(rs, 1500));
+                    await loadSigTp();
+                    if (Number(sigTp.value.running_plan_id) === Number(id)) { ok = true; break; }
+                }
+                try { info.close(); } catch (e2) {}
+                if (ok) {
+                    ElMessage.success('已切換到 ' + who + '（控制器回報目前執行中為計畫 ' + id + '）');
+                } else {
+                    ElMessage.warning({
+                        message: '命令送出了,但控制器目前執行中仍不是計畫 ' + id + '。'
+                               + '最常見原因:控制策略沒有「中央手動」—— 實測沒有它時 5F18 會被回 ErrorCode=2。'
+                               + '也可能只是回報延遲,可按「重新載入」再確認。',
+                        duration: 9000});
+                }
             } catch (e) {
                 ElMessage.error('切換失敗:' + (e.message || e));
             } finally { sigTpBusy.value = false; await loadSigTp(); }
