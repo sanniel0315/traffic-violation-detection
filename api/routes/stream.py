@@ -9,6 +9,7 @@ import os
 import threading
 from collections import deque as _deque
 import time
+import json
 import requests
 from datetime import datetime, timedelta
 from typing import Dict, Optional
@@ -2408,6 +2409,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     #    ROI 也不出現。改成把 zones+版本掛在 detection_services,worker 每輪比對版本,
     #    變了就重算,update_camera 存檔後 bump 版本。免重啟、零 cap.read SEGV 風險。
     _zones_version = 0
+    # [上次檢查 DB 的時間, 上次看到的 zones 內容簽章] —— 用 list 是為了在
+    # 巢狀函式裡不必宣告 nonlocal(那一行已經很長,再加會更難讀)。
+    _zones_db_chk = [0.0, None]
     try:
         # 🛑 用底線開頭 key:zones 裡的 zone dict 會被占用率程式加上 _occ_mask_cache
         #    (numpy 陣列不可 JSON 序列化);/detection/all 與 /detection/status 用
@@ -2652,6 +2656,36 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         # 🔁 zones 熱重載:編輯 ROI 後 update_camera 會 bump 版本,這裡比對到就重算
         try:
             _sv = detection_services.get(camera_id) or {}
+            # 🛑 2026-09-12:光靠 update_camera 推版本是不夠的。任何**不經過
+            #    PUT /api/cameras/{id}** 的 zones 變更(維運腳本直接寫 DB、
+            #    還原備份、外部工具)都不會 bump 版本,執行緒就一直用舊框。
+            #    2026-09-11 13:44 cam5 的車流框就是這樣:DB 已換成小方框,
+            #    偵測仍用舊的大框跑了十一個小時 —— 兩者算出來的流量完全是
+            #    不同的區域,而且直到某次重啟才「突然」生效,沒有任何痕跡。
+            #    (實證:那段期間 9,613 筆事件 100% 落在舊框內、只有 26% 落在 DB 的新框。)
+            #    所以這裡每 30 秒回頭讀一次 DB,內容變了就自己 bump。
+            _now_chk = time.time()
+            if _now_chk - _zones_db_chk[0] >= 30.0:
+                _zones_db_chk[0] = _now_chk
+                try:
+                    from api.models import SessionLocal as _SL
+                    _db = _SL()
+                    try:
+                        _row = _db.query(Camera.zones).filter(Camera.id == int(camera_id)).first()
+                    finally:
+                        _db.close()
+                    _db_zones = list(_row[0] or []) if _row else []
+                    _sig = json.dumps(_db_zones, sort_keys=True, ensure_ascii=False)
+                    if _zones_db_chk[1] is None:
+                        _zones_db_chk[1] = json.dumps(list(_sv.get("_zones") or zones),
+                                                      sort_keys=True, ensure_ascii=False)
+                    if _sig != _zones_db_chk[1]:
+                        _zones_db_chk[1] = _sig
+                        _sv["_zones"] = _db_zones
+                        _sv["_zones_version"] = int(_sv.get("_zones_version", 0)) + 1
+                        print(f"♻️ cam_{camera_id} 偵測到 DB 的 zones 被直接改動,自行重載", flush=True)
+                except Exception as _de:
+                    print(f"⚠️ cam_{camera_id} 檢查 DB zones 失敗: {_de!r}", flush=True)
             _nv = _sv.get("_zones_version", _zones_version)
             if _nv != _zones_version:
                 zones = list(_sv.get("_zones") or [])

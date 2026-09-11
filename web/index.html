@@ -10344,11 +10344,8 @@
                     <div class="card" v-if="sigCtl.enabled">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-zap"/></svg>號控下傳</span>
-                            <span style="display:flex;gap:8px;align-items:center">
-                                <el-tag size="small" :type="sigCtl.link_connected?'success':'danger'">{{ sigCtl.link_connected?'通道已連線':'通道未連線' }}</el-tag>
-                                <el-tag size="small" :type="sigCtl.query_only?'warning':'danger'">{{ sigCtl.query_only?'只准查詢':'含設定下傳' }}</el-tag>
-                                <el-tag size="small" type="info" v-if="sigCtl.target_addr_hex">位址 {{ sigCtl.target_addr_hex }}</el-tag>
-                            </span>
+                            <!-- 🛑 2026-09-12 使用者:這三個標籤(通道已連線／含設定下傳／位址)不用。
+                                 連線狀態在上方「號誌來源」卡片已經有,位址屬於設定不是這裡要盯的。 -->
                         </div>
                         <div class="card-body">
                             <div style="display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px">
