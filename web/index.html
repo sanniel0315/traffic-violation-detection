@@ -9415,7 +9415,18 @@
                                         <span class="fc-st" v-else>
                                             <em>可換相</em><b class="ok">窗口內</b>
                                         </span>
-                                        <span class="fc-st"><em>強制換相</em><b>{{ sigFc.latest }}<i>s</i></b></span>
+                                        <!-- 🛑 現場倒數(控制器 5F03 每秒回報)擺在前面,
+                                             那才是真的會發生的事。我方的最大綠是操作上限,
+                                             實測綠燈都在它之前就由控制器結束,所以降級成
+                                             次要資訊並標明是「我方上限」,不再叫「強制換相」
+                                             —— 原本的講法會讓人以為那是現場行為。 -->
+                                        <span class="fc-st" v-if="sigFc.ctlRemain!==null">
+                                            <em>現場倒數</em><b class="cd">{{ sigFc.ctlRemain }}<i>s</i></b>
+                                        </span>
+                                        <span class="fc-st"
+                                              title="我方設定的最大綠(操作上限)。控制器自己的步階通常更早結束綠燈,所以這個上限實際上很少觸發。">
+                                            <em>我方上限</em><b>{{ sigFc.latest }}<i>s</i></b>
+                                        </span>
                                         <span class="fc-st"
                                               :title="'累計次數取自持久化訊框,服務重啟不會歸零。'
                                                       + (sigFc.sent24h===null||sigFc.sent24h===undefined ? ''
@@ -26304,6 +26315,14 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             // 🛑 倒數只給「最早可換相」——那是時鐘,精確。
             //    「何時真的換相」取決於車流,不做單點預測,畫成一段窗口。
             const gateName = (minRemain > 0) ? '最小綠' : (thrRemain > 0 ? '節流' : '');
+            // 🛑 現場倒數要用控制器每秒回報的 5F03(sigRemain),不是我方的最大綠。
+            //    2026-09-11 現場回報「不精確、不反映現場」——原因是這一列顯示的
+            //    「強制換相 N 秒」算的是 MAX_GREEN_SEC(我方操作上限,預設 100 秒),
+            //    但控制器自己的步階是 分相1 綠 40+10、分相2 綠 20+10,綠燈**永遠**
+            //    在 100 秒之前就由控制器結束了 —— 那個 70 秒是不會發生的事。
+            //    真正會發生的是 5F03 的步階倒數,畫面別處(號誌燈態)本來就在用。
+            const xnNow = sigLiveXn0.value;
+            const ctlRemain = xnNow ? xnRemainLive(xnNow) : null;
             let phase, title, cls, big, sub;
             if (f.action === 'SWITCH' && !f.blocked) {
                 phase = 'fire';  cls = 'go';
@@ -26320,7 +26339,10 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             } else {
                 phase = 'open'; cls = a.enabled ? 'run' : 'idle';
                 title = a.enabled ? '演算法運轉中 · 可換相窗口' : '演算法只比對,未下發';
-                big = '維持'; sub = '隨時可換相,依車流判斷;' + Math.ceil(latest) + ' 秒後強制換相';
+                big = '維持';
+                sub = (ctlRemain == null || !isFinite(ctlRemain))
+                    ? '隨時可換相,依車流判斷'
+                    : ('隨時可換相,依車流判斷;控制器步階還有 ' + Math.max(0, Math.round(ctlRemain)) + ' 秒');
             }
 
             let last = '尚未下發';
@@ -26335,6 +26357,8 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 countdown: Math.ceil(earliest),           // 精確倒數(只有時鐘)
                 gate: gateName,
                 latest: Math.ceil(latest),
+                // 控制器自己的步階倒數(現場真值);沒收到就給 null,畫面不顯示那一格
+                ctlRemain: (ctlRemain == null || !isFinite(ctlRemain)) ? null : Math.max(0, Math.round(ctlRemain)),
                 minG: Math.round(minG), maxG: Math.round(maxG),
                 // 🛑 sent/last_ts 現在是後端從持久化訊框算的(重啟不歸零)。
                 //    2026-09-08 現場踩過:這裡吃的是行程內計數,部署重啟後
