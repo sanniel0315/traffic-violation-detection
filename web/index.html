@@ -24735,12 +24735,29 @@ const app=createApp({
             }
             if(name==='HardwareStatus'&&isFinite(v)){
                 // 設備硬體狀態位圖(0F04 主動回報 / 0FC1 回報)。
-                // 🛑 廠商說明「寫反」(極性顛倒):bit14 實際 1=信號驅動單元正常、0=故障。
-                //    中央跟著寫反的說明,會把 0x4000(正常) 誤顯示成「信號驅動單元故障」。
-                const b14=(v&(1<<14))?'信號驅動單元 正常':'⚠️信號驅動單元 故障';
-                const others=[];
-                for(let i=0;i<16;i++){ if(i!==14 && (v&(1<<i)))others.push('bit'+i); }
-                return b14+(others.length?('；其他亮位: '+others.join(',')):'');
+                // 🛑 2026-09-11 改寫。舊版寫的是「廠商說明極性顛倒,bit14 1=信號驅動
+                //    單元正常」—— 那是**已被推翻的舊理論**,而且會讓人把 bit14 當成
+                //    信號驅動單元。實際上:
+                //      · bit14 是「控制器就緒」,不是信號驅動單元
+                //      · 中央之所以顯示「信號驅動單元」,是因為它**反讀**這個欄位
+                //        (bit14 → 反讀後落在 bit6 = 號誌驅動單元)
+                //      · 當天的機箱門事件是同一個機制的鐵證:我方放 bit9,中央顯示
+                //        「記憶體異常」(bit1) —— 9 與 1 在位元組交換下互換
+                //    所以這裡兩邊都列出來:我方語意 + 中央實際會顯示什麼。
+                const ours=[]; for(let i=0;i<16;i++){ if(v&(1<<i))ours.push(SIG_HW_BIT_NAMES[i]); }
+                const sw=(((v&0xFF)<<8)|((v>>8)&0xFF))&0xFFFF;
+                const cen=[]; for(let i=0;i<16;i++){ if(sw&(1<<i))cen.push(SIG_HW_BIT_NAMES[i]); }
+                // 現行「中央不會亮 ERROR」的組態(2026-09-11 定案,已報備中央/廠商):
+                //   hwstatus_mode=raw + mask 0x2000(遮 bit13 外部時相控制進行中)
+                //   平時送 0x4000 → 中央反讀 0x0040 =「號誌驅動單元」
+                //   機箱門開啟送 0x4002 → 中央反讀 0x0240 =「號誌驅動單元＋機箱門開啟」
+                //   (bit1 是刻意放的:中央反讀後才會落在 bit9 機箱門開啟)
+                const NOW={0x4000:'✅ 這就是現在平時送的值(raw＋遮 bit13),中央顯示「號誌驅動單元」,不會亮 ERROR',
+                           0x4002:'✅ 這是機箱門開啟時送的值,中央顯示「號誌驅動單元＋機箱門開啟」,不會亮 ERROR'};
+                const tail=NOW[v]?('　'+NOW[v]):'';
+                return '我方語意:'+(ours.length?ours.join('+'):'(全部正常)')
+                     + '　→ 中央反讀 0x'+sw.toString(16).toUpperCase().padStart(4,'0')
+                     + ' 會顯示:'+(cen.length?cen.join('+'):'(無)')+tail;
             }
             if(name==='TransmitType'&&isFinite(v))return v===1?'燈態(5F0F)':(v===2?'步階(5F03)':'');
             if(name==='Direct'&&isFinite(v))return '基準方向 '+v;
