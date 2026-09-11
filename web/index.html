@@ -26892,7 +26892,9 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             const rel = d.release_stats || {};
             const phases = [];
             cams.forEach((c) => { if (phases.indexOf(c.phase_no) === -1) phases.push(c.phase_no); });
-            phases.sort((a, b) => a - b);
+            // 🛑 2026-09-11 使用者:分相一律「2 在前、1 在後」。只動排列,
+            //    分相編號與匝道對應不變(實測 分相1=上匝道、分相2=下匝道)。
+            phases.sort((a, b) => b - a);
             return phases.map((ph) => {
                 const meta = SIG_PHASE_META[ph] || {ramp: '分相 ' + ph, zone: ''};
                 const isGreen = (d.green_phase === ph);
@@ -27465,7 +27467,8 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 qW: sigQueueW(c.queue_m, c.phase_no),
                 occTip: '佔有率:車輛覆蓋 ROI 的比例(不是判級用的壅塞分數)',
                 qTip: '排隊長度;棒長相對於該分相的儲車空間',
-            })).sort((a, b) => (a.phase_no - b.phase_no) || (a.camera_id - b.camera_id));
+            // 🛑 分相 2 的相機排前面(與左右兩欄、時制表同一個排序規則)。
+            })).sort((a, b) => (b.phase_no - a.phase_no) || (a.camera_id - b.camera_id));
         });
         let warVdTimer = null;
         const startWarVdTimer = () => {
