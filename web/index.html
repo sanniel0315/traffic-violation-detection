@@ -9428,10 +9428,11 @@
                                             <em>我方上限</em><b>{{ sigFc.latest }}<i>s</i></b>
                                         </span>
                                         <span class="fc-st"
-                                              :title="'累計次數取自持久化訊框,服務重啟不會歸零。'
+                                              :title="'當日 = 今天 00:00 起算,取自持久化訊框,服務重啟不會歸零。'
                                                       + (sigFc.sent24h===null||sigFc.sent24h===undefined ? ''
-                                                         : ('　近 24 小時:' + sigFc.sent24h + ' 次'))">
-                                            <em>已下發</em><b>{{ sigFc.sent }}<i>次</i></b>
+                                                         : ('　近 24 小時:' + sigFc.sent24h + ' 次'))
+                                                      + '　累計:' + sigFc.sentTotal + ' 次'">
+                                            <em>今日下發</em><b>{{ sigFc.sent }}<i>次</i></b>
                                         </span>
                                         <span class="fc-st"><em>上次</em><b class="t">{{ sigFc.lastText }}</b></span>
                                     </div>
@@ -26363,7 +26364,13 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 // 🛑 sent/last_ts 現在是後端從持久化訊框算的(重啟不歸零)。
                 //    2026-09-08 現場踩過:這裡吃的是行程內計數,部署重啟後
                 //    顯示「已下發 0 次 / 上次 尚未下發」,但資料庫裡有 51 次。
-                sent: a.sent || 0, sent24h: a.sent_24h, lastText: last,
+                // 🛑 主數字改成「當日」(本地午夜起算)。累計會一直長大,看不出今天
+                //    做了多少;滾動 24 小時跨日不歸零,對不上日報。累計與近 24 小時
+                //    仍放在 tooltip,要追歷史時還在。
+                sent: (a.sent_today === null || a.sent_today === undefined)
+                      ? (a.sent || 0) : a.sent_today,
+                sentToday: a.sent_today, sentTotal: a.sent || 0, sent24h: a.sent_24h,
+                lastText: last,
                 blocked: f.blocked || '',
                 reason: P.reason || '',
                 // 幾何:已亮 / 保護期終點 / 可換相窗口
