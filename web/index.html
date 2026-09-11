@@ -3991,6 +3991,14 @@
         .tp-qi { font-size:var(--fs-caption); color:var(--gov-mute-2);
                  font-family:var(--font-mono); }
 
+        /* 🛑 對齊「通訊紀錄」那張 el-table(size=small)的字級與間距。
+           使用者 2026-09-10:「時制計畫選擇這邊的 table 樣式字體大小要跟它一樣」。
+           實測兩邊的差異(getComputedStyle,不是用猜的):
+             td 字級 13px → 12px、td/th 上下留白 11px → 8px、行高 normal → 1.55。
+           左右 14px 與 th 的字重/字距本來就一致,不動。
+           只縮在 .tp-tb 範圍內 —— 全站還有 30 張 .data-table,沒被要求的不要順手改。 */
+        .tp-tb th, .tp-tb td { padding:8px 14px; line-height:1.55; }
+        .tp-tb td { font-size:12px; }
         .tp-tb .num { font-family:var(--font-mono); text-align:right; }
         .tp-tb tr.on { background:#f2fbf5; }
         .tp-id { font-family:var(--font-mono); }
