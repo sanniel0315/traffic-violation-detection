@@ -200,6 +200,7 @@ def _camera_meta(db: Session):
         # 分不出是上匝道還是下匝道;把設定時取的名字帶出去給呼叫端顯示。
         # 同一個 lane_no 有多個 zone 時取第一個非空名稱(通常是同一條車道的不同框)。
         lane_names: dict[int, str] = {}
+        flow_named: set[int] = set()      # 已經由 traffic_flow_settings 命名的車道
         direction_counts: dict[str, int] = {}
         for zone in zones:
             if not is_vd_zone(zone):
@@ -208,9 +209,19 @@ def _camera_meta(db: Session):
             lane_no = int(lane_no) if str(lane_no).isdigit() else None
             if lane_no and lane_no > 0:
                 lane_set.add(lane_no)
+                # 🛑 2026-09-11:同一個 lane_no 有多個 zone 時,原本「取第一個」——
+                #    但第一個常常是 congestion_detection 那個框,而它在現場多半
+                #    還叫預設名。cam4/cam5 就是這樣:車流框叫「高速下匝道」
+                #    「下匝道停等區」,報表的 laneName 卻回「車流區 1」,
+                #    任何照名稱對應車道的邏輯都會靜默對不上(實測踩過)。
+                #    車道的流量數字來自車流框,名稱就該以車流框為準。
                 zname = str(zone.get("name") or "").strip()
-                if zname and lane_no not in lane_names:
-                    lane_names[lane_no] = zname
+                if zname:
+                    is_flow = str(zone.get("scope") or "") == "traffic_flow_settings"
+                    if lane_no not in lane_names or (is_flow and lane_no not in flow_named):
+                        lane_names[lane_no] = zname
+                    if is_flow:
+                        flow_named.add(lane_no)
             # 車流 zone 的 `direction` 一個欄位同時扛兩種語意:轉向(left/straight/right)
             # 或進出模式(INOUT)。一旦選了 INOUT,這個 zone 就沒有地方記「道路的行進方向」,
             # 對外報表的 direction 只能回 INOUT —— 那不是行車方向。
