@@ -25083,13 +25083,45 @@ const app=createApp({
             < ((sigAdj.value || {}).total || 0));
         // 匯出的是**當前這一頁**;要全部就把區間縮到查得完再匯。
         // 🛑 不偷偷去撈全部 —— 使用者以為匯出的是畫面上看到的那些。
-        const sigAdjExport = () => {
-            const d = sigAdj.value || {};
+        // 🛑 匯出「整個查詢區間」,不是當前這一頁。
+        //    2026-09-11 使用者:「匯出 csv 記錄很少」—— 原本只寫 d.rows(一頁 100 筆),
+        //    查到幾千筆也只匯出 100 筆,而且標頭還寫「# 本頁」,等於把分頁當成結果。
+        //    後端 limit 上限 1000,所以這裡自己翻頁翻到 total 為止。
+        const SIG_ADJ_EXPORT_PAGE = 1000;
+        const sigAdjExportAll = async () => {
+            const base = sigAdjParams();
+            base.set('limit', String(SIG_ADJ_EXPORT_PAGE));
+            const first = Object.assign({}, sigAdj.value || {});
+            const rows = [];
+            let off = 0, total = null, guard = 0;
+            while (guard++ < 200) {                 // 200×1000 = 20 萬筆,夠了也擋住無限迴圈
+                base.set('offset', String(off));
+                const r = await fetch('/api/signal/shadow/adjust-log?' + base.toString(),
+                                      {credentials: 'include'});
+                if (!r.ok) break;
+                const d = await r.json();
+                if (total === null) { total = Number(d.total || 0); first.since = d.since; first.until = d.until; }
+                const got = (d.rows || []);
+                rows.push.apply(rows, got);
+                if (!got.length || rows.length >= total) break;
+                off += got.length;
+            }
+            first.rows = rows;
+            first.total = (total === null ? rows.length : total);
+            return first;
+        };
+        const sigAdjExport = async () => {
+            sigAdjLoading.value = true;
+            let d;
+            try { d = await sigAdjExportAll(); }
+            catch (e) { d = sigAdj.value || {}; }
+            finally { sigAdjLoading.value = false; }
             const q = (v) => '"' + String(v === null || v === undefined ? '' : v).replace(/"/g, '""') + '"';
             const L = [];
             L.push(['# 區間', (d.since || '') + ' ~ ' + (d.until || '')].map(q).join(','));
-            L.push(['# 本頁', (d.offset || 0) + 1, '至', (d.offset || 0) + (d.returned || 0),
-                    '共', d.total].map(q).join(','));
+            // 🛑 標頭要說出「這份檔案裡有幾筆 / 區間內共幾筆」,兩個數字不同就是漏了,
+            //    看檔的人才有辦法自己發現。
+            L.push(['# 匯出筆數', (d.rows || []).length, '區間內共', d.total].map(q).join(','));
             L.push(['時間', '命令碼', '做了什麼', '來源', '誰下的', '結果', '配對方式',
                     'ErrorCode', '當時已亮(s)', '當時排隊上(m)', '當時排隊下(m)',
                     '依據(白話)', '依據(算式)'].map(q).join(','));
