@@ -1993,7 +1993,11 @@ def shadow_plan(_user=Depends(get_current_user)):
                             "storage_m": (roles.get(p) or {}).get("storage_m"),
                             "priority": bool((roles.get(p) or {}).get("priority")),
                             "cameras": (roles.get(p) or {}).get("cameras"),
-                            "constraint_camera": (roles.get(p) or {}).get("constraint_camera")}
+                            "constraint_camera": (roles.get(p) or {}).get("constraint_camera"),
+                            # 哪些車流區(ROI)的流量算進這條匝道 —— 一支相機身上可能
+                            # 有跨路段的 ROI(cam3 就同時有上匝道停等區與下匝道後平面
+                            # 道路),不分開的話「總流量」會把兩段路加在一起。
+                            "flow_zones": (roles.get(p) or {}).get("flow_zones") or []}
                    for p in (1, 2)},
         "terms": {
             "switch_gain": d.switch_gain, "keep_gain": d.keep_gain,
