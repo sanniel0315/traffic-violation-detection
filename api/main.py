@@ -430,7 +430,17 @@ async def no_cache_web_html(request: Request, call_next):
         #    卻跟著 index.html 一起被標成 no-store,結果每次開頁都重下載 1.7 MB。
         #    在 2 Mbps 的現場線路上那是十幾秒,而且完全是白費的。
         #    要換版本時檔名會不一樣(或自己清快取),不會有拿到舊檔的問題。
-        if path.startswith("/web/lib/"):
+        # 🛑 2026-09-11 現場:「網頁很卡,地圖有時 load 不出來」。實測發現
+        #    /web/tiles/ 有 1089 個圖磚共 21 MB,而且**每次開地圖都重抓** ——
+        #    它們跟 index.html 一樣被標成 no-store。圖磚是離線地圖的靜態檔,
+        #    內容永遠不變(要換底圖是重新產生整個目錄),沒有任何理由不快取。
+        #    當時機器 load average 5.85~7.19(PyTorch 253% + 4 個 ffmpeg),
+        #    再疊上 1089 個請求,地圖載不出來完全合理。
+        #    一併放行其他不會變的靜態資產(字型/圖片),判斷依副檔名,
+        #    不要用路徑前綴一個一個補 —— 下次新增目錄又會漏掉。
+        _STATIC_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg",
+                       ".woff", ".woff2", ".ttf", ".eot", ".ico")
+        if path.startswith("/web/lib/") or path.startswith("/web/tiles/")                 or path.lower().endswith(_STATIC_EXT):
             # 🛑 不要對 response.headers 呼叫 pop() —— Starlette 的 MutableHeaders
             #    沒有這個方法,會噴 AttributeError 變成 500(2026-08-20 實際踩到,
             #    /web/lib/* 全部 500,整個網頁載不起來)。
