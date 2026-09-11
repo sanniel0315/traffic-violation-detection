@@ -3241,6 +3241,25 @@ def adjust_log(hours: int = Query(24, ge=1, le=168),
         except Exception:
             return None
 
+    # 🛑 這支會被 spec-report 直接當函式呼叫。FastAPI 的預設值是 Query 物件,
+    #    沒帶到的參數拿到的就是那個物件 —— 2026-09-11 spec-report 每 30 秒
+    #    回 500(`int() argument must be ... not 'Query'`)就是這樣來的。
+    #    跟 degrade_log 一樣在入口把型別收乾淨,不要靠呼叫端記得全部帶。
+    def _as_int(v, dflt):
+        return v if isinstance(v, int) and not isinstance(v, bool) else dflt
+
+    hours = _as_int(hours, 24)
+    minutes = _as_int(minutes, 0)
+    limit = _as_int(limit, 100)
+    offset = _as_int(offset, 0)
+    include_query = _as_int(include_query, 0)
+    include_blocked = _as_int(include_blocked, 1)
+    since = since if isinstance(since, str) else ""
+    until = until if isinstance(until, str) else ""
+    code = code if isinstance(code, str) else ""
+    by = by if isinstance(by, str) else ""
+    ack = ack if isinstance(ack, str) else ""
+
     cut = _epoch(since) if since else None
     end = _epoch(until) if until else None
     if cut is None:
@@ -4498,8 +4517,10 @@ def spec_report(since: str = Query("", description="起(ISO);空 = 依 minutes �
 
     stats = shadow_stats(minutes=5, since=since_iso, until=until_iso,
                                trend_limit=10, _user=_user)
-    adj = adjust_log(hours=hr, include_query=False, _user=_user)  # 已改同步,見其定義
-    deg = degrade_log(hours=hr, _user=_user)
+    adj = adjust_log(hours=hr, minutes=0, since="", until="", code="", by="",
+                     ack="", limit=100, offset=0, include_query=0,
+                     include_blocked=1, _user=_user)  # 已改同步,見其定義
+    deg = degrade_log(hours=hr, minutes=0, since="", until="", _user=_user)
     faults = fault_status(_user=_user)
     outcome = _outcome_window(since_iso, until_iso)
 

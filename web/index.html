@@ -28136,9 +28136,18 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 else ElementPlus.ElMessage.error('測試發送失敗');
             }catch(_){ ElementPlus.ElMessage.error('測試發送失敗'); }
         };
+        // 🛑 2026-09-11:這支原本每秒被呼叫一次,而它一次會打四支 API
+        //    (status / connection / safety / center-relay)—— 停在號誌頁時
+        //    光這裡就 4 req/s,其中 safety 每次 10 KB。
+        //    需要 1 Hz 的只有 status(燈態倒數),其餘三支 5 秒一次就夠。
+        let _sigSlowAt=0;
         const loadSignal=async()=>{
-            loadSigConn();
-            loadSigSafety();
+            const _now=Date.now();
+            if(_now-_sigSlowAt>=5000){
+                _sigSlowAt=_now;
+                loadSigConn();
+                loadSigSafety();
+            }
             try{
                 const r=await fetch('/api/signal/status',{credentials:'include'});
                 if(r.ok){
@@ -28302,14 +28311,19 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 const r=await fetch('/api/signal/control/status',{credentials:'include'});
                 if(r.ok)sigCtl.value=await r.json();
             }catch(_){ }
-            try{
-                const r=await fetch('/api/signal/control/schemas',{credentials:'include'});
-                if(r.ok){
-                    const d=await r.json();
-                    sigCmds.value=d.commands||[];
-                    sigCtlSchemaOk.value=!!d.available;
-                }
-            }catch(_){ }
+            // 🛑 2026-09-11:命令 schema 是**靜態表**(98 則命令、約 40 KB),
+            //    原本跟 control/status 綁在一起每 3 秒重抓一次 —— 光這一支就是
+            //    13 KB/s 的無謂流量,還每次觸發一輪重繪。改成只抓一次。
+            if(!sigCmds.value.length){
+                try{
+                    const r=await fetch('/api/signal/control/schemas',{credentials:'include'});
+                    if(r.ok){
+                        const d=await r.json();
+                        sigCmds.value=d.commands||[];
+                        sigCtlSchemaOk.value=!!d.available;
+                    }
+                }catch(_){ }
+            }
         };
         const sigCmdCur=computed(()=>sigCmds.value.find(c=>c.code===sigCmdSel.value)||null);
         // 選一則命令 → 清空表單、清掉上一次的預覽(換命令了,舊 token 不能用)
@@ -28479,13 +28493,20 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             // 號誌每 2 秒上傳一次,1 秒輪詢足夠,狀態 JSON 只有幾 KB
             let _sigTick=0;
             sigTimer=setInterval(()=>{
-                if(page.value!=='signal_hub'
-                   || (signalTab.value!=='lamp'&&signalTab.value!=='live')
-                   || !isPageVisible())return;
-                loadSignal();
+                const tab=signalTab.value;
+                // 🛑 2026-09-11:原本整段只在 lamp/live 跑,結果
+                //    (a) 訊框列表(每次約 41 KB)在**看不到它的分頁**每 3 秒抓一次;
+                //    (b) 真的切到「通訊紀錄」分頁時反而完全不自動更新 —— 條件把
+                //        frames 擋在外面。兩件事是同一行造成的,一起修。
+                if(page.value!=='signal_hub' || !isPageVisible())return;
+                if(tab!=='lamp' && tab!=='live' && tab!=='frames')return;
+                if(tab==='lamp' || tab==='live') loadSignal();
                 _sigTick++;
-                // 中央連線狀態 + 最近訊框每 3 秒刷新,讓中央通訊監看接近即時
-                if(_sigTick%3===0){ loadSigControl(); if(!sigFrameHasRange()) loadSignalFrames(); }
+                if(_sigTick%3===0){
+                    if(tab==='lamp' || tab==='live') loadSigControl();
+                    // 訊框只在真的在看「通訊紀錄」時才抓
+                    if(tab==='frames' && !sigFrameHasRange()) loadSignalFrames();
+                }
             },1000);
         };
 
