@@ -1859,6 +1859,67 @@ def shadow_summary(minutes: int = Query(60, ge=5, le=1440),
     return summarize(minutes, since or None, until or None)
 
 
+def _flow_lanes_for(phase: int, roles: dict) -> dict:
+    """算出「這條匝道的流量要取哪幾台相機的哪幾條 lane」。
+
+    規則刻意是**排除法**:一條 lane 只有在它的車流區名稱出現在**別條匝道**的
+    flow_zones 裡才被排除,其餘一律算進本匝道。
+    用白名單會在現場把 ROI 改名之後直接變成 0 —— 2026-09-11 實際踩過
+    (cam4/cam5 的框叫「車流區 1」,白名單比對不到,流量歸零)。
+
+    回傳 {camera_id: [lane_no, ...]};順便把「設定檔列了但現場找不到的名稱」
+    印出來,免得對應默默漂掉沒人知道。
+    """
+    from api.models import SessionLocal, Camera
+
+    others = set()
+    for q in (1, 2):
+        if q == phase:
+            continue
+        for z in ((roles.get(q) or {}).get("flow_zones") or []):
+            others.add(str(z))
+    listed = set()
+    for q in (1, 2):
+        for z in ((roles.get(q) or {}).get("flow_zones") or []):
+            listed.add(str(z))
+    cams = [int(str(c)[2:]) for c in ((roles.get(phase) or {}).get("cameras") or [])
+            if str(c).startswith("ID") and str(c)[2:].isdigit()]
+    out: dict = {}
+    seen_names: set = set()
+    db = SessionLocal()
+    try:
+        for cid in cams:
+            row = db.query(Camera.zones).filter(Camera.id == cid).first()
+            for z in (list(row[0] or []) if row else []):
+                if str(z.get("scope") or "") != "traffic_flow_settings":
+                    continue
+                name = str(z.get("name") or "")
+                seen_names.add(name)
+                lane = z.get("lane_no")
+                if not str(lane).isdigit():
+                    continue
+                if name in others:          # 屬於另一條匝道的斷面,不算進來
+                    continue
+                out.setdefault(str(cid), []).append(int(lane))
+        # 對應漂掉的預警:設定檔列了名稱,但四台相機身上都找不到
+        if listed:
+            allz: set = set()
+            for cid in [int(str(c)[2:]) for q in (1, 2)
+                        for c in ((roles.get(q) or {}).get("cameras") or [])
+                        if str(c).startswith("ID") and str(c)[2:].isdigit()]:
+                row = db.query(Camera.zones).filter(Camera.id == cid).first()
+                for z in (list(row[0] or []) if row else []):
+                    if str(z.get("scope") or "") == "traffic_flow_settings":
+                        allz.add(str(z.get("name") or ""))
+            missing = sorted(listed - allz)
+            if missing:
+                print("⚠️ [flow_zones] 設定檔列的車流區在現場找不到: %s "
+                      "(ROI 被改名或刪除,排除規則會失效)" % "、".join(missing), flush=True)
+    finally:
+        db.close()
+    return out
+
+
 @router.get("/plan", summary="即時決策盤(輸入/算式/安全閘門逐項攤開)")
 def shadow_plan(_user=Depends(get_current_user)):
     """回傳「這一刻我方演算法在想什麼」的完整快照。
@@ -1997,7 +2058,12 @@ def shadow_plan(_user=Depends(get_current_user)):
                             # 哪些車流區(ROI)的流量算進這條匝道 —— 一支相機身上可能
                             # 有跨路段的 ROI(cam3 就同時有上匝道停等區與下匝道後平面
                             # 道路),不分開的話「總流量」會把兩段路加在一起。
-                            "flow_zones": (roles.get(p) or {}).get("flow_zones") or []}
+                            "flow_zones": (roles.get(p) or {}).get("flow_zones") or [],
+                            # 解析後的對應:這條匝道要算哪幾台相機的哪幾條 lane。
+                            # 前端不再自己用名稱比對 —— 名稱會被現場改(2026-09-12
+                            # cam5 的車流框就被改回預設名「車流區 1」),比對邏輯
+                            # 放在前端等於把易碎的部分放在看不到的地方。
+                            "flow_lanes": _flow_lanes_for(p, roles)}
                    for p in (1, 2)},
         "terms": {
             "switch_gain": d.switch_gain, "keep_gain": d.keep_gain,
