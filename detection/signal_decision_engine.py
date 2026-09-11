@@ -36,7 +36,7 @@
 安全約束（與官方時制表對齊，見 signal_timing_lookup）：
     - min_green 未滿一律 KEEP（不可提早切）
     - max_green 到頂強制 SWITCH（forced）
-    - 主線保護：分相2(下匝道)排隊逼近儲車上限時不可被切走
+    - 主線保護：下匝道(2026-09-11 起為分相1)排隊逼近儲車上限時不可被切走
 """
 from __future__ import annotations
 
@@ -214,7 +214,7 @@ def decide(
         return d
 
     # ③ 主線保護:綠燈側是優先相且排隊逼近儲車上限 → 不可切走
-    #    (分相2 下匝道回堵會溢到國道主線,比地面道路回堵嚴重)
+    #    (下匝道回堵會溢到國道主線,比地面道路回堵嚴重;分相編號一律查 phase_role)
     gsr = green_side.spillback_ratio()
     if green_side.priority and gsr is not None and gsr >= spillback_ratio:
         d.action = "KEEP"
@@ -270,7 +270,7 @@ def evaluate_outcome(samples: list) -> dict:
 
     samples: [{"queue_m_1":.., "queue_m_2":.., "storage_1":.., "storage_2":..,
                "interval_sec":.., "switched": bool}, ...]
-      queue_m_1/2 = 分相1(上匝道)/分相2(下匝道)當下排隊公尺
+      queue_m_1/2 = 分相1(下匝道)/分相2(上匝道)當下排隊公尺
       interval_sec = 這筆樣本代表的時間長度
       switched = 這筆是否發生相位切換
 
@@ -278,7 +278,7 @@ def evaluate_outcome(samples: list) -> dict:
       total_delay_veh_sec  總延滯(車·秒) —— 最主要的目標
       avg_queue_m_1/2      各匝道平均排隊
       max_queue_m_1/2      各匝道最大排隊
-      spillback_events_2   分相2(下匝道)排隊逼近儲車上限的次數 ← 主線回堵風險
+      spillback_events_1   分相1(下匝道)排隊逼近儲車上限的次數 ← 主線回堵風險
       switch_count         切換次數(太頻繁 = 浪費在換相損失)
       switch_per_min       每分鐘切換次數
     """

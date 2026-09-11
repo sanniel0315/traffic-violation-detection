@@ -74,17 +74,17 @@ def phase_role(phase_no: int) -> Optional[dict]:
 
 
 def storage_limit_m(phase_no: int) -> Optional[int]:
-    """該分相對應匝道的儲車上限(公尺)。分相2(下匝道)=600、分相1(上匝道)=210。"""
+    """該分相對應匝道的儲車上限(公尺)。分相1(下匝道)=600、分相2(上匝道)=210。"""
     p = phase_role(phase_no)
     return int(p["storage_m"]) if p else None
 
 
 def priority_phase() -> int:
-    """主線保護優先的分相(下匝道)。"""
+    """主線保護優先的分相(下匝道)。2026-09-11 起是分相1。"""
     for no, p in load_baseline()["phases"].items():
         if p.get("priority"):
             return int(no)
-    return 2
+    return 1
 
 
 def base_split(plan_id: int) -> Optional[tuple]:
@@ -106,4 +106,4 @@ if __name__ == "__main__":
             print(f"  {label} {h:02d}:00 → 計畫 {pid} 分相綠 {sp}")
         break  # 只示範平日
     print("計畫 1 參數:", plan_params(1))
-    print("分相2(下匝道)儲車上限:", storage_limit_m(2), "m")
+    print("分相1(下匝道)儲車上限:", storage_limit_m(1), "m")
