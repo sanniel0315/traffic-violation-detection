@@ -310,8 +310,14 @@ def test_hwstatus_每個模式送出的值(tc3):
     assert f(RAW, "force", 0x1234) == 0x1234
     assert f(RAW, "flip14") == 0x2000, "flip14 只翻 bit14"
 
-    # 機箱門開啟:先在我方位元語意下設 bit9,最後一步才交換
-    assert f(RAW, "raw", cabinet_open=True) == 0x6200
+    # 🛑 機箱門開啟要放在「中央讀得到」的位置:中央產生告警名稱時是反讀。
+    #    raw 模式送 bit1,中央反讀成 bit9 才會顯示「機箱門開啟」。
+    #    2026-09-11 之前送 bit9 → 中央反讀成 bit1,顯示成「記憶體異常」。
+    assert f(RAW, "raw", cabinet_open=True) == 0x6002, (
+        "raw 模式的機箱位元要放 bit1 —— 放 bit9 會被中央讀成記憶體錯誤")
+    _wire = f(RAW, "raw", cabinet_open=True)
+    assert (((_wire & 0xFF) << 8) | (_wire >> 8)) & (1 << 9), (
+        "中央反讀之後必須看得到 bit9 機箱門開啟")
     assert f(RAW, "swap", cabinet_open=True) == 0x0062, (
         "順序錯了 —— 先交換再設機箱位元會設到錯的位置")
 

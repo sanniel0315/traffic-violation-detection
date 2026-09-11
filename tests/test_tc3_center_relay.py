@@ -166,11 +166,19 @@ def test_hardwarestatus_bit14_flip_to_center():
 
 
 def test_cabinet_open_sets_bit9_to_center(monkeypatch):
-    """🛑 我方電子鎖的門一開,上傳中央的 HardwareStatus 必須把 bit9 設起來。
+    """🛑 我方電子鎖的門一開,中央必須看得到「機箱門開啟」。
 
     號誌機自己的 bit9 對不上現場(機箱開著它仍為 0),中央要看到「有人開箱」
-    只能靠我方的門磁。這條測試釘住三件事:
-      · 門開 → bit9 = 1
+    只能靠我方的門磁。
+
+    🛑 2026-09-11 更正位元位置:中央產生告警名稱時是**反讀**這個欄位。
+       raw 模式下線路值就是我方寫的值,所以要讓中央讀到 bit9,線路上必須是
+       **bit1**。先前放 bit9 → 中央反讀成 bit1,畫面顯示「記憶體異常」——
+       機箱門開啟變成記憶體故障(現場實證,已報備中央/廠商)。
+       bit9 與 bit1 在位元組交換下剛好互換,所以這不是偶發。
+
+    這條測試釘住三件事:
+      · 門開 → 線路上 bit1 = 1,且中央反讀後看得到 bit9
       · 只加不減 → 控制器原本報的位元(這裡是 bit14)不能被蓋掉
       · 門關 → 不加任何東西(raw 模式應原封轉發)
     """
@@ -199,7 +207,12 @@ def test_cabinet_open_sets_bit9_to_center(monkeypatch):
         out = S.decode_frame(got)
         assert out and out.get("cks_ok"), "補完 bit9 的框 CKS 不合法"
         hs = (S._unstuff(got[7:-3])[2] << 8) | S._unstuff(got[7:-3])[3]
-        assert hs & (1 << 9), "門開了但 bit9 沒被設起來"
+        assert hs & (1 << 1), "門開了但線路上的 bit1 沒被設起來"
+        swapped = ((hs & 0xFF) << 8) | ((hs >> 8) & 0xFF)
+        assert swapped & (1 << 9), (
+            "中央反讀之後看不到 bit9 機箱門開啟 —— 位元擺錯位置")
+        assert not (swapped & (1 << 1)), (
+            "中央反讀後不該出現 bit1 記憶體錯誤 —— 那正是先前的誤報")
         assert hs & (1 << 14), "只加不減:控制器原本的 bit14 被蓋掉了"
 
         # 門關 → raw 應原封轉發
