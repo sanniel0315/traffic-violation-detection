@@ -608,11 +608,20 @@ def _release_stats() -> dict:
         if ph is None:
             continue
         done = lens[:-1] if (running and ph == last_ph) else lens
+        # 🛑 量到的長度是「頭尾取樣時間差」,綠燈真正的起訖落在取樣之間,所以**系統性
+        #    低估**(取樣 5 秒 → 平均少半個週期)。同一支程式的「綠燈時間統計」早就
+        #    用「量到 + 半個週期」當最佳估計(見 avg_estimated),但這裡一直給的是
+        #    未修正的量到值 —— 同一件事在兩個畫面顯示不同數字,現場回報「前次秒數
+        #    一直不對」就是這個。這裡改用同一個估計式,並把量到值一併回傳可稽核。
+        _half = SHADOW_INTERVAL_SEC / 2.0
         out[str(int(ph))] = {
             "count": len(lens),
             "total_sec": int(round(sum(lens))),
-            "last_sec": int(round(done[-1])) if done else None,
-            "avg_sec": round(sum(done) / len(done), 1) if done else None,
+            "last_sec": int(round(done[-1] + _half)) if done else None,
+            "last_sec_measured": int(round(done[-1])) if done else None,
+            "avg_sec": round(sum(done) / len(done) + _half, 1) if done else None,
+            "avg_sec_measured": round(sum(done) / len(done), 1) if done else None,
+            "sample_interval_sec": SHADOW_INTERVAL_SEC,
             "running": bool(running and ph == last_ph),
         }
     _release_cache.update({"ts": now, "data": out})
