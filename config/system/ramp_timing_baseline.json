@@ -63,8 +63,8 @@
     },
     "9": {
       "cycle": 94,
-      "phase1_green": 50,
-      "phase2_green": 30,
+      "phase1_green": 30,
+      "phase2_green": 50,
       "min_green": [
         10,
         20
@@ -72,12 +72,18 @@
       "max_green": 999,
       "yellow": 3,
       "all_red": 4,
-      "use": "spare"
+      "use": "spare",
+      "official_0814": {
+        "phase1_green": 50,
+        "phase2_green": 30,
+        "note": "中央官方時制表 0814 原值;2026-09-11 現場將分相1/分相2 綠燈對調"
+      },
+      "green_source": "field_5F45_20260911"
     },
     "10": {
       "cycle": 90,
-      "phase1_green": 60,
-      "phase2_green": 20,
+      "phase1_green": 20,
+      "phase2_green": 60,
       "min_green": [
         1,
         2
@@ -85,12 +91,18 @@
       "max_green": 210,
       "yellow": 3,
       "all_red": 2,
-      "use": "spare"
+      "use": "spare",
+      "official_0814": {
+        "phase1_green": 60,
+        "phase2_green": 20,
+        "note": "中央官方時制表 0814 原值;2026-09-11 現場將分相1/分相2 綠燈對調"
+      },
+      "green_source": "field_5F45_20260911"
     },
     "11": {
       "cycle": 95,
-      "phase1_green": 50,
-      "phase2_green": 35,
+      "phase1_green": 35,
+      "phase2_green": 50,
       "min_green": [
         1,
         2
@@ -98,22 +110,15 @@
       "max_green": 999,
       "yellow": 3,
       "all_red": 2,
-      "use": "spare"
+      "use": "spare",
+      "official_0814": {
+        "phase1_green": 50,
+        "phase2_green": 35,
+        "note": "中央官方時制表 0814 原值;2026-09-11 現場將分相1/分相2 綠燈對調"
+      },
+      "green_source": "field_5F45_20260911"
     },
     "22": {
-      "cycle": 110,
-      "phase1_green": 60,
-      "phase2_green": 40,
-      "min_green": [
-        1,
-        2
-      ],
-      "max_green": 210,
-      "yellow": 3,
-      "all_red": 2,
-      "use": "spare"
-    },
-    "23": {
       "cycle": 110,
       "phase1_green": 40,
       "phase2_green": 60,
@@ -124,7 +129,32 @@
       "max_green": 210,
       "yellow": 3,
       "all_red": 2,
-      "use": "spare"
+      "use": "spare",
+      "official_0814": {
+        "phase1_green": 60,
+        "phase2_green": 40,
+        "note": "中央官方時制表 0814 原值;2026-09-11 現場將分相1/分相2 綠燈對調"
+      },
+      "green_source": "field_5F45_20260911"
+    },
+    "23": {
+      "cycle": 110,
+      "phase1_green": 60,
+      "phase2_green": 40,
+      "min_green": [
+        1,
+        2
+      ],
+      "max_green": 210,
+      "yellow": 3,
+      "all_red": 2,
+      "use": "spare",
+      "official_0814": {
+        "phase1_green": 40,
+        "phase2_green": 60,
+        "note": "中央官方時制表 0814 原值;2026-09-11 現場將分相1/分相2 綠燈對調"
+      },
+      "green_source": "field_5F45_20260911"
     },
     "35": {
       "cycle": 80,
@@ -288,5 +318,5 @@
       23
     ]
   },
-  "note_green_swap": "🛑 2026-09-10 計畫 1/35/36/37 的分相1、分相2 綠燈在控制器上對調(5F15 寫入、5F45 查回核對)。本檔 phase1_green/phase2_green 已同步為**現場實際值**,官方 0814 原值保留在各計畫的 official_0814。決策引擎與模擬對照組要用現場值,否則對照組不是現在真的在跑的時制。"
+  "note_green_swap": "🛑 2026-09-10 計畫 1/35/36/37(09-10)與其餘全部 40 套(09-11) 的分相1、分相2 綠燈在控制器上對調(5F15 寫入、5F45 查回核對)。本檔 phase1_green/phase2_green 已同步為**現場實際值**,官方 0814 原值保留在各計畫的 official_0814。決策引擎與模擬對照組要用現場值,否則對照組不是現在真的在跑的時制。"
 }
