@@ -1982,6 +1982,19 @@ def shadow_plan(_user=Depends(get_current_user)):
                  "all_red": pp.get("all_red")},
         "green_side": side(green, roles[g_no]),
         "red_side": side(red, roles[r_no]),
+        # 🛑 2026-09-11 重構:分相 ↔ 匝道 的對應**只有一份真相**,就是
+        #    config/system/ramp_timing_baseline.json 的 phases。
+        #    前端原本自己寫死一份 SIG_PHASE_META(分相1=上匝道…),改一邊忘了另一邊
+        #    就會出現「畫面說下匝道、演算法拿上匝道的儲車上限去算」。
+        #    這裡整組往前端送,前端不再自備。
+        "phases": {str(p): {"ramp": (roles.get(p) or {}).get("ramp"),
+                            "zone": (roles.get(p) or {}).get("zone"),
+                            "role": (roles.get(p) or {}).get("role"),
+                            "storage_m": (roles.get(p) or {}).get("storage_m"),
+                            "priority": bool((roles.get(p) or {}).get("priority")),
+                            "cameras": (roles.get(p) or {}).get("cameras"),
+                            "constraint_camera": (roles.get(p) or {}).get("constraint_camera")}
+                   for p in (1, 2)},
         "terms": {
             "switch_gain": d.switch_gain, "keep_gain": d.keep_gain,
             "change_cost": d.change_cost,
@@ -2419,7 +2432,7 @@ def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
             out["trend_agg"] = True
             out["trend_bucket_sec"] = round(width, 1)
 
-    # 出口(下匝道 = 分相2)滯留:取區間內的平均與最大,這是主線回堵的前哨
+    # 出口(下匝道 = 分相1,2026-09-11 起)滯留:取區間內的平均與最大,這是主線回堵的前哨
     q2 = [float(r[5]) for r in rows if r[5] is not None]
     if q2:
         from detection.signal_decision_engine import DEFAULT_METERS_PER_VEHICLE as MPV

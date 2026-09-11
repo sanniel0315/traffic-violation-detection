@@ -7,23 +7,6 @@
   "lost_time_per_change_sec": 5,
   "phases": {
     "1": {
-      "role": "on_ramp",
-      "ramp": "上匝道",
-      "label": "入口",
-      "green_directions": [
-        "北",
-        "南"
-      ],
-      "storage_m": 210,
-      "spill_to": "平面路口",
-      "priority": false,
-      "cameras": [
-        "ID2",
-        "ID3"
-      ],
-      "constraint_camera": "ID3"
-    },
-    "2": {
       "role": "off_ramp",
       "ramp": "下匝道",
       "label": "出口",
@@ -38,7 +21,26 @@
         "ID4",
         "ID5"
       ],
-      "constraint_camera": "ID4"
+      "constraint_camera": "ID4",
+      "zone": "WN"
+    },
+    "2": {
+      "role": "on_ramp",
+      "ramp": "上匝道",
+      "label": "入口",
+      "green_directions": [
+        "北",
+        "南"
+      ],
+      "storage_m": 210,
+      "spill_to": "平面路口",
+      "priority": false,
+      "cameras": [
+        "ID2",
+        "ID3"
+      ],
+      "constraint_camera": "ID3",
+      "zone": "NE"
     }
   },
   "plans": {
@@ -318,5 +320,6 @@
       23
     ]
   },
-  "note_green_swap": "🛑 2026-09-10 計畫 1/35/36/37(09-10)與其餘全部 40 套(09-11) 的分相1、分相2 綠燈在控制器上對調(5F15 寫入、5F45 查回核對)。本檔 phase1_green/phase2_green 已同步為**現場實際值**,官方 0814 原值保留在各計畫的 official_0814。決策引擎與模擬對照組要用現場值,否則對照組不是現在真的在跑的時制。"
+  "note_green_swap": "🛑 2026-09-10 計畫 1/35/36/37(09-10)與其餘全部 40 套(09-11) 的分相1、分相2 綠燈在控制器上對調(5F15 寫入、5F45 查回核對)。本檔 phase1_green/phase2_green 已同步為**現場實際值**,官方 0814 原值保留在各計畫的 official_0814。決策引擎與模擬對照組要用現場值,否則對照組不是現在真的在跑的時制。",
+  "note_phase_remap": "🛑 2026-09-11 依現場確認改為:分相1 = 下匝道(出口,儲車 600m,主線保護優先),分相2 = 上匝道(入口,儲車 210m)。整組一起搬 —— 匝道名、出入口、綠燈方向、儲車上限、溢流去向、主線保護、相機、基準測點。🛑 我方以放行率實測得到的是相反結果(NE-2 在分相1 綠燈放行率 1.5 倍、WN-2 在分相2 綠燈 3.0 倍,6 小時樣本、兩相綠燈時間差 <2%),使用者 2026-09-11 明確指示「分相1是下匝道是肯定的」,依指示設定。量測方法與數據記在 docs/相機分相對應表.md,日後要複核從那裡開始。"
 }
