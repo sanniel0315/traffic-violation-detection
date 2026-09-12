@@ -823,6 +823,13 @@ FIRST_GREEN_STEP = int(os.getenv("SIGNAL_FIRST_GREEN_STEP", "1") or 1)
 # 實測 78.6% 的下發是在剩 ≤2 秒時送的,等於白送。
 ACTUATE_MIN_EFFECT_SEC = float(os.getenv("SIGNAL_ACTUATE_MIN_EFFECT_SEC", "2.0") or 2.0)
 
+# 綠側沒有需求時,把換相成本按實際需求縮小(見 signal_decision_engine 的說明)。
+# 離峰 17%、尖峰 31% 的取樣時刻是「綠側空、紅側有車」,那些情境下固定收
+# 12.5 車·秒的換相成本是高估 —— 切走一個沒人用的綠燈並沒有損失可用容量。
+# 預設關閉:它會讓換相變積極,要先量過再決定。
+DEMAND_SCALED_CHANGE_COST = str(
+    os.getenv("SIGNAL_DEMAND_SCALED_CHANGE_COST", "0") or "0").strip() not in ("0", "", "false", "False")
+
 # ── 步階1 閘門的 A/B 試驗 ──────────────────────────────────────────
 # 🛑 要回答的問題:第一個綠階(主綠燈)到底能不能下發?
 #    觀察資料判不了 —— 現行閘門只讓我方在綠燈末端動作,於是「有介入的綠燈比較長」
@@ -1359,6 +1366,7 @@ def _loop():
                 lost_time_sec=_lost_time_for(g_no),
                 keep_weight=KEEP_WEIGHT,
                 priority_keep_weight=PRIORITY_KEEP_WEIGHT,
+                demand_scaled_change_cost=DEMAND_SCALED_CHANGE_COST,
             )
 
             # 🛑 先下發再寫這一筆 log —— 反過來的話這一筆決策的執行結果
@@ -2047,7 +2055,8 @@ def shadow_plan(_user=Depends(get_current_user)):
                min_green_sec=min_green, max_green_sec=max_green,
                saturation_vph=_sat_for(g_no),
                meters_per_vehicle=_mpv(), lost_time_sec=_lost_time_for(g_no),
-               keep_weight=KEEP_WEIGHT)
+               keep_weight=KEEP_WEIGHT,
+               demand_scaled_change_cost=DEMAND_SCALED_CHANGE_COST)
 
     def side(a: ApproachState, role: dict) -> dict:
         sr = a.spillback_ratio()
