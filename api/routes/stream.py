@@ -2501,6 +2501,20 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         a[0] += dx; a[1] += dy; a[2] += 1
         a[3] += dx * dx; a[4] += dy * dy; a[5] += dx * dy
 
+    def _zone_axis(zone: dict):
+        """該 zone 的行進軸(單位向量)。樣本不足回 None。
+
+        🛑 **只有這一個地方算軸**。2026-09-12 踩過:投影用位移平均、畫線用二階矩
+           主軸,兩者可能指相反方向(軸是無向的),於是線被擺到重心的另一側 ——
+           WN-1 的 INOUT 從 72 掉到 8,等於幾乎數不到車,而畫面與日誌都看不出異常。
+        """
+        a = _zone_dir_acc.get(id(zone))
+        if not a or a[2] < 40:
+            return None
+        import math as _m
+        th = 0.5 * _m.atan2(2.0 * a[5], (a[3] - a[4]))
+        return _m.cos(th), _m.sin(th)
+
     def _zone_note_span(zone: dict, tid, t: float) -> None:
         """記下每個 track 在這個 zone 內「沿行進方向」走過的區間 [最早, 最晚]。
 
@@ -2513,7 +2527,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         e = d.get(tid)
         if e is None:
             if len(d) > 400:               # 只保留最近的一批,避免無限長大
-                for k in list(d)[:100]:
+                for k in [k for k in list(d)[:100] if k != "_axis_ok"]:
                     d.pop(k, None)
             d[tid] = [t, t]
         else:
@@ -2544,7 +2558,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         acc = _zone_dir_acc.get(id(zone)) or [0.0, 0.0, 0, 0.0, 0.0, 0.0]
         ready = acc[2] >= 40
         cached = _count_line_cache.get(id(zone))
-        spans_ready = len(_zone_spans.get(id(zone)) or {}) >= 60
+        spans_ready = len([k for k in (_zone_spans.get(id(zone)) or {}) if k != "_axis_ok"]) >= 60
         # 方向與位置都定案後就直接用;還在暫時值就等樣本夠了重算一次
         if cached is not None and (cached is False
                                    or (cached[2] == ready and cached[3] == spans_ready)):
@@ -2553,7 +2567,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     _fl0 = (detection_services.get(camera_id) or {}).get("_flow_lines") or {}
                     _e0 = _fl0.get(str(zone.get("name") or ""))
                     if _e0 is not None:
-                        _e0["tracks_sampled"] = len(_zone_spans.get(id(zone)) or {})
+                        _e0["tracks_sampled"] = len([k for k in (_zone_spans.get(id(zone)) or {}) if k != "_axis_ok"])
                         _e0["dir_samples"] = acc[2]
                 except Exception:
                     pass
@@ -2565,9 +2579,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         cx = m["m10"] / m["m00"] if m["m00"] else rx
         cy = m["m01"] / m["m00"] if m["m00"] else ry
         if ready:
-            # 位移的二階矩主軸 = 車流的行進軸(對正反向不敏感,雙向道也成立)
-            th = 0.5 * math.atan2(2.0 * acc[5], (acc[3] - acc[4]))
-            ux, uy = math.cos(th), math.sin(th)
+            ux, uy = _zone_axis(zone)                # 與投影用的是同一支
         else:
             a = math.radians(ang if w >= h else ang + 90.0)
             ux, uy = math.cos(a), math.sin(a)        # 行進方向(暫用長軸)
@@ -2577,7 +2589,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         # 每台車在框內有一段看得到的區間 [t_first, t_last],線放在 t 時,
         # 只有 t_first < t < t_last 的車會跨過去。取涵蓋最多車的 t。
         off = 0.0
-        spans = list((_zone_spans.get(id(zone)) or {}).values())
+        spans = [v for k, v in (_zone_spans.get(id(zone)) or {}).items() if k != "_axis_ok"]
         if ready and len(spans) >= 60:
             cand = sorted(set(round((a0 + b0) / 2.0, 1) for a0, b0 in spans if b0 > a0))
             best, bestn = 0.0, -1
@@ -3314,17 +3326,21 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             if _zone_log_key in _inz:
                                 continue          # 這一趟已經算過
                             _zone_note_motion(pick_zone, _prev, _cur)
-                            _dacc = _zone_dir_acc.get(id(pick_zone))
-                            if _dacc and _dacc[2] >= 40:
-                                import math as _m
-                                _nn = _m.hypot(_dacc[0], _dacc[1]) or 1.0
+                            _ax = _zone_axis(pick_zone)
+                            if _ax:
                                 _pts0 = pick_zone.get("points") or []
                                 if len(_pts0) >= 3:
                                     _a0 = np.array(_pts0, dtype=np.float32)
                                     _mm = cv2.moments(_a0.reshape(-1, 1, 2))
                                     if _mm["m00"]:
                                         _gx, _gy = _mm["m10"] / _mm["m00"], _mm["m01"] / _mm["m00"]
-                                        _t = ((_cur[0] - _gx) * _dacc[0] + (_cur[1] - _gy) * _dacc[1]) / _nn
+                                        # 軸剛定案的那一刻,先把之前用別的基準累積的 span 丟掉
+                                        _sd = _zone_spans.get(id(pick_zone))
+                                        if _sd is not None and not _sd.get("_axis_ok"):
+                                            _zone_spans[id(pick_zone)] = {"_axis_ok": True}
+                                        elif _sd is None:
+                                            _zone_spans[id(pick_zone)] = {"_axis_ok": True}
+                                        _t = (_cur[0] - _gx) * _ax[0] + (_cur[1] - _gy) * _ax[1]
                                         _zone_note_span(pick_zone, _track_id, _t)
                             _line = _zone_count_line(pick_zone)
                             if not _line or _prev is None:
