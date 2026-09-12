@@ -8870,6 +8870,32 @@
                         <el-button size="small" plain :loading="sigAdjLoading" @click="sigAdjSearch">重新查詢</el-button>
                     </div>
 
+                    <!-- 🛑 2026-09-12 使用者:「運作狀態」這張卡移到最上面。它是「此刻」的
+                         狀態,不受下面查詢區間影響,放在查詢列上方反而更清楚。 -->
+                    <!-- 🛑 2026-09-10 拆回兩張卡(使用者:「分開就是分開,不可以混和」)。
+                         前一版把它們併成一張、用小節標題分,但那兩件事的性質不同:
+                         左邊是「此刻的狀態」(會亮會跳),右邊是「這段區間的量測值」
+                         (跟著上面的查詢區間走)。併在一起會讓人以為狀態也受區間影響。 -->
+                    <div class="card ops-card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-activity"/></svg>運作狀態</span>
+                            <span class="ops-live">此刻</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="ops-grid">
+                                <div class="ops-cell" v-for="(c,ci) in specCells" :key="'oc'+c.k"
+                                     :class="c.s" :style="{animationDelay: (ci*70)+'ms'}">
+                                    <span class="ops-dot"></span>
+                                    <span class="ops-k">{{ c.k }}</span>
+                                    <b class="ops-v">{{ c.v }}</b>
+                                </div>
+                            </div>
+                            <p class="ops-reason" v-if="specDegReason">
+                                <svg class="text-icon"><use href="#i-alert"/></svg>降階原因：{{ specDegReason }}
+                            </p>
+                        </div>
+                    </div>
+
                     <!-- ══ 歷史時制調整紀錄 ══════════════════════════════
                          驗收條文明列的產出之一。一筆 = 我方送出的一則會改變運轉的命令,
                          回答三件事:何時送、**為什麼**送、控制器**有沒有接受**。
@@ -9106,30 +9132,6 @@
                                 這段時間沒有可用樣本。線上演算法比對需要抄錄器連線正常，且控制模式為外部動態才會納入。</p>
                         </div>
                     </div>
-                    <!-- 🛑 2026-09-10 拆回兩張卡(使用者:「分開就是分開,不可以混和」)。
-                         前一版把它們併成一張、用小節標題分,但那兩件事的性質不同:
-                         左邊是「此刻的狀態」(會亮會跳),右邊是「這段區間的量測值」
-                         (跟著上面的查詢區間走)。併在一起會讓人以為狀態也受區間影響。 -->
-                    <div class="card ops-card">
-                        <div class="card-header">
-                            <span><svg class="text-icon"><use href="#i-activity"/></svg>運作狀態</span>
-                            <span class="ops-live">此刻</span>
-                        </div>
-                        <div class="card-body">
-                            <div class="ops-grid">
-                                <div class="ops-cell" v-for="(c,ci) in specCells" :key="'oc'+c.k"
-                                     :class="c.s" :style="{animationDelay: (ci*70)+'ms'}">
-                                    <span class="ops-dot"></span>
-                                    <span class="ops-k">{{ c.k }}</span>
-                                    <b class="ops-v">{{ c.v }}</b>
-                                </div>
-                            </div>
-                            <p class="ops-reason" v-if="specDegReason">
-                                <svg class="text-icon"><use href="#i-alert"/></svg>降階原因：{{ specDegReason }}
-                            </p>
-                        </div>
-                    </div>
-
                     <div class="card pfm-card">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-bar"/></svg>執行績效</span>
