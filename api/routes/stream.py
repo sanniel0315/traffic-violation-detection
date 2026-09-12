@@ -3029,6 +3029,10 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 # 30s 對快速通過 ROI 仍是 1 車 1 筆；塞車中 30s 也只 1 筆 (ID swap
                 # 偵測會清狀態，新 track 視為新車重新算)。
                 _EVENT_LOG_COOLDOWN = 30.0
+                # 計流量的防重複方式:
+                #   enter   (預設) 進框算一次,離開框才可再算 —— 停等不會被重複計
+                #   cooldown(舊行為) 同 track 同 zone 每 30 秒可再計一次
+                _FLOW_COUNT_MODE = str(os.getenv("SIGNAL_FLOW_COUNT_MODE", "enter") or "enter").lower()
                 # INOUT「進出」框:進出流量另外由下方「轉場」邏輯計數,
                 # 但這裡的一般流量計數「照算」—— 進出歸進出,原本的流量計數還是要。
                 # (舊版把 INOUT 框從一般迴圈排除,導致標了進出線之後該車道的
@@ -3054,19 +3058,45 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 for v in vehicles:
                     bbox = v.get("bbox", {}) or {}
                     hit_zones = _vehicle_hit_zones(v, det_zones)
+                    # 🛑 離開框要把旗標清掉,下次再進來才算得到新的一筆。
+                    #    只在「這一幀有偵測到這台車」時清 —— 偵測閃斷(車沒出現在
+                    #    vehicles 裡)不會走到這裡,旗標保留,所以閃一下不會被當成
+                    #    重新進框而多算一筆。
+                    _tid_now = v.get("track_id")
+                    if _tid_now is not None and _FLOW_COUNT_MODE != "cooldown":
+                        _hit_keys = {str(z.get("name") or z.get("id") or "") for z in hit_zones}
+                        _st_now = tracks.setdefault(_tid_now, {})
+                        _inz_now = _st_now.get("_in_zone")
+                        if _inz_now:
+                            _inz_now.intersection_update(_hit_keys)
                     if not hit_zones:
                         continue
                     pick_zone = hit_zones[0]
-                    # cooldown check — 跳過同 track 同 zone 已記錄過且未冷卻完的
+                    # 🛑 2026-09-12:計流量改成「一台車進框只算一次,離開框才可再算」。
+                    #    舊做法是同 track 同 zone 每 30 秒才准再記一次 —— 那在**停等區**
+                    #    會把「停著沒動的同一台車」當成新流量反覆計入:一台車等 90 秒
+                    #    就被算成 3 輛。實測後果是停等區測點的流量比同一條匝道上游
+                    #    測點高出 1.5~9 倍(深夜週期長時最誇張),而上游自由流的框不會
+                    #    受影響 —— 兩台看同一批車卻差好幾倍,就是這個機制造成的。
+                    #    現在改成邊緣觸發:track 不在框內 → 進框那一刻記一筆;
+                    #    之後只要它還在框內就不再記,直到離開(該幀沒有命中)才清旗標。
+                    #    🛑 進出線的 IN/EXIT 事件不走這裡(那是給 OPAC 的),維持原樣。
+                    #    要退回舊行為:設 SIGNAL_FLOW_COUNT_MODE=cooldown。
                     _track_id = v.get("track_id")
                     if _track_id is not None:
                         _zone_log_key = str(pick_zone.get("name") or pick_zone.get("id") or "")
                         _track_state = tracks.setdefault(_track_id, {})
-                        _log_state = _track_state.setdefault("_event_log_ts", {})
-                        _last = _log_state.get(_zone_log_key, 0.0)
-                        if now_ts - _last < _EVENT_LOG_COOLDOWN:
-                            continue
-                        _log_state[_zone_log_key] = now_ts
+                        if _FLOW_COUNT_MODE == "cooldown":
+                            _log_state = _track_state.setdefault("_event_log_ts", {})
+                            _last = _log_state.get(_zone_log_key, 0.0)
+                            if now_ts - _last < _EVENT_LOG_COOLDOWN:
+                                continue
+                            _log_state[_zone_log_key] = now_ts
+                        else:
+                            _inz = _track_state.setdefault("_in_zone", set())
+                            if _zone_log_key in _inz:
+                                continue          # 還在框內,不重複計
+                            _inz.add(_zone_log_key)
                     occupancy_val = zone_occupancy_map.get(_zone_key(pick_zone)) if pick_zone else None
                     speed_raw = v.get("speed_kmh")
                     speed_method = str(v.get("speed_method") or "")
