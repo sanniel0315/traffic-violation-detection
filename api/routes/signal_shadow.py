@@ -1254,12 +1254,35 @@ def _loop():
                 green_since = now
             prev_phase = cur_phase
             # 優先用抄錄器逐框追蹤的精確值;取不到才退回自己推算(誤差 ≤ 取樣週期)
+            # 🛑 2026-09-12:加上界限檢查。實測近 7 天 green_elapsed 最大到 **828 秒**,
+            #    而現行四套時制最長的一相也只有 45 秒綠 +10 秒延長 —— 那是抄錄器的
+            #    分相計時沒歸零(分相沒換、或 5F03 斷了一段)造成的假值。
+            #    後果不是只有數字難看:它會觸發「已達最大綠 100s,強制切換」——
+            #    近 7 天我方 2,663 次 SWITCH 判定裡有 **747 次(28%)** 是這樣來的,
+            #    等於超過四分之一的換相意圖不是交通狀況造成的。
+            #    超界時:先退回自己推算;自己推算也超界就重新起算並跳過這一輪,
+            #    不要拿一個明知錯誤的已亮秒數去做決策。
+            _ELAPSED_MAX_SEC = 150.0        # 現行最長一相約 55 秒,留 3 倍裕度
             exact = live.get("phase_elapsed_sec")
-            if isinstance(exact, (int, float)):
+            if isinstance(exact, (int, float)) and 0 <= float(exact) <= _ELAPSED_MAX_SEC:
                 green_elapsed = float(exact)
                 green_since = now - green_elapsed
             else:
+                if isinstance(exact, (int, float)):
+                    with _lock:
+                        _stats["elapsed_out_of_range"] = _stats.get("elapsed_out_of_range", 0) + 1
                 green_elapsed = max(0.0, now - green_since)
+            if green_elapsed > _ELAPSED_MAX_SEC:
+                # 自己推算也超界 —— 代表我方漏看了一次分相變換。重新起算,
+                # 這一輪不下判斷也不記樣本(記了會污染一致率與「最大綠強制」統計)。
+                with _lock:
+                    _stats["elapsed_resync"] = _stats.get("elapsed_resync", 0) + 1
+                green_since = now
+                prev_phase = cur_phase
+                _live_green["since"] = now
+                _live_green["phase"] = cur_phase
+                _stop.wait(SHADOW_INTERVAL_SEC)
+                continue
             _live_green["since"] = green_since
             _live_green["phase"] = cur_phase
 
