@@ -1948,6 +1948,32 @@ async def live_stream_overlay(camera_id: int, q: str = "low", roi: str = "0",
     )
 
 
+@router.get("/flow-count", summary="流量計數方式與斷面線診斷(每支相機每個車流區)")
+async def flow_count_status(db: Session = Depends(get_db)):
+    """讓看報表的人自己查得到「這個流量是怎麼數出來的」。
+
+    🛑 這些值原本只印在偵測執行緒的日誌裡,要登進機器才看得到 ——
+       而它們正是判斷流量可不可信的依據:
+         · mode            計數方式(line=跨斷面線 / enter=進框 / cooldown=舊的 30 秒)
+         · dir_dx/dir_dy   從實際車流學到的行進方向(不是從框的形狀猜的)
+         · line_offset_px  斷面線沿行進方向離多邊形重心多遠
+         · tracks_covered  在取樣的 track 裡,有多少條會跨過這條線
+       tracks_covered 偏低不代表漏車 —— 一台車的通過常被切成好幾段 track,
+       只有其中一段會跨線,正好各算一次。
+    """
+    out = []
+    for cam in db.query(Camera).filter(Camera.enabled == True).all():   # noqa: E712
+        svc = detection_services.get(int(cam.id)) or {}
+        lines = svc.get("_flow_lines") or {}
+        if not lines:
+            continue
+        out.append({"camera_id": int(cam.id), "camera_name": cam.name,
+                    "running": bool(svc.get("running")), "zones": lines})
+    return {"count_mode": os.getenv("SIGNAL_FLOW_COUNT_MODE", "enter"),
+            "cameras": out,
+            "note": "line=跨越自動推導的斷面線才算一次;方向與位置都由實際車流決定,不修改任何 ROI 設定"}
+
+
 @router.get("/{camera_id}/snapshot")
 async def snapshot(camera_id: int, overlay: int = 0, w: int = 0,
                    db: Session = Depends(get_db)):
@@ -2455,7 +2481,11 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 hits.append(z)
         return hits
     _count_line_cache: dict = {}
-    _zone_dir_acc: dict = {}          # zone id -> [sum_dx, sum_dy, n]
+    # zone id -> [sum_dx, sum_dy, n, sum_dx2, sum_dy2, sum_dxdy]
+    # 🛑 方向要用**二階矩的主軸**,不是位移平均。cam2 的框涵蓋雙向平面道路,
+    #    兩個方向的位移會互相抵消 —— 實測 n=40 時平均只剩 (-0, 3),等於沒有方向。
+    #    主軸對「正反向」不敏感(計數線本來就無方向性),雙向道也算得出正確的軸。
+    _zone_dir_acc: dict = {}
     # zone id -> {track_id: [t_first, t_last]};t = 位置沿行進方向的投影(像素)
     # 用來決定計數線該放在行進方向的哪個位置。
     _zone_spans: dict = {}
@@ -2467,8 +2497,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         dx, dy = cur[0] - prev[0], cur[1] - prev[1]
         if abs(dx) + abs(dy) < 1.5:        # 幾乎沒動,不列入(停等中的車會拉偏方向)
             return
-        a = _zone_dir_acc.setdefault(id(zone), [0.0, 0.0, 0])
+        a = _zone_dir_acc.setdefault(id(zone), [0.0, 0.0, 0, 0.0, 0.0, 0.0])
         a[0] += dx; a[1] += dy; a[2] += 1
+        a[3] += dx * dx; a[4] += dy * dy; a[5] += dx * dy
 
     def _zone_note_span(zone: dict, tid, t: float) -> None:
         """記下每個 track 在這個 zone 內「沿行進方向」走過的區間 [最早, 最晚]。
@@ -2510,13 +2541,22 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         if len(pts) < 3:
             _count_line_cache[id(zone)] = False
             return False
-        acc = _zone_dir_acc.get(id(zone)) or [0.0, 0.0, 0]
+        acc = _zone_dir_acc.get(id(zone)) or [0.0, 0.0, 0, 0.0, 0.0, 0.0]
         ready = acc[2] >= 40
         cached = _count_line_cache.get(id(zone))
         spans_ready = len(_zone_spans.get(id(zone)) or {}) >= 60
         # 方向與位置都定案後就直接用;還在暫時值就等樣本夠了重算一次
         if cached is not None and (cached is False
                                    or (cached[2] == ready and cached[3] == spans_ready)):
+            if cached is not False:
+                try:            # 診斷的取樣數要跟著長,不然永遠停在計算當下的快照
+                    _fl0 = (detection_services.get(camera_id) or {}).get("_flow_lines") or {}
+                    _e0 = _fl0.get(str(zone.get("name") or ""))
+                    if _e0 is not None:
+                        _e0["tracks_sampled"] = len(_zone_spans.get(id(zone)) or {})
+                        _e0["dir_samples"] = acc[2]
+                except Exception:
+                    pass
             return cached[:2] if cached is not False else False
         arr = np.array(pts, dtype=np.float32)
         rect = cv2.minAreaRect(arr)
@@ -2525,9 +2565,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         cx = m["m10"] / m["m00"] if m["m00"] else rx
         cy = m["m01"] / m["m00"] if m["m00"] else ry
         if ready:
-            dx, dy = acc[0], acc[1]
-            norm = math.hypot(dx, dy) or 1.0
-            ux, uy = dx / norm, dy / norm            # 行進方向(觀測)
+            # 位移的二階矩主軸 = 車流的行進軸(對正反向不敏感,雙向道也成立)
+            th = 0.5 * math.atan2(2.0 * acc[5], (acc[3] - acc[4]))
+            ux, uy = math.cos(th), math.sin(th)
         else:
             a = math.radians(ang if w >= h else ang + 90.0)
             ux, uy = math.cos(a), math.sin(a)        # 行進方向(暫用長軸)
@@ -2552,6 +2592,27 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         ln = ((lx - sx * half, ly - sy * half), (lx + sx * half, ly + sy * half),
               ready, len(spans) >= 60)
         _count_line_cache[id(zone)] = ln
+        # 🛑 診斷資訊發佈到 detection_services,讓 /api/stream/flow-count 查得到。
+        #    這些值原本只印在日誌裡,要進機器才看得到 —— 而它們正是判斷
+        #    「流量數字可不可信」的依據,應該讓看報表的人自己查得到。
+        try:
+            _svc = detection_services.setdefault(camera_id, {})
+            _fl = _svc.setdefault("_flow_lines", {})
+            # 🛑 不要在這裡讀 _FLOW_COUNT_MODE ——它是 _process_post_yolo 的區域變數,
+            #    這個函式看不到,會 NameError 然後被下面的 except 吃掉,診斷就永遠是空的
+            #    (實際踩過:端點回 cameras: [] 但日誌明明有在算線)。模式由端點自己從 env 讀。
+            _fl[str(zone.get("name") or "")] = {
+                "dir_dx": round(acc[0], 1), "dir_dy": round(acc[1], 1), "dir_samples": acc[2],
+                "dir_from_data": bool(ready),
+                "line_offset_px": round(off, 1),
+                "line": [[round(ln[0][0], 1), round(ln[0][1], 1)],
+                         [round(ln[1][0], 1), round(ln[1][1], 1)]],
+                "tracks_sampled": len(spans),
+                "tracks_covered": (bestn if (ready and len(spans) >= 60) else None),
+                "position_from_data": len(spans) >= 60,
+            }
+        except Exception:
+            pass
         if ready:
             print("📏 zone「%s」計數線方向 dx=%.1f dy=%.1f (n=%d)"
                   % (zone.get("name"), acc[0], acc[1], acc[2]), flush=True)
