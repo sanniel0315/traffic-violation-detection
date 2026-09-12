@@ -4406,19 +4406,29 @@
         /* ── 車種兩列(大車/小車) ── */
         .vt-hd { display:block; font-style:normal; font-size:var(--fs-caption); color:var(--gov-muted); }
         .vt-row { display:flex; align-items:center; gap:7px; margin-top:4px; }
-        .vt-ico { width:26px; height:16px; flex:0 0 26px; color:var(--gov-muted); }
+        .vt-ico { width:26px; height:16px; flex:0 0 26px; color:var(--gov-muted);
+                  animation:vtDrive .75s cubic-bezier(.22,.61,.36,1); }
+        /* 車子從左側駛入並輕微回彈 —— 只在該車種數量變動時跑一次 */
+        @keyframes vtDrive { 0% { transform:translateX(-14px); opacity:0; }
+                             65% { transform:translateX(2px);  opacity:1; }
+                             100%{ transform:translateX(0); } }
+        /* 佔比條由左長出來。用 scaleX 而不是改寬度 —— 寬度是內聯值,
+           keyframes 動不到;scaleX 也不會觸發 layout,戰情牆長時間掛著比較省。 */
+        @keyframes vtGrow { from { transform:scaleX(0); } to { transform:scaleX(1); } }
         .vt-ico.lg { color:#b45309; }
         .vt-ico.sm { color:var(--gov-primary); }
         .vt-name { flex:0 0 30px; }
         .vt-bar { flex:1 1 auto; height:6px; border-radius:3px; background:var(--gov-mute-1,#eef1f4); overflow:hidden; }
-        .vt-bar i { display:block; height:100%; border-radius:3px; transition:width .6s cubic-bezier(.22,.61,.36,1); }
+        .vt-bar i { display:block; height:100%; border-radius:3px; transform-origin:left center;
+                    transition:width .6s cubic-bezier(.22,.61,.36,1);
+                    animation:vtGrow .7s cubic-bezier(.22,.61,.36,1); }
         .vt-bar i.lg { background:#d97706; }
         .vt-bar i.sm { background:var(--gov-primary); }
         .vt-num { flex:0 0 auto; min-width:28px; text-align:right; color:var(--gov-text);
                   font:600 var(--fs-mono-num) var(--font-mono); animation:wrPop .5s ease-out; }
         @media (prefers-reduced-motion: reduce) {
-            .vt-bar i { transition:none; }
-            .vt-num { animation:none; }
+            .vt-bar i { transition:none; animation:none; }
+            .vt-num, .vt-ico { animation:none; }
         }
         @keyframes wrPop { 0% { background:rgba(255,214,102,.55); }
                            100% { background:transparent; } }
@@ -9672,10 +9682,15 @@
                                         <div class="wr-cam-veh" v-if="sigVd[cam.camera_id]">
                                             <em class="vt-hd" :title="'資料時間 ' + sigVd[cam.camera_id].at">近 5 分鐘</em>
                                             <div class="vt-row" v-for="t in sigVdTypes(cam.camera_id)" :key="'vt'+t.k">
-                                                <svg class="vt-ico" :class="t.k" viewBox="0 0 32 20" aria-hidden="true"><use :href="t.icon"/></svg>
+                                                <!-- 🛑 三個元素都綁 :key 到「這一種車的數量」——
+                                                     數量一變元素就重掛,各自的動畫跑一次:
+                                                       車輛圖示 駛入一次 / 佔比條 由左長出來 / 數字 閃一下
+                                                     數量沒變的那一列完全不動,所以看得出「剛剛動的是哪一種」。 -->
+                                                <svg class="vt-ico" :class="t.k" :key="t.k+'i'+t.n"
+                                                     viewBox="0 0 32 20" aria-hidden="true"><use :href="t.icon"/></svg>
                                                 <span class="vt-name">{{ t.name }}</span>
-                                                <span class="vt-bar"><i :class="t.k" :style="{width:t.pct}"></i></span>
-                                                <b class="vt-num" :key="t.k+'-'+t.n">{{ t.n }}</b>
+                                                <span class="vt-bar"><i :class="t.k" :key="t.k+'b'+t.n" :style="{width:t.pct}"></i></span>
+                                                <b class="vt-num" :key="t.k+'n'+t.n">{{ t.n }}</b>
                                             </div>
 
                                             <!-- 🛑 分車道。流量一律走「車流演算法」的一般計數,
