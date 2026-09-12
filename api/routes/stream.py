@@ -2455,34 +2455,64 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 hits.append(z)
         return hits
     _count_line_cache: dict = {}
+    _zone_dir_acc: dict = {}          # zone id -> [sum_dx, sum_dy, n]
+
+    def _zone_note_motion(zone: dict, prev, cur) -> None:
+        """累積該 zone 內觀測到的位移向量,用來決定「行進方向」。"""
+        if prev is None or cur is None:
+            return
+        dx, dy = cur[0] - prev[0], cur[1] - prev[1]
+        if abs(dx) + abs(dy) < 1.5:        # 幾乎沒動,不列入(停等中的車會拉偏方向)
+            return
+        a = _zone_dir_acc.setdefault(id(zone), [0.0, 0.0, 0])
+        a[0] += dx; a[1] += dy; a[2] += 1
 
     def _zone_count_line(zone: dict):
-        """由多邊形自動推導一條「計數斷面線」並快取在 zone 上。
+        """推導一條「計數斷面線」並快取。
 
-        取最小外接矩形:長邊 = 行進方向,短邊 = 橫斷面。線通過矩形中心、
-        沿短邊方向,長度取短邊的 1.2 倍(略為超出,避免貼邊的車跨不到)。
-        🛑 只讀 zone['points'],不會改寫任何 ROI 設定。
+        🛑 2026-09-12 修正:方向**以實際觀測到的車流位移為準**,不再用多邊形的
+           長軸猜。WN-1 的框是又寬又短的梯形,最小外接矩形的長邊是橫的,
+           照長軸推出來的線變成「順著行進方向」的直線(畫出來一看就知道錯),
+           那樣車幾乎不會跨過去 → 會嚴重少算。
+           樣本不足(<40 筆位移)時先用長軸當暫時值,累積夠了自動改用觀測方向。
+        線通過多邊形重心、垂直於行進方向,長度取外接矩形較短邊的 1.2 倍。
+        只讀 zone['points'],不會改寫任何 ROI 設定。
         """
         # 🛑 快取放在獨立 dict(以 zone 的 id 為鍵),不要寫進 zone dict ——
         #    zones 熱重載會把記憶體內容拿去跟 DB 比對,多塞欄位會造成誤判重載。
         #    zone 物件在熱重載後會換新,id 變了快取自然失效,不必手動清。
-        ln = _count_line_cache.get(id(zone))
-        if ln is not None:
-            return ln
+        import math
         pts = zone.get("points") or []
         if len(pts) < 3:
             _count_line_cache[id(zone)] = False
             return False
-        rect = cv2.minAreaRect(np.array(pts, dtype=np.float32))
-        (cx, cy), (w, h), ang = rect
-        import math
-        # 短邊方向 = 長邊方向轉 90 度
-        a = math.radians(ang if w >= h else ang + 90.0)   # 長邊方向
-        sx, sy = -math.sin(a), math.cos(a)                # 短邊(斷面)方向
+        acc = _zone_dir_acc.get(id(zone)) or [0.0, 0.0, 0]
+        ready = acc[2] >= 40
+        cached = _count_line_cache.get(id(zone))
+        # 已用觀測方向算過就直接用;還在用暫時值的話,樣本夠了就重算一次
+        if cached is not None and (cached is False or cached[2] == ready):
+            return cached[:2] if cached is not False else False
+        arr = np.array(pts, dtype=np.float32)
+        rect = cv2.minAreaRect(arr)
+        (rx, ry), (w, h), ang = rect
+        m = cv2.moments(arr.reshape(-1, 1, 2))
+        cx = m["m10"] / m["m00"] if m["m00"] else rx
+        cy = m["m01"] / m["m00"] if m["m00"] else ry
+        if ready:
+            dx, dy = acc[0], acc[1]
+            norm = math.hypot(dx, dy) or 1.0
+            ux, uy = dx / norm, dy / norm            # 行進方向(觀測)
+        else:
+            a = math.radians(ang if w >= h else ang + 90.0)
+            ux, uy = math.cos(a), math.sin(a)        # 行進方向(暫用長軸)
+        sx, sy = -uy, ux                             # 斷面方向 = 行進方向轉 90 度
         half = (min(w, h) / 2.0) * 1.2
-        ln = ((cx - sx * half, cy - sy * half), (cx + sx * half, cy + sy * half))
+        ln = ((cx - sx * half, cy - sy * half), (cx + sx * half, cy + sy * half), ready)
         _count_line_cache[id(zone)] = ln
-        return ln
+        if ready:
+            print("📏 zone「%s」計數線改用觀測方向 (dx=%.1f dy=%.1f n=%d)"
+                  % (zone.get("name"), acc[0], acc[1], acc[2]), flush=True)
+        return ln[:2]
 
     def _seg_cross(p1, p2, q1, q2) -> bool:
         """兩線段是否相交(含端點觸碰)。標準 orientation 判定,不用外部套件。"""
@@ -3179,6 +3209,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                 continue
                             if _zone_log_key in _inz:
                                 continue          # 這一趟已經算過
+                            _zone_note_motion(pick_zone, _prev, _cur)
                             _line = _zone_count_line(pick_zone)
                             if not _line or _prev is None:
                                 continue          # 沒有前一點無法判斷跨越,等下一幀
