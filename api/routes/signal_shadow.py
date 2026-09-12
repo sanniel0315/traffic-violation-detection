@@ -819,6 +819,9 @@ ACK_WAIT_SEC = float(os.getenv("SIGNAL_ACK_WAIT_SEC", "5") or 5)
 # 該分相的第一個綠燈步階。在這一階送「跳下一步階」會跳進感應延長段(步階2),
 # 反而延長綠燈 —— 見 _actuate_gates 的說明。實測兩相都是步階 1。
 FIRST_GREEN_STEP = int(os.getenv("SIGNAL_FIRST_GREEN_STEP", "1") or 1)
+# 步階剩餘時間小於這個值就不下發 —— 再送也只是搶在燈自己要換的前一刻。
+# 實測 78.6% 的下發是在剩 ≤2 秒時送的,等於白送。
+ACTUATE_MIN_EFFECT_SEC = float(os.getenv("SIGNAL_ACTUATE_MIN_EFFECT_SEC", "2.0") or 2.0)
 
 
 def _ack_of_last_send() -> Optional[bool]:
@@ -1031,6 +1034,16 @@ def _actuate_gates(live: dict, now: float) -> Optional[str]:
     #       所以這裡用保守規則:第一個綠階不送。寧可少送,不要送成反效果。
     if live.get("step_id") == FIRST_GREEN_STEP:
         return "還在第一個綠階(步階%s),此時跳下一步階會進入延長段而非清道" % FIRST_GREEN_STEP
+    # 🛑 2026-09-13:步階「快結束了」就不要送 —— 那是白送。
+    #    實測近 7 天 327 次下發,送出當下該步階距離自然結束的剩餘時間
+    #    中位只有 **0.9 秒**,78.6% 是在剩 ≤2 秒時送的。
+    #    也就是絕大多數命令只是「在燈自己要換的前一刻按了一下按鈕」——
+    #    看起來生效率 90.8%,實際上什麼也沒改變,還把下發紀錄灌滿。
+    #    這道閘門只擋掉沒有作用的命令,不會減少任何真正的控制能力。
+    _rem = live.get("step_remain_sec")
+    if isinstance(_rem, (int, float)) and 0 <= float(_rem) <= ACTUATE_MIN_EFFECT_SEC:
+        return ("步階剩 %.1f 秒就自然結束,送了也改變不了(需 >%.0f 秒才有作用)"
+                % (float(_rem), ACTUATE_MIN_EFFECT_SEC))
     # 節流。🛑 沒有這道的話,每一次取樣判 SWITCH 就送一次 —— 控制器會被
     #    連續命令推著跑,綠燈可能短到不合理。最小綠是引擎那一層的閘門,
     #    這裡是獨立於引擎的第二層。
