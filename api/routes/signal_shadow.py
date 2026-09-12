@@ -3843,6 +3843,23 @@ def _actuate_persisted() -> dict:
     return out
 
 
+def _blocked_reason_counts(hours: float = 24.0) -> dict:
+    """近 N 小時被閘門擋下的原因統計(原因取括號前的關鍵字,避免秒數把同類拆散)。"""
+    out: dict = {}
+    try:
+        _blocked_db_ready()
+        conn = _db()
+        cut = time.time() - hours * 3600.0
+        for (why,) in conn.execute(
+                "SELECT reason FROM signal_actuate_blocked WHERE epoch>=?", (cut,)):
+            k = str(why or "").split("(")[0].strip() or "(未註明)"
+            out[k] = out.get(k, 0) + 1
+        conn.close()
+    except Exception:
+        pass
+    return out
+
+
 @router.get("/actuate", summary="演算法下發:現況與把關結果")
 def actuate_status(_user=Depends(get_current_user)):
     """看得到「有沒有在下發」「上一次送了什麼」「這一刻為什麼沒送」。
@@ -3859,6 +3876,11 @@ def actuate_status(_user=Depends(get_current_user)):
         "last_reason": _act["last_reason"],
         "last_raw": _act["last_raw"],
         "blocked": _act["blocked"],
+        # 🛑 24 小時內「判該換相卻沒送出」的原因分布。
+        #    只看下發次數會讓人以為演算法很忙;實際上 2026-09-13 量到
+        #    78.6% 的下發是在步階剩 ≤2 秒時送的(等於白送)。把擋下的理由
+        #    攤開,才看得出我方到底是「不想切」還是「想切但被擋」。
+        "blocked_24h": _blocked_reason_counts(24),
         "last_error": _act["last_error"],
         "events": [dict(e) for e in reversed(ev)],
         "command": "5F1C(0,0,0)= 跳下一步階;清道由控制器自己走,我方只提早結束綠燈",
