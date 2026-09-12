@@ -3033,6 +3033,16 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 #   enter   (預設) 進框算一次,離開框才可再算 —— 停等不會被重複計
                 #   cooldown(舊行為) 同 track 同 zone 每 30 秒可再計一次
                 _FLOW_COUNT_MODE = str(os.getenv("SIGNAL_FLOW_COUNT_MODE", "enter") or "enter").lower()
+                # 🛑 2026-09-12:長框的重複計數防治。
+                #    車輛在長條形 ROI 裡走很久,追蹤 ID 中途斷掉再接上,就會被當成
+                #    「又有一台車進框」再算一次 —— 框越長、斷得越多。實測:WN-2 的框
+                #    佔畫面 35.6%,計到的量是短斷面 WN-1(9.0%)的 2.2 倍。
+                #    物理上「真的新來的車」一定是**從框的邊界進來**的;在框正中央
+                #    憑空出現的,幾乎都是 track 斷掉後重新編號。
+                #    所以:某個 track **第一次被看到**就已經深在框內(離邊界超過
+                #    這個像素數)時,只把它標記成「在框內」,不計流量。
+                #    0 = 關閉這道防治(回到只看進框)。
+                _FLOW_ENTRY_EDGE_PX = float(os.getenv("SIGNAL_FLOW_ENTRY_EDGE_PX", "80") or 0)
                 # INOUT「進出」框:進出流量另外由下方「轉場」邏輯計數,
                 # 但這裡的一般流量計數「照算」—— 進出歸進出,原本的流量計數還是要。
                 # (舊版把 INOUT 框從一般迴圈排除,導致標了進出線之後該車道的
@@ -3063,12 +3073,17 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     #    vehicles 裡)不會走到這裡,旗標保留,所以閃一下不會被當成
                     #    重新進框而多算一筆。
                     _tid_now = v.get("track_id")
+                    _first_sight = False
                     if _tid_now is not None and _FLOW_COUNT_MODE != "cooldown":
                         _hit_keys = {str(z.get("name") or z.get("id") or "") for z in hit_zones}
                         _st_now = tracks.setdefault(_tid_now, {})
                         _inz_now = _st_now.get("_in_zone")
                         if _inz_now:
                             _inz_now.intersection_update(_hit_keys)
+                        # 這個 track 這一輪是不是第一次出現(不論有沒有命中 zone 都要記,
+                        # 否則先在框外被看到的車,之後進框會被誤判成「第一次就在框內」)
+                        _first_sight = not _st_now.get("_seen")
+                        _st_now["_seen"] = True
                     if not hit_zones:
                         continue
                     pick_zone = hit_zones[0]
@@ -3097,6 +3112,18 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             if _zone_log_key in _inz:
                                 continue          # 還在框內,不重複計
                             _inz.add(_zone_log_key)
+                            # 🛑 第一次看到這個 track 就已經深在框內 → 視為 track 斷掉
+                            #    後重新編號,不是新來的車。標記成在框內(所以之後也不會
+                            #    再算),但這一筆不計入流量。
+                            if _first_sight and _FLOW_ENTRY_EDGE_PX > 0:
+                                _pts = pick_zone.get("points") or []
+                                if len(_pts) >= 3:
+                                    _poly = np.array(_pts, dtype=np.float32).reshape(-1, 1, 2)
+                                    _b = v.get("bbox", {}) or {}
+                                    _cx = float((_b.get("x1", 0) + _b.get("x2", 0)) / 2)
+                                    _cy = float((_b.get("y1", 0) + _b.get("y2", 0)) / 2)
+                                    if cv2.pointPolygonTest(_poly, (_cx, _cy), True) > _FLOW_ENTRY_EDGE_PX:
+                                        continue
                     occupancy_val = zone_occupancy_map.get(_zone_key(pick_zone)) if pick_zone else None
                     speed_raw = v.get("speed_kmh")
                     speed_method = str(v.get("speed_method") or "")
