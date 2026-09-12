@@ -2489,6 +2489,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     # zone id -> {track_id: [t_first, t_last]};t = 位置沿行進方向的投影(像素)
     # 用來決定計數線該放在行進方向的哪個位置。
     _zone_spans: dict = {}
+    # zone id -> [sum|Δt|, n]:同一條 track 相鄰兩幀沿行進軸的位移量。
+    # 窄帶要比它寬,車才保證至少被看到一次落在帶內。
+    _zone_step: dict = {}
 
     def _zone_note_motion(zone: dict, prev, cur) -> None:
         """累積該 zone 內觀測到的位移向量,用來決定「行進方向」。"""
@@ -2561,7 +2564,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         spans_ready = len([k for k in (_zone_spans.get(id(zone)) or {}) if k != "_axis_ok"]) >= 60
         # 方向與位置都定案後就直接用;還在暫時值就等樣本夠了重算一次
         if cached is not None and (cached is False
-                                   or (cached[2] == ready and cached[3] == spans_ready)):
+                                   or (cached[3] == ready and cached[4] == spans_ready)):
             if cached is not False:
                 try:            # 診斷的取樣數要跟著長,不然永遠停在計算當下的快照
                     _fl0 = (detection_services.get(camera_id) or {}).get("_flow_lines") or {}
@@ -2571,7 +2574,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         _e0["dir_samples"] = acc[2]
                 except Exception:
                     pass
-            return cached[:2] if cached is not False else False
+            return cached[:3] if cached is not False else False
         arr = np.array(pts, dtype=np.float32)
         rect = cv2.minAreaRect(arr)
         (rx, ry), (w, h), ang = rect
@@ -2602,7 +2605,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                   % (zone.get("name"), off, bestn, len(spans), len(spans)), flush=True)
         lx, ly = cx + ux * off, cy + uy * off
         ln = ((lx - sx * half, ly - sy * half), (lx + sx * half, ly + sy * half),
-              ready, len(spans) >= 60)
+              off, ready, len(spans) >= 60)
         _count_line_cache[id(zone)] = ln
         # 🛑 診斷資訊發佈到 detection_services,讓 /api/stream/flow-count 查得到。
         #    這些值原本只印在日誌裡,要進機器才看得到 —— 而它們正是判斷
@@ -2628,21 +2631,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         if ready:
             print("📏 zone「%s」計數線方向 dx=%.1f dy=%.1f (n=%d)"
                   % (zone.get("name"), acc[0], acc[1], acc[2]), flush=True)
-        return ln[:2]
-
-    def _seg_cross(p1, p2, q1, q2) -> bool:
-        """兩線段是否相交(含端點觸碰)。標準 orientation 判定,不用外部套件。"""
-        def o(a, b, c):
-            v = (b[1] - a[1]) * (c[0] - b[0]) - (b[0] - a[0]) * (c[1] - b[1])
-            return 0 if abs(v) < 1e-9 else (1 if v > 0 else 2)
-        def on(a, b, c):
-            return (min(a[0], b[0]) <= c[0] <= max(a[0], b[0])
-                    and min(a[1], b[1]) <= c[1] <= max(a[1], b[1]))
-        o1, o2, o3, o4 = o(p1, p2, q1), o(p1, p2, q2), o(q1, q2, p1), o(q1, q2, p2)
-        if o1 != o2 and o3 != o4:
-            return True
-        return ((o1 == 0 and on(p1, p2, q1)) or (o2 == 0 and on(p1, p2, q2))
-                or (o3 == 0 and on(q1, q2, p1)) or (o4 == 0 and on(q1, q2, p2)))
+        return ln[:3]
 
     def _zone_key(zone: dict) -> int:
         return id(zone)
@@ -3343,10 +3332,36 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                         _t = (_cur[0] - _gx) * _ax[0] + (_cur[1] - _gy) * _ax[1]
                                         _zone_note_span(pick_zone, _track_id, _t)
                             _line = _zone_count_line(pick_zone)
-                            if not _line or _prev is None:
-                                continue          # 沒有前一點無法判斷跨越,等下一幀
-                            if not _seg_cross(_prev, _cur, _line[0], _line[1]):
-                                continue          # 還沒跨過斷面線
+                            if not _line:
+                                continue
+                            # 🛑 2026-09-13 改成「進入線附近的窄帶」而不是「連續兩幀跨越線」。
+                            #    原因:這個路口的 track 破碎率很高,車在線附近斷掉重新編號,
+                            #    前後兩段都不跨線 → 整台漏掉。人工核對 90 秒實際 7~8 台,
+                            #    跨線只數到 4 台,少了一半。
+                            #    窄帶只要求「某一幀落在帶內」,不要求連續兩幀分居兩側,
+                            #    破碎的 track 只要有一段經過帶就數得到;帶很窄,所以片段
+                            #    剛好起始於帶內而重複計數的機會低。
+                            #    帶寬由**實際每幀位移**決定(2 倍),太窄會漏、太寬會重複。
+                            _ax2 = _zone_axis(pick_zone)
+                            if not _ax2:
+                                continue
+                            _pts2 = pick_zone.get("points") or []
+                            if len(_pts2) < 3:
+                                continue
+                            _m2 = cv2.moments(np.array(_pts2, dtype=np.float32).reshape(-1, 1, 2))
+                            if not _m2["m00"]:
+                                continue
+                            _gx2, _gy2 = _m2["m10"] / _m2["m00"], _m2["m01"] / _m2["m00"]
+                            _tcur = (_cur[0] - _gx2) * _ax2[0] + (_cur[1] - _gy2) * _ax2[1]
+                            if _prev is not None:
+                                _tprev = (_prev[0] - _gx2) * _ax2[0] + (_prev[1] - _gy2) * _ax2[1]
+                                _st2 = _zone_step.setdefault(id(pick_zone), [0.0, 0])
+                                _st2[0] += abs(_tcur - _tprev); _st2[1] += 1
+                            _st2 = _zone_step.get(id(pick_zone)) or [0.0, 0]
+                            _step = (_st2[0] / _st2[1]) if _st2[1] >= 30 else 40.0
+                            _band = max(25.0, min(150.0, 2.0 * _step))
+                            if abs(_tcur - _line[2]) > _band:
+                                continue          # 還沒進到斷面帶
                             _inz.add(_zone_log_key)
                         else:
                             _inz = _track_state.setdefault("_in_zone", set())
