@@ -26935,9 +26935,12 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         //    演算法拿上匝道的儲車上限去算」—— 那是最難查的一類錯。
         //    下面只是**後端還沒回應前**的暫時值,不是設定來源;
         //    任何要改對應的需求都去改 json,不要改這裡。
+        // 🛑 2026-09-12 定案:分相1 = 上匝道、分相2 = 下匝道。
+        //    (9/11 曾依現場指示改成相反,9/12 指示改回。兩次實測都支持這一版,
+        //     量測方法與數據見 docs/相機分相對應表.md 第六節。)
         const SIG_PHASE_META_FALLBACK = {
-            1: {ramp: '下匝道', zone: 'WN'},
-            2: {ramp: '上匝道', zone: 'NE'},
+            1: {ramp: '上匝道', zone: 'NE'},
+            2: {ramp: '下匝道', zone: 'WN'},
         };
         const sigPhaseMeta = computed(() => {
             const src = (sigPlan.value || {}).phases;
@@ -26982,7 +26985,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             const pct = n <= 1 ? n * 100 : n;
             return pct >= 60 ? 'lv4' : (pct >= 40 ? 'lv3' : (pct >= 20 ? 'lv2' : 'lv1'));
         };
-        // 排隊條:以該分相的儲車長度為分母。分相1 下匝道 600 m、分相2 上匝道 210 m。
+        // 排隊條:以該分相的儲車長度為分母。分相1 上匝道 210 m、分相2 下匝道 600 m。
         // 🛑 分母寫死在這裡是刻意的 —— 它是現場的實體長度(演算法規格同一組數),
         //    不是可調參數;拿別的數當分母會讓「快回堵了」的視覺提示失真。
         const SIG_STORAGE_M = {1: 210, 2: 600};
