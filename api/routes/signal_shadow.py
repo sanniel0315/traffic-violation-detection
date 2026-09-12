@@ -2502,7 +2502,7 @@ def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
             out["trend_agg"] = True
             out["trend_bucket_sec"] = round(width, 1)
 
-    # 出口(下匝道 = 分相1,2026-09-11 起)滯留:取區間內的平均與最大,這是主線回堵的前哨
+    # 出口(下匝道 = 分相2)滯留:取區間內的平均與最大,這是主線回堵的前哨
     q2 = [float(r[5]) for r in rows if r[5] is not None]
     if q2:
         from detection.signal_decision_engine import DEFAULT_METERS_PER_VEHICLE as MPV
