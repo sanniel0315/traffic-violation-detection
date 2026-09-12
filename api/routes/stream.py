@@ -2454,6 +2454,50 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             if cv2.pointPolygonTest(poly, (float(cx), float(cy)), False) >= 0:
                 hits.append(z)
         return hits
+    _count_line_cache: dict = {}
+
+    def _zone_count_line(zone: dict):
+        """由多邊形自動推導一條「計數斷面線」並快取在 zone 上。
+
+        取最小外接矩形:長邊 = 行進方向,短邊 = 橫斷面。線通過矩形中心、
+        沿短邊方向,長度取短邊的 1.2 倍(略為超出,避免貼邊的車跨不到)。
+        🛑 只讀 zone['points'],不會改寫任何 ROI 設定。
+        """
+        # 🛑 快取放在獨立 dict(以 zone 的 id 為鍵),不要寫進 zone dict ——
+        #    zones 熱重載會把記憶體內容拿去跟 DB 比對,多塞欄位會造成誤判重載。
+        #    zone 物件在熱重載後會換新,id 變了快取自然失效,不必手動清。
+        ln = _count_line_cache.get(id(zone))
+        if ln is not None:
+            return ln
+        pts = zone.get("points") or []
+        if len(pts) < 3:
+            _count_line_cache[id(zone)] = False
+            return False
+        rect = cv2.minAreaRect(np.array(pts, dtype=np.float32))
+        (cx, cy), (w, h), ang = rect
+        import math
+        # 短邊方向 = 長邊方向轉 90 度
+        a = math.radians(ang if w >= h else ang + 90.0)   # 長邊方向
+        sx, sy = -math.sin(a), math.cos(a)                # 短邊(斷面)方向
+        half = (min(w, h) / 2.0) * 1.2
+        ln = ((cx - sx * half, cy - sy * half), (cx + sx * half, cy + sy * half))
+        _count_line_cache[id(zone)] = ln
+        return ln
+
+    def _seg_cross(p1, p2, q1, q2) -> bool:
+        """兩線段是否相交(含端點觸碰)。標準 orientation 判定,不用外部套件。"""
+        def o(a, b, c):
+            v = (b[1] - a[1]) * (c[0] - b[0]) - (b[0] - a[0]) * (c[1] - b[1])
+            return 0 if abs(v) < 1e-9 else (1 if v > 0 else 2)
+        def on(a, b, c):
+            return (min(a[0], b[0]) <= c[0] <= max(a[0], b[0])
+                    and min(a[1], b[1]) <= c[1] <= max(a[1], b[1]))
+        o1, o2, o3, o4 = o(p1, p2, q1), o(p1, p2, q2), o(q1, q2, p1), o(q1, q2, p2)
+        if o1 != o2 and o3 != o4:
+            return True
+        return ((o1 == 0 and on(p1, p2, q1)) or (o2 == 0 and on(p1, p2, q2))
+                or (o3 == 0 and on(q1, q2, p1)) or (o4 == 0 and on(q1, q2, p2)))
+
     def _zone_key(zone: dict) -> int:
         return id(zone)
     def _zone_occupancy(zone: dict, vehicle_list: list) -> float | None:
@@ -3031,6 +3075,12 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 _EVENT_LOG_COOLDOWN = 30.0
                 # 計流量的防重複方式:
                 #   enter   (預設) 進框算一次,離開框才可再算 —— 停等不會被重複計
+                #   line            在框內自動取一條**虛擬斷面線**,跨越它才算一次。
+                #                   ROI 不能動、但框是長廊形狀時用這個:車在長廊裡
+                #                   走很久,track 斷掉重編號會被當成又一台車進框;
+                #                   改成看「有沒有跨過那條線」就與框的長度無關。
+                #                   線由既有多邊形自動推導(最小外接矩形的短軸方向,
+                #                   過中心),**不修改任何 ROI 設定**。
                 #   cooldown(舊行為) 同 track 同 zone 每 30 秒可再計一次
                 _FLOW_COUNT_MODE = str(os.getenv("SIGNAL_FLOW_COUNT_MODE", "enter") or "enter").lower()
                 # 🛑 2026-09-12:長框的重複計數防治。
@@ -3091,6 +3141,13 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                         # 否則先在框外被看到的車,之後進框會被誤判成「第一次就在框內」)
                         _first_sight = not _st_now.get("_seen")
                         _st_now["_seen"] = True
+                        # 逐幀保留上一幀的中心點,line 模式判斷「有沒有跨過斷面線」要用。
+                        # 放在這裡(不論有沒有命中 zone 都更新),車才會有「框外 → 框內」
+                        # 那一段連線可判。
+                        _bn = v.get("bbox", {}) or {}
+                        _st_now["_flow_prev"] = _st_now.get("_flow_cur")
+                        _st_now["_flow_cur"] = (float((_bn.get("x1", 0) + _bn.get("x2", 0)) / 2),
+                                                float((_bn.get("y1", 0) + _bn.get("y2", 0)) / 2))
                     if not hit_zones:
                         continue
                     pick_zone = hit_zones[0]
@@ -3114,6 +3171,20 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             if now_ts - _last < _EVENT_LOG_COOLDOWN:
                                 continue
                             _log_state[_zone_log_key] = now_ts
+                        elif _FLOW_COUNT_MODE == "line":
+                            _inz = _track_state.setdefault("_in_zone", set())
+                            _cur = _track_state.get("_flow_cur")
+                            _prev = _track_state.get("_flow_prev")
+                            if _cur is None:
+                                continue
+                            if _zone_log_key in _inz:
+                                continue          # 這一趟已經算過
+                            _line = _zone_count_line(pick_zone)
+                            if not _line or _prev is None:
+                                continue          # 沒有前一點無法判斷跨越,等下一幀
+                            if not _seg_cross(_prev, _cur, _line[0], _line[1]):
+                                continue          # 還沒跨過斷面線
+                            _inz.add(_zone_log_key)
                         else:
                             _inz = _track_state.setdefault("_in_zone", set())
                             if _zone_log_key in _inz:
