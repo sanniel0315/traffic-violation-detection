@@ -823,6 +823,28 @@ FIRST_GREEN_STEP = int(os.getenv("SIGNAL_FIRST_GREEN_STEP", "1") or 1)
 # 實測 78.6% 的下發是在剩 ≤2 秒時送的,等於白送。
 ACTUATE_MIN_EFFECT_SEC = float(os.getenv("SIGNAL_ACTUATE_MIN_EFFECT_SEC", "2.0") or 2.0)
 
+# ── 步階1 閘門的 A/B 試驗 ──────────────────────────────────────────
+# 🛑 要回答的問題:第一個綠階(主綠燈)到底能不能下發?
+#    觀察資料判不了 —— 現行閘門只讓我方在綠燈末端動作,於是「有介入的綠燈比較長」
+#    這種相關性完全是選擇偏誤(只有長綠燈才輪得到介入)。唯一的辦法是讓
+#    「能不能介入」由**與車流無關的東西**決定,時間就是最乾淨的那一個。
+#
+#    SIGNAL_AB_FIRSTGREEN_MIN = 0 關閉(維持現行:一律擋)
+#                             = 30 每 30 分鐘輪替一次
+#    A 段:放開步階1 閘門(可在主綠燈下發)   B 段:維持現行(擋)
+#    以「一天內的第幾個時段」的奇偶決定,所以每個小時都同時含 A 與 B,
+#    需求的日內變化會被平均掉,不會變成「A 都在尖峰、B 都在離峰」。
+AB_FIRSTGREEN_MIN = float(os.getenv("SIGNAL_AB_FIRSTGREEN_MIN", "0") or 0)
+
+
+def ab_firstgreen_side(now_ts: float | None = None) -> str:
+    """回傳這一刻屬於 A(放開)還是 B(維持現行);未啟用時一律 B。"""
+    if AB_FIRSTGREEN_MIN <= 0:
+        return "B"
+    lt = datetime.fromtimestamp(now_ts or time.time())
+    slot = int((lt.hour * 60 + lt.minute) // AB_FIRSTGREEN_MIN)
+    return "A" if slot % 2 == 0 else "B"
+
 
 def _ack_of_last_send() -> Optional[bool]:
     """我方上一則 5F1C 有沒有被控制器接受。True 接受 / False 被拒 / None 還不知道。
@@ -1032,7 +1054,7 @@ def _actuate_gates(live: dict, now: float) -> Optional[str]:
     #    🛑 FIRST_GREEN_STEP 是用實測定的(兩相都是步階1 為第一個綠階)。
     #       要精確判定得拿到時相步階排列定義(5F5F),但那被這台控制器拒收,
     #       所以這裡用保守規則:第一個綠階不送。寧可少送,不要送成反效果。
-    if live.get("step_id") == FIRST_GREEN_STEP:
+    if live.get("step_id") == FIRST_GREEN_STEP and ab_firstgreen_side(now) == "B":
         return "還在第一個綠階(步階%s),此時跳下一步階會進入延長段而非清道" % FIRST_GREEN_STEP
     # 🛑 2026-09-13:步階「快結束了」就不要送 —— 那是白送。
     #    實測近 7 天 327 次下發,送出當下該步階距離自然結束的剩餘時間
