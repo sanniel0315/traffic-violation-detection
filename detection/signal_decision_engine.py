@@ -128,6 +128,7 @@ def decide(
     lost_time_sec: float = DEFAULT_LOST_TIME_SEC,
     keep_weight: float = DEFAULT_KEEP_WEIGHT,
     priority_keep_weight: Optional[float] = None,
+    demand_scaled_change_cost: bool = False,
 ) -> Decision:
     """算出這一刻該 KEEP 還是 SWITCH。純函式，不碰 IO、不下發。"""
     mpv = meters_per_vehicle
@@ -167,6 +168,18 @@ def decide(
 
     # 換相成本 = 換相損失時間 × 飽和流(這段時間誰都不能走)
     change_cost = lost_time_sec * sat_per_sec * lost_time_sec
+    # 🛑 2026-09-13:綠側沒有需求時,換相成本要跟著縮小。
+    #    change_cost 代表「換相的損失時間本來可以放行多少車」。但那個容量
+    #    只有在**綠側真的有車可放**的時候才叫損失 —— 綠燈開給空無一車的進場道,
+    #    切走它並沒有損失任何可用容量,固定收 12.5 車·秒的代價是高估。
+    #    實測近 7 天:離峰 17.0%、尖峰 31.3% 的取樣時刻是「綠側空、紅側有車」,
+    #    而且綠燈當下已經亮了中位 29 秒 —— 這正是定時控制最浪費的情境,
+    #    也是動態控制最該發揮的地方,卻因為成本被高估而沒有動作。
+    #    修正:成本上限不超過綠側實際有的車數(損失時間內最多能放的量與實際需求取小)。
+    if demand_scaled_change_cost:
+        _cap = lost_time_sec * sat_per_sec          # 損失時間內最多可放行的車數
+        _dem = max(0.0, float(green_demand))
+        change_cost = change_cost * (min(_cap, _dem) / _cap if _cap > 0 else 1.0)
 
     # 🛑 門檻在**四道關卡之前**就算好,並且四種判定都帶著它。
     #    以前只有走到第④關才寫進 detail,提早返回的那三種就退回用
