@@ -2456,6 +2456,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         return hits
     _count_line_cache: dict = {}
     _zone_dir_acc: dict = {}          # zone id -> [sum_dx, sum_dy, n]
+    # zone id -> {track_id: [t_first, t_last]};t = 位置沿行進方向的投影(像素)
+    # 用來決定計數線該放在行進方向的哪個位置。
+    _zone_spans: dict = {}
 
     def _zone_note_motion(zone: dict, prev, cur) -> None:
         """累積該 zone 內觀測到的位移向量,用來決定「行進方向」。"""
@@ -2466,6 +2469,27 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             return
         a = _zone_dir_acc.setdefault(id(zone), [0.0, 0.0, 0])
         a[0] += dx; a[1] += dy; a[2] += 1
+
+    def _zone_note_span(zone: dict, tid, t: float) -> None:
+        """記下每個 track 在這個 zone 內「沿行進方向」走過的區間 [最早, 最晚]。
+
+        🛑 為什麼要這個:計數線放在多邊形重心是想當然耳的作法,但遠處的車太小
+           偵測不到,要駛近才第一次被看到 —— 若第一次被看到時**已經越過重心**,
+           那台車就永遠跨不到線,直接漏計。WN-2 低估到 0.49 倍就是這個形狀的框
+           造成的。改成用實際的「看得到的區間」決定線要放哪。
+        """
+        d = _zone_spans.setdefault(id(zone), {})
+        e = d.get(tid)
+        if e is None:
+            if len(d) > 400:               # 只保留最近的一批,避免無限長大
+                for k in list(d)[:100]:
+                    d.pop(k, None)
+            d[tid] = [t, t]
+        else:
+            if t < e[0]:
+                e[0] = t
+            if t > e[1]:
+                e[1] = t
 
     def _zone_count_line(zone: dict):
         """推導一條「計數斷面線」並快取。
@@ -2489,8 +2513,10 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
         acc = _zone_dir_acc.get(id(zone)) or [0.0, 0.0, 0]
         ready = acc[2] >= 40
         cached = _count_line_cache.get(id(zone))
-        # 已用觀測方向算過就直接用;還在用暫時值的話,樣本夠了就重算一次
-        if cached is not None and (cached is False or cached[2] == ready):
+        spans_ready = len(_zone_spans.get(id(zone)) or {}) >= 60
+        # 方向與位置都定案後就直接用;還在暫時值就等樣本夠了重算一次
+        if cached is not None and (cached is False
+                                   or (cached[2] == ready and cached[3] == spans_ready)):
             return cached[:2] if cached is not False else False
         arr = np.array(pts, dtype=np.float32)
         rect = cv2.minAreaRect(arr)
@@ -2507,10 +2533,27 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             ux, uy = math.cos(a), math.sin(a)        # 行進方向(暫用長軸)
         sx, sy = -uy, ux                             # 斷面方向 = 行進方向轉 90 度
         half = (min(w, h) / 2.0) * 1.2
-        ln = ((cx - sx * half, cy - sy * half), (cx + sx * half, cy + sy * half), ready)
+        # 線要放在行進方向的哪個位置:取「能被最多車跨過」的那一點。
+        # 每台車在框內有一段看得到的區間 [t_first, t_last],線放在 t 時,
+        # 只有 t_first < t < t_last 的車會跨過去。取涵蓋最多車的 t。
+        off = 0.0
+        spans = list((_zone_spans.get(id(zone)) or {}).values())
+        if ready and len(spans) >= 60:
+            cand = sorted(set(round((a0 + b0) / 2.0, 1) for a0, b0 in spans if b0 > a0))
+            best, bestn = 0.0, -1
+            for t in cand:
+                n = sum(1 for a0, b0 in spans if a0 < t < b0)
+                if n > bestn:
+                    best, bestn = t, n
+            off = best
+            print("📏 zone「%s」計數線位置 t=%.0f px,可涵蓋 %d/%d 台(樣本 %d)"
+                  % (zone.get("name"), off, bestn, len(spans), len(spans)), flush=True)
+        lx, ly = cx + ux * off, cy + uy * off
+        ln = ((lx - sx * half, ly - sy * half), (lx + sx * half, ly + sy * half),
+              ready, len(spans) >= 60)
         _count_line_cache[id(zone)] = ln
         if ready:
-            print("📏 zone「%s」計數線改用觀測方向 (dx=%.1f dy=%.1f n=%d)"
+            print("📏 zone「%s」計數線方向 dx=%.1f dy=%.1f (n=%d)"
                   % (zone.get("name"), acc[0], acc[1], acc[2]), flush=True)
         return ln[:2]
 
@@ -3210,6 +3253,18 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             if _zone_log_key in _inz:
                                 continue          # 這一趟已經算過
                             _zone_note_motion(pick_zone, _prev, _cur)
+                            _dacc = _zone_dir_acc.get(id(pick_zone))
+                            if _dacc and _dacc[2] >= 40:
+                                import math as _m
+                                _nn = _m.hypot(_dacc[0], _dacc[1]) or 1.0
+                                _pts0 = pick_zone.get("points") or []
+                                if len(_pts0) >= 3:
+                                    _a0 = np.array(_pts0, dtype=np.float32)
+                                    _mm = cv2.moments(_a0.reshape(-1, 1, 2))
+                                    if _mm["m00"]:
+                                        _gx, _gy = _mm["m10"] / _mm["m00"], _mm["m01"] / _mm["m00"]
+                                        _t = ((_cur[0] - _gx) * _dacc[0] + (_cur[1] - _gy) * _dacc[1]) / _nn
+                                        _zone_note_span(pick_zone, _track_id, _t)
                             _line = _zone_count_line(pick_zone)
                             if not _line or _prev is None:
                                 continue          # 沒有前一點無法判斷跨越,等下一幀
