@@ -4306,6 +4306,9 @@
         .wr-col-vd b { font-size:calc(var(--fs-small) + 3px); color:var(--gov-text);
                        font-variant-numeric:tabular-nums; margin:0 2px; }
         .wr-col-vd i { font-style:normal; margin-left:6px; opacity:.75; }
+        .wr-col-vd u { text-decoration:none; margin-left:6px; font-variant-numeric:tabular-nums; }
+        .wr-cam-mix { display:block; font-style:normal; font-size:var(--fs-small);
+                      color:var(--gov-muted); margin-top:2px; font-variant-numeric:tabular-nums; }
         .wr-rel { display:flex; gap:18px; flex-wrap:wrap; margin:4px 0 12px; align-items:baseline;
                   font-size:var(--fs-small); color:var(--gov-muted); }
         .wr-rel b { font:600 var(--fs-t2) var(--font-mono); color:var(--gov-text); margin:0 3px; }
@@ -9569,7 +9572,8 @@
                                          系統算錯。下面每一磚仍保留各自的量測值。 -->
                                     <span class="wr-col-vd" v-if="col.vd" :title="col.vd.tip">
                                         近 5 分鐘 <b>{{ col.vd.total }}</b> 輛
-                                        <i>測點 {{ col.vd.camName }}</i>
+                                        <u>大 {{ col.vd.large }} · 小 {{ col.vd.small }}</u>
+                                        <i>· 測點 {{ col.vd.camName }}</i>
                                     </span>
                                 </div>
                                 <div class="wr-rel">
@@ -9638,6 +9642,8 @@
                                         </div>
                                         <div class="wr-cam-veh" v-if="sigVd[cam.camera_id]">
                                             近 5 分鐘 總流量 <i>{{ sigVd[cam.camera_id].total }}</i> 輛
+                                            <em class="wr-cam-mix" title="大車=大貨車/聯結車/巴士;未歸類的車種兩邊都不計,所以大+小可能小於總流量">
+                                                大 {{ sigVd[cam.camera_id].large }} · 小 {{ sigVd[cam.camera_id].small }}</em>
                                         </div>
                                         <!-- 🛑 純原始畫面,**不疊任何東西**(使用者 2026-09-06:「原始影像沒 roi」)。
                                              走 go2rtc 的共用基礎串流 cam_N,traffic-api 完全不參與編碼。 -->
@@ -26855,13 +26861,17 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             if (!lanes || !ph) return total;
             const map = (sigPhaseMeta.value[ph] || {}).flow_lanes || {};
             const want = map[String(camId)] || map[camId];
-            if (!want || !want.length) return total;
-            let sum = 0;
+            const fb = {total: total, large: Number(item.largeFlow) || 0, small: Number(item.smallFlow) || 0};
+            if (!want || !want.length) return fb;
+            let sum = 0, lg = 0, sm = 0;
             want.forEach((ln) => {
                 const rec = lanes[String(ln)] || lanes[ln];
-                if (rec) sum += Number(rec.flow) || 0;
+                if (!rec) return;
+                sum += Number(rec.flow) || 0;
+                lg += Number(rec.largeFlow) || 0;
+                sm += Number(rec.smallFlow) || 0;
             });
-            return sum;
+            return {total: sum, large: lg, small: sm};
         };
         const loadWarVd = async () => {
             const pad = (n) => String(n).padStart(2, '0');
@@ -26899,7 +26909,11 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                         //    改成只加「屬於這支相機那條匝道」的 ROI(對應表在
                         //    ramp_timing_baseline.json 的 phases[].flow_zones,
                         //    經 /plan 送過來)。沒有對應表時退回 totalFlow,不要憑空少算。
-                        total: sigVdApproachFlow(id, it),
+                        // 🛑 大小車分開列:總流量之外,現場要知道大車佔多少
+                        //    (大車的放行時間與儲車空間都不一樣)。
+                        //    未歸類的車種不會進大車也不會進小車,所以
+                        //    大+小 可能小於總流量 —— 刻意保留,不要湊成相等。
+                        ...sigVdApproachFlow(id, it),
                         occ: (it.avgOccupancyPct == null) ? '—' : Number(it.avgOccupancyPct).toFixed(0) + '%',
                         at: String(it.timeText || '').slice(11),
                     };
@@ -26996,7 +27010,8 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                     const ccId = Number(cc.slice(2));
                     const rec = sigVd.value[ccId];
                     if (rec) {
-                        vd = {total: rec.total, camName: (SIG_CAM_NAME[ccId] || ('cam' + ccId)),
+                        vd = {total: rec.total, large: rec.large, small: rec.small,
+                              camName: (SIG_CAM_NAME[ccId] || ('cam' + ccId)),
                               tip: '這條匝道的總流量以基準測點 ' + (SIG_CAM_NAME[ccId] || ccId)
                                    + ' 為準(' + rec.at + ' 那一桶)。同匝道另一台的數字保留在下方各自的磚上,'
                                    + '兩台框的位置與遮擋不同,數字本來就不會相等。'};
