@@ -4300,13 +4300,6 @@
         @keyframes wrSecPulse { 0%,100%{opacity:1} 50%{opacity:.55} }
         @media (prefers-reduced-motion: reduce) { .wr-live-sec.hot { animation:none; } }
         .wr-col-sub { font-size:var(--fs-small); color:var(--gov-muted); }
-        /* 匝道總流量:放在欄頭右側,與匝道名同一行 —— 一條匝道一個數字。 */
-        .wr-col-vd { margin-left:auto; font-size:var(--fs-small); color:var(--gov-muted);
-                     white-space:nowrap; }
-        .wr-col-vd b { font-size:calc(var(--fs-small) + 3px); color:var(--gov-text);
-                       font-variant-numeric:tabular-nums; margin:0 2px; }
-        .wr-col-vd i { font-style:normal; margin-left:6px; opacity:.75; }
-        .wr-col-vd u { text-decoration:none; margin:0 6px; font-variant-numeric:tabular-nums; }
         .wr-cam-mix { display:block; font-style:normal; font-size:var(--fs-small);
                       color:var(--gov-muted); margin-top:2px; font-variant-numeric:tabular-nums; }
         .wr-cam-lane { display:flex; flex-wrap:wrap; gap:4px 10px; font-style:normal;
@@ -9599,15 +9592,8 @@
                                     <span class="lv-lamp" :class="col.lampCls"></span>
                                     <b>{{ col.ramp }}</b>
                                     <span class="wr-col-sub">分相 {{ col.phase }} · {{ col.zone }}</span>
-                                    <!-- 🛑 一條匝道只給**一個**總流量,取自該匝道的基準測點。
-                                         同一條匝道兩台相機的數字本來就不會相等(框的位置、
-                                         遮擋、重複計數各不相同),把兩個都當總流量看會以為
-                                         系統算錯。下面每一磚仍保留各自的量測值。 -->
-                                    <span class="wr-col-vd" v-if="col.vd" :title="col.vd.tip">
-                                        近 5 分鐘 <b>{{ col.vd.total }}</b> 輛
-                                        <u>大 {{ col.vd.large }} · 小 {{ col.vd.small }}</u>
-                                        <i>測點 {{ col.vd.camName }}</i>
-                                    </span>
+                                    <!-- 🛑 2026-09-12 使用者:欄頭的「近 5 分鐘 N 輛 大/小 測點」拿掉。
+                                         流量改為只在下面每一塊相機磚上呈現(大車/小車兩列)。 -->
                                 </div>
                                 <div class="wr-rel">
                                     <!-- 🛑 標明來源:這是**現場實際控制**今天的放行統計
@@ -27047,9 +27033,6 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         const SIG_CAM_FULL = {2: 'CCTV-N8-E-9-L-NE-1-SIG', 3: 'CCTV-N8-E-9-L-NE-2-SIG',
                               4: 'CCTV-N8-E-9-L-WN-1-SIG', 5: 'CCTV-N8-E-9-L-WN-2-SIG'};
         const sigCamFullName = (id) => SIG_CAM_FULL[id] || '';
-        // 短碼(NE-1/WN-2):從正式名稱切出來,不另外維護第二份對照。
-        const SIG_CAM_NAME = Object.fromEntries(Object.entries(SIG_CAM_FULL).map(
-            ([k, v]) => [k, (String(v).match(/-(NE|WN)-\d/) || [, ''])[0].replace(/^-/, '') || v]));
         // 一欄 = 一個分相:自己的兩台相機、自己的放行統計、自己的狀態列。
         // 量測棒的寬度與顏色。🛑 佔有率的欄位是 0~1 的比例,不是百分比 ——
         //    直接當百分比用會讓所有棒子都貼在 1% 動不了。
@@ -27086,21 +27069,6 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             phases.sort((a, b) => b - a);
             return phases.map((ph) => {
                 const meta = sigPhaseMeta.value[ph] || {ramp: '分相 ' + ph, zone: ''};
-                // 匝道總流量:只認基準測點那一台(constraint_camera),不要把兩台相加
-                // 也不要讓看的人自己挑。來源同樣是 ramp_timing_baseline.json。
-                let vd = null;
-                const cc = String(meta.constraint_camera || '');
-                if (cc.slice(0, 2) === 'ID') {
-                    const ccId = Number(cc.slice(2));
-                    const rec = sigVd.value[ccId];
-                    if (rec) {
-                        vd = {total: rec.total, large: rec.large, small: rec.small,
-                              camName: (SIG_CAM_NAME[ccId] || ('cam' + ccId)),
-                              tip: '這條匝道的總流量以基準測點 ' + (SIG_CAM_NAME[ccId] || ccId)
-                                   + ' 為準(' + rec.at + ' 那一桶)。同匝道另一台的數字保留在下方各自的磚上,'
-                                   + '兩台框的位置與遮擋不同,數字本來就不會相等。'};
-                    }
-                }
                 const isGreen = (d.green_phase === ph);
                 // 🛑 三種狀態要分開,不能把清道也算成綠燈:
                 //    清道(黃燈/全紅)期間車流已經在停,顯示成「放行中」會誤導,
@@ -27153,7 +27121,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 const remainPct = (remain != null && _tot) ?
                     Math.max(0, Math.min(100, Math.round(remain / _tot * 100))) : null;
                 return {
-                    phase: ph, ramp: meta.ramp, zone: meta.zone, vd: vd,
+                    phase: ph, ramp: meta.ramp, zone: meta.zone,
                     remain: remain, remainPct: remainPct, remainTotal: _tot,
                     isGreen: isGreen, stateText: stateText,
                     stateCls: stateCls, lampCls: lampCls,
