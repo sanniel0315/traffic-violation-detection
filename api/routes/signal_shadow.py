@@ -4485,19 +4485,39 @@ def shadow_runs(hours: float = Query(3.0, ge=0.1, le=72.0),
             continue
         first_sw = None
         blk = ""
+        n_samples = 0
         for ts, gp, ge, ours, why in sm:
             if not (a <= ts <= b):
                 continue
+            n_samples += 1
             if ours == "SWITCH" and first_sw is None:
                 first_sw = round(ge, 1)
-        for ep, why in blocked:
-            if a <= ep <= b and not blk:
-                blk = str(why or "").split("(")[0].strip()
         sent = [x for x in sends if a <= x <= b]
+        # 🛑 2026-09-13:原本不管有沒有送出都把擋下原因填進去,結果出現
+        #    「下發=是、沒送出原因=還在第一個綠階」這種自相矛盾的列。
+        #    一段綠燈裡本來就可能先被擋、後來才送出(例如第 20 秒被擋、
+        #    第 31 秒進到延長段才送)。已經送出的段就不該再顯示擋下原因,
+        #    那一欄問的是「為什麼沒送」。
+        if not sent:
+            for ep, why in blocked:
+                if a <= ep <= b and not blk:
+                    blk = str(why or "").split("(")[0].strip()
+        # 🛑 「我方想切」三種狀態要分清楚,不能都寫成「全程續綠」:
+        #    有取樣且判過 SWITCH → 第 N 秒
+        #    有取樣但從未判 SWITCH → 未判該切(本來就不想切)
+        #    這一段完全沒有取樣(影子停擺/降階/資料缺口) → 無取樣,不可當成續綠
+        if first_sw is not None:
+            ours_state = "switch"
+        elif n_samples > 0:
+            ours_state = "keep"
+        else:
+            ours_state = "nosample"
         out.append({
             "start": datetime.fromtimestamp(a).strftime("%H:%M:%S"),
             "phase": r.get("phase"),
             "green_sec": round(float(r.get("green_sec") or (b - a)), 1),
+            "ours_state": ours_state,
+            "samples": n_samples,
             "ours_switch_at_sec": first_sw,
             "gap_sec": (round(first_sw - float(r.get("green_sec") or (b - a)), 1)
                         if first_sw is not None else None),

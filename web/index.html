@@ -9838,18 +9838,26 @@
                                         <td>{{ r.start }}</td>
                                         <td>{{ sigRunRamp(r.phase) }}</td>
                                         <td class="sc-num">{{ r.green_sec }} 秒</td>
-                                        <td class="sc-num">{{ r.ours_switch_at_sec==null ? '— 全程續綠' : ('第 '+r.ours_switch_at_sec+' 秒') }}</td>
+                                        <!-- 🛑 三種狀態要分清楚:判過該切 / 有取樣但沒判該切 /
+                                             這一段根本沒有取樣(影子停擺、降階、資料缺口)。
+                                             全部寫成「全程續綠」會把「沒資料」講成「不想切」。 -->
+                                        <td class="sc-num">{{ r.ours_state==='switch' ? ('第 '+r.ours_switch_at_sec+' 秒')
+                                            : (r.ours_state==='keep' ? '未判該切' : '無取樣') }}</td>
                                         <td class="sc-num" :class="(r.gap_sec!=null && r.gap_sec<0)?'sc-bad':''">
                                             {{ r.gap_sec==null ? '—' : (r.gap_sec>0?'+':'')+r.gap_sec+' 秒' }}</td>
-                                        <td>{{ r.sent ? ('是（第 '+r.sent_at_sec+' 秒）') : '否' }}</td>
-                                        <td>{{ r.blocked || '—' }}</td>
+                                        <td>{{ r.sent ? ('已下發（第 '+r.sent_at_sec+' 秒）') : '未下發' }}</td>
+                                        <!-- 已下發的段不顯示擋下原因 —— 這一欄問的是「為什麼沒送」。
+                                             未下發又沒有擋下紀錄,代表引擎本來就沒判該切。 -->
+                                        <td>{{ r.sent ? '—' : (r.blocked || (r.ours_state==='switch' ? '(無紀錄)' : '本來就沒判該切')) }}</td>
                                     </tr>
                                 </tbody>
                             </table>
                             <div class="analysis-setting-tip" style="margin-top:8px">
-                                「差距」= 我方想切的時點 − 實際綠燈長度。負值代表我方會比控制器早切。
-                                「全程續綠」代表這一段我方從頭到尾都判斷該續綠 —— 那不是被擋,是本來就不想切,
-                                兩者的處置完全不同。
+                                「差距」= 我方想切的時點 − 實際綠燈長度,負值代表我方會比控制器早切。<br>
+                                「未判該切」= 這一段有取樣但引擎從頭到尾都判續綠(不是被擋);
+                                「無取樣」= 這一段沒有任何影子取樣(停擺/降階/資料缺口),不可當成續綠。<br>
+                                最後一欄只在**未下發**時才有意義 —— 已下發的段一律顯示「—」。
+                                同一段可能先被擋、後來進到延長段才送出,那種情況以「已下發」為準。
                             </div>
                         </div>
                     </div>
