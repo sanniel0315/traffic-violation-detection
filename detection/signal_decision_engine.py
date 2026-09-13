@@ -247,15 +247,25 @@ def decide(
     #    整體延滯變差。這裡只改「紅側是優先相」這一種情況,其餘完全不變。
     # 🛑 這個值**沒有**經過 keep_weight 那樣的驗證,是為了現場要求
     #    (2026-09-08「下匝道要放多點,很塞」)加的旋鈕,要用實測回頭驗證。
-    w = "" if kw == 1.0 else f"×{kw:g}"
+    # 🛑 2026-09-13 改寫理由文字。原本寫成
+    #    「紅側延滯 64 ≤ 綠側價值 128×3 + 換相成本 6,續綠」——
+    #    現場反映完全看不懂:三個數字沒有單位、×3 沒有來由、也看不出
+    #    它們各自是怎麼來的。理由欄是給值班的人判讀用的,不是內部算式備忘。
+    #    改成:先講結論,再用「幾台等幾秒」把數字還原成看得懂的量,
+    #    並標明單位與權重的意思。
+    kw_txt = "" if kw == 1.0 else f"×權重{kw:g}"
+    lhs = (f"對向 {red_veh:.1f} 台已等 {max(0.0, red_wait):.0f} 秒"
+           f"，延滯 {switch_gain:.0f}")
+    rhs = (f"切走要付 {threshold:.0f}"
+           f"（綠側 {green_remain:.1f} 台會多等 {keep_gain:.0f}{kw_txt}"
+           f"，加換相損失 {change_cost:.0f}）")
+    tail = "。數字都是「車×秒」，越大代表越多車等越久"
     if switch_gain > threshold:
         d.action = "SWITCH"
-        d.reason = (f"紅側延滯 {switch_gain:.0f} > 綠側價值 {keep_gain:.0f}{w}"
-                    f" + 換相成本 {change_cost:.0f}")
+        d.reason = f"換相：{lhs}，已超過{rhs}{tail}"
     else:
         d.action = "KEEP"
-        d.reason = (f"紅側延滯 {switch_gain:.0f} ≤ 綠側價值 {keep_gain:.0f}{w}"
-                    f" + 換相成本 {change_cost:.0f},續綠")
+        d.reason = f"續綠：{lhs}，還不到{rhs}{tail}"
     return d
 
 
