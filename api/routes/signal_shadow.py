@@ -2906,14 +2906,28 @@ def _actual_runs_from_frames(since_iso: str, until_iso: str) -> Optional[list]:
         if cur is None or sp != cur["phase"]:
             if cur is not None:
                 segs.append(cur)
-            cur = {"phase": sp, "start": float(ts), "green_end": None, "end": float(ts)}
+            cur = {"phase": sp, "start": float(ts), "green_end": None,
+                   "green_last": None, "end": float(ts)}
         cur["end"] = float(ts)
-        if st == 1:
+        # 🛑 2026-09-13 修:原本取「最後一個 step==1 的框」當綠燈結束。
+        #    那個寫法預設 5F03 是每秒一框,但實測這台控制器是**事件驅動**——
+        #    平均 10.5 秒一框,每個步階大約只有一框(近 200 框裡
+        #    (分相,步階) 四種各 21~26 框,數量相當,不是依時長分布)。
+        #    結果每一段的 green_end 都等於 start、green_sec 恆為 0,
+        #    而 /paired 的「我方會早切」KPI 正是建立在這個長度上。
+        #    改成:綠燈階段是步階 1 與 2(主綠 + 綠燈延長),
+        #    綠燈結束 = 這一相裡**第一個不是綠燈步階**的框(黃燈/全紅)。
+        if st in (1, 2):
+            cur["green_last"] = float(ts)
+        elif cur.get("green_end") is None and cur.get("green_last") is not None:
             cur["green_end"] = float(ts)
     if cur is not None:
         segs.append(cur)
     out = []
     for sg in segs:
+        # 這一相還沒走到黃燈就被區間切斷 → 用最後一個綠燈框當結束(會略為低估)
+        if sg.get("green_end") is None and sg.get("green_last") is not None:
+            sg["green_end"] = sg["green_last"]
         if sg["green_end"] is None:
             continue
         out.append({"phase": sg["phase"], "start": sg["start"], "green_end": sg["green_end"],
