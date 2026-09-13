@@ -619,11 +619,36 @@ def _release_stats() -> dict:
             "total_sec": int(round(sum(lens))),
             "last_sec": int(round(done[-1] + _half)) if done else None,
             "last_sec_measured": int(round(done[-1])) if done else None,
+            "last_sec_source": "shadow_sampling",
             "avg_sec": round(sum(done) / len(done) + _half, 1) if done else None,
             "avg_sec_measured": round(sum(done) / len(done), 1) if done else None,
             "sample_interval_sec": SHADOW_INTERVAL_SEC,
             "running": bool(running and ph == last_ph),
         }
+    # 🛑 2026-09-13:「上次綠燈」改用控制器 5F03 重建的**實際綠燈段**,
+    #    不要用影子 5 秒取樣 + 半個週期的估計。取樣法的誤差是 ±2.5 秒,
+    #    而 5F03 的步階轉換框直接給出綠燈起訖,精確得多。
+    #    (先前 _actual_runs_from_frames 的綠燈長度恆為 0,所以只能用估計值;
+    #     那個 bug 今天修好了,這裡就該換回精確來源。)
+    #    取「最近一段已結束的」—— 還在跑的那一段不算,否則跟「已亮 N 秒」重複。
+    try:
+        _u = datetime.now()
+        _a = _u - timedelta(hours=2)
+        for _r in reversed(_actual_runs_from_frames(
+                _a.isoformat(timespec="seconds"), _u.isoformat(timespec="seconds")) or []):
+            _ph = str(int(_r.get("phase") or 0))
+            _rec = out.get(_ph)
+            if not _rec or _rec.get("last_sec_source") == "frames_5f03":
+                continue
+            _gs = float(_r.get("green_sec") or 0)
+            # 這一段還在進行中就跳過(綠燈結束時間貼近現在)
+            if _gs <= 0 or (time.time() - float(_r.get("green_end") or 0)) <= 3:
+                continue
+            _rec["last_sec"] = int(round(_gs))
+            _rec["last_sec_measured"] = round(_gs, 1)
+            _rec["last_sec_source"] = "frames_5f03"
+    except Exception:
+        pass
     _release_cache.update({"ts": now, "data": out})
     return out
 
