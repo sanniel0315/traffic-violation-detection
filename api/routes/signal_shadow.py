@@ -665,8 +665,59 @@ def _phase_measure(phase: int) -> dict:
         f2 = r.get("flow_vpm")
         if f2 is not None:
             fmax = f2 if fmax is None else max(fmax, float(f2))
+    # 🛑 2026-09-13:到達率改用**車流計數**,不要用壅塞偵測的 flow_vpm。
+    #    flow_vpm 的定義是「最近 60 秒有幾個 track 從畫面消失」,而這個路口的
+    #    tracker 破碎率很高(實測 cam5 60 條 track 只對應約 16 台車),
+    #    一台車會被算成好幾台。它自己的文件也寫明「這個數字會低估,只能用來
+    #    **往下修**判級,絕對不能拿來往上升級」—— 但決策引擎拿它算
+    #    stranded_arrivals → keep_gain,那正是「往上升」的用法(把續綠的價值墊高)。
+    #    改用 traffic_events 的車流計數:那條路徑今天以人工逐幀核對過
+    #    (90 秒實際 5 台、系統 4 台),是目前唯一驗證過的計數。
+    if ARRIVAL_FROM_EVENTS:
+        ev = _events_flow_vpm(phase)
+        if ev is not None:
+            fmax = ev
     return {"queue_m": qmax, "flow_vpm": fmax,
             "vehicles": veh, "cameras": seen}
+
+
+_EV_FLOW_CACHE: dict = {}
+
+
+def _events_flow_vpm(phase: int, window_sec: float = 120.0) -> Optional[float]:
+    """用車流計數(traffic_events 的一般流量事件)算該分相的到達率(輛/分)。
+
+    只取該分相**基準測點**那一台 —— 同相兩台是上下游關係、看的是同一批車,
+    兩台都算會重複;基準測點是官方時制表指定的量測點。
+    5 秒快取,避免每個取樣週期都打 DB。
+    """
+    import time as _t
+    hit = _EV_FLOW_CACHE.get(phase)
+    if hit and _t.time() - hit[0] < 5.0:
+        return hit[1]
+    try:
+        from detection.signal_timing_lookup import phase_role
+        r = phase_role(phase) or {}
+        cc = str(r.get("constraint_camera") or "")
+        if not cc.startswith("ID") or not cc[2:].isdigit():
+            return None
+        cam = int(cc[2:])
+        from api.models import SessionLocal
+        from sqlalchemy import text as _text
+        db = SessionLocal()
+        try:
+            n = db.execute(_text(
+                "SELECT COUNT(*) FROM traffic_events WHERE camera_id=:c "
+                "AND direction='INOUT' "
+                "AND created_at >= datetime('now', :w)"),
+                {"c": cam, "w": "-%d seconds" % int(window_sec)}).scalar() or 0
+        finally:
+            db.close()
+        v = float(n) * (60.0 / window_sec)
+        _EV_FLOW_CACHE[phase] = (_t.time(), v)
+        return v
+    except Exception:
+        return None
 
 
 def _queue_m(camera_id: int) -> Optional[float]:
@@ -822,6 +873,10 @@ FIRST_GREEN_STEP = int(os.getenv("SIGNAL_FIRST_GREEN_STEP", "1") or 1)
 # 步階剩餘時間小於這個值就不下發 —— 再送也只是搶在燈自己要換的前一刻。
 # 實測 78.6% 的下發是在剩 ≤2 秒時送的,等於白送。
 ACTUATE_MIN_EFFECT_SEC = float(os.getenv("SIGNAL_ACTUATE_MIN_EFFECT_SEC", "2.0") or 2.0)
+
+# 到達率的來源:1 = 用車流計數(已人工核對過),0 = 用壅塞偵測的 flow_vpm(舊行為)。
+ARRIVAL_FROM_EVENTS = str(
+    os.getenv("SIGNAL_ARRIVAL_FROM_EVENTS", "1") or "1").strip() not in ("0", "", "false", "False")
 
 # 綠側沒有需求時,把換相成本按實際需求縮小(見 signal_decision_engine 的說明)。
 # 離峰 17%、尖峰 31% 的取樣時刻是「綠側空、紅側有車」,那些情境下固定收
@@ -4325,6 +4380,95 @@ def shadow_hourly(date: str = Query("", description="YYYY-MM-DD,空 = 今天"),
             "capped": (d1 - d0).days + 1 > DAY_CAP,
             "note": "跨區間版:每一天的逐時列合併後依小時排序;"
                     "缺的小時丟背景補算,不擋畫面。最多 %d 天。" % DAY_CAP}
+
+
+@router.get("/runs", summary="逐段綠燈:我方想在第幾秒切、實際切在第幾秒、為什麼沒送")
+def shadow_runs(hours: float = Query(3.0, ge=0.1, le=72.0),
+                limit: int = Query(60, ge=1, le=500),
+                _user=Depends(get_current_user)):
+    """一段綠燈一列 —— 換相時機對照要看的是這個,不是每 5 秒一個點的曲線。
+
+    每一列回答四件事:
+      · 這一段綠燈實際亮了幾秒(控制器 5F03,精確到秒)
+      · 我方**第一次**判該切是在第幾秒(沒判過就是 None)
+      · 有沒有真的下發,下發當下那個步階還剩幾秒(剩太少等於白送)
+      · 沒下發的話被哪一道閘門擋住
+
+    🛑 為什麼要分「判該切」與「有下發」:2026-09-13 實測 327 次下發有 78.6%
+       是在步階剩 ≤2 秒時送的,表面生效率 90.8% 但什麼都沒改變。
+       只看「我方會早切幾秒」會把這種情況讀成有作為。
+    """
+    until = datetime.now()
+    since = until - timedelta(hours=hours)
+    since_iso = since.isoformat(timespec="seconds")
+    until_iso = until.isoformat(timespec="seconds")
+    runs = _actual_runs_from_frames(since_iso, until_iso) or []
+    if not runs:
+        return {"since": since_iso, "until": until_iso, "runs": [],
+                "note": "這個區間沒有可用的 5F03 抄錄框,無法重建綠燈段"}
+
+    # 我方逐 5 秒的判斷
+    try:
+        conn = _db()
+        samples = conn.execute(
+            "SELECT ts,green_phase,green_elapsed,ours,reason FROM signal_shadow_log "
+            "WHERE ts>=? AND ts<=? ORDER BY ts", (since_iso, until_iso)).fetchall()
+        blocked = conn.execute(
+            "SELECT epoch,reason FROM signal_actuate_blocked WHERE epoch>=? AND epoch<=?",
+            (since.timestamp(), until.timestamp())).fetchall()
+        conn.close()
+    except Exception:
+        samples, blocked = [], []
+    sm = []
+    for ts, gp, ge, ours, why in samples:
+        try:
+            sm.append((datetime.fromisoformat(ts).timestamp(), gp, ge or 0.0, ours, why or ""))
+        except Exception:
+            pass
+
+    # 我方送出的 5F1C
+    sends = []
+    try:
+        from api.routes.signal_tc3 import _QDB_PATH
+        import sqlite3 as _sq
+        c2 = _sq.connect(f"file:{_QDB_PATH}?mode=ro", uri=True, timeout=10)
+        sends = [r[0] for r in c2.execute(
+            "SELECT ts FROM signal_frames WHERE code='5F1C' AND src='self' AND ts>=? AND ts<=? "
+            "ORDER BY ts", (since.timestamp(), until.timestamp()))]
+        c2.close()
+    except Exception:
+        pass
+
+    out = []
+    for r in runs[-limit:]:
+        a, b = float(r.get("start") or 0), float(r.get("green_end") or r.get("end") or 0)
+        if b <= a:
+            continue
+        first_sw = None
+        blk = ""
+        for ts, gp, ge, ours, why in sm:
+            if not (a <= ts <= b):
+                continue
+            if ours == "SWITCH" and first_sw is None:
+                first_sw = round(ge, 1)
+        for ep, why in blocked:
+            if a <= ep <= b and not blk:
+                blk = str(why or "").split("(")[0].strip()
+        sent = [x for x in sends if a <= x <= b]
+        out.append({
+            "start": datetime.fromtimestamp(a).strftime("%H:%M:%S"),
+            "phase": r.get("phase"),
+            "green_sec": round(float(r.get("green_sec") or (b - a)), 1),
+            "ours_switch_at_sec": first_sw,
+            "gap_sec": (round(first_sw - float(r.get("green_sec") or (b - a)), 1)
+                        if first_sw is not None else None),
+            "sent": len(sent),
+            "sent_at_sec": (round(sent[0] - a, 1) if sent else None),
+            "blocked": blk,
+        })
+    out.reverse()          # 新的在上面
+    return {"since": since_iso, "until": until_iso, "runs": out,
+            "note": "green_sec 來自控制器 5F03;ours_switch_at_sec 是我方第一次判該切的綠燈已亮秒數"}
 
 
 @router.get("/paired", summary="逐次綠燈配對(精確比對:我方會早幾秒切)")
