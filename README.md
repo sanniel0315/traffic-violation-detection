@@ -461,7 +461,7 @@ python3 services/ocr_service.py
 **預設登入帳號（首次初始化，可用 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 覆寫）**
 ```
 username: admin
-password: <ADMIN_PASSWORD>
+password: <ADMIN_PASSWORD 設定值>
 ```
 ⚠️ 上線前務必改掉。
 
