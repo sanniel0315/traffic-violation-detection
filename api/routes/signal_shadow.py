@@ -924,6 +924,8 @@ FIRST_GREEN_STEP = int(os.getenv("SIGNAL_FIRST_GREEN_STEP", "1") or 1)
 # 步階剩餘時間小於這個值就不下發 —— 再送也只是搶在燈自己要換的前一刻。
 # 實測 78.6% 的下發是在剩 ≤2 秒時送的,等於白送。
 ACTUATE_MIN_EFFECT_SEC = float(os.getenv("SIGNAL_ACTUATE_MIN_EFFECT_SEC", "2.0") or 2.0)
+# 步階1 至少還要剩這麼多秒才送 = 延長段實測約 5 秒 + 2 秒裕度(只在 A 段有作用)。
+FIRST_GREEN_MIN_REMAIN_SEC = float(os.getenv("SIGNAL_FIRST_GREEN_MIN_REMAIN_SEC", "7") or 7)
 
 # 到達率的來源:1 = 用車流計數(已人工核對過),0 = 用壅塞偵測的 flow_vpm(舊行為)。
 ARRIVAL_FROM_EVENTS = str(
@@ -1169,6 +1171,13 @@ def _actuate_gates(live: dict, now: float) -> Optional[str]:
     #       所以這裡用保守規則:第一個綠階不送。寧可少送,不要送成反效果。
     if live.get("step_id") == FIRST_GREEN_STEP and ab_firstgreen_side(now) == "B":
         return "還在第一個綠階(步階%s),此時跳下一步階會進入延長段而非清道" % FIRST_GREEN_STEP
+    # A 段放開步階1,但步階1 快結束時不送:最壞情況是被推進延長段(約 5 秒),
+    # 步階1 剩得比延長段還少,送了反而把綠燈拉長。
+    _rem1 = live.get("step_remain_sec")
+    if (live.get("step_id") == FIRST_GREEN_STEP and isinstance(_rem1, (int, float))
+            and float(_rem1) <= FIRST_GREEN_MIN_REMAIN_SEC):
+        return ("步階%s 只剩 %.0f 秒,送了可能被推進延長段反而更長(需 >%.0f 秒)"
+                % (FIRST_GREEN_STEP, float(_rem1), FIRST_GREEN_MIN_REMAIN_SEC))
     # 🛑 2026-09-13:步階「快結束了」就不要送 —— 那是白送。
     #    實測近 7 天 327 次下發,送出當下該步階距離自然結束的剩餘時間
     #    中位只有 **0.9 秒**,78.6% 是在剩 ≤2 秒時送的。
@@ -3145,7 +3154,9 @@ APPROACH_LEN_M = {
     1: float(os.getenv("SIGNAL_EVAL_APPROACH_M_PHASE1", "52.7") or 52.7),
     2: float(os.getenv("SIGNAL_EVAL_APPROACH_M_PHASE2", "16.0") or 16.0),
 }
-PEAK_WINDOWS = ((9, 12), (17, 20))      # 使用者定義的尖峰:每天 09-12、17-20
+# 使用者定義的尖峰(一天內的分鐘):09:00-12:00、16:30-20:00
+# (2026-09-13 使用者:「尖峰 1630 1700 1730 1800 1830 1900 1930 這也是尖峰」)
+PEAK_WINDOWS = ((9 * 60, 12 * 60), (16 * 60 + 30, 20 * 60))
 
 
 def _eval_window(since_iso: str, until_iso: str) -> dict:
@@ -3168,8 +3179,76 @@ def _eval_window(since_iso: str, until_iso: str) -> dict:
 
 
 def _is_peak(ts: float) -> bool:
-    h = datetime.fromtimestamp(ts).hour
-    return any(a <= h < b for a, b in PEAK_WINDOWS)
+    lt = datetime.fromtimestamp(ts)
+    m = lt.hour * 60 + lt.minute
+    return any(a <= m < b for a, b in PEAK_WINDOWS)
+
+
+@router.get("/ab-firstgreen", summary="步階1 閘門 A/B:放開(A) vs 維持(B)的逐週期比較")
+def ab_firstgreen_report(since: str = Query("", description="起(ISO);空=近 24 小時"),
+                         until: str = Query("", description="訖(ISO);空=現在"),
+                         _user=Depends(get_current_user)):
+    """回答「主綠燈(步階1)能不能下發」—— 兩邊都是我方控制,差別只有閘門。
+
+    側別由綠燈開始時刻 + SIGNAL_AB_FIRSTGREEN_MIN 還原(與 ab_firstgreen_side 同一條規則),
+    跨越時段邊界的週期(本輪與下一輪開頭不同側)整筆排除,免得混到對方。
+    尖峰 / 離峰分開比:兩種需求下,放開閘門的效果方向可能相反。
+
+    指標(per_cycle_metrics,我方車流計數,不用進出線):
+      cycle_sec 週期長度 —— 放開閘門的目的就是縮短它
+      green_sec 綠燈長度 —— A 若沒有比 B 短,代表步階1 送了也沒用
+      queue_avg_m / queue_max_m 排隊 —— 不可惡化
+      throughput_vph 通過量
+    🛑 每邊每相至少 20 個週期才下判斷;p 值 < 0.05 才算有差。
+    """
+    from detection import signal_eval as E
+    from detection.signal_timing_lookup import phase_role
+    if AB_FIRSTGREEN_MIN <= 0:
+        return {"enabled": False,
+                "note": "A/B 未啟用(SIGNAL_AB_FIRSTGREEN_MIN=0),現在一律是 B(步階1 擋)"}
+    now = datetime.now()
+    u = until or now.isoformat(timespec="seconds")
+    s = since or (now - timedelta(hours=24)).isoformat(timespec="seconds")
+    cycles_all = _actual_runs_from_frames(s, u) or []
+    cams = sorted(set(PHASE_STOPLINE.values()))
+    cong = E.load_congestion(_VIOL_DB, cams, s, u)
+    passes = E.load_passes(_VIOL_DB, {PHASE_STOPLINE[p]: _phase_lanes(p).get(PHASE_STOPLINE[p]) or []
+                                      for p in (1, 2)}, s, u)
+    KEYS = ("cycle_sec", "green_sec", "queue_avg_m", "queue_max_m", "throughput_vph")
+    MIN_N = 20
+    out = {"enabled": True, "slot_min": AB_FIRSTGREEN_MIN, "since": s, "until": u,
+           "by_phase": {}}
+    for ph in (1, 2):
+        cyc = [c for c in cycles_all if c["phase"] == ph]
+        cam = PHASE_STOPLINE[ph]
+        rows = E.per_cycle_metrics(cyc, cong.get(cam, []), passes.get(cam, []),
+                                   (phase_role(ph) or {}).get("storage_m"), APPROACH_LEN_M.get(ph))
+        buckets = {}
+        dropped = 0
+        for r in rows:
+            sa = ab_firstgreen_side(r["start"])
+            if ab_firstgreen_side(r["start"] + r["cycle_sec"] - 1) != sa:
+                dropped += 1
+                continue
+            buckets.setdefault(("peak" if _is_peak(r["start"]) else "offpeak", sa), []).append(r)
+        res = {"boundary_dropped": dropped}
+        for tier in ("peak", "offpeak"):
+            A, B = buckets.get((tier, "A"), []), buckets.get((tier, "B"), [])
+            cmp = E.compare(A, B, keys=KEYS)
+            enough = len(A) >= MIN_N and len(B) >= MIN_N
+            res[tier] = {
+                "n_A": len(A), "n_B": len(B),
+                "spillback_A": sum(1 for r in A if r.get("spillback")),
+                "spillback_B": sum(1 for r in B if r.get("spillback")),
+                "compare": cmp,
+                "conclusive": enough,
+                "caveat": None if enough else "樣本不足(每邊至少 %d 個週期),不下結論" % MIN_N,
+            }
+        out["by_phase"][ph] = res
+    out["note"] = ("compare 裡 mean_a = A(放開步階1)、mean_b = B(維持擋),diff = B − A。"
+                   "cycle_sec / green_sec 的 diff > 0 代表放開後變短(目的達成);"
+                   "排隊 diff < 0 代表放開後排隊變長(要停)。p < 0.05 才算有差。")
+    return out
 
 
 @router.get("/count-check", summary="人工計數對照表(90% 準確度條款的證據產生器)")
