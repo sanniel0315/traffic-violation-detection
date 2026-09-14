@@ -950,6 +950,9 @@ DEMAND_SCALED_CHANGE_COST = str(
 #    以「一天內的第幾個時段」的奇偶決定,所以每個小時都同時含 A 與 B,
 #    需求的日內變化會被平均掉,不會變成「A 都在尖峰、B 都在離峰」。
 AB_FIRSTGREEN_MIN = float(os.getenv("SIGNAL_AB_FIRSTGREEN_MIN", "0") or 0)
+# A/B 開始的時刻(ISO)。🛑 側別是用時鐘還原的,這個時刻之前的週期實際上全是 B,
+#    若被時鐘規則分成一半 A,A 組就摻了假樣本 —— 判讀一律從這裡起算。
+AB_FIRSTGREEN_SINCE = os.getenv("SIGNAL_AB_FIRSTGREEN_SINCE", "") or ""
 
 
 def ab_firstgreen_side(now_ts: float | None = None) -> str:
@@ -3185,7 +3188,7 @@ def _is_peak(ts: float) -> bool:
 
 
 @router.get("/ab-firstgreen", summary="步階1 閘門 A/B:放開(A) vs 維持(B)的逐週期比較")
-def ab_firstgreen_report(since: str = Query("", description="起(ISO);空=近 24 小時"),
+def ab_firstgreen_report(since: str = Query("", description="起(ISO);空=A/B 開始時刻"),
                          until: str = Query("", description="訖(ISO);空=現在"),
                          _user=Depends(get_current_user)):
     """回答「主綠燈(步階1)能不能下發」—— 兩邊都是我方控制,差別只有閘門。
@@ -3206,9 +3209,12 @@ def ab_firstgreen_report(since: str = Query("", description="起(ISO);空=近 24
     if AB_FIRSTGREEN_MIN <= 0:
         return {"enabled": False,
                 "note": "A/B 未啟用(SIGNAL_AB_FIRSTGREEN_MIN=0),現在一律是 B(步階1 擋)"}
+    if not AB_FIRSTGREEN_SINCE:
+        return {"enabled": True,
+                "note": "沒設 SIGNAL_AB_FIRSTGREEN_SINCE(A/B 開始時刻),分不出哪些週期真的是 A,不判讀"}
     now = datetime.now()
     u = until or now.isoformat(timespec="seconds")
-    s = since or (now - timedelta(hours=24)).isoformat(timespec="seconds")
+    s = max(since or AB_FIRSTGREEN_SINCE, AB_FIRSTGREEN_SINCE)
     cycles_all = _actual_runs_from_frames(s, u) or []
     cams = sorted(set(PHASE_STOPLINE.values()))
     cong = E.load_congestion(_VIOL_DB, cams, s, u)

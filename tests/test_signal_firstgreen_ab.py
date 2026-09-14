@@ -64,3 +64,22 @@ def test_peak_includes_1630(S):
 def test_report_says_disabled_when_off(S, monkeypatch):
     monkeypatch.setattr(S, "AB_FIRSTGREEN_MIN", 0.0)
     assert S.ab_firstgreen_report(since="", until="", _user=None)["enabled"] is False
+
+
+def test_report_refuses_without_start_time(S, monkeypatch):
+    """沒有 A/B 開始時刻就不判讀 —— 之前的週期全是 B,會被時鐘規則誤標成 A。"""
+    monkeypatch.setattr(S, "AB_FIRSTGREEN_MIN", 30.0)
+    monkeypatch.setattr(S, "AB_FIRSTGREEN_SINCE", "")
+    assert "不判讀" in S.ab_firstgreen_report(since="", until="", _user=None)["note"]
+
+
+def test_report_never_reads_before_start(S, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(S, "AB_FIRSTGREEN_MIN", 30.0)
+    monkeypatch.setattr(S, "AB_FIRSTGREEN_SINCE", "2026-09-14T12:27:00")
+    monkeypatch.setattr(S, "_actual_runs_from_frames", lambda a, b: seen.setdefault("a", a) and [])
+    monkeypatch.setattr(S, "_phase_lanes", lambda p: {})
+    from detection import signal_eval as E
+    monkeypatch.setattr(E, "load_congestion", lambda *a, **k: {})
+    r = S.ab_firstgreen_report(since="2026-09-13T00:00:00", until="2026-09-14T13:00:00", _user=None)
+    assert seen["a"] == "2026-09-14T12:27:00" and r["since"] == "2026-09-14T12:27:00"
