@@ -76,6 +76,64 @@ def test_live_phase_carries_step_remain(S, monkeypatch):
     assert live["step_remain_sec"] == 4 and live["step_total_sec"] == 5
 
 
+def _followup(S, monkeypatch, seq):
+    """跑一次補送:seq 是 _live_phase 依序回傳的狀態。回傳送出的原因清單。"""
+    sent = []
+    it = iter(seq)
+    monkeypatch.setattr(S, "_live_phase", lambda: next(it, None))
+    monkeypatch.setattr(S, "_send_5f1c", lambda g, why, now: sent.append(why) or True)
+    monkeypatch.setattr(S.time, "sleep", lambda s: None)
+    monkeypatch.setitem(S._act, "skip_sent", 0)
+    monkeypatch.setitem(S._act, "skip_missed", 0)
+    S._skip_ped_flash_followup(1, S.time.time())
+    return sent
+
+
+def _lv(step, remain, phase=1, **kw):
+    d = {"sub_phase_id": phase, "step_id": step, "step_remain_sec": remain,
+         "stale": False, "clearance": False, "control_mode": "external_dynamic"}
+    d.update(kw)
+    return d
+
+
+def test_skip_sends_when_ped_flash_just_started(S, monkeypatch):
+    sent = _followup(S, monkeypatch, [_lv(1, 12), _lv(2, 5)])
+    assert len(sent) == 1 and S._act["skip_sent"] == 1
+
+
+def test_skip_never_sends_near_end_of_ped_flash(S, monkeypatch):
+    """步階2 剩 3 秒不補送 —— 黃燈保護。"""
+    assert _followup(S, monkeypatch, [_lv(2, 3)]) == []
+    assert "黃燈保護" in S._act["skip_last"]
+
+
+def test_skip_never_sends_in_yellow_or_after_phase_change(S, monkeypatch):
+    assert _followup(S, monkeypatch, [_lv(4, 3, clearance=True)]) == []
+    assert _followup(S, monkeypatch, [_lv(1, 30, phase=2)]) == []
+
+
+def test_skip_never_sends_without_remain(S, monkeypatch):
+    assert _followup(S, monkeypatch, [_lv(2, None)]) == []
+
+
+def test_skip_only_after_step1_send(S, monkeypatch):
+    """步階2 下發(B 段的做法)不觸發補送;步階1 下發才觸發。"""
+    started = []
+    monkeypatch.setattr(S, "SKIP_PED_FLASH", True)
+    monkeypatch.setattr(S, "_send_5f1c", lambda g, why, now: True)
+    monkeypatch.setattr(S, "ab_firstgreen_side", lambda now=None: "A")
+    monkeypatch.setattr(S.threading, "Thread",
+                        lambda target, args, **k: type("T", (), {"start": lambda self: started.append(args)})())
+
+    class _D:
+        action, reason = "SWITCH", "x"
+    S._actuate(_D(), 1, _live(2, 4))
+    assert started == []
+    monkeypatch.setitem(S._act, "last_ts", 0)
+    S._actuate(_D(), 1, _live(1, 20))
+    assert len(started) == 1
+
+
 def test_side_alternates_by_slot(S, monkeypatch):
     from datetime import datetime
     monkeypatch.setattr(S, "AB_FIRSTGREEN_MIN", 30.0)

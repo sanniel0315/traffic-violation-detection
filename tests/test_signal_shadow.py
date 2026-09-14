@@ -35,7 +35,18 @@ def test_only_one_send_path():
     senders = [fn.name for fn in ast.walk(tree)
                if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
                and calls_daemon_post(fn)]
-    assert senders == ["_actuate"], "下發路徑不只一條:%s" % senders
+    # 2026-09-15:送出本身收斂在 _send_5f1c(唯一呼叫 _daemon_post 的地方)。
+    assert senders == ["_send_5f1c"], "下發路徑不只一條:%s" % senders
+
+    # 呼叫 _send_5f1c 的只准兩個:_actuate(過七道閘門)與行人綠閃補送
+    # (自帶黃燈保護:同相、步階2、剩 ≥4 秒、未過期、不在清道)。多一個就是沒把關的入口。
+    def calls(node, name):
+        return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                   and n.func.id == name for n in ast.walk(node))
+    callers = sorted(fn.name for fn in ast.walk(tree)
+                     if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+                     and fn.name != "_send_5f1c" and calls(fn, "_send_5f1c"))
+    assert callers == ["_actuate", "_skip_ped_flash_followup"], "送出入口:%s" % callers
 
 
 def test_never_sends_in_process():
@@ -870,8 +881,9 @@ def test_algorithm_never_switches_timing_plan():
     """
     import ast
     src = (ROOT / "api" / "routes" / "signal_shadow.py").read_text(encoding="utf-8")
+    # 送出點收斂在 _send_5f1c(2026-09-15),檢查它送的命令碼
     fn = [n for n in ast.walk(ast.parse(src))
-          if isinstance(n, ast.FunctionDef) and n.name == "_actuate"][0]
+          if isinstance(n, ast.FunctionDef) and n.name == "_send_5f1c"][0]
     codes = {n.value for n in ast.walk(fn)
              if isinstance(n, ast.Constant) and isinstance(n.value, str)
              and len(n.value) == 4 and n.value.upper().startswith("5F")}
