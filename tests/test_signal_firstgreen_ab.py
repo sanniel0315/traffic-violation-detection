@@ -45,6 +45,37 @@ def test_step2_unaffected_by_step1_rule(S, monkeypatch):
     assert S._actuate_gates(_live(2, 4), 1000.0) is None
 
 
+def test_unknown_remain_blocks(S, monkeypatch):
+    """不知道步階剩幾秒就不送 —— 原本拿不到就放行,閘門形同虛設,撞上黃燈。"""
+    monkeypatch.setattr(S, "ab_firstgreen_side", lambda now=None: "B")
+    assert "不知道步階還剩幾秒" in S._actuate_gates(_live(2, None), 1000.0)
+
+
+def test_step2_near_end_blocks_for_yellow_safety(S, monkeypatch):
+    """延長段剩 3 秒(整數)不送:撞黃燈的 62 則估計剩餘全 ≤2.2 秒。"""
+    monkeypatch.setattr(S, "ab_firstgreen_side", lambda now=None: "B")
+    assert S._actuate_gates(_live(2, 3), 1000.0) is not None
+    assert S._actuate_gates(_live(2, 4), 1000.0) is None
+
+
+def test_live_phase_carries_step_remain(S, monkeypatch):
+    """_live_phase 必須把抄錄器的 step_remain_sec 帶出來,下發閘門才看得到。"""
+    import io, json, urllib.request
+    body = {"intersections": [{"phase": {"sub_phase_id": 1, "step_id": 2,
+                                         "lights": [{"value": 0x04}]},
+                               "stale": False, "age_sec": 0.5, "phase_elapsed_sec": 30,
+                               "step_remain_sec": 4, "step_total_sec": 5,
+                               "control_mode": {"code": "external_dynamic"}}]}
+
+    class _R(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *a, **k: _R(json.dumps(body).encode()))
+    live = S._live_phase()
+    assert live["step_remain_sec"] == 4 and live["step_total_sec"] == 5
+
+
 def test_side_alternates_by_slot(S, monkeypatch):
     from datetime import datetime
     monkeypatch.setattr(S, "AB_FIRSTGREEN_MIN", 30.0)

@@ -81,7 +81,9 @@ class _D:
     reason = "測試"
 
 
-LIVE_OK = {"control_mode": "external_dynamic", "clearance": False, "stale": False}
+# step_remain_sec 必帶:2026-09-14 起「不知道步階剩幾秒」一律不送(黃燈保護)
+LIVE_OK = {"control_mode": "external_dynamic", "clearance": False, "stale": False,
+           "step_remain_sec": 10}
 
 
 def test_actuate_blocked_when_disabled(monkeypatch):

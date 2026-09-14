@@ -828,6 +828,12 @@ def _live_phase() -> Optional[dict]:
                     #    精確到訊框;影子自己每 5 秒輪詢推算最多差一個週期,
                     #    而 min/max green 的安全閘門就是拿這個數字去比。
                     "phase_elapsed_sec": xn.get("phase_elapsed_sec"),
+                    # 🛑 2026-09-14 補:這一步還剩幾秒。原本沒帶出來,下發閘門拿到的
+                    #    永遠是 None → 「步階快結束不送」從 09-13 上線起**從未生效**,
+                    #    近 14 天有 62 則在延長段最後 ≤2.2 秒送出、剛好撞上控制器自己
+                    #    轉黃燈,黃燈被切成約 1 秒(正常 3 秒)。
+                    "step_remain_sec": xn.get("step_remain_sec"),
+                    "step_total_sec": xn.get("step_total_sec"),
                     "control_mode": cm.get("code")}
     except Exception:
         pass
@@ -923,7 +929,12 @@ ACK_WAIT_SEC = float(os.getenv("SIGNAL_ACK_WAIT_SEC", "5") or 5)
 FIRST_GREEN_STEP = int(os.getenv("SIGNAL_FIRST_GREEN_STEP", "1") or 1)
 # 步階剩餘時間小於這個值就不下發 —— 再送也只是搶在燈自己要換的前一刻。
 # 實測 78.6% 的下發是在剩 ≤2 秒時送的,等於白送。
-ACTUATE_MIN_EFFECT_SEC = float(os.getenv("SIGNAL_ACTUATE_MIN_EFFECT_SEC", "2.0") or 2.0)
+# 🛑 2026-09-14 由 2 秒提高到 3 秒 —— 這道同時是**黃燈保護**:
+#    命令若在控制器自己轉黃燈的那一刻到達,控制器不保護最短黃燈,會把黃燈切成
+#    約 1 秒(14 天 46 則黃燈中有我方下發,44 則 ≤1.4 秒;無下發的黃燈中位 3.0 秒)。
+#    撞上的 62 則,送出時估計剩餘全部 ≤2.2 秒。剩餘值是整數(四捨五入),
+#    設 3 = 實際剩 ≥3.5 秒才送,距最壞案例留 1.3 秒。
+ACTUATE_MIN_EFFECT_SEC = float(os.getenv("SIGNAL_ACTUATE_MIN_EFFECT_SEC", "3.0") or 3.0)
 # 步階1 至少還要剩這麼多秒才送 = 延長段實測約 5 秒 + 2 秒裕度(只在 A 段有作用)。
 FIRST_GREEN_MIN_REMAIN_SEC = float(os.getenv("SIGNAL_FIRST_GREEN_MIN_REMAIN_SEC", "7") or 7)
 
@@ -1188,7 +1199,11 @@ def _actuate_gates(live: dict, now: float) -> Optional[str]:
     #    看起來生效率 90.8%,實際上什麼也沒改變,還把下發紀錄灌滿。
     #    這道閘門只擋掉沒有作用的命令,不會減少任何真正的控制能力。
     _rem = live.get("step_remain_sec")
-    if isinstance(_rem, (int, float)) and 0 <= float(_rem) <= ACTUATE_MIN_EFFECT_SEC:
+    # 🛑 不知道步階還剩幾秒就不送。原本寫成「拿不到就放行」,結果欄位根本沒帶出來,
+    #    這道閘門形同虛設,命令撞上黃燈起點把黃燈切成 1 秒(見 _live_phase 的說明)。
+    if not isinstance(_rem, (int, float)):
+        return "不知道步階還剩幾秒,不下發(避免撞上黃燈)"
+    if 0 <= float(_rem) <= ACTUATE_MIN_EFFECT_SEC:
         return ("步階剩 %.1f 秒就自然結束,送了也改變不了(需 >%.0f 秒才有作用)"
                 % (float(_rem), ACTUATE_MIN_EFFECT_SEC))
     # 節流。🛑 沒有這道的話,每一次取樣判 SWITCH 就送一次 —— 控制器會被
