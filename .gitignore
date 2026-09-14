@@ -95,3 +95,7 @@ temp_pdf_pages/
 # 誤放到 web/ 的暫存腳本 (_ 前綴) — 正式腳本在專案根/Jetson parking_autolabel
 web/_*.py
 web/_*.json
+
+# 敏感檔案：不可再進版控（2026-09-14 歷史清理）
+config/frigate/.jwt_secret
+docs/screenshots/
