@@ -107,38 +107,38 @@ def load_congestion(db_path: str, cams: list, since_local: str, until_local: str
     return out
 
 
-# 通過事件的 direction 標記。只有 EXIT 是「一輛車離開停等區 = 通過停止線」;
-# 其餘是每幀每車的偵測紀錄或別的進場道,不能拿來算通過量。
-PASS_DIRECTION = "EXIT"
+# 進出線(IN/OUT/EXIT)是給 OPAC 的轉場事件,**不是我方流量**,任何計數都要排除。
+# 使用者 2026-09-13/14:「in out 不要管，那個是給OPAC」「不要再對IN OUT」。
+FLOW_EXCLUDE_DIRECTIONS = ("IN", "OUT", "EXIT")
 
 
-def load_passes(db_path: str, cams: list, since_local: str, until_local: str) -> dict:
-    """{cam: [(local_ts, speed_kmh|None)]} —— **每筆一輛通過**。
+def load_passes(db_path: str, cam_lanes: dict, since_local: str, until_local: str) -> dict:
+    """{cam: [(local_ts, speed_kmh|None)]} —— **每筆一輛通過**,取我方車流計數。
 
-    🛑 只取 direction='EXIT'。2026-09-06 查出 traffic_events 混了三種列:
-         IN / EXIT   每車一筆的通過紀錄(NE-2 三小時 887 / 873,兩者應該相當)
-         INOUT       每幀每車的偵測紀錄(同一台車在框內每秒可寫 3 筆)
-         straight 等 **別的進場道**的偵測(NE-2 的 straight 是下匝道後平面道路)
-       先前不分 direction 全部計入,NE-2 算出 1044 vph、WN-2 1358 vph,
-       合計 2403 vph —— 而該相飽和流只有 1184/909 vph,綠燈又只佔約四成,
-       物理上不可能。只取 EXIT 後是 291 + 361 = 652 vph,低於容量,
-       也與紅燈排隊成長法估到的到達率(515 vph)量級相符。
-       §7.9 與 09-04/09-05 每日報告裡的「通過車輛數」是舊算法,偏高約 2.5 倍。
+    cam_lanes = {camera_id: [lane_no, ...]}:只取屬於該分相的 lane
+    (同一台相機可能有別條匝道的斷面,例如 cam3 lane 2 是下匝道後平面道路)。
+    進出線事件(FLOW_EXCLUDE_DIRECTIONS)一律排除 —— 那是 OPAC 的,不當我方通過量。
 
-    🛑 某台相機在這段時間完全沒有 EXIT 列時回空,由呼叫端當「量不到」處理 ——
-       不可以退回「全部列」湊一個數字出來。
+    🛑 2026-09-14 前這裡只取 direction='EXIT'(進出線),已改。
+    🛑 某台相機在這段時間沒有任何計數列時回空,由呼叫端當「量不到」處理 ——
+       不可以退回別種事件湊一個數字出來。
     """
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=20)
-    out = {c: [] for c in cams}
-    q = ("SELECT camera_id, created_at, speed_kmh FROM traffic_events WHERE camera_id IN (%s) "
-         "AND direction=? AND created_at>=? AND created_at<? ORDER BY created_at"
-         % ",".join("?" * len(cams)))
-    for cam, ca, sp in conn.execute(
-            q, (*cams, PASS_DIRECTION, _to_utc(since_local), _to_utc(until_local))):
-        try:
-            out[cam].append((_local_ts(ca), float(sp) if sp and sp > 0 else None))
-        except Exception:
+    out = {c: [] for c in cam_lanes}
+    excl = ",".join("?" * len(FLOW_EXCLUDE_DIRECTIONS))
+    for cam, lanes in cam_lanes.items():
+        if not lanes:
             continue
+        q = ("SELECT created_at, speed_kmh FROM traffic_events WHERE camera_id=? "
+             "AND direction NOT IN (%s) AND lane_no IN (%s) "
+             "AND created_at>=? AND created_at<? ORDER BY created_at"
+             % (excl, ",".join("?" * len(lanes))))
+        for ca, sp in conn.execute(q, (cam, *FLOW_EXCLUDE_DIRECTIONS, *lanes,
+                                       _to_utc(since_local), _to_utc(until_local))):
+            try:
+                out[cam].append((_local_ts(ca), float(sp) if sp and sp > 0 else None))
+            except Exception:
+                continue
     conn.close()
     return out
 

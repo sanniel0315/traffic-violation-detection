@@ -707,6 +707,25 @@ def _phase_measure(phase: int) -> dict:
 
 
 _EV_FLOW_CACHE: dict = {}
+_PHASE_LANES_CACHE: dict = {}
+
+
+def _phase_lanes(phase: int) -> dict:
+    """{camera_id(int): [lane_no, ...]} —— 該分相的流量要取哪幾台的哪幾條 lane。
+
+    與 /plan 的 flow_lanes 同一個來源(_flow_lanes_for 的排除法),60 秒快取。
+    用 lane 篩而不是 direction 標籤 —— 同一台相機上可能有別條匝道的斷面
+    (cam3 的 lane 2 是下匝道後平面道路,屬分相2)。
+    """
+    import time as _t
+    hit = _PHASE_LANES_CACHE.get(phase)
+    if hit and _t.time() - hit[0] < 60.0:
+        return hit[1]
+    from detection.signal_timing_lookup import phase_role
+    roles = {p: (phase_role(p) or {}) for p in (1, 2)}
+    lanes = {int(c): v for c, v in _flow_lanes_for(phase, roles).items()}
+    _PHASE_LANES_CACHE[phase] = (_t.time(), lanes)
+    return lanes
 
 
 def _events_flow_vpm(phase: int, window_sec: float = 120.0) -> Optional[float]:
@@ -714,6 +733,7 @@ def _events_flow_vpm(phase: int, window_sec: float = 120.0) -> Optional[float]:
 
     只取該分相**基準測點**那一台 —— 同相兩台是上下游關係、看的是同一批車,
     兩台都算會重複;基準測點是官方時制表指定的量測點。
+    該台只取屬於本分相的 lane,排除進出線事件(signal_eval.FLOW_EXCLUDE_DIRECTIONS)。
     5 秒快取,避免每個取樣週期都打 DB。
     """
     import time as _t
@@ -727,14 +747,20 @@ def _events_flow_vpm(phase: int, window_sec: float = 120.0) -> Optional[float]:
         if not cc.startswith("ID") or not cc[2:].isdigit():
             return None
         cam = int(cc[2:])
+        lanes = _phase_lanes(phase).get(cam) or []
+        if not lanes:
+            return None
         from api.models import SessionLocal
         from sqlalchemy import text as _text
+        from detection.signal_eval import FLOW_EXCLUDE_DIRECTIONS
         db = SessionLocal()
         try:
             n = db.execute(_text(
                 "SELECT COUNT(*) FROM traffic_events WHERE camera_id=:c "
-                "AND direction='INOUT' "
-                "AND created_at >= datetime('now', :w)"),
+                "AND direction NOT IN (%s) AND lane_no IN (%s) "
+                "AND created_at >= datetime('now', :w)"
+                % (",".join("'%s'" % d for d in FLOW_EXCLUDE_DIRECTIONS),
+                   ",".join(str(int(x)) for x in lanes))),
                 {"c": cam, "w": "-%d seconds" % int(window_sec)}).scalar() or 0
         finally:
             db.close()
@@ -3129,7 +3155,8 @@ def _eval_window(since_iso: str, until_iso: str) -> dict:
     cycles_all = _actual_runs_from_frames(since_iso, until_iso) or []
     cams = sorted(set(PHASE_STOPLINE.values()))
     cong = E.load_congestion(_VIOL_DB, cams, since_iso, until_iso)
-    passes = E.load_passes(_VIOL_DB, cams, since_iso, until_iso)
+    passes = E.load_passes(_VIOL_DB, {PHASE_STOPLINE[p]: _phase_lanes(p).get(PHASE_STOPLINE[p]) or []
+                                      for p in (1, 2)}, since_iso, until_iso)
     out = {}
     for ph in (1, 2):
         cyc = [c for c in cycles_all if c["phase"] == ph]
@@ -3182,31 +3209,31 @@ def count_check(camera_id: int = Query(..., ge=1),
            "since": since, "until": until, "minutes": round(mins, 2),
            "methods": [], "note": "", "playback": {}}
 
-    # ── 1) traffic_events 的三種算法 ──
+    # ── 1) 我方車流計數(只取本分相的 lane;進出線是 OPAC 的,不列)──
+    ph = next((k for k, v in PHASE_STOPLINE.items() if v == camera_id), None)
+    lanes = (_phase_lanes(ph).get(camera_id) or []) if ph else []
     try:
+        from detection.signal_eval import FLOW_EXCLUDE_DIRECTIONS as _EXCL
         conn = sqlite3.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=20)
         a, b = _utc(since), _utc(until)
-        row = conn.execute(
-            "SELECT COUNT(*), SUM(CASE WHEN direction='EXIT' THEN 1 ELSE 0 END), "
-            "SUM(CASE WHEN direction='IN' THEN 1 ELSE 0 END) "
-            "FROM traffic_events WHERE camera_id=? AND created_at>=? AND created_at<?",
-            (camera_id, a, b)).fetchone()
-        total_rows, n_exit, n_in = (row[0] or 0), (row[1] or 0), (row[2] or 0)
-        out["methods"].append({"key": "events_all", "label": "traffic_events 全部列",
-                               "count": total_rows,
-                               "how": "不分 direction 全部計入(混了每幀偵測列與別的進場道)"})
-        out["methods"].append({"key": "events_exit", "label": "traffic_events 只取 EXIT",
-                               "count": n_exit,
-                               "how": "離開停等區 = 通過停止線,每車一筆"})
-        out["methods"].append({"key": "events_in", "label": "traffic_events 只取 IN",
-                               "count": n_in, "how": "進入停等區,理論上應與 EXIT 相當"})
+        sql = ("SELECT COUNT(*) FROM traffic_events WHERE camera_id=? AND created_at>=? "
+               "AND created_at<? AND direction NOT IN (%s)" % ",".join("?" * len(_EXCL)))
+        args = [camera_id, a, b, *_EXCL]
+        if lanes:
+            sql += " AND lane_no IN (%s)" % ",".join("?" * len(lanes))
+            args += lanes
+        n = conn.execute(sql, args).fetchone()[0] or 0
         conn.close()
+        out["methods"].append({
+            "key": "flow_events", "label": "我方車流計數",
+            "count": n,
+            "how": "車流演算法每通過一台寫一筆;只取%s" % (
+                ("lane " + "、".join(str(x) for x in lanes)) if lanes else "本台全部車流區")})
     except Exception as e:
-        out["methods"].append({"key": "events_all", "label": "traffic_events", "count": None,
+        out["methods"].append({"key": "flow_events", "label": "我方車流計數", "count": None,
                                "how": "查詢失敗: %s" % e})
 
     # ── 2) 系統流量 flow_vpm(影子紀錄每 5 秒一筆)──
-    ph = next((k for k, v in PHASE_STOPLINE.items() if v == camera_id), None)
     if ph:
         try:
             conn = _db()
@@ -3265,7 +3292,8 @@ def count_check(camera_id: int = Query(..., ge=1),
         "page": "/web/nvr_playback.html",
         "camera": "cam_%d" % camera_id,
         "since": since, "until": until,
-        "hint": "Frigate 四台全時錄影、保留 3 天。回放頁選這台相機與這段時間,逐格數 EXIT 方向的車。",
+        "hint": "Frigate 四台全時錄影、保留 3 天。回放頁選這台相機與這段時間,逐格數"
+                "「真的越過計數線開走」的車 —— 停在停等區排隊的車不算,只數綠燈放行出去的。",
     }
     out["note"] = ("這支只讀不寫。人工計數是這幾種量測之間唯一的裁判 —— "
                    "機器彼此比不出對錯(§7.12 三種算法差到 4 倍)。"
