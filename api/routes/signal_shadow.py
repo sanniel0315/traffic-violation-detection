@@ -3187,6 +3187,92 @@ def _is_peak(ts: float) -> bool:
     return any(a <= m < b for a, b in PEAK_WINDOWS)
 
 
+# ── 步階1 A/B 的定案規則 —— 2026-09-14 17:40 在看到尖峰完整資料**之前**寫定 ──
+# 🛑 不可看完結果再改門檻。改了就要重跑一個新的試驗期,舊資料不能拿來過新規則。
+FG_MIN_SLOTS = 3          # 每邊每個時段別至少幾個 30 分鐘時段
+FG_NONINF_MARGIN = 0.20   # 排隊「不惡化」的容忍:A 不可高於 B 的 +20%
+FG_GREEN_TOL_SEC = 2.0    # 綠燈低於最小綠的判定容忍(5F03 框間距造成的量測誤差)
+
+
+def _fg_slot_key(ts: float) -> str:
+    lt = datetime.fromtimestamp(ts)
+    return "%s#%d" % (lt.strftime("%Y-%m-%d"),
+                      int((lt.hour * 60 + lt.minute) // AB_FIRSTGREEN_MIN))
+
+
+def _fg_slot_means(rows: list, keys) -> list:
+    """同一個 30 分鐘時段的週期取平均 → 一段一筆。"""
+    g: dict = {}
+    for r in rows:
+        g.setdefault(_fg_slot_key(r["start"]), []).append(r)
+    out = []
+    for k in sorted(g):
+        rs = g[k]
+        d = {"slot": k, "start": datetime.fromtimestamp(min(r["start"] for r in rs)).strftime("%m-%d %H:%M"),
+             "cycles": len(rs)}
+        for key in keys:
+            v = [r[key] for r in rs if r.get(key) is not None]
+            d[key] = round(sum(v) / len(v), 2) if v else None
+        out.append(d)
+    return out
+
+
+def _fg_below_min(rows: list, phase: int) -> int:
+    """綠燈短於該時刻計畫最小綠(扣容忍)的週期數。"""
+    from detection.signal_timing_lookup import current_base_plan, plan_params
+    n = 0
+    for r in rows:
+        g = r.get("green_sec")
+        if g is None:
+            continue
+        pp = plan_params(current_base_plan(datetime.fromtimestamp(r["start"]))) or {}
+        mins = pp.get("min_green") or [10, 20]
+        mg = float(mins[phase - 1]) if len(mins) >= phase else 10.0
+        if float(g) < mg - FG_GREEN_TOL_SEC:
+            n += 1
+    return n
+
+
+def _fg_verdict(by_phase: dict, tier: str) -> dict:
+    """依事先寫定的規則判定。四條全過才算通過;時段數不足就不判。"""
+    def _mean(slots, k):
+        v = [s[k] for s in slots if s.get(k) is not None]
+        return (sum(v) / len(v)) if v else None
+
+    p1, p2 = (by_phase.get(1) or {}).get(tier) or {}, (by_phase.get(2) or {}).get(tier) or {}
+    nA = min(len(p1.get("slots_A") or []), len(p2.get("slots_A") or []))
+    nB = min(len(p1.get("slots_B") or []), len(p2.get("slots_B") or []))
+    if nA < FG_MIN_SLOTS or nB < FG_MIN_SLOTS:
+        return {"result": "樣本不足", "slots_A": nA, "slots_B": nB,
+                "text": "每邊至少 %d 個時段才判定(目前 A %d、B %d)" % (FG_MIN_SLOTS, nA, nB)}
+    checks = []
+    c = (p1.get("compare_slots") or {}).get("cycle_sec") or {}
+    a, b = _mean(p1["slots_A"], "cycle_sec"), _mean(p1["slots_B"], "cycle_sec")
+    checks.append({"name": "週期縮短(時段層級 p<0.05)",
+                   "pass": bool(a is not None and b is not None and a < b
+                                and c.get("p") is not None and c["p"] < 0.05),
+                   "detail": "A %.1f vs B %.1f 秒,p=%s" % (a or 0, b or 0, c.get("p"))})
+    for ph, pr, label in ((1, p1, "上匝道"), (2, p2, "下匝道")):
+        for k, kl in (("queue_max_m", "最大排隊"), ("queue_avg_m", "平均排隊")):
+            a, b = _mean(pr["slots_A"], k), _mean(pr["slots_B"], k)
+            ok = a is None or b is None or a <= b * (1 + FG_NONINF_MARGIN) + 0.5
+            checks.append({"name": "%s%s不惡化(A ≤ B+%d%%)" % (label, kl, FG_NONINF_MARGIN * 100),
+                           "pass": bool(ok),
+                           "detail": "A %s vs B %s m" % (None if a is None else round(a, 1),
+                                                          None if b is None else round(b, 1))})
+    checks.append({"name": "下匝道回堵次數 A ≤ B",
+                   "pass": (p2.get("spillback_A") or 0) <= (p2.get("spillback_B") or 0),
+                   "detail": "A %s vs B %s" % (p2.get("spillback_A"), p2.get("spillback_B"))})
+    below = (p1.get("green_below_min_A") or 0) + (p2.get("green_below_min_A") or 0)
+    checks.append({"name": "A 段沒有綠燈短於最小綠",
+                   "pass": below == 0, "detail": "%d 次" % below})
+    ok = all(x["pass"] for x in checks)
+    return {"result": "通過" if ok else "不通過", "slots_A": nA, "slots_B": nB,
+            "checks": checks,
+            "text": ("A(主綠燈可切)全部條件成立" if ok else
+                     "未過:" + "、".join(x["name"] for x in checks if not x["pass"]))}
+
+
 @router.get("/ab-firstgreen", summary="步階1 閘門 A/B:放開(A) vs 維持(B)的逐週期比較")
 def ab_firstgreen_report(since: str = Query("", description="起(ISO);空=A/B 開始時刻"),
                          until: str = Query("", description="訖(ISO);空=現在"),
@@ -3246,15 +3332,25 @@ def ab_firstgreen_report(since: str = Query("", description="起(ISO);空=A/B �
             A, B = buckets.get((tier, "A"), []), buckets.get((tier, "B"), [])
             cmp = E.compare(A, B, keys=KEYS)
             enough = len(A) >= MIN_N and len(B) >= MIN_N
+            sA, sB = _fg_slot_means(A, KEYS), _fg_slot_means(B, KEYS)
             res[tier] = {
                 "n_A": len(A), "n_B": len(B),
                 "spillback_A": sum(1 for r in A if r.get("spillback")),
                 "spillback_B": sum(1 for r in B if r.get("spillback")),
+                "green_below_min_A": _fg_below_min(A, ph),
+                "green_below_min_B": _fg_below_min(B, ph),
                 "compare": cmp,
+                # 🛑 逐週期檢定會高估顯著性:同一個 30 分鐘時段內的週期共享同一股車流,
+                #    不是獨立樣本。定案一律看**時段層級**(每段取平均,段與段比)。
+                "slots_A": sA, "slots_B": sB,
+                "compare_slots": {k: E.welch_t([x[k] for x in sA if x.get(k) is not None],
+                                               [x[k] for x in sB if x.get(k) is not None])
+                                  for k in KEYS},
                 "conclusive": enough,
                 "caveat": None if enough else "樣本不足(每邊至少 %d 個週期),不下結論" % MIN_N,
             }
         out["by_phase"][ph] = res
+    out["verdict"] = {t: _fg_verdict(out["by_phase"], t) for t in ("peak", "offpeak")}
     out["note"] = ("compare 裡 mean_a = A(放開步階1)、mean_b = B(維持擋),diff = B − A。"
                    "cycle_sec / green_sec 的 diff > 0 代表放開後變短(目的達成);"
                    "排隊 diff < 0 代表放開後排隊變長(要停)。p < 0.05 才算有差。")
