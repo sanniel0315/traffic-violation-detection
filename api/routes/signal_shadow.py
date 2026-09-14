@@ -3192,6 +3192,11 @@ def _is_peak(ts: float) -> bool:
 FG_MIN_SLOTS = 3          # 每邊每個時段別至少幾個 30 分鐘時段
 FG_NONINF_MARGIN = 0.20   # 排隊「不惡化」的容忍:A 不可高於 B 的 +20%
 FG_GREEN_TOL_SEC = 2.0    # 綠燈低於最小綠的判定容忍(5F03 框間距造成的量測誤差)
+# 一個時段至少要有這麼多完整週期才算一段(滿段約 24 個,取 60%)。
+# 🛑 2026-09-14 19:33 補(資料品質規則,不是門檻):當時進行中的 19:30 B 段只有 2~3 個
+#    週期、平均 52 秒,被當成完整一段,把 B 的平均拉低,尖峰判成「週期未縮短」。
+#    12:27 那段(A/B 剛開始)也只有 1~2 個週期。A、B 一律套用;上面四條門檻未動。
+FG_MIN_CYCLES_PER_SLOT = 15
 
 
 def _fg_slot_key(ts: float) -> str:
@@ -3208,6 +3213,8 @@ def _fg_slot_means(rows: list, keys) -> list:
     out = []
     for k in sorted(g):
         rs = g[k]
+        if len(rs) < FG_MIN_CYCLES_PER_SLOT:     # 進行中或被中斷的時段不算一段
+            continue
         d = {"slot": k, "start": datetime.fromtimestamp(min(r["start"] for r in rs)).strftime("%m-%d %H:%M"),
              "cycles": len(rs)}
         for key in keys:

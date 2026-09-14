@@ -109,10 +109,22 @@ def test_slot_means_group_by_half_hour(S, monkeypatch):
     from datetime import datetime
     monkeypatch.setattr(S, "AB_FIRSTGREEN_MIN", 30.0)
     t = lambda h, m: datetime(2026, 9, 14, h, m).timestamp()
+    monkeypatch.setattr(S, "FG_MIN_CYCLES_PER_SLOT", 1)
     rows = [{"start": t(17, 1), "cycle_sec": 60}, {"start": t(17, 20), "cycle_sec": 64},
             {"start": t(18, 5), "cycle_sec": 70}]
     got = S._fg_slot_means(rows, ("cycle_sec",))
     assert [g["cycle_sec"] for g in got] == [62, 70] and [g["cycles"] for g in got] == [2, 1]
+
+
+def test_partial_slot_is_not_a_slot(S, monkeypatch):
+    """進行中的時段(2~3 個週期)不可當成完整一段 —— 19:30 那段就這樣把 B 拉低。"""
+    from datetime import datetime
+    monkeypatch.setattr(S, "AB_FIRSTGREEN_MIN", 30.0)
+    base = datetime(2026, 9, 14, 18, 30).timestamp()
+    full = [{"start": base + 73 * i, "cycle_sec": 73} for i in range(24)]
+    part = [{"start": datetime(2026, 9, 14, 19, 30).timestamp() + 50 * i, "cycle_sec": 52} for i in range(3)]
+    got = S._fg_slot_means(full + part, ("cycle_sec",))
+    assert [g["cycle_sec"] for g in got] == [73]
 
 
 def test_report_refuses_without_start_time(S, monkeypatch):
