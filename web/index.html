@@ -5032,6 +5032,8 @@
         .sc-th-unit { font-size:10px; font-weight:600; color:var(--gov-mute-2);
                       margin-left:3px; }
         .sc-table td.sc-bad { color:var(--gov-fault); }
+        .tp-tb td.sc-bad { color:var(--gov-fault); font-weight:600; }
+        .tp-tb td.sc-good { color:var(--gov-ok); font-weight:600; }
         .sc-table--stats tbody tr:hover td { background:var(--gov-surface-2); }
         .sc-code { margin:0; padding:10px 12px; border-radius:8px; background:var(--gov-text); color:var(--gov-surface);
                    font-size:12px; line-height:1.7; overflow-x:auto; }
@@ -9816,6 +9818,46 @@
                          實際上 78.6% 的下發是在步階剩 ≤2 秒時送的(白送)。
                          這張表直接回答四件事:這段綠燈實際幾秒、我方第幾秒想切、
                          有沒有真的送出、沒送的話被哪道閘門擋住。 -->
+                    <!-- 2026-09-14 步階1 閘門 A/B:兩邊都是我方控制,差別只有「主綠燈能不能切」。
+                         每 30 分鐘輪替;判讀只算 A/B 開始之後,跨時段邊界的週期排除。 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-activity"/></svg>主綠燈可切 A/B 試驗</span>
+                            <span class="st-sub" v-if="sigFg.enabled && sigFg.side_now">
+                                現在 {{ sigFg.side_now==='A' ? 'A 段（主綠燈可切）' : 'B 段（只在延長段切）' }}
+                                · {{ sigFg.next_switch }} 換邊 · 自 {{ (sigFg.since||'').replace('T',' ').slice(0,16) }} 起</span>
+                            <el-button size="small" plain style="margin-left:auto" :loading="sigFgLoading"
+                                       @click="loadSigFg">重新整理</el-button>
+                        </div>
+                        <div class="card-body">
+                            <div v-if="!sigFgRows.length" class="analysis-setting-tip">
+                                {{ sigFg.note || '尚未載入' }}
+                            </div>
+                            <table v-else class="data-table tp-tb">
+                                <thead><tr>
+                                    <th>分相</th><th>時段</th><th class="sc-num">週期數 A / B</th>
+                                    <th class="sc-num">週期長</th><th class="sc-num">綠燈長</th>
+                                    <th class="sc-num">平均排隊</th><th class="sc-num">最大排隊</th>
+                                    <th class="sc-num">通過量</th><th>判讀</th>
+                                </tr></thead>
+                                <tbody>
+                                    <tr v-for="(r,ri) in sigFgRows" :key="'ab'+ri">
+                                        <td>{{ sigRunRamp(r.phase) }}</td>
+                                        <td>{{ r.tier }}</td>
+                                        <td class="sc-num">{{ r.nA }} / {{ r.nB }}</td>
+                                        <td class="sc-num" v-for="c in r.cells" :key="c.k" :class="c.cls">{{ c.text }}</td>
+                                        <td>{{ r.verdict }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div class="analysis-setting-tip" style="margin-top:8px">
+                                每格是「A → B」的平均值。A = 主綠燈可切,B = 只在延長段切(原本的做法)。<br>
+                                目的是讓週期與綠燈變短、排隊不變長。每邊每相至少 20 個週期、且差異 p &lt; 0.05 才下判讀;
+                                綠色 = A 較好且顯著,紅色 = A 較差且顯著。通過量用我方車流計數。
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="card">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-list"/></svg>逐段綠燈：我方想切的時點 vs 實際</span>
@@ -25658,7 +25700,7 @@ const app=createApp({
             // 🛑 eval 也有即時決策盤,所以輪詢(5s)與每秒 tick 兩個計時器都要起 ——
             //    原本只呼叫 loadSigConsole(),等於載入一次就凍住。
             eval:   () => { loadSigFaults(); loadViz(); startVizTimer(); loadVizHourly();
-                            loadSigStats(); startSigStatTimer(); loadSigRuns();
+                            loadSigStats(); startSigStatTimer(); loadSigRuns(); loadSigFg();
                             loadSigConsole(); startSigConsoleTimer(); startSigLiveTimer(); },
             // 🛑 統計報表已併入 eval(2026-09-08 使用者:「不要這樣設計,要以使用者
             //    角度」)—— 同一份調整紀錄出現在兩頁,第一個問題就是「我該看哪個」。
@@ -27779,6 +27821,55 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             } catch (e) { /* 讀不到就維持上次 */ }
             finally { sigRunsLoading.value = false; }
         };
+        // 主綠燈可切 A/B(步階1 閘門)。與上方 sigAb*(我方 vs 內建時制的 A/B 排程)是兩件事。
+        const sigFg = ref({});
+        const sigFgLoading = ref(false);
+        const loadSigFg = async () => {
+            sigFgLoading.value = true;
+            try {
+                const r = await fetch('/api/signal/shadow/ab-firstgreen', {credentials: 'include'});
+                if (r.ok) sigFg.value = await r.json();
+            } catch (e) { /* 讀不到就維持上次 */ }
+            finally { sigFgLoading.value = false; }
+        };
+        // 每格「A → B」;顯著(p<0.05)且 A 較好標綠、A 較差標紅。
+        // lower=true 代表越小越好(週期、綠燈、排隊),通過量則越大越好。
+        const SIG_FG_COLS = [
+            {k: 'cycle_sec', unit: ' 秒', lower: true, label: '週期'},
+            {k: 'green_sec', unit: ' 秒', lower: true, label: '綠燈'},
+            {k: 'queue_avg_m', unit: ' m', lower: true, label: '平均排隊'},
+            {k: 'queue_max_m', unit: ' m', lower: true, label: '最大排隊'},
+            {k: 'throughput_vph', unit: '', lower: false, label: '通過量'},
+        ];
+        const sigFgRows = computed(() => {
+            const bp = (sigFg.value || {}).by_phase || {};
+            const rows = [];
+            [1, 2].forEach(ph => {
+                const P = bp[ph] || bp[String(ph)];
+                if (!P) return;
+                [['peak', '尖峰'], ['offpeak', '離峰']].forEach(([key, tier]) => {
+                    const T = P[key] || {};
+                    const cmp = T.compare || {};
+                    const good = [], bad = [];
+                    const cells = SIG_FG_COLS.map(c => {
+                        const x = cmp[c.k] || {};
+                        if (x.mean_a == null || x.mean_b == null) return {k: c.k, text: '—', cls: ''};
+                        const sig = T.conclusive && x.p != null && x.p < 0.05;
+                        const aBetter = c.lower ? (x.mean_a < x.mean_b) : (x.mean_a > x.mean_b);
+                        if (sig) (aBetter ? good : bad).push(c.label);
+                        return {k: c.k, cls: sig ? (aBetter ? 'sc-good' : 'sc-bad') : '',
+                                text: Math.round(x.mean_a) + ' → ' + Math.round(x.mean_b) + c.unit};
+                    });
+                    let verdict = T.caveat || '';
+                    if (T.conclusive) {
+                        verdict = bad.length ? ('A 較差：' + bad.join('、'))
+                            : (good.length ? ('A 較好：' + good.join('、')) : '無顯著差異');
+                    }
+                    rows.push({phase: ph, tier, nA: T.n_A || 0, nB: T.n_B || 0, cells, verdict});
+                });
+            });
+            return rows;
+        });
         // 近 24 小時「判該換相卻沒送出」的原因統計。只看下發次數會誤以為演算法很忙,
         // 把擋下的理由攤開才看得出是「不想切」還是「想切但被擋」。
         const sigBlockedTotal = computed(() => {
@@ -29421,7 +29512,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigConnDirty,sigConnTouch,sigConnReset,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPhaseMeta,sigCamPhase,sigVdLanes,sigVdTypes,sigBlockedTotal,sigBlockedTop,sigRuns,sigRunsLoading,sigRunRamp,loadSigRuns,sigPhDesc,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwCenterText,sigHwSetMode,sigHwRestore,SIG_HW_BIT_NAMES,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigConnDirty,sigConnTouch,sigConnReset,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPhaseMeta,sigCamPhase,sigVdLanes,sigVdTypes,sigBlockedTotal,sigBlockedTop,sigRuns,sigRunsLoading,sigRunRamp,loadSigRuns,sigFg,sigFgLoading,sigFgRows,loadSigFg,sigPhDesc,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwCenterText,sigHwSetMode,sigHwRestore,SIG_HW_BIT_NAMES,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigAdjExportPdf,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,sigDegHas,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgSectionsOrdered,sigCfgOrder,sigCfgDragKey,sigCfgDragStart,sigCfgDrop,sigCfgResetOrder,sigCfgReceived,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgBusy,sigCfgRefreshOne,sigCfgAutoOn,sigCfgAutoHours,sigCfgAutoBusy,sigCfgAutoText,sigCfgSetAuto,sigCfgRunAuto,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigAbOn,sigAbMin,sigAbBusy,sigAbText,sigAbSet,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBitsShown,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatTrendBars,sigStatTrendLines,sigStatBucketText,sigGreenExport,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigStepCells,sigCycleDash,sigCycleText,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,specCells,specPerfCells,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,

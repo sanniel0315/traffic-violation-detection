@@ -3222,7 +3222,11 @@ def ab_firstgreen_report(since: str = Query("", description="起(ISO);空=A/B �
                                       for p in (1, 2)}, s, u)
     KEYS = ("cycle_sec", "green_sec", "queue_avg_m", "queue_max_m", "throughput_vph")
     MIN_N = 20
+    _m = now.hour * 60 + now.minute
+    _next = now.replace(second=0, microsecond=0) + timedelta(
+        minutes=AB_FIRSTGREEN_MIN - (_m % AB_FIRSTGREEN_MIN))
     out = {"enabled": True, "slot_min": AB_FIRSTGREEN_MIN, "since": s, "until": u,
+           "side_now": ab_firstgreen_side(), "next_switch": _next.strftime("%H:%M"),
            "by_phase": {}}
     for ph in (1, 2):
         cyc = [c for c in cycles_all if c["phase"] == ph]
