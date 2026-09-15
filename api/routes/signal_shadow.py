@@ -935,14 +935,7 @@ FIRST_GREEN_STEP = int(os.getenv("SIGNAL_FIRST_GREEN_STEP", "1") or 1)
 #    撞上的 62 則,送出時估計剩餘全部 ≤2.2 秒。剩餘值是整數(四捨五入),
 #    設 3 = 實際剩 ≥3.5 秒才送,距最壞案例留 1.3 秒。
 ACTUATE_MIN_EFFECT_SEC = float(os.getenv("SIGNAL_ACTUATE_MIN_EFFECT_SEC", "3.0") or 3.0)
-# 步階2 = 行人綠閃(車綠+行人綠閃,固定 5 秒;09-15 以 5F03 燈號位元查證,先前誤稱「延長段」)。
-PED_FLASH_STEP = int(os.getenv("SIGNAL_PED_FLASH_STEP", "2") or 2)
-# 跳過行人綠閃:步階1 切下後補送一次直接進黃燈。現場沒有行穿線(使用者 09-15 確認)。
-# 預設關閉,由環境變數開;只會跟在步階1 下發之後,所以實際上只發生在 A 段。
-SKIP_PED_FLASH = str(os.getenv("SIGNAL_SKIP_PED_FLASH", "0") or "0").strip() not in ("0", "", "false", "False")
-SKIP_PED_FLASH_MIN_REMAIN_SEC = int(os.getenv("SIGNAL_SKIP_PED_FLASH_MIN_REMAIN_SEC", "4") or 4)
-SKIP_PED_FLASH_WINDOW_SEC = float(os.getenv("SIGNAL_SKIP_PED_FLASH_WINDOW_SEC", "4") or 4)
-# 步階1 至少還要剩這麼多秒才送 = 行人綠閃(步階2)5 秒 + 2 秒裕度(只在 A 段有作用)。
+# 步階1 至少還要剩這麼多秒才送 = 延長段實測約 5 秒 + 2 秒裕度(只在 A 段有作用)。
 FIRST_GREEN_MIN_REMAIN_SEC = float(os.getenv("SIGNAL_FIRST_GREEN_MIN_REMAIN_SEC", "7") or 7)
 
 # 到達率的來源:1 = 用車流計數(已人工核對過),0 = 用壅塞偵測的 flow_vpm(舊行為)。
@@ -1338,99 +1331,38 @@ def _actuate(d, g_no: int, live: dict) -> None:
     if why:
         _log_blocked(why, g_no, live, d)
         return stop(why)
+    # 送出:prepare 取 token → send。daemon 端的 _control_guard 會再擋一次
+    #    (號控總開關 / 只准查詢 / 動態總開關 / 降階),被擋會回 403,原因照抄。
     try:
-        if not _send_5f1c(g_no, d.reason or "", now):
+        tok = _daemon_post("/api/signal/control/prepare",
+                           {"code": "5F1C", "info_hex": "000000",
+                            "by": "algorithm"})
+        token = (tok or {}).get("token")
+        if not token:
             return stop("prepare 沒拿到 token")
+        res = _daemon_post("/api/signal/control/send", {"token": token})
+        sent = (res or {}).get("sent") or {}
+        raw = sent.get("raw") or ""
+        _act.update({"n": _act["n"] + 1, "last_ts": now, "last_seq": sent.get("seq"),
+                     "last_reason": d.reason or "", "last_raw": raw,
+                     "blocked": "", "last_error": ""})
+        _fault["send_fails"] = 0         # 成功一次就重算,判的是「連續」失敗
+        _act["events"].append({"ts": now, "phase": g_no, "seq": sent.get("seq"),
+                               "reason": d.reason or "", "raw": raw})
+        # 🛑 這裡**不**自己再側錄一份訊框:daemon 的 control/send 已經寫進
+        #    signal_frames(src=self, user=algorithm(...))。在 traffic-api 這個
+        #    行程呼叫 signal_tc3._enqueue_frame 只會寫進一份沒人讀的記憶體
+        #    deque —— 看起來有紀錄、其實不存在,那比沒有更糟。
+        add_log("info", "演算法下發 5F1C(提早結束分相 %d 綠燈):%s"
+                % (g_no, d.reason or ""), "signal")
+        print("[signal-shadow][下發] 5F1C seq=%s raw=%s reason=%s"
+              % (sent.get("seq"), raw, d.reason), flush=True)
     except Exception as exc:
         # 🛑 送不出去就是沒送,不要重試 —— 重試會在控制器忙的時候堆命令。
         #    下一次取樣若還判 SWITCH 自然會再試一次。
         _act["last_error"] = "%s: %s" % (type(exc).__name__, exc)
         _fault["send_fails"] += 1        # 連續失敗會被判成「指令傳輸錯誤」
         return stop(_act["last_error"])
-    # 在主綠燈(步階1)切下 → 控制器會先走 5 秒行人綠閃(步階2)才進黃燈。
-    # 現場沒有行穿線(使用者 2026-09-15 確認),那 5 秒只是多給車的綠燈 —— 補送一次跳過。
-    if SKIP_PED_FLASH and live.get("step_id") == FIRST_GREEN_STEP:
-        threading.Thread(target=_skip_ped_flash_followup, args=(g_no, now),
-                         daemon=True, name="skip-ped-flash").start()
-
-
-def _send_5f1c(g_no: int, reason: str, now: float) -> bool:
-    """送一則 5F1C(跳下一步階)。成功回 True;prepare 沒拿到 token 回 False;失敗丟例外。
-
-    送出:prepare 取 token → send。daemon 端的 _control_guard 會再擋一次
-    (號控總開關 / 只准查詢 / 動態總開關 / 降階),被擋會回 403,原因照抄。
-    🛑 一般下發與行人綠閃補送共用這一條,不要另開第二條送出路徑。
-    """
-    tok = _daemon_post("/api/signal/control/prepare",
-                       {"code": "5F1C", "info_hex": "000000", "by": "algorithm"})
-    token = (tok or {}).get("token")
-    if not token:
-        return False
-    res = _daemon_post("/api/signal/control/send", {"token": token})
-    sent = (res or {}).get("sent") or {}
-    raw = sent.get("raw") or ""
-    _act.update({"n": _act["n"] + 1, "last_ts": now, "last_seq": sent.get("seq"),
-                 "last_reason": reason, "last_raw": raw,
-                 "blocked": "", "last_error": ""})
-    _fault["send_fails"] = 0         # 成功一次就重算,判的是「連續」失敗
-    _act["events"].append({"ts": now, "phase": g_no, "seq": sent.get("seq"),
-                           "reason": reason, "raw": raw})
-    # 🛑 這裡**不**自己再側錄一份訊框:daemon 的 control/send 已經寫進
-    #    signal_frames(src=self, user=algorithm(...))。在 traffic-api 這個
-    #    行程呼叫 signal_tc3._enqueue_frame 只會寫進一份沒人讀的記憶體
-    #    deque —— 看起來有紀錄、其實不存在,那比沒有更糟。
-    add_log("info", "演算法下發 5F1C(提早結束分相 %d 綠燈):%s" % (g_no, reason), "signal")
-    print("[signal-shadow][下發] 5F1C seq=%s raw=%s reason=%s"
-          % (sent.get("seq"), raw, reason), flush=True)
-    return True
-
-
-def _skip_ped_flash_followup(g_no: int, t_send: float) -> None:
-    """步階1 切下後,等控制器進入步階2(行人綠閃)就再送一次,直接進黃燈。
-
-    🛑 黃燈保護(控制器不保護最短黃燈,命令撞上黃燈起點會把黃燈切成約 1 秒):
-       只在「同一相、步階2、剩餘 ≥ SKIP_PED_FLASH_MIN_REMAIN_SEC、資料未過期、
-       不在清道」時送;其他任何狀況(已進黃燈、剩太少、換相、看不到)一律放棄不送。
-       步階2 固定 5 秒,要求剩 ≥4(整數)= 實際剩 ≥3.5 秒,距歷來撞黃燈最壞案例
-       (估計剩 2.2 秒)留 1.3 秒。
-    🛑 只補一次。放棄的原因記在 _act["skip_last"],計數在 skip_missed。
-    """
-    why = "逾時未見到步階2"
-    deadline = t_send + SKIP_PED_FLASH_WINDOW_SEC
-    while time.time() < deadline:
-        time.sleep(0.25)
-        live = _live_phase()
-        if not live:
-            continue
-        if live.get("sub_phase_id") != g_no:
-            why = "已換相"
-            break
-        st = live.get("step_id")
-        if st == FIRST_GREEN_STEP:
-            continue                      # 控制器還沒吃下第一則
-        if st != PED_FLASH_STEP:
-            why = "已進清道(步階%s),不補送" % st
-            break
-        rem = live.get("step_remain_sec")
-        if (live.get("stale") or live.get("clearance") or not _act["enabled"]
-                or live.get("control_mode") != "external_dynamic"):
-            why = "狀態不允許補送"
-            break
-        if not isinstance(rem, (int, float)) or rem < SKIP_PED_FLASH_MIN_REMAIN_SEC:
-            why = "步階2 剩 %s 秒,不補送(黃燈保護,需 ≥%d)" % (rem, SKIP_PED_FLASH_MIN_REMAIN_SEC)
-            break
-        try:
-            if _send_5f1c(g_no, "跳過行人綠閃(步階2 剩 %s 秒)" % rem, time.time()):
-                _act["skip_sent"] = _act.get("skip_sent", 0) + 1
-                _act["skip_last"] = "已補送(步階2 剩 %s 秒)" % rem
-                return
-            why = "prepare 沒拿到 token"
-        except Exception as exc:
-            why = "補送失敗 %s" % exc
-            _fault["send_fails"] += 1
-        break
-    _act["skip_missed"] = _act.get("skip_missed", 0) + 1
-    _act["skip_last"] = why
 
 
 def _daemon_post(path: str, body: dict) -> dict:
@@ -4278,9 +4210,6 @@ def actuate_status(_user=Depends(get_current_user)):
         #    78.6% 的下發是在步階剩 ≤2 秒時送的(等於白送)。把擋下的理由
         #    攤開,才看得出我方到底是「不想切」還是「想切但被擋」。
         "blocked_24h": _blocked_reason_counts(24),
-        # 跳過行人綠閃(步階1 切下後補送)的統計:行程啟動以來
-        "skip_ped_flash": {"enabled": SKIP_PED_FLASH, "sent": _act.get("skip_sent", 0),
-                           "missed": _act.get("skip_missed", 0), "last": _act.get("skip_last", "")},
         "last_error": _act["last_error"],
         "events": [dict(e) for e in reversed(ev)],
         "command": "5F1C(0,0,0)= 跳下一步階;清道由控制器自己走,我方只提早結束綠燈",
