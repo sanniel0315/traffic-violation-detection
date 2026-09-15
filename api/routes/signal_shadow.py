@@ -734,25 +734,30 @@ def _phase_lanes(phase: int) -> dict:
     return lanes
 
 
-def _events_flow_vpm(phase: int, window_sec: float = 120.0) -> Optional[float]:
+def _events_flow_vpm(phase: int, window_sec: float = 120.0,
+                     camera: Optional[int] = None) -> Optional[float]:
     """用車流計數(traffic_events 的一般流量事件)算該分相的到達率(輛/分)。
 
-    只取該分相**基準測點**那一台 —— 同相兩台是上下游關係、看的是同一批車,
+    預設只取該分相**基準測點**那一台 —— 同相兩台是上下游關係、看的是同一批車,
     兩台都算會重複;基準測點是官方時制表指定的量測點。
+    camera 可指定別台(例如規範 K(C)a(b)「交流道入口上游到達率」的影子比對用 NE-1)。
     該台只取屬於本分相的 lane,排除進出線事件(signal_eval.FLOW_EXCLUDE_DIRECTIONS)。
     5 秒快取,避免每個取樣週期都打 DB。
     """
     import time as _t
-    hit = _EV_FLOW_CACHE.get(phase)
+    hit = _EV_FLOW_CACHE.get((phase, camera))
     if hit and _t.time() - hit[0] < 5.0:
         return hit[1]
     try:
-        from detection.signal_timing_lookup import phase_role
-        r = phase_role(phase) or {}
-        cc = str(r.get("constraint_camera") or "")
-        if not cc.startswith("ID") or not cc[2:].isdigit():
-            return None
-        cam = int(cc[2:])
+        if camera is None:
+            from detection.signal_timing_lookup import phase_role
+            r = phase_role(phase) or {}
+            cc = str(r.get("constraint_camera") or "")
+            if not cc.startswith("ID") or not cc[2:].isdigit():
+                return None
+            cam = int(cc[2:])
+        else:
+            cam = int(camera)
         lanes = _phase_lanes(phase).get(cam) or []
         if not lanes:
             return None
@@ -771,7 +776,7 @@ def _events_flow_vpm(phase: int, window_sec: float = 120.0) -> Optional[float]:
         finally:
             db.close()
         v = float(n) * (60.0 / window_sec)
-        _EV_FLOW_CACHE[phase] = (_t.time(), v)
+        _EV_FLOW_CACHE[(phase, camera)] = (_t.time(), v)
         return v
     except Exception:
         return None
@@ -1371,6 +1376,46 @@ def _actuate(d, g_no: int, live: dict) -> None:
         return stop(_act["last_error"])
 
 
+# 規範 16613 K(C)a(b)「交流道入口上游轉向量/到達率」的上游相機:NE-1(上高速公路前平面道路)。
+# 決策目前用基準測點 NE-2(上匝道前停等區)的到達率;先影子並列比對再決定要不要換。
+ONRAMP_UPSTREAM_CAMERA = int(os.getenv("SIGNAL_ONRAMP_UPSTREAM_CAMERA", "2") or 2)
+
+
+def _input_shadow_record(g_no: int, green_elapsed: float, min_green: float,
+                         max_green: float, q_map: dict, live: dict) -> None:
+    """到達率來源影子比對 —— **只記錄,絕不下發**。
+
+    每 5 秒一筆,把決策需要的輸入連同「上匝道到達率的兩種來源」寫進 signal_input_shadow:
+      arr1_stop = NE-2(上匝道前停等區,現行)  arr1_up = NE-1(上高速公路前平面道路,規範的「入口上游」)
+      arr2      = WN-1(高速下匝道,現行,已是上游)
+    /input-shadow/arrival 用同一批輸入各算一次決策,看換成上游來源會翻轉多少判斷。
+    🛑 這裡不可以呼叫 _actuate / _daemon_post;守門測試會檢查。
+    """
+    try:
+        if live.get("clearance"):
+            return
+        a1 = _events_flow_vpm(1)
+        a1u = _events_flow_vpm(1, camera=ONRAMP_UPSTREAM_CAMERA)
+        a2 = _events_flow_vpm(2)
+        conn = _db()
+        conn.execute("""CREATE TABLE IF NOT EXISTS signal_input_shadow (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, epoch REAL,
+                            green_phase INTEGER, green_elapsed REAL, min_green REAL, max_green REAL,
+                            queue_m_1 REAL, queue_m_2 REAL,
+                            arr1_stop REAL, arr1_up REAL, arr2 REAL)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_input_shadow_epoch ON signal_input_shadow(epoch)")
+        conn.execute("INSERT INTO signal_input_shadow(ts,epoch,green_phase,green_elapsed,min_green,"
+                     "max_green,queue_m_1,queue_m_2,arr1_stop,arr1_up,arr2) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                     (datetime.now().isoformat(timespec="seconds"), time.time(), g_no,
+                      round(green_elapsed, 1), min_green, max_green,
+                      q_map.get(1), q_map.get(2), a1, a1u, a2))
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        with _lock:
+            _stats["input_shadow_error"] = "%s: %s" % (type(exc).__name__, exc)
+
+
 _rule_prev: dict = {"since": None, "q": None}
 
 
@@ -1579,6 +1624,7 @@ def _loop():
             # 候選規則影子評估(只記錄,不下發;失敗也不影響主迴圈)
             _rule_shadow_record(g_no, green_since, green_elapsed, min_green,
                                 q_map, bool(g_role.get("priority")), live)
+            _input_shadow_record(g_no, green_elapsed, min_green, _max_green(pp), q_map, live)
 
             conn = _db()
             conn.execute(
@@ -3452,6 +3498,97 @@ def ab_firstgreen_report(since: str = Query("", description="起(ISO);空=A/B �
                    "cycle_sec / green_sec 的 diff > 0 代表放開後變短(目的達成);"
                    "排隊 diff < 0 代表放開後排隊變長(要停)。p < 0.05 才算有差。")
     return out
+
+
+@router.get("/input-shadow/arrival", summary="到達率來源影子比對:上匝道 NE-2(現行) vs NE-1(入口上游)")
+def input_shadow_arrival(since: str = Query("", description="起(ISO);空=近 24 小時"),
+                         until: str = Query("", description="訖(ISO);空=現在"),
+                         _user=Depends(get_current_user)):
+    """規範 16613 K(C)a(b) 要求輸入「交流道入口上游轉向量/到達率」。
+
+    上匝道到達率現行取 NE-2(上匝道前停等區),規範的「入口上游」是 NE-1
+    (上高速公路前平面道路)。這支用同一批紀錄的輸入,以現行參數各算一次決策,
+    回答兩件事:兩個來源量到的到達率差多少、換成 NE-1 會翻轉多少判斷。
+    🛑 只讀不寫、不下發。翻轉多不代表哪個對 —— 要搭配排隊結果看。
+    """
+    from detection.signal_decision_engine import ApproachState, decide
+    from detection.signal_timing_lookup import phase_role
+    now = datetime.now()
+    u = until or now.isoformat(timespec="seconds")
+    s = since or (now - timedelta(hours=24)).isoformat(timespec="seconds")
+    try:
+        conn = _db()
+        rows = conn.execute(
+            "SELECT epoch,green_phase,green_elapsed,min_green,max_green,queue_m_1,queue_m_2,"
+            "arr1_stop,arr1_up,arr2 FROM signal_input_shadow WHERE epoch>=? AND epoch<? ORDER BY epoch",
+            (datetime.fromisoformat(s).timestamp(), datetime.fromisoformat(u).timestamp())).fetchall()
+        conn.close()
+    except Exception:
+        rows = []
+    if not rows:
+        return {"since": s, "until": u, "samples": 0, "note": "這段時間還沒有影子紀錄"}
+    roles = {p: (phase_role(p) or {}) for p in (1, 2)}
+    mpv = _mpv()
+
+    def _decide_action(g, el, mn, mx, q, arr):
+        r = 2 if g == 1 else 1
+        return decide(
+            green_phase=g, green_elapsed_sec=el,
+            green_side=ApproachState(g, queue_m=q[g], flow_vpm=arr[g],
+                                     storage_m=roles[g].get("storage_m"),
+                                     priority=bool(roles[g].get("priority"))),
+            red_side=ApproachState(r, queue_m=q[r], flow_vpm=arr[r],
+                                   storage_m=roles[r].get("storage_m"),
+                                   priority=bool(roles[r].get("priority")), waiting_sec=el),
+            min_green_sec=mn or 15, max_green_sec=mx or 100,
+            saturation_vph=_sat_for(g), meters_per_vehicle=mpv,
+            lost_time_sec=_lost_time_for(g), keep_weight=KEEP_WEIGHT,
+            priority_keep_weight=PRIORITY_KEEP_WEIGHT,
+            demand_scaled_change_cost=DEMAND_SCALED_CHANGE_COST).action
+
+    flips = {1: {"KEEP→SWITCH": 0, "SWITCH→KEEP": 0, "n": 0}, 2: {"KEEP→SWITCH": 0, "SWITCH→KEEP": 0, "n": 0}}
+    a_stop, a_up, tiers = [], [], {"尖峰": [[], []], "離峰": [[], []]}
+    examples = []
+    for ep, g, el, mn, mx, q1, q2, a1, a1u, a2 in rows:
+        if a1 is not None and a1u is not None:
+            a_stop.append(a1); a_up.append(a1u)
+            t = tiers["尖峰" if _is_peak(ep) else "離峰"]
+            t[0].append(a1); t[1].append(a1u)
+        if a1 is None or a1u is None or g not in (1, 2):
+            continue
+        q = {1: q1, 2: q2}
+        cur = _decide_action(g, el or 0, mn, mx, q, {1: a1, 2: a2})
+        alt = _decide_action(g, el or 0, mn, mx, q, {1: a1u, 2: a2})
+        flips[g]["n"] += 1
+        if cur != alt:
+            flips[g]["%s→%s" % (cur, alt)] += 1
+            if len(examples) < 20:
+                examples.append({"time": datetime.fromtimestamp(ep).strftime("%m-%d %H:%M:%S"),
+                                 "green": "分相%d" % g, "elapsed": el,
+                                 "queue_上匝道_m": q1, "queue_下匝道_m": q2,
+                                 "arr_NE-2": a1, "arr_NE-1": a1u, "現行": cur, "改用NE-1": alt})
+
+    def _corr(x, y):
+        n = len(x)
+        if n < 3:
+            return None
+        mx_, my_ = sum(x) / n, sum(y) / n
+        sx = sum((a - mx_) ** 2 for a in x) ** 0.5
+        sy = sum((b - my_) ** 2 for b in y) ** 0.5
+        return round(sum((a - mx_) * (b - my_) for a, b in zip(x, y)) / (sx * sy), 3) if sx and sy else None
+
+    mean = lambda v: round(sum(v) / len(v), 2) if v else None
+    return {
+        "since": s, "until": u, "samples": len(rows),
+        "arrival_vpm": {"NE-2 上匝道前停等區(現行)": mean(a_stop), "NE-1 上高速公路前平面道路(入口上游)": mean(a_up),
+                        "相關係數": _corr(a_stop, a_up),
+                        "by_tier": {k: {"NE-2": mean(v[0]), "NE-1": mean(v[1]), "n": len(v[0])} for k, v in tiers.items()}},
+        "decision_flips": {"分相1(上匝道綠燈)": flips[1], "分相2(下匝道綠燈)": flips[2]},
+        "examples": examples,
+        "note": "同一批紀錄的輸入,以現行參數各算一次;引擎只把綠燈側的到達率算進綠側價值,"
+                "所以上匝道到達率只會改變分相1(上匝道)綠燈時的判斷。"
+                "翻轉多不代表哪個來源對,要搭配排隊結果判斷。",
+    }
 
 
 @router.get("/rule-shadow/offramp", summary="候選規則影子評估:下匝道沒人用就切(不下發)")

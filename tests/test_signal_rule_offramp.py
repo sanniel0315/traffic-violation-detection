@@ -52,3 +52,33 @@ def test_rule_shadow_never_sends():
     called = {n.func.id for n in ast.walk(fn)
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     assert not called & {"_actuate", "_daemon_post"}, called
+
+
+def test_input_shadow_never_sends():
+    """到達率影子紀錄不可以碰任何下發函式。"""
+    src = (ROOT / "api" / "routes" / "signal_shadow.py").read_text(encoding="utf-8")
+    fn = [n for n in ast.walk(ast.parse(src))
+          if isinstance(n, ast.FunctionDef) and n.name == "_input_shadow_record"][0]
+    called = {n.func.id for n in ast.walk(fn)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    assert not called & {"_actuate", "_daemon_post"}, called
+
+
+def test_input_shadow_arrival_counts_flips(tmp_path, monkeypatch):
+    """上匝道綠燈、綠側沒排隊:NE-2 量到 0、NE-1 量到很多 → 綠側價值變高,切→續綠翻轉。"""
+    import sqlite3
+    from api.routes import signal_shadow as S
+    db = tmp_path / "s.db"
+    c = sqlite3.connect(str(db))
+    c.execute("""CREATE TABLE signal_input_shadow (id INTEGER PRIMARY KEY, ts TEXT, epoch REAL,
+                 green_phase INTEGER, green_elapsed REAL, min_green REAL, max_green REAL,
+                 queue_m_1 REAL, queue_m_2 REAL, arr1_stop REAL, arr1_up REAL, arr2 REAL)""")
+    from datetime import datetime
+    ep = datetime(2026, 9, 15, 10, 0).timestamp()
+    c.execute("INSERT INTO signal_input_shadow(ts,epoch,green_phase,green_elapsed,min_green,max_green,"
+              "queue_m_1,queue_m_2,arr1_stop,arr1_up,arr2) VALUES('x',?,1,25,10,100,0,30,0,20,3)", (ep,))
+    c.commit(); c.close()
+    monkeypatch.setattr(S, "_db", lambda: sqlite3.connect(str(db)))
+    r = S.input_shadow_arrival(since="2026-09-15T09:00:00", until="2026-09-15T11:00:00", _user=None)
+    f = r["decision_flips"]["分相1(上匝道綠燈)"]
+    assert f["n"] == 1 and f["SWITCH→KEEP"] == 1
