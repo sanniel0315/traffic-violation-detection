@@ -10649,7 +10649,7 @@
                                     <el-table :data="sigQryLog[0].fields" size="small" max-height="300" style="width:100%">
                                         <el-table-column prop="name" label="欄位" width="160"></el-table-column>
                                         <el-table-column label="值">
-                                            <template #default="sc"><span style="font-family:monospace">{{ Array.isArray(sc.row.value)?('['+sc.row.value.join(', ')+']'):sc.row.value }}</span><span v-if="sigDecodeValue(sc.row.name,sc.row.value)" style="color:#2563eb;font-size:12px;margin-left:8px">= {{ sigDecodeValue(sc.row.name,sc.row.value) }}</span></template>
+                                            <template #default="sc"><span style="font-family:monospace;white-space:pre-line">{{ sigCfgVal(sc.row.value) }}</span><span v-if="sigDecodeValue(sc.row.name,sc.row.value)" style="color:#2563eb;font-size:12px;margin-left:8px">= {{ sigDecodeValue(sc.row.name,sc.row.value) }}</span></template>
                                         </el-table-column>
                                         <el-table-column prop="desc" label="說明" width="160"></el-table-column>
                                     </el-table>
@@ -10689,7 +10689,7 @@
                                         <el-table :data="sc.row.fields||[]" size="small" style="width:100%;margin:4px 0">
                                             <el-table-column prop="name" label="欄位" width="180"></el-table-column>
                                             <el-table-column label="值">
-                                                <template #default="c"><span style="font-family:monospace">{{ Array.isArray(c.row.value)?('['+c.row.value.join(', ')+']'):c.row.value }}</span><span v-if="sigDecodeValue(c.row.name,c.row.value)" style="color:#2563eb;font-size:12px;margin-left:8px">= {{ sigDecodeValue(c.row.name,c.row.value) }}</span></template>
+                                                <template #default="c"><span style="font-family:monospace;white-space:pre-line">{{ sigCfgVal(c.row.value) }}</span><span v-if="sigDecodeValue(c.row.name,c.row.value)" style="color:#2563eb;font-size:12px;margin-left:8px">= {{ sigDecodeValue(c.row.name,c.row.value) }}</span></template>
                                             </el-table-column>
                                             <el-table-column prop="desc" label="說明" width="180"></el-table-column>
                                         </el-table>
@@ -10941,7 +10941,7 @@
                                             <el-table v-else :data="sigFrameDecodeCache[sc.row.raw].fields" size="small" style="width:100%">
                                                 <el-table-column prop="name" label="欄位" width="180"></el-table-column>
                                                 <el-table-column label="值">
-                                                    <template #default="c"><span style="font-family:monospace">{{ Array.isArray(c.row.value)?('['+c.row.value.join(', ')+']'):c.row.value }}</span><span v-if="sigDecodeValue(c.row.name,c.row.value)" style="color:#2563eb;font-size:12px;margin-left:8px">= {{ sigDecodeValue(c.row.name,c.row.value) }}</span></template>
+                                                    <template #default="c"><span style="font-family:monospace;white-space:pre-line">{{ sigCfgVal(c.row.value) }}</span><span v-if="sigDecodeValue(c.row.name,c.row.value)" style="color:#2563eb;font-size:12px;margin-left:8px">= {{ sigDecodeValue(c.row.name,c.row.value) }}</span></template>
                                                 </el-table-column>
                                                 <el-table-column prop="desc" label="說明" width="180"></el-table-column>
                                             </el-table>
