@@ -20693,6 +20693,13 @@ const app=createApp({
         //    用「有沒有 producer」當條件是自我修正的:哪天後端把 lite 推起來
         //    (像 LOFI_ALWAYS 那樣常駐),前端就會自動重新採用,不必再改這裡。
         const hasGo2rtcLite=(camera)=>go2rtcProducing.value.has(go2rtcLiteName(camera));
+        // 攝影機自己出的小碼流(go2rtc 直接拉相機 RTSP,帶 resolution=800x450&fps=15)。
+        // 🛑 2026-09-15 現場「戰情影像很慢也頓」:lite 是後端拿偵測迴圈解出的畫面重編,
+        //    幀率跟著偵測走 —— 09-11 起每天 NE-1 約 3.4 fps、NE-2 約 5、WN-1 約 6.3、WN-2 約 7.7。
+        //    相機自己出 800x450@15fps:幀率高 2~4 倍、瀏覽器解碼量小、現場機不必重編。
+        //    它是真的 RTSP 來源(有人看才連),名字在清單裡就可用,不需要 publisher 判斷。
+        const go2rtcSubName=(camera)=>camera?.id?`cam_${camera.id}_sub`:'';
+        const hasGo2rtcSub=(camera)=>go2rtcLive.value.has(go2rtcSubName(camera));
         // 遠端省流變體:同解析度、10fps/350k。遠端(web/app)開此開關就走這條,
         // 塞得進 4G 窄上行;現場不開,照舊看高幀高碼的 annotated。
         const go2rtcLofiName=(camera)=>camera?.id?`cam_${camera.id}_lofi`:'';
@@ -20717,6 +20724,8 @@ const app=createApp({
                 name=go2rtcLofiName(camera);   // 遠端省流:10fps/350k 同解析度
             }else if(opts.annotated && hasGo2rtcAnnotated(camera)){
                 name=go2rtcAnnotatedName(camera);
+            }else if(opts.sub && hasGo2rtcSub(camera)){
+                name=go2rtcSubName(camera);    // 相機原生小碼流(戰情頁)
             }else if(opts.lite && hasGo2rtcLite(camera)){
                 name=go2rtcLiteName(camera);   // 窄頻的原始畫面
             }else{
@@ -20778,6 +20787,8 @@ const app=createApp({
                 //    停在 1080p60 的原生串流(也就是「很不順」的狀態)。
                 if(page.value==='signal_hub' && signalTab.value==='live' && h264LiveEnabled.value){
                     Object.keys(SIG_CAM_SITE).map(Number).forEach((id)=>{
+                        // 有相機原生小碼流就不預約 lite —— 戰情不看它,讓後端編碼器自己停(省 CPU)
+                        if(hasGo2rtcSub({id:id}))return;
                         const n=go2rtcLiteName({id:id});
                         if(n && go2rtcLive.value.has(n))srcs.add(n);
                     });
@@ -27011,7 +27022,9 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             // 🛑 hasGo2rtcLite 要求「真的有 publisher」,所以 lite 還沒起來時
             //    這裡會自動落回共用的 cam_N —— 看得到畫面,只是還沒省到解碼。
             //    lite 的預約在 streamWantHeartbeat(否則前後端互相等,永遠起不來)。
-            return getGo2rtcWsUrl(camera, {annotated: false, lite: true});
+            // 🛑 2026-09-15 起優先走相機原生小碼流 cam_N_sub(800x450@15fps,見 hasGo2rtcSub);
+            //    沒有那一路才退回 lite,再退回 cam_N。
+            return getGo2rtcWsUrl(camera, {annotated: false, sub: true, lite: true});
         };
         // 車流資料(車種分流、平均車速、佔有率)。原本現場有 4 台 VD 偵測器,
         // 2026-09-06 拿走之後,這份資料的唯一來源就是本系統的相機偵測。
