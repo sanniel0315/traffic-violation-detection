@@ -946,7 +946,68 @@ FIRST_GREEN_STEP = int(os.getenv("SIGNAL_FIRST_GREEN_STEP", "1") or 1)
 #    撞上的 62 則,送出時估計剩餘全部 ≤2.2 秒。剩餘值是整數(四捨五入),
 #    設 3 = 實際剩 ≥3.5 秒才送,距最壞案例留 1.3 秒。
 ACTUATE_MIN_EFFECT_SEC = float(os.getenv("SIGNAL_ACTUATE_MIN_EFFECT_SEC", "3.0") or 3.0)
-# 步階1 至少還要剩這麼多秒才送 = 延長段實測約 5 秒 + 2 秒裕度(只在 A 段有作用)。
+# ── 延長綠燈(規範 16613 K(C)d「延長或結束綠燈」)────────────────────
+# 5F1C(分相, 1, T):T = 步階1 的「總長」秒數(09-15 現場三次受控驗證,見
+# docs/5F1C延長綠燈_受控驗證紀錄.md)。演算法判「續綠」、綠燈這邊還有車、步階1 快結束時,
+# 把總長往後推 EXTEND_STEP_SEC 秒。預設關閉;SIGNAL_EXTEND_UNTIL(ISO)到了自動停。
+EXTEND_GREEN = str(os.getenv("SIGNAL_EXTEND_GREEN", "0") or "0").strip() not in ("0", "", "false", "False")
+EXTEND_UNTIL = os.getenv("SIGNAL_EXTEND_UNTIL", "") or ""
+EXTEND_STEP_SEC = int(os.getenv("SIGNAL_EXTEND_STEP_SEC", "5") or 5)
+EXTEND_TRIGGER_REMAIN = int(os.getenv("SIGNAL_EXTEND_TRIGGER_REMAIN", "6") or 6)   # 剩 ≤ 這個才延
+EXTEND_MIN_REMAIN = int(os.getenv("SIGNAL_EXTEND_MIN_REMAIN", "4") or 4)           # 剩 < 這個不送(黃燈保護)
+EXTEND_MAX_STEP1_SEC = int(os.getenv("SIGNAL_EXTEND_MAX_STEP1_SEC", "95") or 95)   # +行閃 5 = 最大綠 100
+EXTEND_MIN_GAP_SEC = float(os.getenv("SIGNAL_EXTEND_MIN_GAP_SEC", "5") or 5)       # 與我方上一則命令的間隔
+EXTEND_MIN_GREEN_VEH = float(os.getenv("SIGNAL_EXTEND_MIN_GREEN_VEH", "1.0") or 1.0)
+
+
+def _extend_decision(d, g_no: int, live: dict, now: float) -> tuple:
+    """要不要延長、延到總長幾秒。回 (不延的原因, None) 或 ("", T)。純判斷,不送。
+
+    🛑 黃燈保護:只在步階1、剩 ≥ EXTEND_MIN_REMAIN 秒時送 —— 控制器不保護最短黃燈,
+       命令撞上轉換時刻會出事(09-14 缺陷、09-15 事件)。
+    🛑 不連送:與我方上一則命令(結束或延長)至少隔 EXTEND_MIN_GAP_SEC 秒。
+    """
+    from detection.signal_timing_lookup import phase_role
+    if not EXTEND_GREEN:
+        return "延長未啟用", None
+    if EXTEND_UNTIL:
+        try:
+            if now >= datetime.fromisoformat(EXTEND_UNTIL).timestamp():
+                return "延長驗證時段已結束", None
+        except ValueError:
+            return "SIGNAL_EXTEND_UNTIL 格式錯", None
+    if not _act["enabled"]:
+        return "演算法下發未啟用", None
+    if d.action != "KEEP" or getattr(d, "decided_by", "") != "cost":
+        return "不是成本比較判續綠", None
+    if float((d.detail or {}).get("green_remain") or 0) < EXTEND_MIN_GREEN_VEH:
+        return "綠燈這邊沒車", None
+    if (live.get("control_mode") != "external_dynamic" or live.get("clearance")
+            or live.get("stale") or live.get("step_id") != FIRST_GREEN_STEP):
+        return "不在主綠燈或狀態不允許", None
+    rem, el = live.get("step_remain_sec"), live.get("phase_elapsed_sec")
+    if not isinstance(rem, (int, float)) or not isinstance(el, (int, float)):
+        return "不知道剩餘/已亮秒數", None
+    if rem > EXTEND_TRIGGER_REMAIN:
+        return "還沒快結束", None
+    if rem < EXTEND_MIN_REMAIN:
+        return "剩太少不送(黃燈保護)", None
+    last = max(_act.get("last_ts") or 0, _act.get("ext_last_ts") or 0)
+    if last and now - last < EXTEND_MIN_GAP_SEC:
+        return "距上一則命令不到 %.0f 秒" % EXTEND_MIN_GAP_SEC, None
+    r_no = 2 if g_no == 1 else 1
+    rr = phase_role(r_no) or {}
+    red_m = float((d.detail or {}).get("red_veh") or 0) * _mpv()
+    if rr.get("priority") and rr.get("storage_m") and red_m >= 0.5 * float(rr["storage_m"]):
+        return "對向是下匝道且排隊已達儲車一半,不延長", None
+    T = int(round(el + rem + EXTEND_STEP_SEC))
+    T = min(T, EXTEND_MAX_STEP1_SEC)
+    if T <= el + rem + 1:
+        return "已達延長上限", None
+    return "", T
+
+
+# 步階1 至少還要剩這麼多秒才送 = 行人綠閃(步階2)5 秒 + 2 秒裕度(只在 A 段有作用)。
 FIRST_GREEN_MIN_REMAIN_SEC = float(os.getenv("SIGNAL_FIRST_GREEN_MIN_REMAIN_SEC", "7") or 7)
 
 # 到達率的來源:1 = 用車流計數(已人工核對過),0 = 用壅塞偵測的 flow_vpm(舊行為)。
@@ -1223,6 +1284,10 @@ def _actuate_gates(live: dict, now: float) -> Optional[str]:
     gap = now - _act["last_ts"]
     if _act["last_ts"] and gap < ACTUATE_MIN_GAP_SEC:
         return "節流中(距上次下發 %.0f 秒,需 %.0f 秒)" % (gap, ACTUATE_MIN_GAP_SEC)
+    # 🛑 不連送:結束命令也要與我方延長命令隔開(09-15 事件:約 1 秒內兩則造成黃燈退回綠燈)
+    eg = now - (_act.get("ext_last_ts") or 0)
+    if _act.get("ext_last_ts") and eg < EXTEND_MIN_GAP_SEC:
+        return "距延長命令只有 %.1f 秒,不連送" % eg
     return None
 
 
@@ -1335,9 +1400,33 @@ def _actuate(d, g_no: int, live: dict) -> None:
         _act["blocked"] = why
         return None
 
-    if d.action != "SWITCH":
-        return stop("")
     now = time.time()
+    if d.action != "SWITCH":
+        # 延長綠燈:判續綠、綠燈這邊有車、步階1 快結束 → 把步階1 總長往後推
+        why_ext, T = _extend_decision(d, g_no, live, now)
+        _act["ext_blocked"] = why_ext
+        if T is None:
+            return stop("")
+        try:
+            tok = _daemon_post("/api/signal/control/prepare",
+                               {"code": "5F1C", "info_hex": "%02X%02X%02X" % (g_no, FIRST_GREEN_STEP, T),
+                                "by": "algorithm-extend"})
+            token = (tok or {}).get("token")
+            if not token:
+                return stop("prepare 沒拿到 token")
+            res = _daemon_post("/api/signal/control/send", {"token": token})
+            sent = (res or {}).get("sent") or {}
+            _act.update({"ext_n": _act.get("ext_n", 0) + 1, "ext_last_ts": now,
+                         "ext_last": "分相%d 步階1 總長延到 %d 秒" % (g_no, T)})
+            _fault["send_fails"] = 0
+            _act["events"].append({"ts": now, "phase": g_no, "seq": sent.get("seq"),
+                                   "reason": "延長綠燈:步階1 總長 → %d 秒" % T, "raw": sent.get("raw") or ""})
+            add_log("info", "演算法延長分相 %d 綠燈:步階1 總長 → %d 秒" % (g_no, T), "signal")
+            print("[signal-shadow][延長] 5F1C(%d,%d,%d) raw=%s" % (g_no, FIRST_GREEN_STEP, T, sent.get("raw")), flush=True)
+        except Exception as exc:
+            _act["last_error"] = "%s: %s" % (type(exc).__name__, exc)
+            _fault["send_fails"] += 1
+        return stop("")
     why = _actuate_gates(live, now)
     if why:
         _log_blocked(why, g_no, live, d)
@@ -4497,6 +4586,9 @@ def actuate_status(_user=Depends(get_current_user)):
         #    78.6% 的下發是在步階剩 ≤2 秒時送的(等於白送)。把擋下的理由
         #    攤開,才看得出我方到底是「不想切」還是「想切但被擋」。
         "blocked_24h": _blocked_reason_counts(24),
+        # 延長綠燈(規範 K(C)d):行程啟動以來的統計
+        "extend": {"enabled": EXTEND_GREEN, "until": EXTEND_UNTIL, "sent": _act.get("ext_n", 0),
+                   "last": _act.get("ext_last", ""), "last_not_sent": _act.get("ext_blocked", "")},
         "last_error": _act["last_error"],
         "events": [dict(e) for e in reversed(ev)],
         "command": "5F1C(0,0,0)= 跳下一步階;清道由控制器自己走,我方只提早結束綠燈",
