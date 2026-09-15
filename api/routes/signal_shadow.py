@@ -948,63 +948,116 @@ FIRST_GREEN_STEP = int(os.getenv("SIGNAL_FIRST_GREEN_STEP", "1") or 1)
 ACTUATE_MIN_EFFECT_SEC = float(os.getenv("SIGNAL_ACTUATE_MIN_EFFECT_SEC", "3.0") or 3.0)
 # ── 延長綠燈(規範 16613 K(C)d「延長或結束綠燈」)────────────────────
 # 5F1C(分相, 1, T):T = 步階1 的「總長」秒數(09-15 現場三次受控驗證,見
-# docs/5F1C延長綠燈_受控驗證紀錄.md)。演算法判「續綠」、綠燈這邊還有車、步階1 快結束時,
-# 把總長往後推 EXTEND_STEP_SEC 秒。預設關閉;SIGNAL_EXTEND_UNTIL(ISO)到了自動停。
-EXTEND_GREEN = str(os.getenv("SIGNAL_EXTEND_GREEN", "0") or "0").strip() not in ("0", "", "false", "False")
+# docs/5F1C延長綠燈_受控驗證紀錄.md)。
+# SIGNAL_EXTEND_GREEN:0 關 / 1 下發 / shadow 只算不送(寫 signal_rule_shadow,rule=extend)。
+# 🛑 2026-09-15 改成「考慮整個分相時間」的嚴謹算法(使用者要求),見 extend_plan()。
+#    先前固定 +5 秒:13:23~15:25 延長 45 次、多給 292 秒只過 15 台,30 次一台都沒有。
+_EXT_MODE = str(os.getenv("SIGNAL_EXTEND_GREEN", "0") or "0").strip().lower()
+EXTEND_GREEN = _EXT_MODE not in ("0", "", "false")
+EXTEND_SHADOW = _EXT_MODE == "shadow"
 EXTEND_UNTIL = os.getenv("SIGNAL_EXTEND_UNTIL", "") or ""
-EXTEND_STEP_SEC = int(os.getenv("SIGNAL_EXTEND_STEP_SEC", "5") or 5)
-EXTEND_TRIGGER_REMAIN = int(os.getenv("SIGNAL_EXTEND_TRIGGER_REMAIN", "6") or 6)   # 剩 ≤ 這個才延
+EXTEND_TRIGGER_REMAIN = int(os.getenv("SIGNAL_EXTEND_TRIGGER_REMAIN", "6") or 6)   # 剩 ≤ 這個才評估
 EXTEND_MIN_REMAIN = int(os.getenv("SIGNAL_EXTEND_MIN_REMAIN", "4") or 4)           # 剩 < 這個不送(黃燈保護)
-EXTEND_MAX_STEP1_SEC = int(os.getenv("SIGNAL_EXTEND_MAX_STEP1_SEC", "95") or 95)   # +行閃 5 = 最大綠 100
 EXTEND_MIN_GAP_SEC = float(os.getenv("SIGNAL_EXTEND_MIN_GAP_SEC", "5") or 5)       # 與我方上一則命令的間隔
-EXTEND_MIN_GREEN_VEH = float(os.getenv("SIGNAL_EXTEND_MIN_GREEN_VEH", "1.0") or 1.0)
+EXTEND_MIN_DELTA = int(os.getenv("SIGNAL_EXTEND_MIN_DELTA", "3") or 3)             # 算出來 < 這個就不值得送
+EXTEND_MAX_DELTA = int(os.getenv("SIGNAL_EXTEND_MAX_DELTA", "10") or 10)           # 單次最多延幾秒(之後再評估)
+EXTEND_CYCLE_MAX = int(os.getenv("SIGNAL_EXTEND_CYCLE_MAX", "120") or 120)         # 週期上限(使用者週期規格 60~120)
+EXTEND_OPP_STORAGE_RATIO = float(os.getenv("SIGNAL_EXTEND_OPP_STORAGE_RATIO", "0.8") or 0.8)
+PED_FLASH_SEC = int(os.getenv("SIGNAL_PED_FLASH_SEC", "5") or 5)                   # 5FC4 PedGreenFlash=5、5F03 步階2 實測 5
+CONTROLLER_MAX_GREEN = 210                                                          # 5FC4 MaxGreen(四套計畫皆 210)
+_last_meas: dict = {}                                                               # 本輪量測(迴圈寫、延長判斷讀)
+
+
+def extend_plan(*, el: float, rem: float, q_green_m: float, q_red_m: float,
+                arr_red_vpm: float, storage_red_m: float, min_green_other: float,
+                mpv: float, sat_vph: float, yellow: float, all_red: float,
+                ped_flash: float = PED_FLASH_SEC, max_green: float = 100.0,
+                cycle_max: float = EXTEND_CYCLE_MAX, opp_ratio: float = EXTEND_OPP_STORAGE_RATIO,
+                min_delta: int = EXTEND_MIN_DELTA, max_delta: int = EXTEND_MAX_DELTA) -> dict:
+    """算要延長幾秒 —— **考慮整個分相時間**,四個上限取最小。純函式。
+
+    一個分相的總時間 = 主綠(步階1)+ 行人綠閃 + 黃 + 全紅;延長 Δ 秒,對向就多等 Δ 秒、週期多 Δ 秒。
+      ① 需求  Δ_need = 綠側排隊車數 × 飽和車間距 − (剩餘主綠 + 行人綠閃)
+               行閃期間車輛綠燈照亮也能放行,所以算進去;≤ 0 代表剩下的時間就放得完,不必延
+      ② 最大綠 主綠 + 行閃 ≤ max_green(我方操作上限 100;控制器 5FC4 硬上限 210)
+      ③ 對向儲車 對向排隊 + 對向到達 × (剩餘 + Δ + 行閃 + 黃 + 全紅) ≤ 儲車 × opp_ratio
+               (下匝道 600 m → 480 m 主線保護;上匝道 210 m → 168 m)
+      ④ 週期   本相總長 + 對向最短一輪(最小綠 + 黃 + 全紅)≤ cycle_max
+    Δ = min(①②③④, max_delta),取整數;< min_delta 就不延(不值得送一則命令)。
+    回 {"delta", "T", "binding", "caps", "why"};T = 步階1 總長 = el + rem + Δ。
+    """
+    h = 3600.0 / sat_vph if sat_vph and sat_vph > 0 else 3.7
+    clear = ped_flash + yellow + all_red
+    caps = {}
+    caps["需求"] = (q_green_m / mpv) * h - (rem + ped_flash) if mpv > 0 else 0.0
+    caps["最大綠"] = min(max_green, CONTROLLER_MAX_GREEN) - (el + rem + ped_flash)
+    if arr_red_vpm and arr_red_vpm > 0 and storage_red_m:
+        room_veh = (storage_red_m * opp_ratio - (q_red_m or 0)) / mpv
+        caps["對向儲車"] = room_veh / (arr_red_vpm / 60.0) - (rem + clear)
+    elif storage_red_m and (q_red_m or 0) >= storage_red_m * opp_ratio:
+        caps["對向儲車"] = 0.0
+    caps["週期"] = cycle_max - (el + rem + clear + min_green_other + yellow + all_red)
+    caps["單次上限"] = float(max_delta)
+    binding = min(caps, key=lambda k: caps[k])
+    delta = int(max(0.0, caps[binding]))
+    out = {"delta": delta, "T": None, "binding": binding,
+           "caps": {k: round(v, 1) for k, v in caps.items()}, "why": ""}
+    if delta < min_delta:
+        out["delta"] = 0
+        out["why"] = ("綠側剩下的時間就放得完,不必延" if binding == "需求"
+                      else "受「%s」限制,只剩 %.1f 秒,不延" % (binding, caps[binding]))
+        return out
+    out["T"] = int(round(el + rem + delta))
+    return out
 
 
 def _extend_decision(d, g_no: int, live: dict, now: float) -> tuple:
-    """要不要延長、延到總長幾秒。回 (不延的原因, None) 或 ("", T)。純判斷,不送。
+    """要不要延長、延到總長幾秒。回 (不延的原因, None, 明細) 或 ("", T, 明細)。純判斷,不送。
 
     🛑 黃燈保護:只在步階1、剩 ≥ EXTEND_MIN_REMAIN 秒時送 —— 控制器不保護最短黃燈,
        命令撞上轉換時刻會出事(09-14 缺陷、09-15 事件)。
     🛑 不連送:與我方上一則命令(結束或延長)至少隔 EXTEND_MIN_GAP_SEC 秒。
     """
-    from detection.signal_timing_lookup import phase_role
+    from detection.signal_timing_lookup import phase_role, plan_params, current_base_plan
     if not EXTEND_GREEN:
-        return "延長未啟用", None
+        return "延長未啟用", None, {}
     if EXTEND_UNTIL:
         try:
             if now >= datetime.fromisoformat(EXTEND_UNTIL).timestamp():
-                return "延長驗證時段已結束", None
+                return "延長驗證時段已結束", None, {}
         except ValueError:
-            return "SIGNAL_EXTEND_UNTIL 格式錯", None
-    if not _act["enabled"]:
-        return "演算法下發未啟用", None
+            return "SIGNAL_EXTEND_UNTIL 格式錯", None, {}
+    if not _act["enabled"] and not EXTEND_SHADOW:
+        return "演算法下發未啟用", None, {}
     if d.action != "KEEP" or getattr(d, "decided_by", "") != "cost":
-        return "不是成本比較判續綠", None
-    if float((d.detail or {}).get("green_remain") or 0) < EXTEND_MIN_GREEN_VEH:
-        return "綠燈這邊沒車", None
+        return "不是成本比較判續綠", None, {}
     if (live.get("control_mode") != "external_dynamic" or live.get("clearance")
             or live.get("stale") or live.get("step_id") != FIRST_GREEN_STEP):
-        return "不在主綠燈或狀態不允許", None
+        return "不在主綠燈或狀態不允許", None, {}
     rem, el = live.get("step_remain_sec"), live.get("phase_elapsed_sec")
     if not isinstance(rem, (int, float)) or not isinstance(el, (int, float)):
-        return "不知道剩餘/已亮秒數", None
+        return "不知道剩餘/已亮秒數", None, {}
     if rem > EXTEND_TRIGGER_REMAIN:
-        return "還沒快結束", None
+        return "還沒快結束", None, {}
     if rem < EXTEND_MIN_REMAIN:
-        return "剩太少不送(黃燈保護)", None
+        return "剩太少不送(黃燈保護)", None, {}
     last = max(_act.get("last_ts") or 0, _act.get("ext_last_ts") or 0)
-    if last and now - last < EXTEND_MIN_GAP_SEC:
-        return "距上一則命令不到 %.0f 秒" % EXTEND_MIN_GAP_SEC, None
+    if not EXTEND_SHADOW and last and now - last < EXTEND_MIN_GAP_SEC:
+        return "距上一則命令不到 %.0f 秒" % EXTEND_MIN_GAP_SEC, None, {}
     r_no = 2 if g_no == 1 else 1
     rr = phase_role(r_no) or {}
-    red_m = float((d.detail or {}).get("red_veh") or 0) * _mpv()
-    if rr.get("priority") and rr.get("storage_m") and red_m >= 0.5 * float(rr["storage_m"]):
-        return "對向是下匝道且排隊已達儲車一半,不延長", None
-    T = int(round(el + rem + EXTEND_STEP_SEC))
-    T = min(T, EXTEND_MAX_STEP1_SEC)
-    if T <= el + rem + 1:
-        return "已達延長上限", None
-    return "", T
+    pp = plan_params(current_base_plan()) or {}
+    mins = pp.get("min_green") or [10, 20]
+    q = _last_meas.get("q") or {}
+    plan = extend_plan(
+        el=float(el), rem=float(rem), q_green_m=float(q.get(g_no) or 0), q_red_m=float(q.get(r_no) or 0),
+        arr_red_vpm=float(_events_flow_vpm(r_no) or 0), storage_red_m=float(rr.get("storage_m") or 0),
+        min_green_other=float(mins[r_no - 1] if len(mins) >= r_no else 10),
+        mpv=_mpv(), sat_vph=_sat_for(g_no), yellow=float(pp.get("yellow") or 3),
+        all_red=float(pp.get("all_red") or 2), max_green=_max_green(pp))
+    if plan["T"] is None:
+        return plan["why"], None, plan
+    return "", plan["T"], plan
 
 
 # 步階1 至少還要剩這麼多秒才送 = 行人綠閃(步階2)5 秒 + 2 秒裕度(只在 A 段有作用)。
@@ -1403,9 +1456,11 @@ def _actuate(d, g_no: int, live: dict) -> None:
     now = time.time()
     if d.action != "SWITCH":
         # 延長綠燈:判續綠、綠燈這邊有車、步階1 快結束 → 把步階1 總長往後推
-        why_ext, T = _extend_decision(d, g_no, live, now)
+        why_ext, T, plan = _extend_decision(d, g_no, live, now)
         _act["ext_blocked"] = why_ext
-        if T is None:
+        if plan:
+            _extend_shadow_record(g_no, live, plan, sent=bool(T is not None and not EXTEND_SHADOW))
+        if T is None or EXTEND_SHADOW:
             return stop("")
         try:
             tok = _daemon_post("/api/signal/control/prepare",
@@ -1417,7 +1472,8 @@ def _actuate(d, g_no: int, live: dict) -> None:
             res = _daemon_post("/api/signal/control/send", {"token": token})
             sent = (res or {}).get("sent") or {}
             _act.update({"ext_n": _act.get("ext_n", 0) + 1, "ext_last_ts": now,
-                         "ext_last": "分相%d 步階1 總長延到 %d 秒" % (g_no, T)})
+                         "ext_last": "分相%d 步階1 總長延到 %d 秒(+%d,受「%s」限制)" % (
+                             g_no, T, plan.get("delta") or 0, plan.get("binding") or "")})
             _fault["send_fails"] = 0
             _act["events"].append({"ts": now, "phase": g_no, "seq": sent.get("seq"),
                                    "reason": "延長綠燈:步階1 總長 → %d 秒" % T, "raw": sent.get("raw") or ""})
@@ -1503,6 +1559,32 @@ def _input_shadow_record(g_no: int, green_elapsed: float, min_green: float,
     except Exception as exc:
         with _lock:
             _stats["input_shadow_error"] = "%s: %s" % (type(exc).__name__, exc)
+
+
+def _extend_shadow_record(g_no: int, live: dict, plan: dict, sent: bool) -> None:
+    """延長評估逐筆紀錄(不論有沒有送):延幾秒、被哪個上限卡住、四個上限各剩多少。只記錄。"""
+    try:
+        q = _last_meas.get("q") or {}
+        r_no = 2 if g_no == 1 else 1
+        conn = _db()
+        conn.execute("""CREATE TABLE IF NOT EXISTS signal_rule_shadow (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, epoch REAL,
+                            rule TEXT, green_phase INTEGER, green_elapsed REAL,
+                            step_id INTEGER, would INTEGER, reason TEXT,
+                            queue_green REAL, queue_red REAL)""")
+        conn.execute("INSERT INTO signal_rule_shadow(ts,epoch,rule,green_phase,green_elapsed,step_id,would,"
+                     "reason,queue_green,queue_red) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                     (datetime.now().isoformat(timespec="seconds"), time.time(), "extend", g_no,
+                      live.get("phase_elapsed_sec"), live.get("step_id"),
+                      (2 if sent else 1) if plan.get("T") else 0,
+                      json.dumps({"delta": plan.get("delta"), "T": plan.get("T"), "binding": plan.get("binding"),
+                                  "caps": plan.get("caps"), "why": plan.get("why"),
+                                  "rem": live.get("step_remain_sec")}, ensure_ascii=False),
+                      q.get(g_no), q.get(r_no)))
+        conn.commit(); conn.close()
+    except Exception as exc:
+        with _lock:
+            _stats["extend_shadow_error"] = "%s: %s" % (type(exc).__name__, exc)
 
 
 _rule_prev: dict = {"since": None, "q": None}
@@ -1688,6 +1770,7 @@ def _loop():
 
             # 🛑 先下發再寫這一筆 log —— 反過來的話這一筆決策的執行結果
             #    會落到下一筆去,稽核時對不上。
+            _last_meas.update({"q": dict(q_map), "ts": now})
             _actuate(d, g_no, live)
             with _lock:
                 _stats["decisions"] = _stats.get("decisions", 0) + 1
