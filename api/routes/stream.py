@@ -1019,9 +1019,31 @@ def _is_file_backed_source(source) -> bool:
     return path.endswith(_VIDEO_FILE_EXTS)
 
 
-def _try_frigate_snapshot(source: str, camera_id: int = None):
+_frigate_fps_cache: dict = {"ts": 0.0, "fps": {}}
+
+
+def _frigate_camera_live(stream_name: str) -> bool:
+    """Frigate 這台相機現在有沒有在收畫面(/api/stats 的 camera_fps > 0,快取 5 秒)。
+
+    🛑 2026-09-15 WN-2 斷線:相機連不上時 Frigate 的 latest.jpg 仍回 200,
+       內容是「No frames have been received」黑底警示圖。偵測拿它當真畫面分析,
+       結果是「0 台車、排隊 0 m」一路寫進量測與決策 —— 斷線被當成沒車。
+    """
+    now = time.time()
+    if now - _frigate_fps_cache["ts"] > 5.0:
+        _frigate_fps_cache["ts"] = now
+        try:
+            cams = requests.get("http://127.0.0.1:5000/api/stats", timeout=2.0).json().get("cameras") or {}
+            _frigate_fps_cache["fps"] = {k: float((v or {}).get("camera_fps") or 0) for k, v in cams.items()}
+        except Exception:
+            _frigate_fps_cache["fps"] = {}
+    return _frigate_fps_cache["fps"].get(stream_name, 0.0) > 0
+
+
+def _try_frigate_snapshot(source: str, camera_id: int = None, require_live: bool = False):
     """嘗試透過 Frigate latest.jpg API 取得截圖（適用於 Frigate/go2rtc 管理的串流）。
     優先用 camera_id → cam_{id} 對應 frigate stream name；source URL 解析為 fallback。
+    require_live=True:Frigate 那台沒在收畫面就不取(給偵測用,不可把警示圖當畫面分析)。
     """
     # 檔案來源不吃 cam_{id} fallback，否則會播成同編號的別台攝影機
     if _is_file_backed_source(source):
@@ -1035,6 +1057,8 @@ def _try_frigate_snapshot(source: str, camera_id: int = None):
         if n and n not in candidates:
             candidates.append(n)
     for stream_name in candidates:
+        if require_live and not _frigate_camera_live(stream_name):
+            continue
         try:
             resp = requests.get(
                 f"http://127.0.0.1:5000/api/{stream_name}/latest.jpg",
@@ -4111,7 +4135,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             if _now_fb - _frigate_fb_last > 0.2:
                 _frigate_fb_last = _now_fb
                 try:
-                    _fb_jpg = _try_frigate_snapshot(source, camera_id=camera_id)
+                    _fb_jpg = _try_frigate_snapshot(source, camera_id=camera_id, require_live=True)
                     if _fb_jpg:
                         _arr = np.frombuffer(_fb_jpg, dtype=np.uint8)
                         _dec = cv2.imdecode(_arr, cv2.IMREAD_COLOR)

@@ -460,23 +460,43 @@ def draw_congestion(frame, result):
     # 狀態列
     cv2.rectangle(annotated, (0, 0), (w, 35), (0,0,0), -1)
     level_color = level_colors.get(result.get('level', 'low'), (255,255,255))
+    # 斷線標記的量測欄位是 None(見 _mark_no_frame),這裡用 or 0 才不會格式化失敗
     text = (
         f"壅塞: {result.get('level_name', '-')} | "
-        f"車輛: {result.get('vehicle_count', 0)} | "
-        f"停滯: {result.get('stopped_vehicle_count', 0)} | "
-        f"排隊: {result.get('estimated_queue_length_m', 0):.1f}m | "
-        f"分數: {result.get('occupancy', 0)*100:.1f}%"
+        f"車輛: {result.get('vehicle_count') or 0} | "
+        f"停滯: {result.get('stopped_vehicle_count') or 0} | "
+        f"排隊: {result.get('estimated_queue_length_m') or 0:.1f}m | "
+        f"分數: {(result.get('occupancy') or 0)*100:.1f}%"
     )
     # 🛑 cv2.putText 的 Hershey 字型只有 ASCII,中文會變成 ??????(現場實際看到)。
     #    走 PIL + CJK 字型;字型找不到時退回英文標籤,至少數字看得懂。
     _draw_status_text(annotated, text, (10, 6), level_color)
     
     # 底部進度條
-    bar_w = int((w - 20) * result.get('occupancy', 0))
+    bar_w = int((w - 20) * (result.get('occupancy') or 0))
     cv2.rectangle(annotated, (10, h-15), (w-10, h-5), (50,50,50), -1)
     cv2.rectangle(annotated, (10, h-15), (10 + bar_w, h-5), level_color, -1)
     
     return annotated
+
+
+def _mark_no_frame(camera_id: int) -> None:
+    """相機斷線:結果換成「斷線」標記,量測欄位一律 None(不是 0)。
+
+    🛑 2026-09-15 以前這裡寫的是 0 台車 / 排隊 0 m / 暢通 —— 畫面與決策都分不出
+       「路上沒車」和「相機斷線」。斷線就是沒有量測,不能用 0 代替。
+    """
+    if congestion_results.get(camera_id, {}).get("no_frame"):
+        return
+    congestion_results[camera_id] = {
+        "timestamp": datetime.now().isoformat(),
+        "vehicle_count": None, "stopped_vehicle_count": None, "stopped_ratio": None,
+        "occupancy": None, "raw_occupancy": None, "queue_score": None, "queue_active": False,
+        "estimated_queue_length_m": None, "queue_duration_sec": None,
+        "level": "offline", "level_name": "斷線", "zone_results": [],
+        "no_frame": True,
+    }
+    print(f"📵 congestion cam_{camera_id} 無畫面 >15s,標記斷線", flush=True)
 
 
 def run_congestion_detection(camera_id: int, camera_name: str, source: str, zones: list):
@@ -581,6 +601,10 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                     cap.release()
                 except Exception:
                     pass
+                # 🛑 連不上相機時走的是這條,不會經過下面「讀不到 frame」的清除 ——
+                #    舊結果會一直掛著被當成現況。一樣超過 15 秒就標斷線。
+                if (time.time() - last_success) > 15.0:
+                    _mark_no_frame(camera_id)
                 reconnect_count += 1
                 if reconnect_count >= _OFFLINE_MAX_RECONNECT:
                     print(f"📵 congestion cam_{camera_id} 連續 {reconnect_count} 次重連失敗 → 判定離線,自動停止", flush=True)
@@ -620,16 +644,8 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
                 fail_count += 1
                 # 連續讀不到 frame 超過 15 秒 → 清掉舊結果,避免 status 一直回傳斷線前的「幻影排隊」
                 # (RTSP 斷線時原本完全不更新 congestion_results,舊值會無限期殘留誤導)
-                if (time.time() - last_success) > 15.0 and not congestion_results.get(camera_id, {}).get("no_frame"):
-                    congestion_results[camera_id] = {
-                        "timestamp": datetime.now().isoformat(),
-                        "vehicle_count": 0, "stopped_vehicle_count": 0, "stopped_ratio": 0.0,
-                        "occupancy": 0.0, "queue_score": 0.0, "queue_active": False,
-                        "estimated_queue_length_m": 0.0, "queue_duration_sec": 0,
-                        "level": "low", "level_name": "暢通", "zone_results": [],
-                        "no_frame": True,
-                    }
-                    print(f"📵 congestion cam_{camera_id} 無畫面 >15s,清除幻影結果", flush=True)
+                if (time.time() - last_success) > 15.0:
+                    _mark_no_frame(camera_id)
                 if fail_count >= 50:
                     # 連續 50 次讀不到 → 強制 reconnect
                     try: cap.release()
@@ -665,6 +681,8 @@ def run_congestion_detection(camera_id: int, camera_name: str, source: str, zone
         congestion_services[camera_id]["error"] = str(e)
     finally:
         congestion_services[camera_id]["running"] = False
+        if congestion_services[camera_id].get("offline"):
+            _mark_no_frame(camera_id)       # 判定離線停掉時,別留最後一筆舊量測當現況
         try: cap.release()
         except: pass
         print(f"⏹️ 壅塞偵測停止: camera_id={camera_id}")

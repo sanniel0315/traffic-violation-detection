@@ -515,6 +515,24 @@ def _sat_for(phase: int) -> float:
     return float(_measured_sat["vph"].get(phase) or DEFAULT_SATURATION_VPH)
 
 
+CAM_STALE_SEC = 15.0
+
+
+def _cam_ok(r: Optional[dict], now: Optional[float] = None) -> bool:
+    """這台相機的壅塞結果算不算「現在的量測」。
+
+    斷線(no_frame)或結果超過 15 秒沒更新都不算 —— 連不上相機時壅塞迴圈
+    停在重連,最後一筆結果會一直掛著;拿它當現況就是把舊值當即時量測。
+    """
+    if not r or r.get("no_frame"):
+        return False
+    try:
+        ts = datetime.fromisoformat(str(r.get("timestamp"))).timestamp()
+    except Exception:
+        return True                      # 沒有時間戳的舊格式:維持原行為
+    return ((now or time.time()) - ts) <= CAM_STALE_SEC
+
+
 # ── 戰情頁用:每台相機的即時量測、每相今日放行統計 ──────────────────
 def _camera_live() -> list:
     """四台相機各自的即時量測。
@@ -528,11 +546,13 @@ def _camera_live() -> list:
     for phase in sorted(PHASE_CAMERAS):
         for cam in PHASE_CAMERAS[phase]:
             r = congestion_results.get(cam) or {}
+            if not _cam_ok(r):
+                r = {"level": "offline", "level_name": "斷線"}   # 斷線不給任何量測值
             out.append({
                 "camera_id": cam,
                 "name": camera_label(cam),
                 "phase_no": phase,
-                "online": bool(r),
+                "online": r.get("level") != "offline",
                 # 顯示用一律取平滑後的佔用率。原始瞬時值抖動大,
                 # 掛在牆上會一直跳,而且跟等級判定用的不是同一個數。
                 "occupancy": r.get("occupancy"),
@@ -681,7 +701,7 @@ def _phase_measure(phase: int) -> dict:
     seen = 0
     for cam in PHASE_CAMERAS.get(phase, []):
         r = congestion_results.get(cam) or {}
-        if not r:
+        if not _cam_ok(r):               # 斷線/過期的相機不參與聚合(不可當成 0 台車)
             continue
         seen += 1
         q = r.get("estimated_queue_length_m")
@@ -787,6 +807,8 @@ def _queue_m(camera_id: int) -> Optional[float]:
     try:
         from api.routes.congestion import congestion_results
         r = congestion_results.get(camera_id) or {}
+        if not _cam_ok(r):
+            return None
         v = r.get("estimated_queue_length_m")
         return float(v) if v is not None else None
     except Exception:
@@ -798,6 +820,8 @@ def _flow_vpm(camera_id: int) -> Optional[float]:
     try:
         from api.routes.congestion import congestion_results
         r = congestion_results.get(camera_id) or {}
+        if not _cam_ok(r):
+            return None
         v = r.get("flow_vpm")
         return float(v) if v is not None else None
     except Exception:

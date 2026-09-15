@@ -4572,6 +4572,8 @@
                             box-shadow:0 2px 10px rgba(16,24,40,.10); transform:translateY(-1px); }
         .wr-camcell.off { opacity:.5; border-style:dashed; }
         .wr-camcell.off:hover { transform:none; box-shadow:none; }
+        .wr-cc-off { color:#c43a31; font-weight:600; font-size:var(--fs-small); }
+        .wr-cam-lv.lvoff { background:#c43a31; }
         .wr-cc-hd { display:flex; align-items:center; gap:7px; min-width:0; }
         .wr-camcell b { font:600 var(--fs-body) var(--font-mono); color:var(--gov-text); flex:none; }
         .wr-cdot { width:9px; height:9px; border-radius:50%; flex:none;
@@ -9572,7 +9574,9 @@
                                        所以看得出往哪個方向在動。
                                      · 數字用 :key 綁值 —— 值一變元素就重掛,wrPop 跑一次閃一下。
                                        沒變的那格不會閃,所以「剛剛動的是哪一個」看得出來。 -->
-                                <div class="wr-cc-m" :title="c.occTip">
+                                <!-- 相機連不上:不顯示任何量測(沒有量測不等於 0) -->
+                                <div v-if="!c.online" class="wr-cc-off" title="相機連不上,沒有量測">斷線</div>
+                                <div v-else class="wr-cc-m" :title="c.occTip">
                                     <span class="k">佔有率</span>
                                     <span class="wr-bar sm"><i :class="c.occCls" :style="{width:c.occW}"></i></span>
                                     <b :key="'o'+c.occ">{{ c.occ }}</b>
@@ -9640,7 +9644,7 @@
                                         <div class="wr-cam-hd" :title="sigCamFullName(cam.camera_id)">
                                             <b>{{ cam.name }}</b>
                                             <span class="wr-cam-site">{{ cam.site }}</span>
-                                            <span class="wr-cam-lv" :class="'lv'+sigLvRank(cam.level)"
+                                            <span class="wr-cam-lv" :class="cam.online===false ? 'lvoff' : 'lv'+sigLvRank(cam.level)"
                                                   v-if="cam.level_name">{{ cam.level_name }}</span>
                                             <span class="wr-cam-t" v-if="sigVd[cam.camera_id]">{{ sigVd[cam.camera_id].at }}</span>
                                         </div>
