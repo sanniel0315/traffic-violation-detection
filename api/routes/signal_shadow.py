@@ -1365,6 +1365,48 @@ def _actuate(d, g_no: int, live: dict) -> None:
         return stop(_act["last_error"])
 
 
+_rule_prev: dict = {"since": None, "q": None}
+
+
+def _rule_shadow_record(g_no: int, green_since: float, green_elapsed: float,
+                        min_green: float, q_map: dict, green_is_priority: bool,
+                        live: dict) -> None:
+    """候選規則「下匝道沒人用就切」的影子紀錄 —— **只記錄,絕不下發**。
+
+    每 5 秒一筆(只記下匝道綠燈、非清道的取樣),寫進獨立的 signal_rule_shadow,
+    不動主紀錄表。判讀見 /rule-shadow/offramp。
+    🛑 這裡不可以呼叫 _actuate / _daemon_post;守門測試會檢查。
+    """
+    try:
+        if not green_is_priority or live.get("clearance"):
+            return
+        from detection.signal_decision_engine import offramp_idle_cut
+        r_no = 2 if g_no == 1 else 1
+        prev = _rule_prev["q"] if _rule_prev["since"] == green_since else None
+        would, why = offramp_idle_cut(
+            green_is_priority=True, green_elapsed_sec=green_elapsed, min_green_sec=min_green,
+            green_queue_m=q_map.get(g_no), prev_green_queue_m=prev,
+            red_queue_m=q_map.get(r_no), meters_per_vehicle=_mpv())
+        _rule_prev.update({"since": green_since, "q": q_map.get(g_no)})
+        conn = _db()
+        conn.execute("""CREATE TABLE IF NOT EXISTS signal_rule_shadow (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, epoch REAL,
+                            rule TEXT, green_phase INTEGER, green_elapsed REAL,
+                            step_id INTEGER, would INTEGER, reason TEXT,
+                            queue_green REAL, queue_red REAL)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_rule_shadow_epoch ON signal_rule_shadow(epoch)")
+        conn.execute("INSERT INTO signal_rule_shadow(ts,epoch,rule,green_phase,green_elapsed,"
+                     "step_id,would,reason,queue_green,queue_red) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                     (datetime.now().isoformat(timespec="seconds"), time.time(), "offramp_idle",
+                      g_no, round(green_elapsed, 1), live.get("step_id"), 1 if would else 0,
+                      why, q_map.get(g_no), q_map.get(r_no)))
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        with _lock:
+            _stats["rule_shadow_error"] = "%s: %s" % (type(exc).__name__, exc)
+
+
 def _daemon_post(path: str, body: dict) -> dict:
     """對 signal_daemon 送 POST。daemon 內部不驗登入(見 services/signal_daemon.py),
     所以這裡不帶憑證;它只綁 127.0.0.1。403/409 的原因原樣帶出來給畫面顯示。"""
@@ -1505,6 +1547,9 @@ def _loop():
             # 🛑 先下發再寫這一筆 log —— 反過來的話這一筆決策的執行結果
             #    會落到下一筆去,稽核時對不上。
             _actuate(d, g_no, live)
+            # 候選規則影子評估(只記錄,不下發;失敗也不影響主迴圈)
+            _rule_shadow_record(g_no, green_since, green_elapsed, min_green,
+                                q_map, bool(g_role.get("priority")), live)
 
             conn = _db()
             conn.execute(
@@ -3377,6 +3422,81 @@ def ab_firstgreen_report(since: str = Query("", description="起(ISO);空=A/B �
                    "cycle_sec / green_sec 的 diff > 0 代表放開後變短(目的達成);"
                    "排隊 diff < 0 代表放開後排隊變長(要停)。p < 0.05 才算有差。")
     return out
+
+
+@router.get("/rule-shadow/offramp", summary="候選規則影子評估:下匝道沒人用就切(不下發)")
+def rule_shadow_offramp(since: str = Query("", description="起(ISO);空=近 24 小時"),
+                        until: str = Query("", description="訖(ISO);空=現在"),
+                        _user=Depends(get_current_user)):
+    """逐段下匝道綠燈:候選規則會在第幾秒判可切、可省幾秒、代價與效益。
+
+    · 若在步階1 判可切:下發後控制器照走 5 秒行人綠閃才進黃燈 → 綠燈約在判定後 6 秒結束
+    · 若判定時已在步階2:綠燈本來就快結束,不算省
+    · 效益 = 上匝道在等的車數 × 省下秒數(車·秒)
+    · 代價 = 省下的那段時間內下匝道**實際到達**的車(我方車流計數,基準測點該相車道)
+            —— 這些車在規則生效時要停下來等
+    🛑 這是反事實估計:假設切下後其他條件不變。它回答「值不值得試」,不回答「上線後一定如此」。
+    """
+    from detection import signal_eval as E
+    from detection.signal_timing_lookup import current_base_plan
+    import statistics as _st
+    EXEC_SEC = 6.0
+    now = datetime.now()
+    u = until or now.isoformat(timespec="seconds")
+    s = since or (now - timedelta(hours=24)).isoformat(timespec="seconds")
+    runs = [r for r in (_actual_runs_from_frames(s, u) or []) if r["phase"] == 2]
+    try:
+        conn = _db()
+        rows = conn.execute("SELECT epoch,green_elapsed,step_id,queue_red FROM signal_rule_shadow "
+                            "WHERE rule='offramp_idle' AND would=1 AND epoch>=? AND epoch<? ORDER BY epoch",
+                            (datetime.fromisoformat(s).timestamp(), datetime.fromisoformat(u).timestamp())).fetchall()
+        n_samples = conn.execute("SELECT COUNT(*) FROM signal_rule_shadow WHERE epoch>=? AND epoch<?",
+                                 (datetime.fromisoformat(s).timestamp(),
+                                  datetime.fromisoformat(u).timestamp())).fetchone()[0]
+        conn.close()
+    except Exception:
+        rows, n_samples = [], 0
+    cam = PHASE_CAMERA.get(2)
+    arr = E.load_passes(_VIOL_DB, {cam: _phase_lanes(2).get(cam) or []}, s, u).get(cam, [])
+    at = [a[0] for a in arr]
+    import bisect as _bs
+    mpv = _mpv()
+    per: dict = {}
+    detail = []
+    for r in runs:
+        a, g_end = r["start"], r.get("green_end") or r["end"]
+        hit = next((x for x in rows if a <= x[0] <= g_end), None)
+        key = (current_base_plan(datetime.fromtimestamp(a)), "尖峰" if _is_peak(a) else "離峰")
+        b = per.setdefault(key, {"greens": 0, "cuts": 0, "save": [], "stopped": 0, "benefit": 0.0})
+        b["greens"] += 1
+        if not hit:
+            continue
+        t_star, el, step, qr = hit
+        eff_end = g_end if step == PED_FLASH_STEP else min(g_end, t_star + EXEC_SEC)
+        save = max(0.0, g_end - eff_end)
+        stopped = _bs.bisect_left(at, g_end) - _bs.bisect_left(at, eff_end) if save > 0 else 0
+        b["cuts"] += 1
+        b["save"].append(save)
+        b["stopped"] += stopped
+        b["benefit"] += (qr or 0) / mpv * save
+        detail.append({"green_start": datetime.fromtimestamp(a).strftime("%m-%d %H:%M:%S"),
+                       "plan": key[0], "green_sec": round(g_end - a, 1),
+                       "would_cut_at_sec": el, "save_sec": round(save, 1),
+                       "onramp_waiting_veh": round((qr or 0) / mpv, 1), "offramp_arrivals_stopped": stopped})
+    out = []
+    for (plan, tier), b in sorted(per.items()):
+        sv = b["save"]
+        out.append({"plan": plan, "tier": tier, "offramp_greens": b["greens"], "would_cut": b["cuts"],
+                    "cut_pct": round(100.0 * b["cuts"] / b["greens"], 1) if b["greens"] else None,
+                    "save_sec_median": round(_st.median(sv), 1) if sv else None,
+                    "save_sec_per_green": round(sum(sv) / b["greens"], 1) if b["greens"] else None,
+                    "offramp_stopped_total": b["stopped"],
+                    "offramp_stopped_per_cut": round(b["stopped"] / b["cuts"], 2) if b["cuts"] else None,
+                    "onramp_benefit_veh_sec": round(b["benefit"], 0)})
+    return {"since": s, "until": u, "rule": "下匝道已過最小綠、連續 10 秒無排隊、上匝道 ≥1 台在等",
+            "samples": n_samples, "summary": out, "detail": detail[-40:],
+            "note": "只記錄不下發。省下秒數 = 實際綠燈結束 − (判可切 + 6 秒);代價 = 省下期間下匝道實際到達、"
+                    "規則生效時要停下的車;效益 = 上匝道在等車數 × 省下秒數。反事實估計,僅供決定是否試行。"}
 
 
 @router.get("/count-check", summary="人工計數對照表(90% 準確度條款的證據產生器)")

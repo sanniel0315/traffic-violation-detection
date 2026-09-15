@@ -1,0 +1,54 @@
+"""候選規則「下匝道沒人用就切」—— 只做影子評估,不可下發。"""
+import ast
+import os
+import sys
+from pathlib import Path
+
+os.environ.setdefault("AUTH_SECRET", "test-only-not-a-real-secret")
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from detection.signal_decision_engine import offramp_idle_cut  # noqa: E402
+
+
+def _cut(**kw):
+    base = dict(green_is_priority=True, green_elapsed_sec=25, min_green_sec=20,
+                green_queue_m=0, prev_green_queue_m=0, red_queue_m=12, meters_per_vehicle=6)
+    base.update(kw)
+    return offramp_idle_cut(**base)
+
+
+def test_cuts_when_offramp_idle_and_onramp_waiting():
+    would, why = _cut()
+    assert would and "2.0 台" in why
+
+
+def test_never_before_min_green():
+    assert _cut(green_elapsed_sec=19)[0] is False
+
+
+def test_needs_two_consecutive_empty_samples():
+    """單次 0 可能只是漏框:上一筆有排隊或量不到都不切。"""
+    assert _cut(prev_green_queue_m=6)[0] is False
+    assert _cut(prev_green_queue_m=None)[0] is False
+    assert _cut(green_queue_m=None)[0] is False
+
+
+def test_needs_someone_waiting_on_onramp():
+    assert _cut(red_queue_m=3)[0] is False
+    assert _cut(red_queue_m=None)[0] is False
+
+
+def test_only_for_offramp_green():
+    assert _cut(green_is_priority=False)[0] is False
+
+
+def test_rule_shadow_never_sends():
+    """影子紀錄不可以碰任何下發函式。"""
+    src = (ROOT / "api" / "routes" / "signal_shadow.py").read_text(encoding="utf-8")
+    fn = [n for n in ast.walk(ast.parse(src))
+          if isinstance(n, ast.FunctionDef) and n.name == "_rule_shadow_record"][0]
+    called = {n.func.id for n in ast.walk(fn)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    assert not called & {"_actuate", "_daemon_post"}, called

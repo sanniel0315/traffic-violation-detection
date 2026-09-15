@@ -269,6 +269,40 @@ def decide(
     return d
 
 
+def offramp_idle_cut(*, green_is_priority: bool, green_elapsed_sec: float,
+                     min_green_sec: float, green_queue_m: Optional[float],
+                     prev_green_queue_m: Optional[float], red_queue_m: Optional[float],
+                     meters_per_vehicle: float = DEFAULT_METERS_PER_VEHICLE) -> tuple:
+    """候選規則(**只做影子評估,不下發**):下匝道綠燈沒人用、上匝道有車在等 → 可以切。
+
+    使用說明:
+        would, why = offramp_idle_cut(green_is_priority=True, green_elapsed_sec=25,
+                                      min_green_sec=20, green_queue_m=0, prev_green_queue_m=0,
+                                      red_queue_m=12, meters_per_vehicle=6)
+
+    為什麼要這條:09-15 07:00–08:30 計畫 35 給下匝道 45 秒綠燈,下匝道排隊平均 19 m
+    (儲車 600 m 的 3%),上匝道最大排隊 80~85 m;現行成本式因下匝道最小綠 20 秒,
+    把「等下匝道的車陸續到達」算得很重,幾乎不切下匝道。
+    條件(全部成立才判可切):
+      · 綠燈側是主線保護相(下匝道)—— 這條只處理下匝道
+      · 已過最小綠
+      · 下匝道**連續兩次取樣**(10 秒)排隊都是 0 —— 單次 0 可能只是偵測漏框
+      · 上匝道至少 1 台在等(排隊 ≥ 每車長度)
+    回傳 (would_switch: bool, 理由字串)。
+    """
+    if not green_is_priority:
+        return False, "綠燈不是下匝道"
+    if green_elapsed_sec < min_green_sec:
+        return False, "未滿最小綠 %.0f 秒" % min_green_sec
+    if green_queue_m is None or prev_green_queue_m is None:
+        return False, "下匝道排隊量不到"
+    if green_queue_m > 0 or prev_green_queue_m > 0:
+        return False, "下匝道仍有排隊 %.0f m" % max(green_queue_m, prev_green_queue_m)
+    if red_queue_m is None or red_queue_m < meters_per_vehicle:
+        return False, "上匝道沒有車在等"
+    return True, "下匝道連續 10 秒無排隊、上匝道 %.1f 台在等" % (red_queue_m / meters_per_vehicle)
+
+
 def compare(ours: Decision, theirs_action: Optional[str]) -> dict:
     """把我方影子決策與 OPAC 實際決策比對。theirs_action 為 None 表無對照。"""
     if theirs_action is None:
