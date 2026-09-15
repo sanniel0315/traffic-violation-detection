@@ -1442,7 +1442,8 @@ def _loop():
 
     prev_phase: Optional[int] = None
     green_since: float = time.time()
-    next_log: float = 0.0
+    next_log: float = 0.0          # 下一個紀錄格點
+    pending_switch = False         # 格點之間發生的換相,帶到下一筆紀錄
     while not _stop.is_set():
         try:
             live = _live_phase()
@@ -1553,25 +1554,28 @@ def _loop():
 
             # 🛑 先下發再寫這一筆 log —— 反過來的話這一筆決策的執行結果
             #    會落到下一筆去,稽核時對不上。
-            n_before = _act["n"]
             _actuate(d, g_no, live)
             with _lock:
                 _stats["decisions"] = _stats.get("decisions", 0) + 1
-            # 紀錄每 SHADOW_INTERVAL_SEC 秒一筆;有下發或換相的那一輪強制記(稽核要對得上)
-            # 🛑 用固定 5 秒格點,不是「距上次 ≥5 秒」:決策 2 秒一輪時,後者只會落在
-            #    6 秒(09-15 實測 16/21 筆間隔 6 秒),分析以一筆 = 5 秒積分會少算 20%。
-            #    格點法取最接近每個 5 秒點的那一輪,個別間隔 4/6 秒交錯、平均恰為 5 秒。
+            # 紀錄嚴格每 SHADOW_INTERVAL_SEC 秒一筆(固定格點)。
+            # 🛑 兩個踩過的坑(09-15 實測):
+            #    · 「距上次 ≥5 秒才記」在決策 2 秒一輪時只會落在 6 秒 → 積分少算 20%
+            #    · 「下發/換相那一輪強制多記一筆」→ 平均 4.6 秒一筆 → 積分多算 8%
+            #    所以不強制多記:格點之間發生的換相,帶到下一個格點那一筆記 actual=SWITCH
+            #    (最多晚 4 秒,比原本 5 秒取樣還準)。下發本身另有 signal_control_log 逐則紀錄。
+            if actual == "SWITCH":
+                pending_switch = True
             if not next_log:
                 next_log = now
-            on_grid = now >= next_log - DECISION_INTERVAL_SEC / 2.0
-            if not (_act["n"] != n_before or actual == "SWITCH" or on_grid):
+            if now < next_log - DECISION_INTERVAL_SEC / 2.0:
                 _fault["logic_fails"] = 0
                 _stop.wait(DECISION_INTERVAL_SEC)
                 continue
-            if on_grid:
-                next_log += SHADOW_INTERVAL_SEC          # 下一個格點
-                if next_log < now - SHADOW_INTERVAL_SEC:  # 落後太多(例如斷線後)就重新對齊
-                    next_log = now + SHADOW_INTERVAL_SEC
+            next_log += SHADOW_INTERVAL_SEC              # 下一個格點
+            if next_log < now - SHADOW_INTERVAL_SEC:     # 落後太多(例如斷線後)就重新對齊
+                next_log = now + SHADOW_INTERVAL_SEC
+            if pending_switch:
+                actual, pending_switch = "SWITCH", False
             # 候選規則影子評估(只記錄,不下發;失敗也不影響主迴圈)
             _rule_shadow_record(g_no, green_since, green_elapsed, min_green,
                                 q_map, bool(g_role.get("priority")), live)
