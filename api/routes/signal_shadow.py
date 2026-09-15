@@ -3274,7 +3274,7 @@ def _actual_runs_from_frames(since_iso: str, until_iso: str) -> Optional[list]:
     抄錄框 DB 不可用或該段沒框 → None(呼叫端退回取樣法並標示)。
     """
     try:
-        from api.routes.signal_tc3 import decode_frame, _QDB_PATH
+        from api.routes.signal_tc3 import decode_frame, _QDB_PATH, frame_is_stale_repeat
         import sqlite3 as _sq
         a = datetime.fromisoformat(since_iso).timestamp()
         b = datetime.fromisoformat(until_iso).timestamp()
@@ -3289,11 +3289,18 @@ def _actual_runs_from_frames(since_iso: str, until_iso: str) -> Optional[list]:
         return None
     segs = []
     cur = None
+    rep: dict = {}
     for ts, raw in rows:
         try:
             d = decode_frame(bytes.fromhex(str(raw).replace(" ", "")))
         except Exception:
             continue
+        if d is not None:
+            d["ts"] = float(ts)
+            # 🛑 控制器重送的舊框(16:05 起每 2 秒一次)會把上一相接回來,
+            #    切出 0~4 秒的假綠燈段(09-15 晚上 120 次「短於最小綠」都是它)
+            if frame_is_stale_repeat(rep, d):
+                continue
         ph = (d or {}).get("phase") or {}
         sp, st = ph.get("sub_phase_id"), ph.get("step_id")
         if sp is None:

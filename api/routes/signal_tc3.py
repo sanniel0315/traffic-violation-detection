@@ -726,6 +726,10 @@ def _recorder_loop() -> None:
                         if rec.get("code"):
                             _coverage[rec["code"]] += 1
                             _state["peer_note"] = ""
+                        if frame_is_stale_repeat(_rx_repeat, rec):
+                            # 重送/晚到的舊框:已抄錄、已轉中央,但不更新燈態、不進安全網
+                            _state["repeats"] = _state.get("repeats", 0) + 1
+                            continue
                         if rec.get("phase"):
                             _state["latest"] = rec
                             # 依設備位址各存一筆最新燈態 —— 一台控制器 = 一個路口。
@@ -887,6 +891,43 @@ def _safety_dedup_ok(key: str, window: float = 30.0) -> bool:
     _safety_dedup[key] = now
     return True
 
+
+
+REPEAT_WINDOW_SEC = 30.0
+
+
+def frame_is_stale_repeat(state: dict, rec: dict) -> bool:
+    """控制器重送的舊框 → True(不可拿來更新目前燈態 / 重建綠燈段)。
+
+    🛑 2026-09-15 16:05 起控制器每則訊框每 2 秒重送一次(最多 5~6 次),而且
+       晚到的舊框會排在新框後面到。舊邏輯把每次重送都當「最新燈態」並重新起算
+       倒數 —— 例如 00:09:50 的「分相 1 行人綠閃」一路重送到 00:09:58,
+       戰情就一直顯示上匝道綠燈,實際早已換到下匝道(現場回報「紅綠燈相反了」)。
+       判定:
+         · 30 秒內收過一模一樣的框(同序號、同內容)= 重送
+         · 5F03 序號比最新那則還舊(差 1~127)= 晚到的舊框
+    訊框本身照樣抄錄、照樣轉中央;這裡只決定要不要拿它更新狀態。
+    """
+    ts = float(rec.get("ts") or time.time())
+    raw = rec.get("raw") or ""
+    seen = state.setdefault("seen", {})
+    if len(seen) > 512:
+        for k in [k for k, t in seen.items() if ts - t > REPEAT_WINDOW_SEC]:
+            seen.pop(k, None)
+    t0 = seen.get(raw)
+    if t0 is not None and ts - t0 < REPEAT_WINDOW_SEC:
+        return True
+    seen[raw] = ts
+    seq = rec.get("seq")
+    if rec.get("phase") and isinstance(seq, int):
+        ls, lt = state.get("last_seq"), state.get("last_ts", 0.0)
+        if isinstance(ls, int) and ts - lt < REPEAT_WINDOW_SEC and 0 < (ls - seq) % 256 < 128:
+            return True
+        state["last_seq"], state["last_ts"] = seq, ts
+    return False
+
+
+_rx_repeat: dict = {}
 
 
 # 逐框追蹤的分相/步階時間。抄錄器每秒都收到 5F03,在這裡算才會精確 ——
