@@ -38,6 +38,12 @@ router = APIRouter(prefix="/api/signal/shadow", tags=["signal-shadow"])
 
 # 取樣週期(秒)。OPAC 是 5 秒一次決策，對齊它才好比對。
 SHADOW_INTERVAL_SEC = float(os.getenv("SIGNAL_SHADOW_INTERVAL_SEC", "5") or 5)
+# 決策(與下發)頻率。規範 16613 K(C)c(a):「每 1~2 秒決策應延長或終止當前的綠燈時相」。
+# 🛑 與紀錄頻率分開:signal_shadow_log 仍每 SHADOW_INTERVAL_SEC 秒一筆 —— 大量分析
+#    (延滯積分、綠燈長度重建、飽和流推估)與歷史資料都以「一筆 = 5 秒」為前提,
+#    直接把紀錄改成 2 秒會讓那些數字悄悄算錯。有下發或偵測到換相的那一輪一律強制記一筆。
+#    預設 = 紀錄頻率(行為不變);現場以環境變數設 2。
+DECISION_INTERVAL_SEC = float(os.getenv("SIGNAL_DECISION_INTERVAL_SEC", "") or SHADOW_INTERVAL_SEC)
 # 回堵判定比例(與決策引擎同一個值,不另外訂一套)
 from detection.signal_decision_engine import (  # noqa: E402
     DEFAULT_SPILLBACK_RATIO as DEFAULT_SPILLBACK_RATIO_LOCAL,
@@ -1436,6 +1442,7 @@ def _loop():
 
     prev_phase: Optional[int] = None
     green_since: float = time.time()
+    last_log: float = 0.0
     while not _stop.is_set():
         try:
             live = _live_phase()
@@ -1546,7 +1553,17 @@ def _loop():
 
             # 🛑 先下發再寫這一筆 log —— 反過來的話這一筆決策的執行結果
             #    會落到下一筆去,稽核時對不上。
+            n_before = _act["n"]
             _actuate(d, g_no, live)
+            with _lock:
+                _stats["decisions"] = _stats.get("decisions", 0) + 1
+            # 紀錄每 SHADOW_INTERVAL_SEC 秒一筆;有下發或換相的那一輪強制記(稽核要對得上)
+            if not (_act["n"] != n_before or actual == "SWITCH"
+                    or now - last_log >= SHADOW_INTERVAL_SEC - 0.05):
+                _fault["logic_fails"] = 0
+                _stop.wait(DECISION_INTERVAL_SEC)
+                continue
+            last_log = now
             # 候選規則影子評估(只記錄,不下發;失敗也不影響主迴圈)
             _rule_shadow_record(g_no, green_since, green_elapsed, min_green,
                                 q_map, bool(g_role.get("priority")), live)
@@ -1626,7 +1643,7 @@ def _loop():
                 _report()
             except Exception:
                 pass
-        _stop.wait(SHADOW_INTERVAL_SEC)
+        _stop.wait(DECISION_INTERVAL_SEC)
 
 
 def summarize(minutes: int = 60, since: Optional[str] = None,
@@ -1866,6 +1883,7 @@ def shadow_status(limit: int = Query(50, ge=1, le=500),
         "enabled": SHADOW_ENABLED,
         "running": running,
         "interval_sec": SHADOW_INTERVAL_SEC,
+        "decision_interval_sec": DECISION_INTERVAL_SEC,   # 規範 K(C)c(a) 要求 1~2 秒
         # 🛑 2026-09-07 改寫:別再說「影子」也別再說「OPAC 在控」。
         #    通訊已接上(中央↔控制器全部經由我方中繼),但控制未下發;
         #    而 OPAC 目前是停的,路口跑的是控制器內建時制。
