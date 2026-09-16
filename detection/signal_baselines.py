@@ -269,6 +269,12 @@ def run_benchmark(rate_fn, duration_sec: float, cfg: SimConfig,
                                 fixed_time(web["green"]), web))
     controllers.append(("actuated", "感應控制(gap-out 3 s)", actuated(3.0), {"gap_sec": 3.0}))
     controllers.append(("max_pressure", "MaxPressure", max_pressure(sat), {}))
+    # 🛑 滾動時程是**我方的候選新決策**,不是外部基準 —— 放在同一張表裡比,
+    #    是為了在上線前先用模擬證明它真的比現行的瞬時成本法好。
+    from detection.signal_rolling import rolling_horizon
+    controllers.append(("rolling", "我方候選:滾動時程(看未來一個週期)",
+                        rolling_horizon(rate_fn, sat, cfg),
+                        {"horizon_sec": 120.0, "grid_sec": 5.0}))
 
     out: dict = {"demand_veh": round(demand, 1),
                  "duration_sec": round(duration_sec, 1),
