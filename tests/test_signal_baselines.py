@@ -107,8 +107,9 @@ def test_benchmark_runs_all_controllers_on_same_demand():
     b = run_benchmark(_rate, 3600.0, CFG, _ours, start_phase=1,
                       plan_green={1: 35.0, 2: 40.0},
                       flow_veh_per_sec={1: 0.045, 2: 0.032})
+    # rolling = 我方候選的滾動時程決策(2026-09-16 加入,放同一張表才比得起來)
     assert set(b["results"]) == {"ours", "fixed_plan", "webster",
-                                 "actuated", "max_pressure"}
+                                 "actuated", "max_pressure", "rolling"}
     # 同一份需求
     assert abs(b["demand_veh"] - (0.045 + 0.032) * 3600) < 1.0
     for key, m in b["results"].items():
