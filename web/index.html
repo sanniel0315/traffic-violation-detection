@@ -4492,21 +4492,12 @@
               紅燈 = 車是停的,動畫必須停;清道 = 收尾,放很慢。 */
         .wr-flow.fl-stop  { animation:none; }
         .wr-flow.fl-clear { animation-duration:9s; }
-        /* 🛑 原本動 stroke-dashoffset(虛線流動),那也是每幀重繪整條路徑。
-           改成整條線的透明度呼吸:一樣看得出「這一相在放行」,但走合成層。 */
-        @keyframes wrFlow { 0%,100% { opacity:1; } 50% { opacity:.45; } }
+        @keyframes wrFlow { to { stroke-dashoffset:-23; } }
         /* 燈頭:綠燈呼吸、清道閃爍、紅燈靜止 */
-        /* 🛑 2026-09-16:脈動動畫一律用 transform,**不要動 r / stroke-dashoffset**。
-           動 r 是幾何屬性,瀏覽器每一幀都要重新排版+重繪整張地圖 SVG;戰情牆上同時
-           還在解 4 路影片,主執行緒被吃掉就看到影片頓(現場回報「會卡頓」)。
-           transform + opacity 走合成層,不碰版面。transform-box:fill-box 讓 SVG
-           圖形以自己的中心縮放,否則會以整張 SVG 的原點縮放,圖形會飛走。 */
-        .wr-lamp { transition:fill .25s ease; transform-box:fill-box; transform-origin:center;
-                   will-change:transform, opacity; }
+        .wr-lamp { transition:fill .25s ease; }
         .wr-lamp.green { animation:wrBreathe 2.4s ease-in-out infinite; }
         .wr-lamp.amber { animation:wrBlink .7s steps(2) infinite; }
-        @keyframes wrBreathe { 0%,100% { transform:scale(1); opacity:1; }
-                               50% { transform:scale(1.28); opacity:.82; } }
+        @keyframes wrBreathe { 0%,100% { r:7; opacity:1; } 50% { r:9; opacity:.82; } }
         @keyframes wrBlink { 0%,100% { opacity:1; } 50% { opacity:.35; } }
         /* 相機點:判級越高脈動越明顯;未量到與離線不動 */
         /* ── 路口圖的號誌燈頭 ────────────────────────────────────
@@ -4551,8 +4542,7 @@
         .wr-cam-mk.lv3 { animation:wrPulse 1.7s ease-in-out infinite; }
         .wr-cam-mk.lv4 { animation:wrPulse 1s ease-in-out infinite; }
         .wr-cam-mk.off { opacity:.45; }
-        .wr-cam-mk { transform-box:fill-box; transform-origin:center; will-change:transform; }
-        @keyframes wrPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.36); } }
+        @keyframes wrPulse { 0%,100% { r:7; } 50% { r:9.5; } }
         /* 狀態列的色點跟著地圖一起脈動,兩邊對得起來 */
         .wr-camcell .wr-cdot.lv3 { animation:wrDot 1.7s ease-in-out infinite; }
         .wr-camcell .wr-cdot.lv4 { animation:wrDot 1s ease-in-out infinite; }
