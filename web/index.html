@@ -14853,7 +14853,7 @@ const attachGo2rtc=(el,url)=>{
         //    同一時刻我從本機開一條獨立 MSE 連線接同樣那兩路,拿得到完整
         //    1.03~1.14 Mbps —— 證明來源與編碼器都沒問題,問題在同時兩條。
         //    🛑 mode 必須在指派 src **之前**設好,VideoRTC 是連線時才讀它。
-        const _m = el.getAttribute && el.getAttribute('data-go2rtc-mode');
+        const _m = _go2rtcMode(el);
         if(_m) node.mode = _m;
         if(node.__go2rtcSrc !== el.__go2rtcUrl){
             // 🛑 換串流一定要重建元素,不能只改 src。
@@ -14881,6 +14881,13 @@ const attachGo2rtc=(el,url)=>{
 //    轉圈(2026-08-27 VPN 現場實測)。等幾秒沒影像就整個 <video-stream> 重建
 //    重連,此時編碼器已被心跳養起來,第二次一定接得上。
 const _go2rtcAlive=(el)=>{ const v=el.querySelector('video'); return !!(v && v.videoWidth); };
+// 🛑 2026-09-16:釘死 webrtc 在**跨網段**的戰情牆上等於沒有畫面 —— WebRTC 的媒體走
+//    UDP 8555,戰情牆在 10.21.50.x、主機在 10.42.38.x,中間把 UDP 擋掉:WS 訊號連得上
+//    (現場實測 5 條 established),影像永遠不來,watchdog 用同一種方式重試 6 次也救不回。
+//    改成「換方式」而不是「一直重試同一種」:webrtc → mse(同一條 WS,走 TCP,跨網段一定通)
+//    → mjpeg(最後退路)。一次只有一種,不會回到 2026-09-07 兩條並存互搶的老問題。
+const _GO2RTC_FALLBACK = ['mse', 'mjpeg'];
+const _go2rtcMode=(el)=>el.__go2rtcMode || (el.getAttribute && el.getAttribute('data-go2rtc-mode')) || '';
 const _armGo2rtcWatch=(el)=>{
     if(el.__go2rtcWatch){ clearInterval(el.__go2rtcWatch); }
     el.__go2rtcRetries=0;
@@ -14891,14 +14898,22 @@ const _armGo2rtcWatch=(el)=>{
         if(document.hidden)return;                  // 背景分頁不折騰
         if(_go2rtcAlive(el)){ el.__go2rtcRetries=0; return; }
         el.__go2rtcRetries++;
-        if(el.__go2rtcRetries>6){                   // 最多重試 6 次(~36 秒),避免無限打
+        // 重試兩次還是沒畫面 → 換下一種傳輸方式(這一格記住,重連也照用)
+        if(el.__go2rtcRetries===3 || el.__go2rtcRetries===5){
+            const next=_GO2RTC_FALLBACK[el.__go2rtcRetries===3?0:1];
+            if(_go2rtcMode(el)!==next){
+                el.__go2rtcMode=next;
+                try{ console.warn('[go2rtc] 沒有畫面,改用 '+next+':'+el.__go2rtcUrl); }catch(e){}
+            }
+        }
+        if(el.__go2rtcRetries>8){                   // 三種都試過還是沒有 → 停手,避免無限打
             clearInterval(el.__go2rtcWatch); el.__go2rtcWatch=null; return;
         }
         const old=el.querySelector('video-stream');
         if(old)old.remove();
         const node=document.createElement('video-stream');
         el.appendChild(node);
-        const _m=el.getAttribute && el.getAttribute('data-go2rtc-mode');
+        const _m=_go2rtcMode(el);
         if(_m) node.mode=_m;          // 重建也要釘住,否則重連又變成兩條並存
         node.__go2rtcSrc=el.__go2rtcUrl;
         node.src=el.__go2rtcUrl;
