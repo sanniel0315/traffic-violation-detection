@@ -9737,6 +9737,7 @@
                                                  剛好 webrtc 全 0,樣本太少就下了結論。 -->
                                             <div v-if="warCamWs(cam.camera_id)" class="go2rtc-host wr-cam-live"
                                                  :data-wrcam="cam.camera_id" data-go2rtc-mode="mse"
+                                                 data-go2rtc-buf="4"
                                                  v-go2rtc="warCamWs(cam.camera_id)"></div>
                                             <img v-else :src="sigLiveSrc(cam.camera_id)" :alt="cam.name"
                                                  @error="sigLiveErr[cam.camera_id]=true"
@@ -14818,6 +14819,17 @@ const BUF_TARGET = 2.0;
 // 死區也要跟著放大,否則在 2 秒目標附近會一直來回改速率
 const BUF_HIGH = 0.6, BUF_LOW = 0.5;
 const RATE_UP = 1.06, RATE_DOWN = 0.96;
+// 🛑 2026-09-16:緩衝改成**每一格自己會長**。現場實測主機 → 戰情牆那台
+//    (10.21.50.143)延遲 34~1413 ms、抖動 ±446 ms,0% 遺失;同一張網卡對路由器
+//    與相機都是 0.6 ms。抖動比固定的 2 秒目標大,畫面就會停。
+//    每次瀏覽器因為沒資料而停(waiting)就把目標加 1 秒,上限 6 秒;
+//    線路好的機器(監控頁、本機)不會觸發,維持 2 秒低延遲。
+const BUF_MAX = 6.0;
+const BUF_STEP = 1.0;
+const _bufTarget = (v) => {
+    const base = Number(v && v.__bufBase);
+    return Math.min(BUF_MAX, (isFinite(base) && base > 0 ? base : BUF_TARGET) + (v.__bufGrow || 0));
+};
 const clampGo2rtcPlaybackRate = (node, tries = 0) => {
     const v = node && node.querySelector && node.querySelector('video');
     if (!v) {
@@ -14825,6 +14837,18 @@ const clampGo2rtcPlaybackRate = (node, tries = 0) => {
         return;
     }
     if (v.__rateClamped) return;
+    // 容器可以指定起始緩衝秒數(戰情牆線路抖,給大一點)
+    const host = node.closest && node.closest('[data-go2rtc-buf]');
+    const want = host && Number(host.getAttribute('data-go2rtc-buf'));
+    if (isFinite(want) && want > 0) v.__bufBase = want;
+    v.__bufGrow = 0;
+    v.addEventListener('waiting', () => {
+        // 停頓就把目標往上加,加到吃得下這條線路的抖動為止
+        if (_bufTarget(v) < BUF_MAX) {
+            v.__bufGrow = (v.__bufGrow || 0) + BUF_STEP;
+            try { console.warn('[go2rtc] 畫面停頓,緩衝目標提高到 ' + _bufTarget(v) + ' 秒'); } catch (e) {}
+        }
+    });
     const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'playbackRate');
     if (!desc || !desc.set) return;
     try {
@@ -14834,9 +14858,10 @@ const clampGo2rtcPlaybackRate = (node, tries = 0) => {
             set(gapAsRate) {
                 const gap = Number(gapAsRate);
                 let rate = 1.0;
+                const target = _bufTarget(this);
                 if (isFinite(gap)) {
-                    if (gap > BUF_TARGET + BUF_HIGH) rate = RATE_UP;        // 落後 → 微幅追
-                    else if (gap < BUF_TARGET - BUF_LOW) rate = RATE_DOWN; // 快見底 → 微幅放慢
+                    if (gap > target + BUF_HIGH) rate = RATE_UP;        // 落後 → 微幅追
+                    else if (gap < target - BUF_LOW) rate = RATE_DOWN; // 快見底 → 微幅放慢
                 }
                 desc.set.call(this, rate);
             },
