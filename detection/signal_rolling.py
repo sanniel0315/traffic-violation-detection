@@ -72,8 +72,19 @@ def forward_delay(rate_fn: Callable, sat: dict, cfg, t0: float, green: int,
 
 def plan_extra_green(rate_fn: Callable, sat: dict, cfg, t0: float, green: int,
                      q0: dict, elapsed: float, horizon_sec: float = 120.0,
-                     grid_sec: float = 5.0) -> dict:
-    """本相還該再給幾秒?回傳 {best_sec, delay_by_sec, switch_now}。"""
+                     grid_sec: float = 2.0,
+                     switch_margin_veh_sec: float = 0.0) -> dict:
+    """本相還該再給幾秒?回傳 {best_sec, delay_by_sec, switch_now}。
+
+    🛑 grid_sec 預設 2 秒,不是 5 秒。切換時機的解析度直接決定成效:
+       2026-09-16 實測(09-14 全天)網格 10 秒 45.8 秒/車、5 秒 33.5、2 秒 32.3;
+       網格 5 秒時晨峰還會輸感應控制 8~16%,改 2 秒之後各到達率都贏。
+
+    🛑 switch_margin_veh_sec 預設 0(不啟用)。曾經想用「要明顯比較好才切」來抑制
+       切換次數,實測是**反效果**:門檻 4 車·秒就幾乎不切了(1 小時只切 36 次 =
+       全部跑到最大綠),每車延滯從 15.8 秒惡化到 43.9 秒。
+       真正的病因是網格太粗,不是切太多。參數留著但別再打開,除非有新證據。
+    """
     min_green = float((getattr(cfg, "min_green_sec", {}) or {}).get(green, 10.0))
     max_green = float(getattr(cfg, "max_green_sec", 100.0) or 100.0)
     lo = max(0.0, min_green - elapsed)                 # 最小綠還沒滿就不能切
@@ -89,15 +100,25 @@ def plan_extra_green(rate_fn: Callable, sat: dict, cfg, t0: float, green: int,
     for c in cands:
         d = forward_delay(rate_fn, sat, cfg, t0, green, q0, c, horizon_sec, grid_sec)
         table[c] = round(d, 1)
+        # 平手時偏向**續綠**(候選由小到大,所以要嚴格小於才換掉最佳解)
         if best_d is None or d < best_d - 1e-9:
             best, best_d = c, d
-    return {"best_sec": best, "delay": round(best_d or 0.0, 1),
-            "delay_by_sec": table, "switch_now": bool(best is not None and best <= 0.0)}
+    # 立刻切的代價 vs 再給一點時間的最好結果 —— 差得夠多才值得切
+    d_now = table.get(0.0)
+    d_keep = min([v for k, v in table.items() if k > 0.0] or [None])
+    switch_now = bool(d_now is not None and d_keep is not None
+                      and d_now <= d_keep - switch_margin_veh_sec)
+    if d_keep is None:                      # 沒有「再給」的選項(已到最大綠)
+        switch_now = d_now is not None
+    return {"best_sec": 0.0 if switch_now else (best if best else 0.0),
+            "delay": round(best_d or 0.0, 1), "delay_by_sec": table,
+            "switch_now": switch_now, "margin_veh_sec": switch_margin_veh_sec}
 
 
 def rolling_horizon(rate_fn: Callable, sat: dict, cfg,
-                    horizon_sec: float = 120.0, grid_sec: float = 5.0,
-                    replan_sec: float = 5.0) -> Callable:
+                    horizon_sec: float = 120.0, grid_sec: float = 2.0,
+                    replan_sec: float = 5.0,
+                    switch_margin_veh_sec: float = 8.0) -> Callable:
     """給模擬器用的 switch_fn:滾動時程控制。
 
     🛑 重新規劃的頻率(replan_sec)是效能與品質的取捨 —— 每步都重算在
@@ -112,7 +133,7 @@ def rolling_horizon(rate_fn: Callable, sat: dict, cfg,
         box["t"] = t
         plan = plan_extra_green(rate_fn, sat, cfg, t, int(state["green_phase"]),
                                 state["queue_veh"], float(state["green_elapsed"]),
-                                horizon_sec, grid_sec)
+                                horizon_sec, grid_sec, switch_margin_veh_sec)
         box["want"] = plan["switch_now"]
         return box["want"]
 
