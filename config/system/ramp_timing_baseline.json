@@ -11,8 +11,8 @@
       "ramp": "下匝道",
       "label": "出口",
       "green_directions": [
-        "東",
-        "西"
+        "北",
+        "南"
       ],
       "storage_m": 600,
       "spill_to": "國道主線",
@@ -35,8 +35,8 @@
       "ramp": "上匝道",
       "label": "入口",
       "green_directions": [
-        "北",
-        "南"
+        "東",
+        "西"
       ],
       "storage_m": 210,
       "spill_to": "平面路口",
