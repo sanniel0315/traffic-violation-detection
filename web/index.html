@@ -4494,6 +4494,12 @@
         .wr-flow.fl-clear { animation-duration:9s; }
         @keyframes wrFlow { to { stroke-dashoffset:-23; } }
         /* 燈頭:綠燈呼吸、清道閃爍、紅燈靜止 */
+        /* 🛑 2026-09-16 踩過:把這裡的脈動改成 transform:scale + transform-box:fill-box
+           + will-change(想省重繪),結果**整張地圖的燈號圖示不見了**(現場回報
+           「路口燈態沒出現」),已整段還原。Leaflet 自己會管這些 SVG 圖形的座標與
+           重繪,不要對它畫出來的 circle 加 transform 相關屬性。
+           動 r 確實比較耗,但實測卡頓的真因是線路抖動(見下方 BUF_TARGET 的說明),
+           不是這裡 —— 要再動這段之前先確認地圖還畫得出來。 */
         .wr-lamp { transition:fill .25s ease; }
         .wr-lamp.green { animation:wrBreathe 2.4s ease-in-out infinite; }
         .wr-lamp.amber { animation:wrBlink .7s steps(2) infinite; }
