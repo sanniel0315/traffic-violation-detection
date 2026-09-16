@@ -4315,6 +4315,9 @@
         .wr-rel-run { font-size:var(--fs-small); color:var(--gov-ok); font-weight:600;
                       animation:wrRunPulse 1.8s ease-in-out infinite; }
         .wr-rel-run::before { content:'●'; margin-right:4px; font-size:.8em; }
+        /* 時制設定值:排在量測值旁邊,小一號、灰色 —— 它是對照用的,不是主角 */
+        .wr-rel-plan { font-style:normal; color:var(--gov-mute-2); font-size:var(--fs-caption);
+                       margin-left:4px; }
         @keyframes wrRunPulse { 0%,100%{ opacity:1; } 50%{ opacity:.4; } }
         @media (prefers-reduced-motion: reduce) { .wr-rel-run { animation:none; } }
 
@@ -9631,7 +9634,10 @@
                                         <!-- 🛑 2026-09-13 使用者:「前次 41 秒」太不直覺 ——
                                              光看數字不知道那是綠燈長度還是等待時間還是間隔。
                                              寫明是「上一次綠燈亮了幾秒」。 -->
-                                        上次綠燈 <b>{{ col.rel.last_sec==null?'—':col.rel.last_sec }}</b> 秒</span>
+                                        上次綠燈 <b>{{ col.rel.last_sec==null?'—':col.rel.last_sec }}</b> 秒<i
+                                            v-if="col.planGreen" class="wr-rel-plan"
+                                            :title="'這一相在時制計畫 ' + (sigPlan.plan&&sigPlan.plan.plan_id) + ' 設定的綠燈秒數(控制器現值)。實際量到的秒數會因為控制器漏框而偏短。'"
+                                            >（設定 {{ col.planGreen }} 秒）</i></span>
                                     <!-- 🛑 這個標籤只會出現在「正在放行」那一欄。用 v-if 的話
                                          兩欄的這一列寬度不同,窄螢幕會其中一欄換行 → 高度不齊。
                                          改成永遠在 DOM 裡,用 visibility 控制顯示,佔位一致。 -->
@@ -27280,6 +27286,8 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             phases.sort((a, b) => b - a);
             return phases.map((ph) => {
                 const meta = sigPhaseMeta.value[ph] || {ramp: '分相 ' + ph, zone: ''};
+                // 這一相在目前時制計畫設定的綠燈秒數(後端由控制器現值同步而來)
+                const planGreen = (((sigPlan.value || {}).plan || {}).green_sec || {})[String(ph)] || null;
                 const isGreen = (d.green_phase === ph);
                 // 🛑 三種狀態要分開,不能把清道也算成綠燈:
                 //    清道(黃燈/全紅)期間車流已經在停,顯示成「放行中」會誤導,
@@ -27332,7 +27340,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 const remainPct = (remain != null && _tot) ?
                     Math.max(0, Math.min(100, Math.round(remain / _tot * 100))) : null;
                 return {
-                    phase: ph, ramp: meta.ramp, zone: meta.zone,
+                    phase: ph, ramp: meta.ramp, zone: meta.zone, planGreen,
                     remain: remain, remainPct: remainPct, remainTotal: _tot,
                     isGreen: isGreen, stateText: stateText,
                     stateCls: stateCls, lampCls: lampCls,

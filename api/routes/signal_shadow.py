@@ -2592,10 +2592,15 @@ def shadow_plan(_user=Depends(get_current_user)):
         "step_id": live.get("step_id"),
         "green_phase": g_no, "red_phase": r_no,
         "green_elapsed_sec": round(green_elapsed, 1),
+        # 🛑 green_sec = 這套時制**設定**的各相綠燈(現場最後寫進控制器的值,
+        #    與 5F45 查回一致)。戰情的「上次綠燈」是實際量到的秒數,兩者要並列:
+        #    控制器漏框時量到的會偏短(2026-09-16 現場看到 26 秒、設定是 35 秒),
+        #    只顯示量測值會讓人以為時制被改掉了。
         "plan": {"plan_id": plan_id, "min_green_sec": min_green,
                  "max_green_sec": max_green,
                  "cycle": pp.get("cycle"), "yellow": pp.get("yellow"),
-                 "all_red": pp.get("all_red")},
+                 "all_red": pp.get("all_red"),
+                 "green_sec": {"1": pp.get("phase1_green"), "2": pp.get("phase2_green")}},
         "green_side": side(green, roles[g_no]),
         "red_side": side(red, roles[r_no]),
         # 🛑 2026-09-11 重構:分相 ↔ 匝道 的對應**只有一份真相**,就是
