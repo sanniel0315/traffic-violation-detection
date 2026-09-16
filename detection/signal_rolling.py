@@ -118,7 +118,7 @@ def plan_extra_green(rate_fn: Callable, sat: dict, cfg, t0: float, green: int,
 def rolling_horizon(rate_fn: Callable, sat: dict, cfg,
                     horizon_sec: float = 120.0, grid_sec: float = 2.0,
                     replan_sec: float = 5.0,
-                    switch_margin_veh_sec: float = 8.0) -> Callable:
+                    switch_margin_veh_sec: float = 0.0) -> Callable:
     """給模擬器用的 switch_fn:滾動時程控制。
 
     🛑 重新規劃的頻率(replan_sec)是效能與品質的取捨 —— 每步都重算在

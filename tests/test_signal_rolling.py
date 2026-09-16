@@ -68,3 +68,23 @@ def test_switch_fn_is_usable_in_the_simulator():
     sim = simulate(lambda t, p: 0.05, fn, 600.0, cfg, init_queue_veh={1: 2.0, 2: 2.0})
     assert sim["switch_count"] >= 1
     assert sim["total_delay_veh_sec"] > 0
+
+
+def test_defaults_do_not_enable_the_switch_margin():
+    """🛑 2026-09-16 踩過:只改了內層函式的預設,rolling_horizon 仍留 8.0,
+       整輪驗證都跑成「幾乎不切、全部撞最大綠」,數字全錯。兩處要一致。"""
+    import inspect
+    from detection.signal_rolling import plan_extra_green as pe, rolling_horizon as rh
+    for fn in (pe, rh):
+        assert inspect.signature(fn).parameters["switch_margin_veh_sec"].default == 0.0
+        assert inspect.signature(fn).parameters["grid_sec"].default == 2.0
+
+
+def test_switch_margin_blocks_switching_when_enabled():
+    """門檻真的會抑制切換(留著參數就要有測試說明它的作用)。"""
+    cfg = _cfg()
+    q = {1: 0.0, 2: 8.0}
+    assert plan_extra_green(lambda t, p: 0.02, SAT, cfg, 0.0, 1, q, 15.0,
+                            switch_margin_veh_sec=0.0)["switch_now"] is True
+    assert plan_extra_green(lambda t, p: 0.02, SAT, cfg, 0.0, 1, q, 15.0,
+                            switch_margin_veh_sec=1e6)["switch_now"] is False
