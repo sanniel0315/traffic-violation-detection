@@ -1001,6 +1001,26 @@ def _touch_http_mjpeg_worker(state: dict | None) -> None:
 _VIDEO_FILE_EXTS = (".mp4", ".mkv", ".mov", ".avi", ".webm")
 
 
+def bbox_iou(a: dict, b: dict) -> float:
+    """兩個框的重疊比例(IoU)。同一台車連續兩幀會很高,前後兩台車會很低。
+
+    斷面計數的去重用它:track 在斷面附近斷掉重新編號時,舊的「已算過」記錄跟著失效,
+    同一台車會被算第二次(2026-09-17 實測 WN-1 8%、NE-2 4%)。看框重疊就跟編號無關。
+    """
+    try:
+        ax1, ay1, ax2, ay2 = float(a["x1"]), float(a["y1"]), float(a["x2"]), float(a["y2"])
+        bx1, by1, bx2, by2 = float(b["x1"]), float(b["y1"]), float(b["x2"]), float(b["y2"])
+    except Exception:
+        return 0.0
+    iw = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    ih = max(0.0, min(ay2, by2) - max(ay1, by1))
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    ua = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
+    return inter / ua if ua > 0 else 0.0
+
+
 def _is_file_backed_source(source) -> bool:
     """來源是不是「上傳的影片檔」(而非 RTSP/NVR 攝影機)。
 
@@ -2516,6 +2536,10 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
     # zone id -> [sum|Δt|, n]:同一條 track 相鄰兩幀沿行進軸的位移量。
     # 窄帶要比它寬,車才保證至少被看到一次落在帶內。
     _zone_step: dict = {}
+    # zone id -> [(ts, bbox)]:最近在斷面計到的車,用來擋「同一台車被重新編號後再算一次」。
+    _zone_recent: dict = {}
+    _flow_dedup_stat = [0]          # 被擋掉的重複計數(累積);同時寫進 detection_services 供查
+
 
     def _zone_note_motion(zone: dict, prev, cur) -> None:
         """累積該 zone 內觀測到的位移向量,用來決定「行進方向」。"""
@@ -3242,6 +3266,9 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 #                   過中心),**不修改任何 ROI 設定**。
                 #   cooldown(舊行為) 同 track 同 zone 每 30 秒可再計一次
                 _FLOW_COUNT_MODE = str(os.getenv("SIGNAL_FLOW_COUNT_MODE", "enter") or "enter").lower()
+                # 斷面去重:同一斷面 N 秒內、框重疊 IoU 超過門檻 = 同一台車(對 track 重新編號免疫)
+                _FLOW_DEDUP_SEC = float(os.getenv("SIGNAL_FLOW_DEDUP_SEC", "1.5") or 1.5)
+                _FLOW_DEDUP_IOU = float(os.getenv("SIGNAL_FLOW_DEDUP_IOU", "0.4") or 0.4)
                 # 🛑 2026-09-12:長框的重複計數防治。
                 #    車輛在長條形 ROI 裡走很久,追蹤 ID 中途斷掉再接上,就會被當成
                 #    「又有一台車進框」再算一次 —— 框越長、斷得越多。實測:WN-2 的框
@@ -3386,6 +3413,33 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             _band = max(25.0, min(150.0, 2.0 * _step))
                             if abs(_tcur - _line[2]) > _band:
                                 continue          # 還沒進到斷面帶
+                            # 🛑 2026-09-17:去重不可以只靠 track_id。
+                            #    這個路口的 track 在斷面附近會斷掉重新編號,新的 id 沒有
+                            #    「已算過」的記錄 → **同一台車再算一次**。實測 0.01~1.2 秒內
+                            #    出現框幾乎重疊的重複事件:WN-1 8%、NE-2 4%、NE-1 2%、WN-2 1%。
+                            #    (窄帶判定是 09-13 為了救「破碎導致整台漏掉」才改的,
+                            #     漏算解決了,多算就浮出來 —— 兩者要分開處理。)
+                            #    改成看**實體**:同一斷面、極短時間內、框幾乎重疊 = 同一台車。
+                            #    這對重新編號免疫,而且真的兩台車前後過線時框不會重疊。
+                            if _FLOW_DEDUP_SEC > 0:
+                                _b0 = v.get("bbox", {}) or {}
+                                _recent = _zone_recent.setdefault(id(pick_zone), [])
+                                _recent[:] = [x for x in _recent if now_ts - x[0] <= _FLOW_DEDUP_SEC]
+                                _dup = False
+                                for _t0, _bx in _recent:
+                                    if bbox_iou(_b0, _bx) >= _FLOW_DEDUP_IOU:
+                                        _dup = True
+                                        break
+                                if _dup:
+                                    _flow_dedup_stat[0] += 1
+                                    try:
+                                        detection_services.setdefault(camera_id, {})[
+                                            "flow_dedup_suppressed"] = _flow_dedup_stat[0]
+                                    except Exception:
+                                        pass
+                                    _inz.add(_zone_log_key)   # 這一趟就算過了,別再重複
+                                    continue
+                                _recent.append((now_ts, dict(_b0)))
                             _inz.add(_zone_log_key)
                         else:
                             _inz = _track_state.setdefault("_in_zone", set())
