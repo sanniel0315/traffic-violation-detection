@@ -2296,7 +2296,19 @@ SIGNAL_HEADS_PATH = os.getenv(
     if _CONN_PATH else "/workspace/config/system/signal_heads.json")
 
 # 分相對應是現場事實,不開放從前端改 —— 只有座標可以拖。
-SIGNAL_HEAD_PHASE = {1: 2, 2: 2, 3: 1, 5: 1, 6: 1}
+# 🛑 燈頭綁的是**匝道**(1、2 號燈在下匝道;3、5、6 號燈在上匝道),分相編號由
+#    ramp_timing_baseline.json 的 phases 推導。現場改線路對調時只改那個檔,
+#    這裡不用動 —— 2026-09-16 對調前這裡是寫死的 {1:2,2:2,3:1,5:1,6:1}。
+SIGNAL_HEAD_RAMP = {1: "off_ramp", 2: "off_ramp", 3: "on_ramp", 5: "on_ramp", 6: "on_ramp"}
+
+
+def _head_phase(head_id: int) -> int:
+    from detection.signal_timing_lookup import phase_of_role
+    return phase_of_role(SIGNAL_HEAD_RAMP.get(head_id, "on_ramp"))
+
+
+def _head_phases() -> dict:
+    return {hid: _head_phase(hid) for hid in SIGNAL_HEAD_RAMP}
 
 
 def _load_signal_heads() -> dict:
@@ -2312,9 +2324,10 @@ def _load_signal_heads() -> dict:
 async def signal_heads_get(_user=Depends(get_current_user)):
     saved = _load_signal_heads()
     out = []
-    for hid in sorted(SIGNAL_HEAD_PHASE):
+    phases = _head_phases()
+    for hid in sorted(phases):
         pos = saved.get(hid) or {}
-        out.append({"id": hid, "phase": SIGNAL_HEAD_PHASE[hid],
+        out.append({"id": hid, "phase": phases[hid],
                     "lat": pos.get("lat"), "lng": pos.get("lng"),
                     "placed": bool(pos.get("lat") is not None and pos.get("lng") is not None)})
     n = sum(1 for x in out if x["placed"])
@@ -2341,7 +2354,7 @@ async def signal_heads_set(request: Request, _user=Depends(get_current_user)):
             lat, lng = float(body.get("lat")), float(body.get("lng"))
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="需要 id / lat / lng")
-        if hid not in SIGNAL_HEAD_PHASE:
+        if hid not in SIGNAL_HEAD_RAMP:
             raise HTTPException(status_code=400, detail="燈號只有 1~5")
         # 🛑 擋掉明顯離譜的座標:拖到地圖外或程式算錯時,寧可拒絕也不要存進去
         #    —— 存了之後圖上會有一座燈飛到海裡,而且看不出來是什麼時候壞的。
@@ -2357,7 +2370,7 @@ async def signal_heads_set(request: Request, _user=Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"存檔失敗: {exc}")
     add_log("info", "號誌燈頭位置更新: %s" % ("清除全部" if body.get("reset") else
                                               "燈 %s" % body.get("id")), "signal")
-    return {"ok": True, "placed_count": len(saved), "total": len(SIGNAL_HEAD_PHASE)}
+    return {"ok": True, "placed_count": len(saved), "total": len(SIGNAL_HEAD_RAMP)}
 
 
 # ── A/B 交替排程 ────────────────────────────────────────────────────

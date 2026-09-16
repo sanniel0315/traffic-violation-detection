@@ -72,13 +72,20 @@ def test_input_shadow_arrival_counts_flips(tmp_path, monkeypatch):
     c = sqlite3.connect(str(db))
     c.execute("""CREATE TABLE signal_input_shadow (id INTEGER PRIMARY KEY, ts TEXT, epoch REAL,
                  green_phase INTEGER, green_elapsed REAL, min_green REAL, max_green REAL,
-                 queue_m_1 REAL, queue_m_2 REAL, arr1_stop REAL, arr1_up REAL, arr2 REAL)""")
+                 queue_m_1 REAL, queue_m_2 REAL, arr1_stop REAL, arr1_up REAL, arr2 REAL,
+                 on_phase INTEGER)""")
     from datetime import datetime
     ep = datetime(2026, 9, 15, 10, 0).timestamp()
+    from detection.signal_timing_lookup import phase_of_role
+    on_ph = phase_of_role("on_ramp")           # 上匝道是哪一相依基準表(現場會對調)
+    off_ph = 2 if on_ph == 1 else 1
+    q = {on_ph: 0, off_ph: 30}
     c.execute("INSERT INTO signal_input_shadow(ts,epoch,green_phase,green_elapsed,min_green,max_green,"
-              "queue_m_1,queue_m_2,arr1_stop,arr1_up,arr2) VALUES('x',?,1,25,10,100,0,30,0,20,3)", (ep,))
+              "queue_m_1,queue_m_2,arr1_stop,arr1_up,arr2,on_phase) VALUES('x',?,?,25,10,100,?,?,0,20,3,?)",
+              (ep, on_ph, q[1], q[2], on_ph))
     c.commit(); c.close()
     monkeypatch.setattr(S, "_db", lambda: sqlite3.connect(str(db)))
     r = S.input_shadow_arrival(since="2026-09-15T09:00:00", until="2026-09-15T11:00:00", _user=None)
-    f = r["decision_flips"]["分相1(上匝道綠燈)"]
+    from detection.signal_timing_lookup import ramp_name
+    f = r["decision_flips"]["分相%d(%s綠燈)" % (on_ph, ramp_name(on_ph))]
     assert f["n"] == 1 and f["SWITCH→KEEP"] == 1

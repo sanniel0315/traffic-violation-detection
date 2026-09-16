@@ -36,7 +36,7 @@
 安全約束（與官方時制表對齊，見 signal_timing_lookup）：
     - min_green 未滿一律 KEEP（不可提早切）
     - max_green 到頂強制 SWITCH（forced）
-    - 主線保護：分相2(下匝道)排隊逼近儲車上限時不可被切走
+    - 主線保護：下匝道那一相排隊逼近儲車上限時不可被切走(編號見基準表 priority)
 """
 from __future__ import annotations
 
@@ -327,7 +327,7 @@ def evaluate_outcome(samples: list) -> dict:
 
     samples: [{"queue_m_1":.., "queue_m_2":.., "storage_1":.., "storage_2":..,
                "interval_sec":.., "switched": bool}, ...]
-      queue_m_1/2 = 分相1(上匝道)/分相2(下匝道)當下排隊公尺
+      queue_m_1/2 = 分相1/分相2 當下排隊公尺(哪一相是哪條匝道見基準表)
       interval_sec = 這筆樣本代表的時間長度
       switched = 這筆是否發生相位切換
 
@@ -335,7 +335,8 @@ def evaluate_outcome(samples: list) -> dict:
       total_delay_veh_sec  總延滯(車·秒) —— 最主要的目標
       avg_queue_m_1/2      各匝道平均排隊
       max_queue_m_1/2      各匝道最大排隊
-      spillback_events_2   分相2(下匝道)排隊逼近儲車上限的次數 ← 主線回堵風險
+      spillback_events_1/2 各相排隊逼近儲車上限的次數;主線回堵看的是下匝道那一相
+                           (編號依 ramp_timing_baseline.json,不固定是分相2)
       switch_count         切換次數(太頻繁 = 浪費在換相損失)
       switch_per_min       每分鐘切換次數
     """
@@ -345,6 +346,7 @@ def evaluate_outcome(samples: list) -> dict:
     total_delay = 0.0
     q1 = []
     q2 = []
+    spill1 = 0
     spill2 = 0
     switches = 0
     total_sec = 0.0
@@ -357,6 +359,9 @@ def evaluate_outcome(samples: list) -> dict:
         q2.append(b)
         # 延滯 = 排隊車數 × 這段時間(車·秒)
         total_delay += ((a + b) / mpv) * dt
+        st1 = s.get("storage_1")
+        if st1 and a / float(st1) >= DEFAULT_SPILLBACK_RATIO:
+            spill1 += 1
         st2 = s.get("storage_2")
         if st2 and b / float(st2) >= DEFAULT_SPILLBACK_RATIO:
             spill2 += 1
@@ -371,6 +376,7 @@ def evaluate_outcome(samples: list) -> dict:
         "avg_queue_m_2": round(sum(q2) / n, 1),
         "max_queue_m_1": round(max(q1), 1),
         "max_queue_m_2": round(max(q2), 1),
+        "spillback_events_1": spill1,
         "spillback_events_2": spill2,
         "switch_count": switches,
         "switch_per_min": round(switches / (total_sec / 60.0), 2) if total_sec else 0,

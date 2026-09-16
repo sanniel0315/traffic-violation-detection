@@ -80,17 +80,39 @@ def camera_label(key) -> str:
     return CAMERA_LABELS.get(key, str(key) if key is not None else "—")
 
 
+def _cam_id(key) -> Optional[int]:
+    """基準表的 "ID3" → 3;認不出來回 None。"""
+    s = str(key or "").strip().upper()
+    return int(s[2:]) if s.startswith("ID") and s[2:].isdigit() else None
+
+
+def _role_cams(phase: int) -> str:
+    """該分相的相機清單(基準表 phases[n].cameras),寫成 env 預設值的字串。"""
+    from detection.signal_timing_lookup import phase_role
+    ids = [_cam_id(c) for c in ((phase_role(phase) or {}).get("cameras") or [])]
+    return ",".join(str(i) for i in ids if i) or ("2,3" if phase == 1 else "4,5")
+
+
+def _role_cam(phase: int, key: str, fallback: int) -> int:
+    """該分相基準表裡某個相機欄位(constraint_camera / stopline_camera)的相機 id。"""
+    from detection.signal_timing_lookup import phase_role
+    return _cam_id((phase_role(phase) or {}).get(key)) or fallback
+
+
+# 🛑 分相 ↔ 相機一律從 ramp_timing_baseline.json 的 phases 推導(2026-09-16)。
+#    以前這裡寫死 "2,3"/"4,5",現場一改線路對調就得改兩個地方,漏一個就會變成
+#    「畫面說下匝道、演算法拿上匝道的排隊」。env 仍可覆蓋(換站點用)。
 PHASE_CAMERAS = {
-    1: _phase_cams("SIGNAL_SHADOW_CAMS_PHASE1", "2,3"),   # NE-1, NE-2 上匝道
-    2: _phase_cams("SIGNAL_SHADOW_CAMS_PHASE2", "4,5"),   # WN-1, WN-2 下匝道
+    1: _phase_cams("SIGNAL_SHADOW_CAMS_PHASE1", _role_cams(1)),
+    2: _phase_cams("SIGNAL_SHADOW_CAMS_PHASE2", _role_cams(2)),
 }
 # 🛑 PHASE_CAMERA 維持原意 = 官方時制表的 constraint_camera(該相的「基準測點」),
 #    不可以改成「清單第一台」—— 那是語意漂移,會讓依賴它的地方悄悄換了意思。
 #    (加聚合時差點就這樣改掉,既有測試 test_phase_camera_mapping_matches_baseline
 #     擋下來了。)聚合請用 PHASE_CAMERAS。
 PHASE_CAMERA = {
-    1: int(os.getenv("SIGNAL_SHADOW_CAM_PHASE1", "3") or 3),
-    2: int(os.getenv("SIGNAL_SHADOW_CAM_PHASE2", "4") or 4),
+    1: int(os.getenv("SIGNAL_SHADOW_CAM_PHASE1", "") or _role_cam(1, "constraint_camera", 3)),
+    2: int(os.getenv("SIGNAL_SHADOW_CAM_PHASE2", "") or _role_cam(2, "constraint_camera", 4)),
 }
 
 # 抄錄器所在的獨立服務(traffic-signal.service)。燈態只有它有。
@@ -1563,21 +1585,30 @@ def _input_shadow_record(g_no: int, green_elapsed: float, min_green: float,
     try:
         if live.get("clearance"):
             return
-        a1 = _events_flow_vpm(1)
-        a1u = _events_flow_vpm(1, camera=ONRAMP_UPSTREAM_CAMERA)
-        a2 = _events_flow_vpm(2)
+        # 🛑 arr1_* 一律是「上匝道」的兩種來源、arr2 是下匝道 —— 依角色取相,
+        #    不可寫死分相 1/2(對應會因現場改線路而換)。on_phase 欄位記下當時的編號。
+        from detection.signal_timing_lookup import phase_of_role
+        on_ph = phase_of_role("on_ramp")
+        off_ph = phase_of_role("off_ramp")
+        a1 = _events_flow_vpm(on_ph)
+        a1u = _events_flow_vpm(on_ph, camera=ONRAMP_UPSTREAM_CAMERA)
+        a2 = _events_flow_vpm(off_ph)
         conn = _db()
         conn.execute("""CREATE TABLE IF NOT EXISTS signal_input_shadow (
                             id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, epoch REAL,
                             green_phase INTEGER, green_elapsed REAL, min_green REAL, max_green REAL,
                             queue_m_1 REAL, queue_m_2 REAL,
                             arr1_stop REAL, arr1_up REAL, arr2 REAL)""")
+        try:
+            conn.execute("ALTER TABLE signal_input_shadow ADD COLUMN on_phase INTEGER")
+        except Exception:
+            pass                       # 已經有這欄
         conn.execute("CREATE INDEX IF NOT EXISTS ix_input_shadow_epoch ON signal_input_shadow(epoch)")
         conn.execute("INSERT INTO signal_input_shadow(ts,epoch,green_phase,green_elapsed,min_green,"
-                     "max_green,queue_m_1,queue_m_2,arr1_stop,arr1_up,arr2) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                     "max_green,queue_m_1,queue_m_2,arr1_stop,arr1_up,arr2,on_phase) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                      (datetime.now().isoformat(timespec="seconds"), time.time(), g_no,
                       round(green_elapsed, 1), min_green, max_green,
-                      q_map.get(1), q_map.get(2), a1, a1u, a2))
+                      q_map.get(1), q_map.get(2), a1, a1u, a2, on_ph))
         conn.commit()
         conn.close()
     except Exception as exc:
@@ -2185,7 +2216,14 @@ def _outcome_window(since_iso: str, until_iso: str) -> dict:
     except Exception as e:
         return {"error": str(e), "since": since_iso, "until": until_iso}
     out = evaluate_outcome(samples) or {}
-    out.update({"since": since_iso, "until": until_iso})
+    # 🛑 畫面要標「上匝道/下匝道」與「主線回堵」,但指標鍵是分相編號。
+    #    對應會因現場改線路而換,所以把匝道名與主線回堵那一相一起送出去,
+    #    前端不要再自己把編號翻成匝道名。
+    from detection.signal_timing_lookup import priority_phase
+    out.update({"since": since_iso, "until": until_iso,
+                "ramp_1": _ramp_name(1), "ramp_2": _ramp_name(2),
+                "mainline_phase": priority_phase(),
+                "spillback_events_mainline": out.get("spillback_events_%d" % priority_phase())})
     if not samples:
         out["insufficient_data"] = True
     return out
@@ -3488,13 +3526,19 @@ def _paired_precise(rows: list, actual: list, interval: float = None) -> dict:
 # ── 成效報告(工程 / 技術 / 完整)──────────────────────────────────────
 # 停止線相機(每相一台,通過事件與排隊都以它為準)與進場道長度(上游台到停止線台)。
 # 🛑 這兩個是站點幾何,不是量測值;換站點改 env。
+def _role_approach(phase: int, fallback: float) -> float:
+    from detection.signal_timing_lookup import phase_role
+    v = (phase_role(phase) or {}).get("approach_m")
+    return float(v) if v is not None else fallback
+
+
 PHASE_STOPLINE = {
-    1: int(os.getenv("SIGNAL_EVAL_STOPLINE_PHASE1", "3") or 3),
-    2: int(os.getenv("SIGNAL_EVAL_STOPLINE_PHASE2", "5") or 5),
+    1: int(os.getenv("SIGNAL_EVAL_STOPLINE_PHASE1", "") or _role_cam(1, "stopline_camera", 3)),
+    2: int(os.getenv("SIGNAL_EVAL_STOPLINE_PHASE2", "") or _role_cam(2, "stopline_camera", 5)),
 }
 APPROACH_LEN_M = {
-    1: float(os.getenv("SIGNAL_EVAL_APPROACH_M_PHASE1", "52.7") or 52.7),
-    2: float(os.getenv("SIGNAL_EVAL_APPROACH_M_PHASE2", "16.0") or 16.0),
+    1: float(os.getenv("SIGNAL_EVAL_APPROACH_M_PHASE1", "") or _role_approach(1, 52.7)),
+    2: float(os.getenv("SIGNAL_EVAL_APPROACH_M_PHASE2", "") or _role_approach(2, 16.0)),
 }
 # 使用者定義的尖峰(一天內的分鐘):09:00-12:00、16:30-20:00
 # (2026-09-13 使用者:「尖峰 1630 1700 1730 1800 1830 1900 1930 這也是尖峰」)
@@ -3563,6 +3607,14 @@ def _fg_slot_means(rows: list, keys) -> list:
     return out
 
 
+def _has_on_phase(conn) -> bool:
+    """舊紀錄沒有 on_phase 欄(2026-09-16 才加)—— 當時上匝道就是分相1。"""
+    try:
+        return any(r[1] == "on_phase" for r in conn.execute("PRAGMA table_info(signal_input_shadow)"))
+    except Exception:
+        return False
+
+
 def _fg_below_min(rows: list, phase: int) -> int:
     """綠燈短於該時刻計畫最小綠(扣容忍)的週期數。"""
     from detection.signal_timing_lookup import current_base_plan, plan_params
@@ -3598,7 +3650,8 @@ def _fg_verdict(by_phase: dict, tier: str) -> dict:
                    "pass": bool(a is not None and b is not None and a < b
                                 and c.get("p") is not None and c["p"] < 0.05),
                    "detail": "A %.1f vs B %.1f 秒,p=%s" % (a or 0, b or 0, c.get("p"))})
-    for ph, pr, label in ((1, p1, "上匝道"), (2, p2, "下匝道")):
+    for ph, pr in ((1, p1), (2, p2)):
+        label = _ramp_name(ph)
         for k, kl in (("queue_max_m", "最大排隊"), ("queue_avg_m", "平均排隊")):
             a, b = _mean(pr["slots_A"], k), _mean(pr["slots_B"], k)
             ok = a is None or b is None or a <= b * (1 + FG_NONINF_MARGIN) + 0.5
@@ -3723,7 +3776,9 @@ def input_shadow_arrival(since: str = Query("", description="起(ISO);空=近 24
         conn = _db()
         rows = conn.execute(
             "SELECT epoch,green_phase,green_elapsed,min_green,max_green,queue_m_1,queue_m_2,"
-            "arr1_stop,arr1_up,arr2 FROM signal_input_shadow WHERE epoch>=? AND epoch<? ORDER BY epoch",
+            "arr1_stop,arr1_up,arr2,"
+            + ("COALESCE(on_phase,1)" if _has_on_phase(conn) else "1")
+            + " FROM signal_input_shadow WHERE epoch>=? AND epoch<? ORDER BY epoch",
             (datetime.fromisoformat(s).timestamp(), datetime.fromisoformat(u).timestamp())).fetchall()
         conn.close()
     except Exception:
@@ -3752,7 +3807,8 @@ def input_shadow_arrival(since: str = Query("", description="起(ISO);空=近 24
     flips = {1: {"KEEP→SWITCH": 0, "SWITCH→KEEP": 0, "n": 0}, 2: {"KEEP→SWITCH": 0, "SWITCH→KEEP": 0, "n": 0}}
     a_stop, a_up, tiers = [], [], {"尖峰": [[], []], "離峰": [[], []]}
     examples = []
-    for ep, g, el, mn, mx, q1, q2, a1, a1u, a2 in rows:
+    for ep, g, el, mn, mx, q1, q2, a1, a1u, a2, on_ph in rows:
+        off_ph = 2 if on_ph == 1 else 1
         if a1 is not None and a1u is not None:
             a_stop.append(a1); a_up.append(a1u)
             t = tiers["尖峰" if _is_peak(ep) else "離峰"]
@@ -3760,15 +3816,15 @@ def input_shadow_arrival(since: str = Query("", description="起(ISO);空=近 24
         if a1 is None or a1u is None or g not in (1, 2):
             continue
         q = {1: q1, 2: q2}
-        cur = _decide_action(g, el or 0, mn, mx, q, {1: a1, 2: a2})
-        alt = _decide_action(g, el or 0, mn, mx, q, {1: a1u, 2: a2})
+        cur = _decide_action(g, el or 0, mn, mx, q, {on_ph: a1, off_ph: a2})
+        alt = _decide_action(g, el or 0, mn, mx, q, {on_ph: a1u, off_ph: a2})
         flips[g]["n"] += 1
         if cur != alt:
             flips[g]["%s→%s" % (cur, alt)] += 1
             if len(examples) < 20:
                 examples.append({"time": datetime.fromtimestamp(ep).strftime("%m-%d %H:%M:%S"),
                                  "green": "分相%d" % g, "elapsed": el,
-                                 "queue_上匝道_m": q1, "queue_下匝道_m": q2,
+                                 "queue_上匝道_m": q[on_ph], "queue_下匝道_m": q[off_ph],
                                  "arr_NE-2": a1, "arr_NE-1": a1u, "現行": cur, "改用NE-1": alt})
 
     def _corr(x, y):
@@ -3786,10 +3842,10 @@ def input_shadow_arrival(since: str = Query("", description="起(ISO);空=近 24
         "arrival_vpm": {"NE-2 上匝道前停等區(現行)": mean(a_stop), "NE-1 上高速公路前平面道路(入口上游)": mean(a_up),
                         "相關係數": _corr(a_stop, a_up),
                         "by_tier": {k: {"NE-2": mean(v[0]), "NE-1": mean(v[1]), "n": len(v[0])} for k, v in tiers.items()}},
-        "decision_flips": {"分相1(上匝道綠燈)": flips[1], "分相2(下匝道綠燈)": flips[2]},
+        "decision_flips": {"分相%d(%s綠燈)" % (p, _ramp_name(p)): flips[p] for p in (1, 2)},
         "examples": examples,
         "note": "同一批紀錄的輸入,以現行參數各算一次;引擎只把綠燈側的到達率算進綠側價值,"
-                "所以上匝道到達率只會改變分相1(上匝道)綠燈時的判斷。"
+                "所以上匝道到達率只會改變上匝道綠燈那一相的判斷。"
                 "翻轉多不代表哪個來源對,要搭配排隊結果判斷。",
     }
 
@@ -4070,7 +4126,10 @@ def fault_status(_user=Depends(get_current_user)):
 # ── 白話化:命令 / 來源 / 依據 ────────────────────────────────────────
 # 🛑 現場看的人不會背 TC3 指令碼。白話**加在旁邊**,原始碼與原始算式一律保留 ——
 #    稽核要能從一句白話回到訊框,不能只剩一句好聽的話。
-RAMP_NAME = {1: "上匝道", 2: "下匝道"}
+def _ramp_name(phase: int) -> str:
+    """匝道名一律查基準表(分相編號與匝道的對應會因現場改線路而換)。"""
+    from detection.signal_timing_lookup import ramp_name
+    return ramp_name(phase)
 CMD_PLAIN = {
     "5F1C": "提早結束綠燈",
     "5F10": "維持控制授權",
@@ -4113,8 +4172,8 @@ def _basis_plain(w: dict) -> str:
     """
     g = w.get("green_phase")
     r = 2 if g == 1 else 1
-    ramp_g = RAMP_NAME.get(g, "綠燈側")
-    ramp_r = RAMP_NAME.get(r, "紅燈側")
+    ramp_g = _ramp_name(g) if g in (1, 2) else "綠燈側"
+    ramp_r = _ramp_name(r) if r in (1, 2) else "紅燈側"
     qr = w.get("queue_m_%d" % r)
     qg = w.get("queue_m_%d" % g) if g else None
     el = w.get("green_elapsed")

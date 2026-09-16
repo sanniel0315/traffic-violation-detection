@@ -182,23 +182,33 @@ def test_interval_aligns_with_opac():
 
 
 def test_phase_camera_mapping_matches_baseline():
-    """分相→相機的對應要與官方時制表的 constraint_camera 一致。
+    """分相→相機的對應一律由基準表推導,不可在程式裡寫死編號。
 
-    baseline: 分相1(上匝道)=ID3、分相2(下匝道)=ID4
+    🛑 現場改線路會對調分相與匝道(2026-09-11/09-12/09-16 各一次)。
+       測試也不能寫死,否則每次對調都要改測試,改不動就會有人去改程式遷就測試。
     """
     import importlib
     import api.routes.signal_shadow as m
     for k in ("SIGNAL_SHADOW_CAM_PHASE1", "SIGNAL_SHADOW_CAM_PHASE2"):
         os.environ.pop(k, None)
     m = importlib.reload(m)
-    assert m.PHASE_CAMERA[1] == 3
-    assert m.PHASE_CAMERA[2] == 4
+    from detection.signal_timing_lookup import phase_of_role, phase_role
+    on, off = phase_of_role("on_ramp"), phase_of_role("off_ramp")
+    assert {on, off} == {1, 2}, "兩相必須各自是一條匝道"
+    for ph in (1, 2):
+        role = phase_role(ph) or {}
+        assert m.PHASE_CAMERA[ph] == m._cam_id(role["constraint_camera"])
+        assert sorted(m.PHASE_CAMERAS[ph]) == sorted(m._cam_id(c) for c in role["cameras"])
+        assert m.PHASE_STOPLINE[ph] == m._cam_id(role["stopline_camera"])
+    # 上匝道那一相看 NE-1/NE-2,下匝道那一相看 WN-1/WN-2
+    assert sorted(m.PHASE_CAMERAS[on]) == [2, 3]
+    assert sorted(m.PHASE_CAMERAS[off]) == [4, 5]
 
     # 🛑 決策的量測要涵蓋該相的**所有**相機,不是只有基準測點。
     #    現場四台 NE-1 / NE-2 / WN-1 / WN-2(相機 id 2/3/4/5);先前只用 constraint_camera
     #    各取一台,等於少看一半的進場,而 switch_gain 直接由排隊車數算出來。
-    assert sorted(m.PHASE_CAMERAS[1]) == [2, 3], "分相1 要含 NE-1 與 NE-2"
-    assert sorted(m.PHASE_CAMERAS[2]) == [4, 5], "分相2 要含 WN-1 與 WN-2"
+    assert sorted(m.PHASE_CAMERAS[on]) == [2, 3], "上匝道那一相要含 NE-1 與 NE-2"
+    assert sorted(m.PHASE_CAMERAS[off]) == [4, 5], "下匝道那一相要含 WN-1 與 WN-2"
     allcams = sorted(m.PHASE_CAMERAS[1] + m.PHASE_CAMERAS[2])
     assert allcams == [2, 3, 4, 5], f"四台都要對應到,實際 {allcams}"
     # constraint_camera 必須落在該相的相機清單裡,否則兩者對不起來
@@ -1038,16 +1048,17 @@ def test_basis_plain_and_switch_matching():
        取樣每 5 秒,單純取時間最近會配到前一筆 KEEP。
     """
     from api.routes import signal_shadow as S
+    from detection.signal_timing_lookup import ramp_name
     w = {"green_phase": 2, "action": "SWITCH", "green_elapsed": 30.0,
          "queue_m_1": 18.5, "queue_m_2": 0.0}
     t = S._basis_plain(w)
-    assert "下匝道綠燈已亮 30 秒" in t
-    assert "上匝道排隊 18.5 m 在等" in t
+    assert "%s綠燈已亮 30 秒" % ramp_name(2) in t
+    assert "%s排隊 18.5 m 在等" % ramp_name(1) in t
     assert "提早結束綠燈" in t
     # 紅側沒車時要講出來,不可以省略成看不出有沒有車
     t2 = S._basis_plain({"green_phase": 1, "action": "KEEP", "green_elapsed": 12.0,
                          "queue_m_1": 0.0, "queue_m_2": 0.0})
-    assert "下匝道沒有車在等" in t2 and "續綠" in t2
+    assert "%s沒有車在等" % ramp_name(2) in t2 and "續綠" in t2
 
 
 def test_cmd_and_by_plain_keep_original():

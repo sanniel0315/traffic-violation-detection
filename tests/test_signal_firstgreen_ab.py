@@ -122,12 +122,13 @@ def test_verdict_passes_when_all_hold(S):
 
 
 def test_verdict_fails_when_onramp_queue_worse(S):
-    """上匝道最大排隊超過 B 的 +20% → 不通過,即使週期縮短了。"""
+    """某一相最大排隊超過 B 的 +20% → 不通過,即使週期縮短了。"""
+    from detection.signal_timing_lookup import ramp_name
     v = S._fg_verdict({1: {"peak": _tier(_slots(3, cycle_sec=62, queue_max_m=50, queue_avg_m=6),
                                           _slots(4, cycle_sec=73, queue_max_m=30, queue_avg_m=6))},
                        2: {"peak": _tier(_slots(3, queue_max_m=30, queue_avg_m=6),
                                           _slots(4, queue_max_m=30, queue_avg_m=6))}}, "peak")
-    assert v["result"] == "不通過" and "上匝道最大排隊" in v["text"]
+    assert v["result"] == "不通過" and "%s最大排隊" % ramp_name(1) in v["text"]
 
 
 def test_verdict_fails_on_below_min_green(S):

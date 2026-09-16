@@ -41,7 +41,9 @@ def S(tmp_path, monkeypatch):
     db = tmp_path / "v.db"
     _mk_viol_db(db)
     monkeypatch.setattr(S, "_VIOL_DB", str(db))
-    monkeypatch.setattr(S, "_phase_lanes", lambda p: {3: [1]} if p == 1 else {5: [1]})
+    # 相機屬於哪一相由基準表決定(現場改線路會對調),測試跟著推導
+    monkeypatch.setattr(S, "_phase_lanes",
+                        lambda p: {3: [1]} if 3 in S.PHASE_CAMERAS[p] else {5: [1]})
     return S
 
 

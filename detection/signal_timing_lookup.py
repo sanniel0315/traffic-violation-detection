@@ -26,8 +26,10 @@ _BASELINE_PATH = (
 
 @lru_cache(maxsize=1)
 def load_baseline() -> dict:
-    """載入基準時制表(結果快取)。"""
-    with open(_BASELINE_PATH, encoding="utf-8") as f:
+    """載入基準時制表(結果快取)。RAMP_TIMING_BASELINE 可指到另一份(測試用)。"""
+    import os as _os
+    path = _os.getenv("RAMP_TIMING_BASELINE") or _BASELINE_PATH
+    with open(path, encoding="utf-8") as f:
         return _json.load(f)
 
 
@@ -73,14 +75,33 @@ def phase_role(phase_no: int) -> Optional[dict]:
     return load_baseline()["phases"].get(str(phase_no))
 
 
+def phase_of_role(role: str) -> int:
+    """哪一相是上匝道 / 下匝道(role = "on_ramp" / "off_ramp")。
+
+    🛑 分相編號與匝道的對應會因現場改線路而換(2026-09-11、09-12、09-16 各一次)。
+       任何「這一相是哪條匝道」的判斷都要走這裡,不可以寫死編號 ——
+       寫死的那幾處在換對應時一定會漏掉一個,畫面與演算法就會各說各話。
+    """
+    for no, p in load_baseline()["phases"].items():
+        if p.get("role") == role:
+            return int(no)
+    return 1 if role == "on_ramp" else 2
+
+
+def ramp_name(phase_no: int) -> str:
+    """該分相的匝道名(上匝道/下匝道),查無回「分相 N」。"""
+    p = phase_role(phase_no) or {}
+    return p.get("ramp") or ("分相 %d" % phase_no)
+
+
 def storage_limit_m(phase_no: int) -> Optional[int]:
-    """該分相對應匝道的儲車上限(公尺)。分相2(下匝道)=600、分相1(上匝道)=210。"""
+    """該分相對應匝道的儲車上限(公尺):下匝道 600、上匝道 210。"""
     p = phase_role(phase_no)
     return int(p["storage_m"]) if p else None
 
 
 def priority_phase() -> int:
-    """主線保護優先的分相(下匝道)。2026-09-12 定案為分相2。"""
+    """主線保護優先的分相(下匝道)。實際編號依 phases 的 priority 旗標。"""
     for no, p in load_baseline()["phases"].items():
         if p.get("priority"):
             return int(no)
