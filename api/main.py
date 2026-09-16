@@ -101,6 +101,16 @@ def _mark_camera_online(db, cam) -> None:
 _LPR_STALL_SEC = float(os.getenv("LPR_STALL_RESTART_SEC", "90") or 90)
 
 
+def _camera_frames_alive(cam_id: int, max_age_sec: float = 15.0) -> bool:
+    """偵測執行緒最近有沒有拿到這台相機的畫面(給離線後的自動續跑用)。"""
+    try:
+        sf = stream._shared_frames.get(cam_id) or {}
+        return bool(sf.get("frame") is not None
+                    and (_time.time() - float(sf.get("ts") or 0)) <= max_age_sec)
+    except Exception:
+        return False
+
+
 def _service_watchdog():
     """定期監控 detection / LPR / congestion 服務，掛掉自動重啟。"""
     from api.models import SessionLocal, Camera
@@ -181,9 +191,20 @@ def _service_watchdog():
                 if want_cong:
                     cong_svc = congestion.congestion_services.get(cam_id, {})
                     ct = cong_svc.get("_thread")
-                    # 離線自動停的(offline 標記)不在這裡無條件重啟,否則離線相機會死循環重啟;
-                    # 交給 congestion watchdog 輕量探測影像,恢復了才續偵測。
-                    if ct is not None and not ct.is_alive() and not cong_svc.get("offline"):
+                    dead = (ct is not None and not ct.is_alive()) or (
+                        ct is None and cong_svc and not cong_svc.get("running"))
+                    if dead and cong_svc.get("offline"):
+                        # 🛑 2026-09-16:離線自動停掉後**沒有人會把它拉回來** ——
+                        #    NE-1 只斷了 40 秒(8 次重連),之後相機一直是通的,壅塞卻停了
+                        #    35 分鐘,戰情一直顯示「斷線」,要人工按啟動。原註解說「交給
+                        #    congestion watchdog 探測影像」,但那個探測從來沒有實作。
+                        #    探測用偵測執行緒的共用畫面:它自己會一直重連,有新畫面就代表
+                        #    相機回來了,不必另外開 RTSP 去戳(戳了反而多佔一條連線)。
+                        if _camera_frames_alive(cam_id):
+                            congestion.congestion_services.pop(cam_id, None)
+                            congestion._start_congestion_service(cam)
+                            restarted.append(f"congestion-{cam_id}(影像恢復)")
+                    elif dead:
                         congestion.congestion_services.pop(cam_id, None)
                         congestion._start_congestion_service(cam)
                         restarted.append(f"congestion-{cam_id}")
