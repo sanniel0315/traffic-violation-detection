@@ -3085,7 +3085,7 @@ def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
        控制會怎樣」—— 這時候給比較數字只會製造假結論。
     """
     from detection.signal_sim import (
-        SimConfig, arrival_profile, calibrate, estimate_arrivals,
+        SimConfig, arrival_profile, calibrate, calibrate_by_cycle, estimate_arrivals,
         estimate_saturation, profile_rate_fn, replay_actual, simulate,
     )
     from detection.signal_decision_engine import ApproachState, decide
@@ -3129,7 +3129,10 @@ def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
     profile = arrival_profile(rows)
     rate_fn = profile_rate_fn(profile)
     base = replay_actual(rows, rate_fn, cfg)
-    cal = calibrate(rows, base)
+    # 關卡同 /benchmark:逐週期錨定(整段連跑量到的是累積誤差,不是模型好壞)
+    legacy = calibrate(rows, base)
+    cal = calibrate_by_cycle(rows, rate_fn, cfg, cfg.meters_per_vehicle)
+    cal["legacy_whole_run"] = {k: legacy.get(k) for k in ("usable", "phase_1", "phase_2", "reason")}
 
     result = {
         "available": True, "since": since_iso, "until": until_iso,
@@ -4804,7 +4807,7 @@ def shadow_benchmark(minutes: int = Query(360, ge=30, le=1440),
       固定時制(現行時制表) / Webster 最佳固定時制 / 感應控制 / MaxPressure
     """
     from detection.signal_sim import (
-        SimConfig, arrival_profile, calibrate, estimate_arrivals,
+        SimConfig, arrival_profile, calibrate, calibrate_by_cycle, estimate_arrivals,
         estimate_saturation, profile_rate_fn, replay_actual,
     )
     from detection.signal_baselines import run_benchmark
@@ -4849,9 +4852,14 @@ def shadow_benchmark(minutes: int = Query(360, ge=30, le=1440),
     profile = arrival_profile(rows, mpv=cfg.meters_per_vehicle)
     rate_fn = profile_rate_fn(profile)
 
-    # ── 校準:OPAC 的實際換相序列能不能被模型重現 ──
+    # ── 校準:模型能不能重現「已知控制下」的現場排隊 ──
+    # 🛑 2026-09-16 改用逐週期錨定當關卡。整段連跑的版本量到的是累積誤差:
+    #    同一批 09-14 資料,整段連跑 MAE 108m / r 0.12,逐週期錨定 MAE 7.9m / r 0.55。
+    #    舊指標仍然算給人看(legacy),但不再拿它擋 —— 它擋掉的是它自己的漂移。
     replay = replay_actual(rows, rate_fn, cfg)
-    cal = calibrate(rows, replay, cfg.meters_per_vehicle)
+    legacy = calibrate(rows, replay, cfg.meters_per_vehicle)
+    cal = calibrate_by_cycle(rows, rate_fn, cfg, cfg.meters_per_vehicle)
+    cal["legacy_whole_run"] = {k: legacy.get(k) for k in ("usable", "phase_1", "phase_2", "reason")}
     out = {
         "available": True, "since": since_iso, "until": until_iso,
         "samples": len(rows),

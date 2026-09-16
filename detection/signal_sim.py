@@ -379,6 +379,121 @@ def replay_actual(rows: list, arrivals,
                     start_phase=rows[0][1] or 1)
 
 
+def _phase_segments(rows: list, min_rows: int = 3) -> list:
+    """把樣本切成一段一段的「同一相綠燈」(= 週期的一半)。"""
+    segs, cur, prev = [], [], None
+    for r in rows:
+        if prev is not None and r[1] != prev:
+            if len(cur) >= min_rows:
+                segs.append(cur)
+            cur = []
+        cur.append(r)
+        prev = r[1]
+    if len(cur) >= min_rows:
+        segs.append(cur)
+    return segs
+
+
+def calibrate_by_cycle(rows: list, arrivals, cfg: Optional[SimConfig] = None,
+                       mpv: float = DEFAULT_METERS_PER_VEHICLE,
+                       align_sec: float = 5.0) -> dict:
+    """逐週期錨定的校準 —— 這才是模型該被檢驗的方式。
+
+    🛑 為什麼不用整段連跑(calibrate + replay_actual):那種做法從排隊 0 開始
+       連跑好幾小時,到達率只要比放行快一點點,模擬排隊就一路長大 ——
+       2026-09-16 實測 09-14 全天的 MAE 到 108 公尺、相關係數 0.12/-0.14,
+       量到的其實是「累積誤差」不是「模型好不好」。
+       改成每個週期開頭把排隊設成**實測值**、只模擬這一個週期之後:
+       09-14 r 0.55/0.51、MAE 7.9/9.8 —— 同一個模型、同一批資料。
+
+    🛑 align_sec:模型要往後對齊約 5 秒才跟實測同步。我方拿到的「綠燈開始時刻」
+       本來就晚(5 秒取樣 + 控制器回報延遲),不是模型反應慢。
+       實測 -15~+10 秒全掃過,+5 秒在兩天都是最好(09-14 0.551/0.510、
+       09-16 0.540/0.439),再往後就變差。
+
+    決策依賴的是「週期內排隊怎麼漲怎麼消」,這裡驗的正是那件事。
+    """
+    cfg = cfg or SimConfig()
+    if not rows:
+        return {"usable": False, "reason": "沒有資料可比對", "method": "cycle"}
+    t_base = datetime.fromisoformat(rows[0][0]).timestamp()
+    xs1, ys1, xs2, ys2 = [], [], [], []
+    used = 0
+    for seg in _phase_segments(rows):
+        if seg[0][2] is None or seg[0][3] is None:
+            continue
+        t0 = datetime.fromisoformat(seg[0][0]).timestamp()
+        dur = datetime.fromisoformat(seg[-1][0]).timestamp() - t0
+        if dur < 10:
+            continue
+        init = {1: float(seg[0][2]) / mpv, 2: float(seg[0][3]) / mpv}
+        if callable(arrivals):
+            def rate(t, p, _t0=t0):
+                return arrivals(t + _t0 - t_base, p)
+        else:
+            rate = arrivals
+        sim = simulate(rate, lambda st: False, dur, cfg,
+                       init_queue_veh=init, start_phase=seg[0][1] or 1)
+        traj = sim["trajectory"]
+        j = 0
+        for r in seg:
+            tm = datetime.fromisoformat(r[0]).timestamp() - t0 + align_sec
+            while j + 1 < len(traj) and traj[j + 1]["t"] <= tm:
+                j += 1
+            if r[2] is not None:
+                xs1.append(float(r[2]))
+                ys1.append(float(traj[j]["q1"]) * mpv)
+            if r[3] is not None:
+                xs2.append(float(r[3]))
+                ys2.append(float(traj[j]["q2"]) * mpv)
+        used += 1
+    s1, s2 = _fit_stats(xs1, ys1), _fit_stats(xs2, ys2)
+    return _calib_verdict(s1, s2, method="cycle", extra={"cycles": used, "align_sec": align_sec})
+
+
+def _fit_stats(xs: list, ys: list) -> dict:
+    n = len(xs)
+    if n < 10:
+        return {"n": n, "mae": None, "r": None}
+    mae = sum(abs(a - b) for a, b in zip(xs, ys)) / n
+    mx, my = sum(xs) / n, sum(ys) / n
+    cov = sum((a - mx) * (b - my) for a, b in zip(xs, ys))
+    vx = sum((a - mx) ** 2 for a in xs)
+    vy = sum((b - my) ** 2 for b in ys)
+    r = cov / ((vx * vy) ** 0.5) if vx > 0 and vy > 0 else None
+    return {"n": n, "mae": round(mae, 1), "r": round(r, 3) if r is not None else None}
+
+
+MAE_MAX, R_MIN = 12.0, 0.5
+
+
+def _calib_verdict(s1: dict, s2: dict, method: str, extra: Optional[dict] = None) -> dict:
+    def ok(s):
+        return (s["mae"] is not None and s["mae"] <= MAE_MAX
+                and s["r"] is not None and s["r"] >= R_MIN)
+
+    reasons = []
+    for name, s in (("分相1", s1), ("分相2", s2)):
+        if s["mae"] is None:
+            reasons.append("%s 樣本不足(%s)" % (name, s["n"]))
+            continue
+        if s["mae"] > MAE_MAX:
+            reasons.append("%s MAE %sm > %sm" % (name, s["mae"], MAE_MAX))
+        if s["r"] is None or s["r"] < R_MIN:
+            reasons.append("%s 相關係數 %s < %s" % (name, s["r"], R_MIN))
+    out = {
+        "usable": ok(s1) and ok(s2),
+        "method": method,
+        "thresholds": {"mae_max_m": MAE_MAX, "r_min": R_MIN},
+        "phase_1": s1, "phase_2": s2,
+        "reason": "校準通過" if not reasons else "；".join(reasons),
+        "note": "校準沒過就代表模型無法在已知控制下重現現場排隊,"
+                "更不可能預測『換另一套控制會怎樣』—— 此時模擬結論一律不成立。",
+    }
+    out.update(extra or {})
+    return out
+
+
 def calibrate(rows: list, sim: dict,
               mpv: float = DEFAULT_METERS_PER_VEHICLE) -> dict:
     """比對「模擬排隊」與「實際量到的排隊」,回傳擬合指標。
