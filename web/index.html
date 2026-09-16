@@ -9712,6 +9712,13 @@
                                                  完全不參與編碼。go2rtc 拿不到那一路時才退回快照。 -->
                                             <!-- 🛑 釘死單一傳輸方式,不要讓播放器同時開 WebRTC + MSE
                                                  兩條互搶(那是 2026-09-07 卡頓的第一個真因)。
+                                                 🛑 2026-09-16 改用 **mse**:戰情牆在 10.21.50.x、主機在
+                                                    10.42.38.x,WebRTC 的媒體走 UDP 8555 被跨網段擋掉 ——
+                                                    WS 訊號連得上、影像永遠不來(現場症狀「影像沒出現」)。
+                                                    mse 走同一條 WS(TCP),跨網段一定通。之前選 webrtc 是
+                                                    因為 mse 在 1080p 主串流上吃不滿;戰情現在走的是
+                                                    800x450@15 的 cam_N_sub(約 320 kbps),mse 綽綽有餘
+                                                    (實測送出 15.0/秒、最大間隔 67 ms、0 次停頓)。
                                                  🛑 **選 webrtc**:釘死之後實測(每路確實只剩一條),
                                                     webrtc 10 秒送出 1.53 MB(= 1.2 Mbps 滿速),
                                                     而 mse 只有 0.35 MB(來源的 25%)甚至 0.00 ——
@@ -9719,7 +9726,7 @@
                                                  先前一度改成 mse 是我判斷錯誤:當時那次 10 秒取樣
                                                  剛好 webrtc 全 0,樣本太少就下了結論。 -->
                                             <div v-if="warCamWs(cam.camera_id)" class="go2rtc-host wr-cam-live"
-                                                 :data-wrcam="cam.camera_id" data-go2rtc-mode="webrtc"
+                                                 :data-wrcam="cam.camera_id" data-go2rtc-mode="mse"
                                                  v-go2rtc="warCamWs(cam.camera_id)"></div>
                                             <img v-else :src="sigLiveSrc(cam.camera_id)" :alt="cam.name"
                                                  @error="sigLiveErr[cam.camera_id]=true"
@@ -14886,7 +14893,7 @@ const _go2rtcAlive=(el)=>{ const v=el.querySelector('video'); return !!(v && v.v
 //    (現場實測 5 條 established),影像永遠不來,watchdog 用同一種方式重試 6 次也救不回。
 //    改成「換方式」而不是「一直重試同一種」:webrtc → mse(同一條 WS,走 TCP,跨網段一定通)
 //    → mjpeg(最後退路)。一次只有一種,不會回到 2026-09-07 兩條並存互搶的老問題。
-const _GO2RTC_FALLBACK = ['mse', 'mjpeg'];
+const _GO2RTC_FALLBACK = ['webrtc', 'mjpeg'];   // 主要方式失敗後依序換(mse 是戰情預設)
 const _go2rtcMode=(el)=>el.__go2rtcMode || (el.getAttribute && el.getAttribute('data-go2rtc-mode')) || '';
 const _armGo2rtcWatch=(el)=>{
     if(el.__go2rtcWatch){ clearInterval(el.__go2rtcWatch); }
@@ -14899,8 +14906,8 @@ const _armGo2rtcWatch=(el)=>{
         if(_go2rtcAlive(el)){ el.__go2rtcRetries=0; return; }
         el.__go2rtcRetries++;
         // 重試兩次還是沒畫面 → 換下一種傳輸方式(這一格記住,重連也照用)
-        if(el.__go2rtcRetries===3 || el.__go2rtcRetries===5){
-            const next=_GO2RTC_FALLBACK[el.__go2rtcRetries===3?0:1];
+        if(el.__go2rtcRetries===2 || el.__go2rtcRetries===4){
+            const next=_GO2RTC_FALLBACK[el.__go2rtcRetries===2?0:1];
             if(_go2rtcMode(el)!==next){
                 el.__go2rtcMode=next;
                 try{ console.warn('[go2rtc] 沒有畫面,改用 '+next+':'+el.__go2rtcUrl); }catch(e){}
@@ -14918,7 +14925,7 @@ const _armGo2rtcWatch=(el)=>{
         node.__go2rtcSrc=el.__go2rtcUrl;
         node.src=el.__go2rtcUrl;
         clampGo2rtcPlaybackRate(node);
-    }, 6000);
+    }, 4000);          // 🛑 4 秒一輪:三種方式全試完約 20 秒,不會讓人盯著空畫面等太久
 };
 // v-go2rtc:用指令掛載,而不是直接在模板寫 <video-stream>。
 // 🛑 原因:video-rtc.js 的 src 是 property setter 且沒有 observedAttributes,
