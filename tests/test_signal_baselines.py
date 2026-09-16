@@ -242,3 +242,29 @@ def test_cycle_adaptive_clamps_cycle_to_range():
                    1800.0, cfg, start_phase=1)
     # 週期 >= 60 秒 → 每分鐘換相次數 <= 2
     assert sim["switch_per_min"] <= 2.05, sim["switch_per_min"]
+
+
+def test_fixed_time_follows_the_schedule_when_plans_change():
+    """🛑 2026-09-16:對照組的時制要跟著排程換。
+
+    原本整段只用一套綠燈,而且取的是**查詢當下**的計畫 —— 拿今天下午的
+    計畫 37(25/40)當 09-14 白天(計畫 35/1/37)的對照,標籤還寫「現行計畫」。
+    """
+    from detection.signal_baselines import fixed_time_schedule
+
+    def green_at(t):
+        return {1: 20.0, 2: 20.0} if t < 1000 else {1: 60.0, 2: 60.0}
+
+    fn = fixed_time_schedule(green_at)
+    early = {"t": 100.0, "green_phase": 1, "green_elapsed": 25.0, "queue_veh": {1: 0, 2: 0}}
+    late = {"t": 2000.0, "green_phase": 1, "green_elapsed": 25.0, "queue_veh": {1: 0, 2: 0}}
+    assert fn(early) is True, "前半段綠燈 20 秒,已亮 25 秒該換"
+    assert fn(late) is False, "後半段綠燈 60 秒,已亮 25 秒不該換"
+
+
+def test_benchmark_accepts_a_schedule_callable():
+    b = run_benchmark(_rate, 3600.0, CFG, _ours, start_phase=1,
+                      plan_green=lambda t: {1: 35.0, 2: 40.0},
+                      flow_veh_per_sec={1: 0.045, 2: 0.032})
+    assert "fixed_plan" in b["results"]
+    assert "依排程" in b["results"]["fixed_plan"]["label"]

@@ -49,6 +49,23 @@ def fixed_time(green_sec: dict) -> Callable:
     return switch_fn
 
 
+def fixed_time_schedule(green_at: Callable) -> Callable:
+    """固定時制(照排程換計畫):不同時段用不同的綠燈分配。
+
+    🛑 2026-09-16 修:原本整段只用一套綠燈,而且取的是**查詢當下**的計畫 ——
+       拿今天下午的計畫 37(25/40)去當 09-14 白天的對照,標籤還寫「現行計畫」。
+       這個站一天要走 35 → 1 → 37 → 36 四套,對照組必須跟著排程換,
+       否則等於拿一套沒在跑的時制當基準。
+
+    green_at(t_rel) -> {1: g1, 2: g2},t_rel 是模擬起點起算的秒數。
+    """
+    def switch_fn(state) -> bool:
+        g = state["green_phase"]
+        green = green_at(float(state["t"])) or {}
+        return state["green_elapsed"] >= float(green.get(g, 30.0))
+    return switch_fn
+
+
 def webster_split(flow_veh_per_sec: dict, sat_veh_per_sec: dict,
                   lost_time_sec: float, n_phases: int = 2,
                   min_green: Optional[dict] = None,
@@ -257,8 +274,12 @@ def run_benchmark(rate_fn, duration_sec: float, cfg: SimConfig,
     demand = _demand_veh(rate_fn, duration_sec, cfg.dt_sec)
 
     controllers: list = [("ours", "我方演算法(延滯成本)", ours_switch_fn, {})]
-    if plan_green:
-        controllers.append(("fixed_plan", f"固定時制(現行計畫 {plan_green[1]:.0f}/{plan_green[2]:.0f})",
+    if callable(plan_green):
+        # 照排程換計畫(視窗橫跨多套時制時才正確)
+        controllers.append(("fixed_plan", "固定時制(依排程換計畫)",
+                            fixed_time_schedule(plan_green), {"green_sec": "schedule"}))
+    elif plan_green:
+        controllers.append(("fixed_plan", f"固定時制(計畫綠燈 {plan_green[1]:.0f}/{plan_green[2]:.0f})",
                             fixed_time(plan_green), {"green_sec": plan_green}))
     web = None
     if flow_veh_per_sec:

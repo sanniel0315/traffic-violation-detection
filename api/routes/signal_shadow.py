@@ -3114,7 +3114,14 @@ def shadow_simulate(minutes: int = Query(360, ge=30, le=1440),
         return {"available": False, "since": since_iso, "until": until_iso,
                 "reason": f"樣本僅 {len(rows)} 筆,不足以校準(需 ≥120)"}
 
-    pp = plan_params(current_base_plan()) or {}
+    # 🛑 2026-09-16 修:參數要取**被分析的那段時間**在跑的計畫,不是查詢當下的。
+    #    原本用 current_base_plan()(= 現在),拿今天下午的計畫 37(25/40)當
+    #    09-14 白天的對照組,連最小綠/最大綠都跟著錯。
+    _t_a = datetime.fromisoformat(since_iso)
+    _t_b = datetime.fromisoformat(until_iso)
+    _mid = _t_a + (_t_b - _t_a) / 2
+    plan_id_mid = current_base_plan(_mid)
+    pp = plan_params(plan_id_mid) or {}
     mins = pp.get("min_green") or [10, 20]
     cfg = SimConfig(dt_sec=SHADOW_INTERVAL_SEC,
                     min_green_sec={1: float(mins[0]), 2: float(mins[1])},
@@ -4837,7 +4844,14 @@ def shadow_benchmark(minutes: int = Query(360, ge=30, le=1440),
         return {"available": False, "since": since_iso, "until": until_iso,
                 "reason": f"樣本僅 {len(rows)} 筆,不足以校準(需 >=120)"}
 
-    pp = plan_params(current_base_plan()) or {}
+    # 🛑 2026-09-16 修:參數要取**被分析的那段時間**在跑的計畫,不是查詢當下的。
+    #    原本用 current_base_plan()(= 現在),拿今天下午的計畫 37(25/40)當
+    #    09-14 白天的對照組,連最小綠/最大綠都跟著錯。
+    _t_a = datetime.fromisoformat(since_iso)
+    _t_b = datetime.fromisoformat(until_iso)
+    _mid = _t_a + (_t_b - _t_a) / 2
+    plan_id_mid = current_base_plan(_mid)
+    pp = plan_params(plan_id_mid) or {}
     mins = pp.get("min_green") or [10, 20]
     cfg = SimConfig(dt_sec=SHADOW_INTERVAL_SEC,
                     min_green_sec={1: float(mins[0]), 2: float(mins[1])},
@@ -4866,6 +4880,8 @@ def shadow_benchmark(minutes: int = Query(360, ge=30, le=1440),
         "arrivals_measured": overall,
         "saturation_measured": sat,
         "calibration": cal,
+        "plan_window": {"plans": plan_ids, "mid_plan": plan_id_mid,
+                        "note": "這段時間排程走過的計畫;固定時制對照組會跟著換"},
         "constants": {"lost_time_sec": cfg.lost_time_sec,
                       "meters_per_vehicle": cfg.meters_per_vehicle,
                       "min_green_sec": cfg.min_green_sec,
@@ -4900,8 +4916,19 @@ def shadow_benchmark(minutes: int = Query(360, ge=30, le=1440),
                    lost_time_sec=cfg.lost_time_sec)
         return d.action == "SWITCH"
 
-    plan_green = None
-    if pp.get("phase1_green") and pp.get("phase2_green"):
+    # 固定時制對照組要**跟著排程換計畫**:這個站一天走 35 → 1 → 37 → 36 四套,
+    # 整段套同一套等於拿一組沒在跑的時制當基準(2026-09-16 修)。
+    def _green_at(t_rel: float) -> dict:
+        pid = current_base_plan(_t_a + timedelta(seconds=float(t_rel)))
+        q = plan_params(pid) or {}
+        if q.get("phase1_green") and q.get("phase2_green"):
+            return {1: float(q["phase1_green"]), 2: float(q["phase2_green"])}
+        return {1: 35.0, 2: 40.0}
+
+    plan_ids = sorted({current_base_plan(_t_a + timedelta(seconds=x))
+                       for x in range(0, int((_t_b - _t_a).total_seconds()) + 1, 300)})
+    plan_green = _green_at if len(plan_ids) > 1 else None
+    if plan_green is None and pp.get("phase1_green") and pp.get("phase2_green"):
         plan_green = {1: float(pp["phase1_green"]), 2: float(pp["phase2_green"])}
     flows = {p: (overall[p]["veh_per_sec"] or 0.0) for p in (1, 2)}
     bench = run_benchmark(rate_fn, replay["duration_sec"], cfg, ours,
