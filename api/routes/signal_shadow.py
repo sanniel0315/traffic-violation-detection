@@ -4225,6 +4225,99 @@ def rule_shadow_offramp(since: str = Query("", description="起(ISO);空=近 24 
                     "規則生效時要停下的車;效益 = 上匝道在等車數 × 省下秒數。反事實估計,僅供決定是否試行。"}
 
 
+@router.get("/rolling", summary="滾動時程預測:目前預測、歷史紀錄與命中率(只算不下發)")
+def rolling_shadow(minutes: int = Query(60, ge=5, le=1440),
+                   limit: int = Query(100, ge=1, le=1000),
+                   _user=Depends(get_current_user)):
+    """往前看 N 秒的預測:現在建議再給幾秒綠燈,以及過去的預測有沒有說中。
+
+    🛑 只算不下發。線上的到達率是「當下流量外推」,不是校準過的到達曲線 ——
+       模擬裡 rolling 拿的是後者(等於預知未來的平均行為)且仍未贏過成本式,
+       線上條件更差。這一頁是用來**累積證據**,不是用來主張成效。
+
+    命中率怎麼算:每一筆預測說「現在就切」,就看接下來 switch_window_sec 秒內
+    控制器有沒有真的換相(來源 signal_shadow_log 的 green_phase 變化)。
+    說「再給 N 秒」的筆數則看它與實際換相時刻差幾秒(誤差中位數)。
+    🛑 這是**對照**不是驗證:現在下發的是成本式,不是 rolling ——
+       rolling 說中只代表它與現行決策一致,不代表它比較好。
+    """
+    cut = time.time() - minutes * 60
+    SW = 10.0                       # 「現在就切」的認定窗(秒)
+    rows, switches = [], []
+    try:
+        conn = _db()
+        rows = list(conn.execute(
+            "SELECT ts,epoch,green_phase,green_elapsed,would,reason,queue_green,queue_red "
+            "FROM signal_rule_shadow WHERE rule='rolling' AND epoch>=? "
+            "ORDER BY epoch DESC LIMIT ?", (cut, limit)))
+        # 實際換相時刻:green_phase 變了的那一筆
+        prev_ph, prev_ts = None, None
+        for ts_s, ph in conn.execute(
+                "SELECT ts,green_phase FROM signal_shadow_log WHERE ts>=? ORDER BY ts",
+                (datetime.fromtimestamp(cut).isoformat(timespec="seconds"),)):
+            try:
+                t = datetime.fromisoformat(ts_s).timestamp()
+            except Exception:
+                continue
+            if prev_ph is not None and ph != prev_ph:
+                switches.append(t)
+            prev_ph, prev_ts = ph, t
+        conn.close()
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:160]}
+
+    def _next_switch(t):
+        for x in switches:
+            if x >= t:
+                return x
+        return None
+
+    items, hit, said_now, err = [], 0, 0, []
+    for ts_s, ep, ph, el, would, reason, qg, qr in rows:
+        try:
+            info = json.loads(reason or "{}")
+        except Exception:
+            info = {}
+        nxt = _next_switch(ep)
+        gap = (nxt - ep) if nxt is not None else None
+        if would:
+            said_now += 1
+            if gap is not None and gap <= SW:
+                hit += 1
+        elif info.get("best_sec") is not None and gap is not None:
+            err.append(abs(float(info["best_sec"]) - gap))
+        items.append({
+            "ts": ts_s, "phase_no": ph, "ramp": _ramp_name(int(ph or 0)),
+            "green_elapsed_sec": el,
+            "advice": ("現在就切" if would else
+                       ("再給 %.0f 秒" % info["best_sec"]) if info.get("best_sec") is not None
+                       else "—"),
+            "best_sec": info.get("best_sec"),
+            "horizon_sec": info.get("horizon_sec"),
+            "queue_green_m": qg, "queue_red_m": qr,
+            "rate_vpm": info.get("rate_vpm"),
+            "actual_switch_in_sec": (round(gap, 1) if gap is not None else None),
+        })
+    err.sort()
+    return {
+        "available": True, "minutes": minutes, "samples": len(items),
+        "horizon_sec": ROLLING_HORIZON_SEC,
+        "live": (items[0] if items else None),
+        "accuracy": {
+            "said_switch_now": said_now,
+            "switched_within_sec": SW,
+            "hit": hit,
+            "hit_rate_pct": (round(100 * hit / said_now, 1) if said_now else None),
+            "keep_advice_n": len(err),
+            "keep_err_median_sec": (round(err[len(err) // 2], 1) if err else None),
+            "note": "命中 = rolling 說現在切、且 %.0f 秒內控制器真的換相。"
+                    "現在下發的是成本式,所以這是**一致率**不是成效。" % SW,
+        },
+        "items": items,
+        "caveat": "只算不下發;線上到達率是當下流量外推,非校準到達曲線。",
+    }
+
+
 @router.get("/count-check", summary="人工計數對照表(90% 準確度條款的證據產生器)")
 def count_check(camera_id: int = Query(..., ge=1),
                       since: str = Query(...), until: str = Query(...),
