@@ -27415,7 +27415,11 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //    上匝道 → 掛在**號控燈 5 的左邊**(它在動態道路上,所以標籤落在
                 //             那條路的左側)
                 //    錨點是「掛在哪座燈」的語意;往左幾 px 是視覺微調,兩者分開。
-                const LABEL_HEAD = {off_ramp: 1, on_ramp: 5};
+                // 🛑 2026-09-17 使用者最後指示:「把兩個標籤位置對調就可以」。
+                //    所以下匝道的標籤掛在燈 5 那個位置、上匝道掛在燈 1 那個位置 ——
+                //    這裡是**純顯示位置**,不代表燈的分相歸屬(燈↔分相一律看後端
+                //    /api/signal/heads:1、2 是下匝道,3、5、6 是上匝道)。
+                const LABEL_HEAD = {off_ramp: 5, on_ramp: 1};
                 let LP, lblOpt;
                 let _anchor = null;
                 const _wantId = _isOff ? LABEL_HEAD.off_ramp : LABEL_HEAD.on_ramp;
@@ -27444,7 +27448,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                     //    兩個標籤都往左展開約 150px 會重疊 —— 所以再各給一點垂直錯開
                     //    (下 -14、上 +14,間距約 31px)。要再挪只改這幾個數字。
                     lblOpt = {permanent: true, direction: 'left',
-                              offset: _isOff ? [-24, -14] : [-24, 14],
+                              offset: _isOff ? [-24, 14] : [-24, -14],
                               opacity: .95,
                               className: 'wr-seg-label' + (isPri ? ' pri' : '')};
                 } else {
