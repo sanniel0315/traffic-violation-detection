@@ -1,7 +1,7 @@
-"""限時實驗:對控制器的主動回報回 0F80,看重複會不會停(2026-09-17 現場授權)。
+"""中間層對控制器回 0F80(2026-09-17 實測證實:不回就會被每 2 秒重送整段)。
 
-🛑 預設關閉、必須設到期時間、到期自動停 —— 這是改變我方對控制器行為的開關,
-   不可以因為忘了關就一直在送。
+我方是中間層:控制器的訊框先到我們這裡再上傳中央,所以收訊端的 ACK 由我方回。
+🛑 永遠不回 0F80/0F81 本身(會變成互相回應的迴圈);到期時間是選填,給限時實驗用。
 """
 import os
 import sys
@@ -38,10 +38,18 @@ def test_off_by_default(T, monkeypatch):
     assert T._sent_frames == [] and T._ack_stat["sent"] == 0
 
 
-def test_requires_an_expiry_time(T, monkeypatch):
-    """只開開關、沒設到期時間 → 不送(避免忘了關)。"""
+def test_no_expiry_means_always_on(T, monkeypatch):
+    """沒設到期時間 = 持續生效(正式功能,不是實驗)。"""
     monkeypatch.setattr(T, "ACK_CONTROLLER", True)
     monkeypatch.setattr(T, "ACK_CONTROLLER_UNTIL", "")
+    monkeypatch.setattr(T, "ACK_ONLY", set())
+    T._ack_controller_frame(_rec())
+    assert len(T._sent_frames) == 1
+
+
+def test_bad_expiry_format_does_not_send(T, monkeypatch):
+    monkeypatch.setattr(T, "ACK_CONTROLLER", True)
+    monkeypatch.setattr(T, "ACK_CONTROLLER_UNTIL", "not-a-time")
     T._ack_controller_frame(_rec())
     assert T._sent_frames == []
 
@@ -56,6 +64,7 @@ def test_stops_after_expiry(T, monkeypatch):
 
 def test_acks_autonomous_reports_within_window(T, monkeypatch):
     monkeypatch.setattr(T, "ACK_CONTROLLER", True)
+    monkeypatch.setattr(T, "ACK_ONLY", set())
     monkeypatch.setattr(T, "ACK_CONTROLLER_UNTIL",
                         (datetime.now() + timedelta(minutes=30)).isoformat(timespec="seconds"))
     T._ack_controller_frame(_rec("5F03", 9))
@@ -66,20 +75,40 @@ def test_acks_autonomous_reports_within_window(T, monkeypatch):
     assert T._ack_stat["sent"] == 1
 
 
-@pytest.mark.parametrize("code", ["0F80", "0F81", "5FC0", "0FC1", "5FC8"])
-def test_never_acks_replies_or_acks(T, monkeypatch, code):
-    """回覆類與 ACK/NAK 本身不回,避免互相回應的迴圈。"""
+@pytest.mark.parametrize("code", ["0F80", "0F81"])
+def test_never_acks_an_ack(T, monkeypatch, code):
+    """ACK/NAK 本身不回,否則兩邊會互相回應到天荒地老。"""
     monkeypatch.setattr(T, "ACK_CONTROLLER", True)
-    monkeypatch.setattr(T, "ACK_CONTROLLER_UNTIL",
-                        (datetime.now() + timedelta(minutes=30)).isoformat(timespec="seconds"))
+    monkeypatch.setattr(T, "ACK_CONTROLLER_UNTIL", "")
+    monkeypatch.setattr(T, "ACK_ONLY", set())
     T._ack_controller_frame(_rec(code, 3))
     assert T._sent_frames == []
+
+
+@pytest.mark.parametrize("code", ["5FC0", "0FC1", "5FC8", "5F03", "0F04"])
+def test_acks_everything_else_including_replies(T, monkeypatch, code):
+    """回覆中央查詢的那幾種也要回 —— 實驗中沒回的就繼續被重送 60% 以上。"""
+    monkeypatch.setattr(T, "ACK_CONTROLLER", True)
+    monkeypatch.setattr(T, "ACK_CONTROLLER_UNTIL", "")
+    monkeypatch.setattr(T, "ACK_ONLY", set())
+    T._ack_controller_frame(_rec(code, 5))
+    assert len(T._sent_frames) == 1
+
+
+def test_ack_codes_env_can_narrow_the_scope(T, monkeypatch):
+    monkeypatch.setattr(T, "ACK_CONTROLLER", True)
+    monkeypatch.setattr(T, "ACK_CONTROLLER_UNTIL", "")
+    monkeypatch.setattr(T, "ACK_ONLY", {"5F03"})
+    T._ack_controller_frame(_rec("5F03", 1))
+    T._ack_controller_frame(_rec("0FC1", 2))
+    assert len(T._sent_frames) == 1
 
 
 def test_never_acks_a_bad_checksum_frame(T, monkeypatch):
     monkeypatch.setattr(T, "ACK_CONTROLLER", True)
     monkeypatch.setattr(T, "ACK_CONTROLLER_UNTIL",
                         (datetime.now() + timedelta(minutes=30)).isoformat(timespec="seconds"))
+    monkeypatch.setattr(T, "ACK_ONLY", set())
     r = _rec(); r["cks_ok"] = False
     T._ack_controller_frame(r)
     assert T._sent_frames == []

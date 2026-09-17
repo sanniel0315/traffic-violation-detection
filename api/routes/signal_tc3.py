@@ -1169,21 +1169,27 @@ def _controller_send(data: bytes) -> bool:
         return False
 
 
-# ── 實驗:對控制器的主動回報回 ACK(限時開關,預設關) ──────────────────
-# 🛑 2026-09-17 現場授權的因果測試。背景:控制器送出的**每一種**訊框(連它自己的
-#    0F80 ACK)都在 2.0~2.1 秒後整批重來,最多 9 次;09-10/13/14 是 0%,09-15 之後
-#    81%。整段輸出重播、與訊息種類無關,最像「送出端在等回應、沒等到就重送」。
-#    我方目前完全不回應控制器的主動回報(中央端歷來也沒送過一則 0F80)。
-#    這個開關讓我方在**限定時間內**回 0F80,看重複會不會停 —— 只為了證實原因。
+# ── 中間層對控制器回 ACK ──────────────────────────────────────────────
+# 🛑 2026-09-17 實測證實的因果。控制器送出的每一種訊框都在 2.0~2.1 秒後**整批**
+#    重來、最多 9 次(09-15 起重複率 81%)。開啟我方回 0F80 的 20 分鐘測試窗後:
+#      我方有回的  5F00 78%→0%、5F03 72%→13%、0F80 74%→10%
+#      我方沒回的  0FC1 89%→61%、5FC8 84%→65%
+#    → 控制器完全照協定在做:等對方確認,沒等到就重送。缺的是**收訊端的 ACK**,
+#      而中央端歷來一則 0F80 都沒送過。
 #
-# 🛑 這不是「偽造 ACK 給中央」(那條原則不變,見 _downlink_allow 的說明):
-#    方向相反,是我方以中央代理的身分回應控制器。但它仍然改變了我方對控制器的行為,
-#    所以:預設關閉、必須設到期時間、到期自動停、每一則都留紀錄。
+# 🛑 為什麼由我方回:我方是中間層 —— 控制器的訊框先進到我們這裡,再由我們上傳中央;
+#    下行的中央命令也由我們轉給控制器。對控制器來說,收訊端就是我們,我們回 ACK
+#    是據實回應「已收到」,不是代替中央承諾什麼。
+#    這與「不偽造 ACK 給中央」是兩回事:那條講的是**不要替控制器回答中央**,
+#    因為我方沒有權限代表控制器接受命令;這裡方向相反,且我方確實收到了。
+#
+# 🛑 永遠不回 0F80/0F81 本身 —— 會變成互相回應的無窮迴圈。
 ACK_CONTROLLER = os.getenv("SIGNAL_TC3_ACK_CONTROLLER", "0") == "1"
+# 到期時間(選填)。空字串 = 持續生效;要做限時實驗才設。
 ACK_CONTROLLER_UNTIL = os.getenv("SIGNAL_TC3_ACK_CONTROLLER_UNTIL", "")
-# 只回這些「控制器主動送的」訊框;回覆類(5FC0/0FC1…)與 ACK/NAK 本身不回,
-# 避免變成互相回應的無窮迴圈。
-ACK_CODES = {"5F03", "0F04", "5F00", "5F0C", "0F08"}
+ACK_NEVER = {"0F80", "0F81"}
+# 只回這幾種(空 = 除了 ACK/NAK 以外全部回)
+ACK_ONLY = {x.strip().upper() for x in os.getenv("SIGNAL_TC3_ACK_CODES", "").split(",") if x.strip()}
 _ack_stat = {"sent": 0, "last": "", "last_error": ""}
 
 
@@ -1191,19 +1197,21 @@ def _ack_window_open() -> bool:
     if not ACK_CONTROLLER:
         return False
     if not ACK_CONTROLLER_UNTIL:
-        return False                      # 沒設到期時間就不做,避免忘了關
+        return True                       # 沒設到期時間 = 持續生效
     try:
         return datetime.now() < datetime.fromisoformat(ACK_CONTROLLER_UNTIL)
     except Exception:
-        return False
+        return False                      # 設了但格式不對 → 不送(寧可不做)
 
 
 def _ack_controller_frame(rec: dict) -> None:
-    """對控制器的主動回報回一則 0F80(內容 = 被確認的訊息碼,序號沿用對方的)。"""
+    """對控制器送來的訊框回一則 0F80(內容 = 被確認的訊息碼,序號沿用對方的)。"""
     if not _ack_window_open():
         return
     code = (rec.get("code") or "").upper()
-    if code not in ACK_CODES or not rec.get("cks_ok"):
+    if not code or code in ACK_NEVER or not rec.get("cks_ok"):
+        return
+    if ACK_ONLY and code not in ACK_ONLY:
         return
     try:
         info = bytes((0x0F, 0x80, int(code[:2], 16), int(code[2:], 16)))
@@ -1215,7 +1223,7 @@ def _ack_controller_frame(rec: dict) -> None:
         _enqueue_frame({"ts": time.time(), "src": "self", "code": "0F80",
                         "seq": rec.get("seq"), "addr": rec.get("addr"),
                         "len": len(frame), "cks_ok": True,
-                        "raw": frame.hex(" ").upper(), "user": "ack-experiment"})
+                        "raw": frame.hex(" ").upper(), "user": "relay-ack"})
     except Exception as exc:
         _ack_stat["last_error"] = "%s: %s" % (type(exc).__name__, exc)
 
