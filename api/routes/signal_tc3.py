@@ -1583,6 +1583,7 @@ def _auth_renew_loop() -> None:
             except Exception as exc:
                 _auth["last_error"] = "啟動查策略失敗:%s" % exc
         shutdown_event.wait(AUTH_PROBE_SEC)
+    _next_at = time.time()          # 續約的時間錨點(見迴圈末端的說明)
     while not shutdown_event.is_set():
         try:
             if _dyn.get("enabled") and _dyn.get("level") == "L0":
@@ -1608,7 +1609,21 @@ def _auth_renew_loop() -> None:
                     continue
         except Exception as exc:
             _auth["last_error"] = "%s: %s" % (type(exc).__name__, exc)
-        shutdown_event.wait(AUTH_RENEW_SEC)
+        # 🛑 2026-09-17:不可以「做完事再睡固定秒數」—— 那會把工作耗時累加上去。
+        #    實測續約設 10 秒,實際間隔卻是 10/17/10/18/10/19… 交替(285 則裡
+        #    50 次超過 15 秒),而部署後 4 次掉回定時有 3 次正好落在這種空窗。
+        #    改成**對齊時間錨點**:下一次固定在上一次的預定時刻 + 週期,
+        #    這一輪花掉的時間由下一次的等待吸收。落後太多(>一個週期)就重設錨點,
+        #    避免補送一串命令灌爆序列線。
+        _next_at += AUTH_RENEW_SEC
+        _wait = _next_at - time.time()
+        if _wait < 0:
+            _auth["late_n"] = _auth.get("late_n", 0) + 1
+            _auth["late_last"] = round(-_wait, 1)
+            if -_wait > AUTH_RENEW_SEC:
+                _next_at = time.time() + AUTH_RENEW_SEC
+            _wait = 0.5
+        shutdown_event.wait(_wait)
 
 
 def start_auth_renew() -> None:
