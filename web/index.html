@@ -27433,8 +27433,13 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                     //    (螢幕約 100px)、緯度只差 10 m(約 19px),而標籤寬約 150px ——
                     //    同高度還是會擦到。下匝道那個錨點在北邊,再往上推到 -44px,
                     //    垂直間距拉開到約 43px,兩個標籤才真的分開。
+                    // 🛑 2026-09-17 現場微調(使用者逐次指示):
+                    //    上匝道標籤在號控燈 5 上方、再**往左** 70px;
+                    //    下匝道標籤在 1、2 號燈中點上方 44px。
+                    //    x 往左是負值。這兩組數字是現場看出來的,不是算出來的 ——
+                    //    要再挪就改這裡,不要動錨點(錨點是「掛在哪座燈」的語意)。
                     lblOpt = {permanent: true, direction: 'top',
-                              offset: [0, _isOff ? -44 : -20],
+                              offset: _isOff ? [0, -44] : [-70, -20],
                               opacity: .95,
                               className: 'wr-seg-label' + (isPri ? ' pri' : '')};
                 } else {
