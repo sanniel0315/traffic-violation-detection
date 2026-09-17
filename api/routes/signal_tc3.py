@@ -1546,6 +1546,8 @@ _downlink = {"seen": 0, "held": 0, "passed": 0, "last_held": None,
 #    改成 20 秒,一個週期內可以連掉兩次仍不失控。
 #    代價只是多送幾則 5F10;送的值固定 0x14,控制器不會來回跳。
 AUTH_RENEW_SEC = float(os.getenv("SIGNAL_TC3_AUTH_RENEW_SEC", "20") or 20)
+# 換相(5F1C)送出前,授權若比這個秒數舊就先補一次 5F10。0 = 關閉。
+AUTH_REFRESH_BEFORE_SEC = float(os.getenv("SIGNAL_TC3_AUTH_REFRESH_BEFORE_SEC", "8") or 0)
 # 啟動後等抄到控制策略就立刻續約(每 2 秒探一次,最多等這麼久)。
 # 🛑 不可以直接等一個完整週期 —— 2026-09-08 重啟後第一次續約拖到 90 秒,
 #    授權在第 60 秒就到期了,路口白白退回定時控制一分鐘。
@@ -3507,6 +3509,21 @@ async def control_send(body: dict, _user=Depends(get_current_user)):
     sock = _sock_ref.get("sock")
     if sock is None:
         raise HTTPException(status_code=409, detail="號誌通道目前沒有連線,無法送出。")
+
+    # 🛑 2026-09-17 實測:5F1C 被拒(0F81 ErrorCode=02)與「距上次 5F10 多久」
+    #    完全對得上 —— 10 秒內送出的 36 則 **零被拒**,15~25 秒被拒率 41~50%。
+    #    同一份資料裡時相控制保持率也隨這個 age 衰減(≤12 秒 99%、20~24 秒 86%)。
+    #    續約迴圈的節奏會被序列排隊拉長(實測仍有 28~30 秒的空檔),所以
+    #    **換相前先補一次授權**:把命令送在授權還新的時候,而不是事後重送。
+    if (dev_cmd == "5F1C" and AUTH_REFRESH_BEFORE_SEC > 0
+            and _dyn.get("enabled") and _dyn.get("level") == "L0"
+            and isinstance(_safety.get("strategy"), int)
+            and time.time() - float(_auth.get("last") or 0) > AUTH_REFRESH_BEFORE_SEC):
+        try:
+            _do_reassert(kind="換相前補授權")
+            _auth["last"] = time.time()
+        except Exception as exc:                 # 補不成也照送,不要因此擋掉換相
+            _auth["last_error"] = "換相前補授權失敗:%s" % exc
 
     user = getattr(_user, "username", None) or str(_user)
     # 自稱來源 + 實際登入者,兩個都留 —— 只留一個事後無法交叉查核。
