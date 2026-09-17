@@ -85,3 +85,25 @@ def test_empty_history_is_not_an_error(tmp_path, monkeypatch):
     assert out["available"] is True and out["samples"] == 0
     assert out["live"] is None
     assert out["accuracy"]["hit_rate_pct"] is None
+
+
+def test_accuracy_is_split_by_tier(tmp_path, monkeypatch):
+    """🛑 夜間(20:00-06:00)幾乎沒有車,模型一直建議續綠,與控制器照時制跑本來
+       就對不上。混在一起算的一致率既不代表白天也不代表夜間,所以要分開。"""
+    from api.routes import signal_shadow as S
+
+    now = float(int(time.time()))
+    db = tmp_path / "t.db"
+    _seed(db, now)
+    monkeypatch.setattr(S, "_db", lambda: sqlite3.connect(str(db)))
+
+    out = S.rolling_shadow(minutes=60, limit=100, _user="t")
+    bt = out["accuracy"]["by_tier"]
+    assert set(bt) == {"尖峰", "離峰", "夜間"}
+    # 每一筆都要標時段,表格才對得起來
+    assert all(i.get("tier") in ("尖峰", "離峰", "夜間") for i in out["items"])
+    # 分桶後的次數加總要等於總數(沒有樣本被吃掉或重複計)
+    assert sum(b["said_switch_now"] for b in bt.values()) == out["accuracy"]["said_switch_now"]
+    assert sum(b["hit"] for b in bt.values()) == out["accuracy"]["hit"]
+    assert sum(b["keep_advice_n"] for b in bt.values()) == out["accuracy"]["keep_advice_n"]
+    assert "夜間" in out["accuracy"]["tier_note"]

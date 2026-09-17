@@ -9017,12 +9017,30 @@
                                         <div class="ds-kpi-hint">預測的剩餘綠燈 vs 實際還跑了多久（{{ sigRoll.accuracy.keep_advice_n }} 筆）</div>
                                     </div>
                                 </div>
+                                <!-- 🛑 一致率要分時段看:夜間幾乎沒有車,模型一直建議續綠,
+                                     與控制器照時制跑本來就對不上。混在一起的總數不可判讀。 -->
+                                <div style="overflow-x:auto;margin-bottom:10px">
+                                    <table class="sc-table">
+                                        <thead><tr><th>時段</th><th>說「現在切」</th><th>一致</th><th>一致率</th><th>「再給N秒」誤差中位</th></tr></thead>
+                                        <tbody>
+                                            <tr v-for="tk in ['尖峰','離峰','夜間']" :key="'rt'+tk">
+                                                <td>{{ tk }}</td>
+                                                <td class="sc-num">{{ ((sigRoll.accuracy.by_tier||{})[tk]||{}).said_switch_now }}</td>
+                                                <td class="sc-num">{{ ((sigRoll.accuracy.by_tier||{})[tk]||{}).hit }}</td>
+                                                <td class="sc-num">{{ ((sigRoll.accuracy.by_tier||{})[tk]||{}).hit_rate_pct==null ? '—' : (((sigRoll.accuracy.by_tier||{})[tk]||{}).hit_rate_pct + '%') }}</td>
+                                                <td class="sc-num">{{ ((sigRoll.accuracy.by_tier||{})[tk]||{}).keep_err_median_sec==null ? '—' : (((sigRoll.accuracy.by_tier||{})[tk]||{}).keep_err_median_sec + ' s') }}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div style="color:var(--gov-muted);font-size:12px;margin-bottom:10px">{{ sigRoll.accuracy.tier_note }}</div>
                                 <div style="overflow-x:auto">
                                     <table class="sc-table">
-                                        <thead><tr><th>時間</th><th>匝道（分相）</th><th>已亮</th><th>預測建議</th><th>實際幾秒後換相</th><th>排隊 綠/紅</th></tr></thead>
+                                        <thead><tr><th>時間</th><th>時段</th><th>匝道（分相）</th><th>已亮</th><th>預測建議</th><th>實際幾秒後換相</th><th>排隊 綠/紅</th></tr></thead>
                                         <tbody>
                                             <tr v-for="(r,ri) in sigRoll.items.slice(0,40)" :key="'rl'+ri">
                                                 <td>{{ (r.ts||'').slice(11,19) }}</td>
+                                                <td>{{ r.tier }}</td>
                                                 <td>{{ r.ramp }}（分相 {{ r.phase_no }}）</td>
                                                 <td class="sc-num">{{ r.green_elapsed_sec }} s</td>
                                                 <td>{{ r.advice }}</td>

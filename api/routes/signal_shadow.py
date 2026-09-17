@@ -4272,6 +4272,18 @@ def rolling_shadow(minutes: int = Query(60, ge=5, le=1440),
                 return x
         return None
 
+    # 🛑 2026-09-18:一致率要**分時段算**。夜間(20:00-06:00)幾乎沒有車,
+    #    模型看不到需求就一直建議續綠,而控制器照時制在跑 —— 兩者當然對不上。
+    #    把夜間跟白天混在一起算,會得到一個既不代表白天也不代表夜間的數字。
+    def _tier_of(ts):
+        lt = datetime.fromtimestamp(ts)
+        m = lt.hour * 60 + lt.minute
+        if m >= 20 * 60 or m < 6 * 60:
+            return "夜間"
+        return "尖峰" if _is_peak(ts) else "離峰"
+
+    tiers = {t: {"said_switch_now": 0, "hit": 0, "err": []}
+             for t in ("尖峰", "離峰", "夜間")}
     items, hit, said_now, err = [], 0, 0, []
     for ts_s, ep, ph, el, would, reason, qg, qr in rows:
         try:
@@ -4280,14 +4292,20 @@ def rolling_shadow(minutes: int = Query(60, ge=5, le=1440),
             info = {}
         nxt = _next_switch(ep)
         gap = (nxt - ep) if nxt is not None else None
+        tier = _tier_of(ep)
+        tb = tiers[tier]
         if would:
             said_now += 1
+            tb["said_switch_now"] += 1
             if gap is not None and gap <= SW:
                 hit += 1
+                tb["hit"] += 1
         elif info.get("best_sec") is not None and gap is not None:
             err.append(abs(float(info["best_sec"]) - gap))
+            tb["err"].append(abs(float(info["best_sec"]) - gap))
         items.append({
-            "ts": ts_s, "phase_no": ph, "ramp": _ramp_name(int(ph or 0)),
+            "ts": ts_s, "tier": tier,
+            "phase_no": ph, "ramp": _ramp_name(int(ph or 0)),
             "green_elapsed_sec": el,
             "advice": ("現在就切" if would else
                        ("再給 %.0f 秒" % info["best_sec"]) if info.get("best_sec") is not None
@@ -4299,6 +4317,17 @@ def rolling_shadow(minutes: int = Query(60, ge=5, le=1440),
             "actual_switch_in_sec": (round(gap, 1) if gap is not None else None),
         })
     err.sort()
+    by_tier = {}
+    for t, b in tiers.items():
+        e = sorted(b["err"])
+        by_tier[t] = {
+            "said_switch_now": b["said_switch_now"],
+            "hit": b["hit"],
+            "hit_rate_pct": (round(100 * b["hit"] / b["said_switch_now"], 1)
+                             if b["said_switch_now"] else None),
+            "keep_advice_n": len(e),
+            "keep_err_median_sec": (round(e[len(e) // 2], 1) if e else None),
+        }
     return {
         "available": True, "minutes": minutes, "samples": len(items),
         "horizon_sec": ROLLING_HORIZON_SEC,
@@ -4312,6 +4341,9 @@ def rolling_shadow(minutes: int = Query(60, ge=5, le=1440),
             "keep_err_median_sec": (round(err[len(err) // 2], 1) if err else None),
             "note": "命中 = rolling 說現在切、且 %.0f 秒內控制器真的換相。"
                     "現在下發的是成本式,所以這是**一致率**不是成效。" % SW,
+            "by_tier": by_tier,
+            "tier_note": "夜間(20:00-06:00)幾乎沒有車,模型看不到需求就一直建議續綠,"
+                         "與控制器照時制跑本來就對不上 —— 不要用混合後的總數判讀。",
         },
         "items": items,
         "caveat": "只算不下發;線上到達率是當下流量外推,非校準到達曲線。",
