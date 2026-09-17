@@ -27358,6 +27358,10 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 const isPri = !!(sides[ph] || {}).priority;
                 // 🛑 常駐標籤只留「這是哪條路」—— 排隊長度與等級每秒在變,放在常駐
                 //    標籤裡會讓它一直變寬變窄,而且那是滑鼠停留才需要的細節(segTip 有)。
+                // 🛑 2026-09-17 現場:「地圖上顯示 匝道 分相 1 2 路況的標籤疊加在一起」。
+                //    我一度把「分相 N」拿掉讓標籤變短,使用者當場指正**分相要顯示** ——
+                //    現場要靠它跟控制器的回報對照。所以標籤內容不動,
+                //    疊加改用下面的錨點分離 + 垂直錯開解決。
                 const segLabel = '<b>' + rampName + '</b>（分相 ' + ph + '）'
                                + (isPri ? ' <i>主線保護</i>' : '');
                 const segTip = rampName + '（分相 ' + ph + '）'
@@ -27378,12 +27382,24 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //    用 px 不用公尺 —— 跟縮放無關,也跟兩條線的夾角無關,
                 //    不會因為之後改 segLen 或燈的位置又疊回去。
                 if (wrLayers.seg[ph]) wrLayers.seg[ph].unbindTooltip();
-                const LBL_AT = 0.72;
+                // 🛑 第二招:兩條線的錨點**放在不同比例**,不要都在 72% ——
+                //    兩條分相線幾乎平行(夾角約 21°),同一比例的兩個錨點只差
+                //    46.7 m(z18 約 85px)、緯度只差 2.8 m(約 5px),等於並排在
+                //    同一高度,標籤一長就必疊。一個推到最遠端、一個拉回半途,
+                //    沿線方向先拉開一段距離。
+                // 🛑 第三招:再加畫面座標的垂直錯開,並且加大到 ±26px(原本 ±14
+                //    不夠,現場仍看到疊)。用 px 與縮放無關,也不受兩線夾角影響。
+                //    錯開方向綁**匝道角色**不綁分相編號 —— 編號會因改線路對調,
+                //    綁編號的話哪天對調又會擠回同一側。
+                // 角色拿不到時退回 priority 旗標 —— 主線保護相就是下匝道。
+                const _sd = sides[ph] || {};
+                const _isOff = (_sd.role ? _sd.role === 'off_ramp' : !!_sd.priority);
+                const LBL_AT = _isOff ? 0.95 : 0.55;
                 const LP = wrOffset(originLat, originLng,
                                     ux * segLen * LBL_AT, uy * segLen * LBL_AT);
                 const lblOpt = {permanent: true,
-                                direction: (ph === 1) ? 'top' : 'bottom',
-                                offset: (ph === 1) ? [0, -14] : [0, 14],
+                                direction: _isOff ? 'top' : 'bottom',
+                                offset: _isOff ? [0, -26] : [0, 26],
                                 opacity: .95,
                                 className: 'wr-seg-label' + (isPri ? ' pri' : '')};
                 upsert('lbl', ph,

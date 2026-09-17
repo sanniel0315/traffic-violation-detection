@@ -2413,6 +2413,33 @@ def shadow_outcome_compare(
                     "在我方真的接管控制權之前,兩段量到的都是現行控制方的成效。"}
 
 
+def _split_by_peak(st: float, en: float) -> list:
+    """把一段時間依尖峰邊界切開,回 [(start, end, "尖峰"/"離峰"), ...]。
+
+    🛑 2026-09-17 使用者:「要分尖峰離峰」。一段 60 分鐘的 A/B 分段很可能
+       跨過 09:00 或 16:30 —— 整段歸一邊會把尖峰的塞算進離峰(或反過來)。
+       所以先切開,各自算成效,再依時段別彙總。
+    🛑 尖峰定義沿用 PEAK_WINDOWS(使用者定的 09:00-12:00、16:30-20:00),
+       不在這裡另外寫一份。
+    """
+    out = []
+    cur = st
+    while cur < en:
+        lt = datetime.fromtimestamp(cur)
+        day0 = lt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        m = lt.hour * 60 + lt.minute + lt.second / 60.0
+        tier = "尖峰" if _is_peak(cur) else "離峰"
+        # 下一個邊界:當天所有尖峰起訖裡,第一個大於現在的
+        bounds = []
+        for a, b in PEAK_WINDOWS:
+            bounds += [day0 + a * 60, day0 + b * 60]
+        bounds.append(day0 + 24 * 3600)          # 跨日也要切
+        nxt = min([x for x in bounds if x > cur] or [en])
+        out.append((cur, min(nxt, en), tier))
+        cur = min(nxt, en)
+    return out
+
+
 @router.get("/ab-report", summary="A/B 交替的成效比較(同一天內、共享外在條件)")
 def ab_report(since: str = Query("", description="起(ISO);空=全部"),
               until: str = Query("", description="訖(ISO)"),
@@ -2457,6 +2484,9 @@ def ab_report(since: str = Query("", description="起(ISO);空=全部"),
                 "hint": "A/B 交替排程還沒跑過就不會有分段(POST /api/signal/control/ab)"}
 
     per = {"A": [], "B": []}
+    # 依時段別分開存(使用者 2026-09-17:「要分尖峰離峰」)
+    per_tier: dict = {("A", "尖峰"): [], ("A", "離峰"): [],
+                      ("B", "尖峰"): [], ("B", "離峰"): []}
     excluded = {"degraded": 0, "too_short": 0}
     for side, st, en, deg in rows:
         if deg:
@@ -2473,9 +2503,33 @@ def ab_report(since: str = Query("", description="起(ISO);空=全部"),
             continue
         o["_minutes"] = round((en - st2) / 60, 1)
         per.setdefault(side, []).append(o)
+        # 🛑 跨尖峰邊界的分段要**切開**再算 —— 整段歸一邊會把尖峰的塞
+        #    算進離峰(或反過來)。切完不足 5 分鐘的碎片丟掉,不是樣本。
+        for a2, b2, tier in _split_by_peak(st2, en):
+            if (b2 - a2) < 300:
+                continue
+            ot = _outcome_window(datetime.fromtimestamp(a2).isoformat(timespec="seconds"),
+                                 datetime.fromtimestamp(b2).isoformat(timespec="seconds"))
+            if ot.get("insufficient_data"):
+                continue
+            ot["_minutes"] = round((b2 - a2) / 60, 1)
+            per_tier.setdefault((side, tier), []).append(ot)
 
-    KEYS = ("total_delay_veh_sec", "avg_queue_m_1", "avg_queue_m_2",
-            "max_queue_m_2", "spillback_events_2", "switch_per_min")
+    from detection.signal_timing_lookup import phase_of_role as _pof
+    _off, _on = _pof("off_ramp"), _pof("on_ramp")
+    # 🛑 指標鍵以**匝道**為主(使用者定調),分相編號只是取值用的索引。
+    KEYS = ("total_delay_veh_sec",
+            "avg_queue_m_%d" % _off, "avg_queue_m_%d" % _on,
+            "max_queue_m_%d" % _off, "spillback_events_%d" % _off,
+            "switch_per_min")
+    KEY_LABEL = {
+        "total_delay_veh_sec": "總延滯(車·秒)",
+        "avg_queue_m_%d" % _off: "下匝道平均排隊(m)",
+        "avg_queue_m_%d" % _on: "上匝道平均排隊(m)",
+        "max_queue_m_%d" % _off: "下匝道最大排隊(m)",
+        "spillback_events_%d" % _off: "主線回堵次數(下匝道)",
+        "switch_per_min": "每分鐘換相次數",
+    }
 
     def _agg(lst):
         if not lst:
@@ -2496,17 +2550,44 @@ def ab_report(since: str = Query("", description="起(ISO);空=全部"),
 
     A, B = _agg(per["A"]), _agg(per["B"])
     MIN_SLOTS, MIN_MIN = 3, 90
-    enough = (A["slots"] >= MIN_SLOTS and B["slots"] >= MIN_SLOTS
-              and A.get("minutes", 0) >= MIN_MIN and B.get("minutes", 0) >= MIN_MIN)
-    delta = {}
-    for k in KEYS:
-        va, vb = A.get(k), B.get(k)
-        if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
-            delta[k] = {"A_我方": va, "B_內建時制": vb, "diff": round(va - vb, 2),
-                        "pct": (round((va - vb) / vb * 100, 1) if vb else None)}
+
+    def _enough(a, b):
+        return (a["slots"] >= MIN_SLOTS and b["slots"] >= MIN_SLOTS
+                and a.get("minutes", 0) >= MIN_MIN and b.get("minutes", 0) >= MIN_MIN)
+
+    def _delta(a, b):
+        d = {}
+        for k in KEYS:
+            va, vb = a.get(k), b.get(k)
+            if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
+                d[KEY_LABEL.get(k, k)] = {
+                    "A_我方": va, "B_內建時制": vb, "diff": round(va - vb, 2),
+                    "pct": (round((va - vb) / vb * 100, 1) if vb else None)}
+        return d
+
+    enough = _enough(A, B)
+    delta = _delta(A, B)
+    # 🛑 尖峰與離峰分開判:兩者的車流條件差很多,合在一起看會被時數多的那邊帶走。
+    #    每個時段別各自套同一組樣本門檻,不足就各自標明不下結論。
+    by_tier = {}
+    for tier in ("尖峰", "離峰"):
+        ta, tb = _agg(per_tier[("A", tier)]), _agg(per_tier[("B", tier)])
+        ok = _enough(ta, tb)
+        by_tier[tier] = {
+            "A_我方控制": ta, "B_控制器內建時制": tb, "delta": _delta(ta, tb),
+            "conclusive": ok,
+            "caveat": (None if ok else
+                       ("🛑 %s 樣本不足,**不下結論**:每邊至少 %d 段且合計 %d 分鐘,"
+                        "目前 A %d 段/%.0f 分、B %d 段/%.0f 分。"
+                        % (tier, MIN_SLOTS, MIN_MIN, ta["slots"], ta.get("minutes", 0),
+                           tb["slots"], tb.get("minutes", 0)))),
+        }
     return {
         "available": True,
         "A_我方控制": A, "B_控制器內建時制": B, "delta": delta,
+        "by_tier": by_tier,
+        "peak_windows": ["%02d:%02d-%02d:%02d" % (a // 60, a % 60, b // 60, b % 60)
+                         for a, b in PEAK_WINDOWS],
         "slots_total": len(rows), "excluded": excluded, "guard_sec": guard_sec,
         "conclusive": enough,
         "note": ("越小越好(switch_per_min 除外:太頻繁代表浪費在換相損失)。"
@@ -2703,6 +2784,9 @@ def shadow_plan(_user=Depends(get_current_user)):
         sr = a.spillback_ratio()
         return {
             "phase_no": a.phase_no,
+            # 🛑 role 要送出去:前端要用角色(off_ramp/on_ramp)決定版面,
+            #    不可以用分相編號 —— 編號會因現場改線路對調,版面就跟著跳。
+            "role": role.get("role"),
             "ramp": role.get("ramp"), "label": role.get("label"),
             "camera": camera_label(role.get("constraint_camera")),
             "camera_key": role.get("constraint_camera"),
