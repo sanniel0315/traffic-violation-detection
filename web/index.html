@@ -27394,14 +27394,32 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 // 角色拿不到時退回 priority 旗標 —— 主線保護相就是下匝道。
                 const _sd = sides[ph] || {};
                 const _isOff = (_sd.role ? _sd.role === 'off_ramp' : !!_sd.priority);
-                const LBL_AT = _isOff ? 0.95 : 0.55;
-                const LP = wrOffset(originLat, originLng,
-                                    ux * segLen * LBL_AT, uy * segLen * LBL_AT);
-                const lblOpt = {permanent: true,
-                                direction: _isOff ? 'top' : 'bottom',
-                                offset: _isOff ? [0, -26] : [0, 26],
-                                opacity: .95,
-                                className: 'wr-seg-label' + (isPri ? ' pri' : '')};
+                // 🛑 2026-09-17 使用者:「下的要放到兩紅綠燈的上面」——
+                //    下匝道那一相的標籤錨在它**兩座號誌燈的中點**,再往上推,
+                //    不再沿線段取比例。這樣它跟自己的燈是一組,看的人不必猜
+                //    哪個標籤講哪條路;上匝道維持沿線 55% 往下,兩者自然分開。
+                //    拿不到燈座標(還沒拖曳定位)才退回沿線比例。
+                let LP, lblOpt;
+                const _headMid = (_isOff && phHeadPts.length)
+                    ? [phHeadPts.reduce((a, c) => a + c.lat, 0) / phHeadPts.length,
+                       phHeadPts.reduce((a, c) => a + c.lng, 0) / phHeadPts.length]
+                    : null;
+                if (_headMid) {
+                    LP = _headMid;
+                    // 燈箱高 22px、錨點在正中央 → 要推到 11px 之上才不會壓到燈
+                    lblOpt = {permanent: true, direction: 'top', offset: [0, -20],
+                              opacity: .95,
+                              className: 'wr-seg-label' + (isPri ? ' pri' : '')};
+                } else {
+                    const LBL_AT = _isOff ? 0.95 : 0.55;
+                    LP = wrOffset(originLat, originLng,
+                                  ux * segLen * LBL_AT, uy * segLen * LBL_AT);
+                    lblOpt = {permanent: true,
+                              direction: _isOff ? 'top' : 'bottom',
+                              offset: _isOff ? [0, -26] : [0, 26],
+                              opacity: .95,
+                              className: 'wr-seg-label' + (isPri ? ' pri' : '')};
+                }
                 upsert('lbl', ph,
                        () => L.marker(LP, {opacity: 0, interactive: false, keyboard: false})
                               .bindTooltip(segLabel, lblOpt),
