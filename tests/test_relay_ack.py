@@ -112,3 +112,29 @@ def test_never_acks_a_bad_checksum_frame(T, monkeypatch):
     r = _rec(); r["cks_ok"] = False
     T._ack_controller_frame(r)
     assert T._sent_frames == []
+
+
+def _ack_rec(inner="5F10", seq=7):
+    """控制器回的 0F80,內容是被確認的碼。"""
+    raw = "AA BB %02X FF FF 00 0E 0F 80 %s %s AA CC 00" % (seq, inner[:2], inner[2:])
+    return {"code": "0F80", "seq": seq, "addr": 0xFFFF, "cks_ok": True, "raw": raw}
+
+
+def test_acks_the_controller_ack_of_our_command(T, monkeypatch):
+    """控制器對**我方命令**回的 0F80 也要確認 —— 中央沒送過那道命令,不該由它收尾。"""
+    monkeypatch.setattr(T, "ACK_CONTROLLER", True)
+    monkeypatch.setattr(T, "ACK_CONTROLLER_UNTIL", "")
+    monkeypatch.setattr(T, "ACK_ONLY", set())
+    T._ack_controller_frame(_ack_rec("5F10", 11))
+    assert len(T._sent_frames) == 1
+    assert T._sent_frames[0][7:11] == bytes((0x0F, 0x80, 0x0F, 0x80))
+
+
+def test_does_not_ack_an_ack_of_an_ack(T, monkeypatch):
+    """只回一層:對方確認的若本身是 ACK 就停,否則會互相確認到天荒地老。"""
+    monkeypatch.setattr(T, "ACK_CONTROLLER", True)
+    monkeypatch.setattr(T, "ACK_CONTROLLER_UNTIL", "")
+    monkeypatch.setattr(T, "ACK_ONLY", set())
+    T._ack_controller_frame(_ack_rec("0F80", 12))
+    T._ack_controller_frame(_ack_rec("0F81", 13))
+    assert T._sent_frames == []

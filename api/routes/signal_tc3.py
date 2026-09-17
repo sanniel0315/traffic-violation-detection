@@ -1187,7 +1187,14 @@ def _controller_send(data: bytes) -> bool:
 ACK_CONTROLLER = os.getenv("SIGNAL_TC3_ACK_CONTROLLER", "0") == "1"
 # 到期時間(選填)。空字串 = 持續生效;要做限時實驗才設。
 ACK_CONTROLLER_UNTIL = os.getenv("SIGNAL_TC3_ACK_CONTROLLER_UNTIL", "")
-ACK_NEVER = {"0F80", "0F81"}
+# 🛑 0F80/0F81 本身原則上不回,否則兩邊會互相確認到天荒地老。
+#    但實測 2026-09-17:控制器對**我方命令**回的 0F80(近 15 分鐘 58 則裡 56 則是
+#    回我方的 5F10/5F1C)等不到確認,一樣每 2 秒重送 —— 那段本來就該由我方收尾,
+#    中央沒送過那道命令,也不該替它確認。
+#    解法:回,但**只回一層** —— 被確認的碼若本身是 0F80/0F81 就不再回。
+#    這樣最深只有「命令 → ACK → 我方確認」,不可能無限循環。
+ACK_NEVER: set = set()
+ACK_NO_SECOND_LAYER = {"0F80", "0F81"}
 # 只回這幾種(空 = 除了 ACK/NAK 以外全部回)
 ACK_ONLY = {x.strip().upper() for x in os.getenv("SIGNAL_TC3_ACK_CODES", "").split(",") if x.strip()}
 _ack_stat = {"sent": 0, "last": "", "last_error": ""}
@@ -1213,6 +1220,15 @@ def _ack_controller_frame(rec: dict) -> None:
         return
     if ACK_ONLY and code not in ACK_ONLY:
         return
+    if code in ACK_NO_SECOND_LAYER:
+        # 這是一則 ACK/NAK:看它在確認什麼,若確認的又是 ACK 就不再回(斷開循環)
+        try:
+            body = _unstuff(bytes.fromhex((rec.get("raw") or "").replace(" ", ""))[7:-3])
+            inner = "%02X%02X" % (body[2], body[3]) if len(body) >= 4 else ""
+        except Exception:
+            return
+        if inner in ACK_NO_SECOND_LAYER or not inner:
+            return
     try:
         info = bytes((0x0F, 0x80, int(code[:2], 16), int(code[2:], 16)))
         frame = build_frame(int(rec.get("addr") or 0xFFFF), int(rec.get("seq") or 0), info)
