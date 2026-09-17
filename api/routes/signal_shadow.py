@@ -3433,21 +3433,38 @@ def _actual_runs_from_frames(since_iso: str, until_iso: str) -> Optional[list]:
         #    而 /paired 的「我方會早切」KPI 正是建立在這個長度上。
         #    改成:綠燈階段是步階 1 與 2(主綠 + 綠燈延長),
         #    綠燈結束 = 這一相裡**第一個不是綠燈步階**的框(黃燈/全紅)。
+        # 🛑 2026-09-17:黃燈框不能當唯一的「綠燈結束」依據。斷電後控制器的短步階
+        #    回報大量不見(黃燈 3 秒的回報只剩 16% 的週期收得到、全紅 2 秒剩 7%),
+        #    而步階2(行人綠閃 5 秒)還有 64% —— 兩者合起來 81% 的週期至少有一個。
+        #    步階2 的回報帶「這一步還剩幾秒」,所以看到它就能推算綠燈結束:
+        #        綠燈結束 = 這一框的時刻 + 剩餘秒數
+        #    收得到黃燈時仍以黃燈為準(那是實測到的轉換時刻,不是推算)。
+        rem = ph.get("step_sec")
         if st in (1, 2):
             cur["green_last"] = float(ts)
+            if st == 2 and cur.get("green_end") is None and isinstance(rem, int):
+                cur["green_end_est"] = float(ts) + float(rem)   # 行人綠閃結束 = 綠燈結束
         elif cur.get("green_end") is None and cur.get("green_last") is not None:
-            cur["green_end"] = float(ts)
+            cur["green_end"] = float(ts)                        # 黃燈框:實測值,優先
     if cur is not None:
         segs.append(cur)
     out = []
     for sg in segs:
+        # 沒收到黃燈框,但收到行人綠閃 → 用它推算(誤差 <=1 秒,遠小於漏掉整段)
+        if sg.get("green_end") is None and sg.get("green_end_est") is not None:
+            sg["green_end"] = sg["green_end_est"]
+            sg["green_end_source"] = "step2_est"
         # 這一相還沒走到黃燈就被區間切斷 → 用最後一個綠燈框當結束(會略為低估)
         if sg.get("green_end") is None and sg.get("green_last") is not None:
             sg["green_end"] = sg["green_last"]
+            sg["green_end_source"] = "green_last"
+        sg.setdefault("green_end_source", "yellow_frame")
         if sg["green_end"] is None:
             continue
         out.append({"phase": sg["phase"], "start": sg["start"], "green_end": sg["green_end"],
-                    "end": sg["end"], "green_sec": round(sg["green_end"] - sg["start"], 1)})
+                    "end": sg["end"], "green_sec": round(sg["green_end"] - sg["start"], 1),
+                    # 綠燈結束是實測到的黃燈框,還是用行人綠閃推算的 —— 報表要分得出來
+                    "green_end_source": sg.get("green_end_source")})
     return out
 
 
