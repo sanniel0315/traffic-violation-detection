@@ -1656,7 +1656,15 @@ def _do_reassert(kind: str = "重新宣告") -> None:
             return
         # 序號與側錄都沿用既有下發那一套,不另造一份 —— 兩套會漂移。
         seq = (int(_seq_next.get("n", 0)) + 1) & 0xFF
-        info = bytes([0x5F, 0x10, reassert_strategy(), REASSERT_EFFECT & 0xFF])
+        # 🛑 2026-09-17:EffectTime 要**每次交替**,不可以每次送一模一樣的命令。
+        #    實測:每 20 秒續約一次、內容完全相同,授權仍然平均只撐 41 秒就掉回
+        #    0x05(定時控制 + 殘留的路口手動),時相控制只佔一半時間 ——
+        #    控制器對「與現值相同的命令」不重新計時,續約再密也沒用。
+        #    交替 1↔2 分鐘讓每一則都是新命令,計時器才會被刷新;而且窗口(>=1 分)
+        #    一直大於續約間隔(20 秒),中間不會有空檔。
+        #    🛑 不改成很大的 EffectTime —— 那等於把「我方掛掉就自動歸還」的保險拆掉。
+        _eff = REASSERT_EFFECT if (_reassert["n"] % 2 == 0) else (REASSERT_EFFECT + 1)
+        info = bytes([0x5F, 0x10, reassert_strategy(), _eff & 0xFF])
         frame = build_frame(addr, seq, info)
         if _controller_send(frame):
             _seq_next["n"] = seq
@@ -1668,7 +1676,7 @@ def _do_reassert(kind: str = "重新宣告") -> None:
                             "cks_ok": True, "raw": frame.hex(" ").upper(),
                             "user": "reassert" if kind == "重新宣告" else "renew"})
             add_log("info", "授權%s:我方送 5F10 0x%02X(EffectTime=%d 分)"
-                    % (kind, reassert_strategy(), REASSERT_EFFECT), "signal")
+                    % (kind, reassert_strategy(), _eff), "signal")
             print("[signal-tc3][控制] user=%s code=5F10 seq=%d raw=%s"
                   % (("reassert" if kind == "重新宣告" else "renew"), seq, frame.hex(" ").upper()), flush=True)
         else:
