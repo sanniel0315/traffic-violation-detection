@@ -2809,7 +2809,11 @@ def _control_evidence(minutes: int = 30) -> dict:
         #    送出數」去推外部次數會得到假數字。所以兩邊各報各的來源,不相減。
         for code, user, n, last in conn.execute(
                 "SELECT code,user,count(*),max(ts) FROM signal_frames "
-                "WHERE src='self' AND ts>? GROUP BY code,user", (cut,)):
+                # 🛑 2026-09-17:排除 user='relay-ack' —— 那是中間層代控制器補回的
+                #    0F80 確認框(不是任何人下發的命令)。不排除的話它會落進
+                #    「manual(人工)」桶,每 2 秒一則、量級遠大於真正的下發,
+                #    卡片會顯示成「人工正在大量下發控制」。
+                "WHERE src='self' AND ts>? AND user<>'relay-ack' GROUP BY code,user", (cut,)):
             u = str(user or "")
             who = "algorithm" if u.startswith("algorithm") else (
                 "renew" if u == "renew" or u == "reassert" else "manual")
@@ -4393,7 +4397,9 @@ def adjust_log(hours: int = Query(24, ge=1, le=168),
     # 🛑 上限放在 SQL 而不是取完再切:一次撈整年會把記憶體吃掉。
     #    這個上限是**掃描範圍**不是回傳筆數 —— 回傳由 limit/offset 分頁。
     SCAN_CAP = 20000
-    where = "src='self' AND ts>? AND ts<=? AND code<>'5F10'"
+    # 🛑 user<>'relay-ack':中間層代控制器補回的 0F80 也是 src='self',
+    #    但它是「確認收到」不是「下發調整」,列進來會把調整筆數灌大好幾十倍。
+    where = "src='self' AND ts>? AND ts<=? AND code<>'5F10' AND user<>'relay-ack'"
     args = [cut, end]
     if code:
         where += " AND code=?"
