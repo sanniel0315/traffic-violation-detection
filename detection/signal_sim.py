@@ -461,32 +461,55 @@ def _fit_stats(xs: list, ys: list) -> dict:
     vx = sum((a - mx) ** 2 for a in xs)
     vy = sum((b - my) ** 2 for b in ys)
     r = cov / ((vx * vy) ** 0.5) if vx > 0 and vy > 0 else None
-    return {"n": n, "mae": round(mae, 1), "r": round(r, 3) if r is not None else None}
+    sd = (vx / n) ** 0.5                      # 實測排隊本身的變異(公尺)
+    return {"n": n, "mae": round(mae, 1), "sd_m": round(sd, 1),
+            "r": round(r, 3) if r is not None else None}
 
 
 MAE_MAX, R_MIN = 12.0, 0.5
+# 🛑 2026-09-18:相關係數只有在「實測排隊真的有在動」時才有意義。
+#    逐窗稽核 35 個時段窗發現:夜間窗(20:00-24:00)的 MAE 只有 2~3 公尺
+#    —— 模型其實很準 —— 但 r 只有 0.15~0.4,因為整晚排隊都貼近 0,
+#    幾乎沒有變異可以相關。用 r 去擋這種窗,擋掉的是「沒東西好預測」,
+#    不是「模型不準」。所以:排隊變異低於這個標準差時,改以 MAE 判定,
+#    並在結果標明是低變異窗(不可拿它宣稱模型在尖峰也準)。
+R_SD_MIN_M = 8.0
 
 
 def _calib_verdict(s1: dict, s2: dict, method: str, extra: Optional[dict] = None) -> dict:
+    def _low_var(s):
+        return (s.get("sd_m") is not None and s["sd_m"] < R_SD_MIN_M)
+
     def ok(s):
-        return (s["mae"] is not None and s["mae"] <= MAE_MAX
-                and s["r"] is not None and s["r"] >= R_MIN)
+        if s["mae"] is None or s["mae"] > MAE_MAX:
+            return False
+        if _low_var(s):                       # 低變異:只看絕對誤差
+            return True
+        return s["r"] is not None and s["r"] >= R_MIN
 
     reasons = []
+    low_var = []
     for name, s in (("分相1", s1), ("分相2", s2)):
         if s["mae"] is None:
             reasons.append("%s 樣本不足(%s)" % (name, s["n"]))
             continue
         if s["mae"] > MAE_MAX:
             reasons.append("%s MAE %sm > %sm" % (name, s["mae"], MAE_MAX))
+        if _low_var(s):
+            low_var.append("%s(排隊標準差 %.1fm)" % (name, s["sd_m"]))
+            continue
         if s["r"] is None or s["r"] < R_MIN:
             reasons.append("%s 相關係數 %s < %s" % (name, s["r"], R_MIN))
     out = {
         "usable": ok(s1) and ok(s2),
         "method": method,
-        "thresholds": {"mae_max_m": MAE_MAX, "r_min": R_MIN},
+        "thresholds": {"mae_max_m": MAE_MAX, "r_min": R_MIN,
+                       "r_sd_min_m": R_SD_MIN_M},
+        "low_variance": low_var or None,
         "phase_1": s1, "phase_2": s2,
-        "reason": "校準通過" if not reasons else "；".join(reasons),
+        "reason": ("校準通過" + ("（低變異窗,以 MAE 判定:%s）" % "、".join(low_var)
+                                 if low_var else "")
+                   if not reasons else "；".join(reasons)),
         "note": "校準沒過就代表模型無法在已知控制下重現現場排隊,"
                 "更不可能預測『換另一套控制會怎樣』—— 此時模擬結論一律不成立。",
     }
