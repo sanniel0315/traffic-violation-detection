@@ -1591,7 +1591,20 @@ def _auth_renew_loop() -> None:
                 # 已經是時相控制也要續 —— 續的是「剩餘時間」,不是「模式」。
                 # 只有在完全沒抄到策略時跳過:那代表抄錄斷了,此時不該下命令。
                 if isinstance(strat, int):
+                    # 🛑 2026-09-17:節奏改成錨點之後,仍有 17% 的間隔 >15 秒 ——
+                    #    代表有些輪次**根本沒送出**(_do_reassert 會靜靜地 return)。
+                    #    在這裡記下每一輪花多久、有沒有真的送出、沒送的原因,
+                    #    不要再靠事後從訊框反推。
+                    _t0 = time.time()
+                    _before = _reassert.get("n", 0)
                     _do_reassert(kind="續約")
+                    _took = time.time() - _t0
+                    _sent = _reassert.get("n", 0) != _before
+                    if not _sent or _took > 2.0:
+                        _auth["skip_n"] = _auth.get("skip_n", 0) + (0 if _sent else 1)
+                        print("[signal-tc3][續約] 送出=%s 耗時=%.1f 秒 策略=0x%02X 原因=%s"
+                              % (_sent, _took, strat, _reassert.get("last_error") or "—"),
+                              flush=True)
                     _auth["n"] += 1
                     _auth["last"] = time.time()
                     _auth["last_error"] = ""
