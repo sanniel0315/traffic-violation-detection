@@ -27406,23 +27406,35 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //               5 號 55 m、6 號 30 m 都太靠近交叉處),標籤往下
                 //    兩個錨點因此一個在路口北側高處、一個在上游遠端,不會再被
                 //    看成在講同一條路。
+                // 🛑 2026-09-17 使用者指定:上匝道的標籤放在**號控燈 5 上面**。
+                //    (先前依「離交叉處最遠」自動挑到 3 號燈,使用者改指定 5 號。
+                //     現場怎麼看最清楚由現場決定,不要用幾何規則覆蓋人的判斷。)
+                //    下匝道維持錨在自己兩座燈(1、2 號)的中點上方。
+                const LABEL_HEAD_ON_RAMP = 5;
                 let LP, lblOpt;
                 let _anchor = null;
-                if (phHeadPts.length) {
-                    if (_isOff) {
-                        _anchor = [phHeadPts.reduce((a, c) => a + c.lat, 0) / phHeadPts.length,
-                                   phHeadPts.reduce((a, c) => a + c.lng, 0) / phHeadPts.length];
-                    } else {
+                if (!_isOff) {
+                    const _h5 = sigHeadPos.value[LABEL_HEAD_ON_RAMP];
+                    if (_h5 && isFinite(_h5.lat) && isFinite(_h5.lng)) {
+                        _anchor = [_h5.lat, _h5.lng];
+                    } else if (phHeadPts.length) {
+                        // 5 號燈還沒拖曳定位時,退回離交叉處最遠的那座
                         const far = phHeadPts[phHeadPts.length - 1];
                         _anchor = [far.lat, far.lng];
                     }
+                } else if (phHeadPts.length) {
+                    _anchor = [phHeadPts.reduce((a, c) => a + c.lat, 0) / phHeadPts.length,
+                               phHeadPts.reduce((a, c) => a + c.lng, 0) / phHeadPts.length];
                 }
                 if (_anchor) {
                     LP = _anchor;
-                    // 燈箱高 22px、錨點在正中央 → 要推到 11px 之外才不會壓到燈
-                    lblOpt = {permanent: true,
-                              direction: _isOff ? 'top' : 'bottom',
-                              offset: _isOff ? [0, -20] : [0, 20],
+                    // 燈箱高 22px、錨點在正中央 → 要推到 11px 之外才不會壓到燈。
+                    // 🛑 兩個標籤都在燈的上方(使用者指定),但兩個錨點只差 55 m
+                    //    (螢幕約 100px)、緯度只差 10 m(約 19px),而標籤寬約 150px ——
+                    //    同高度還是會擦到。下匝道那個錨點在北邊,再往上推到 -44px,
+                    //    垂直間距拉開到約 43px,兩個標籤才真的分開。
+                    lblOpt = {permanent: true, direction: 'top',
+                              offset: [0, _isOff ? -44 : -20],
                               opacity: .95,
                               className: 'wr-seg-label' + (isPri ? ' pri' : '')};
                 } else {
