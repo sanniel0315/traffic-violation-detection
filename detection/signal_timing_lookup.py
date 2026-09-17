@@ -127,4 +127,5 @@ if __name__ == "__main__":
             print(f"  {label} {h:02d}:00 → 計畫 {pid} 分相綠 {sp}")
         break  # 只示範平日
     print("計畫 1 參數:", plan_params(1))
-    print("分相2(下匝道)儲車上限:", storage_limit_m(2), "m")
+    print("主線保護相(%s)儲車上限:" % ramp_name(priority_phase()),
+          storage_limit_m(priority_phase()), "m")

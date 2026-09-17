@@ -381,7 +381,7 @@ def _meta(fmt: str = "json") -> dict:
 # 🛑 可用環境變數 EXTERNAL_LANE_DETECTORS 覆寫(JSON:{"名稱":[camera_id, lane_no]}),
 #    現場改名或加線不必改程式。
 _LANE_DETECTORS_DEFAULT = {
-    "CCTV-N8-E-9-L-NE-2-SIG": (3, 1),   # 上匝道停等(分相1約束)
+    "CCTV-N8-E-9-L-NE-2-SIG": (3, 1),   # 上匝道停等(上匝道那一相的基準測點)
     "CCTV-N8-E-9-L-WN-3-SIG": (3, 2),   # 下匝道後平面道路
 }
 

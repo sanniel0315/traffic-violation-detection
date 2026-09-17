@@ -31,7 +31,7 @@ from detection.signal_decision_engine import (
     DEFAULT_SATURATION_VPH,
 )
 
-# 分相數(這個路口固定兩相:1=上匝道 2=下匝道)
+# 分相數(這個路口固定兩相;2026-09-17 定案 1=下匝道 2=上匝道,對應查基準表)
 PHASES = (1, 2)
 
 

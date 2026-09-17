@@ -50,12 +50,13 @@ from detection.signal_decision_engine import (  # noqa: E402
 )
 # 影子模式開關。預設關 —— 要明確開啟才跑（雖然它不下發，仍是背景負載）。
 SHADOW_ENABLED = os.getenv("SIGNAL_SHADOW_ENABLED", "0") != "0"
-# 分相 → 提供該分相排隊量測的相機 id（對照 ramp_timing_baseline.json 的
-# phases[].constraint_camera：分相1=ID3、分相2=ID4）
+# 分相 → 提供該分相排隊量測的相機 id（一律對照 ramp_timing_baseline.json 的
+# phases[].constraint_camera，不在這裡寫死號碼——現行是分相1=ID4、分相2=ID3，
+# 但現場改線路就會換，寫死的註解只會誤導下一個人）
 # 每個分相對應的**所有**相機(不是只有一台)。
 # 🛑 2026-09-05 抓到的缺口:現場四台 NE-1 / NE-2 / WN-1 / WN-2(相機 id 2/3/4/5),
-#    但先前只用 constraint_camera 各取一台 —— 分相1 只看 NE-2、分相2 只看
-#    WN-1,另外兩台的排隊完全沒有進到決策。決策用的 queue_m 因此系統性低估
+#    但先前只用 constraint_camera 各取一台 —— 上匝道那一相只看 NE-2、
+#    下匝道那一相只看 WN-1,另外兩台的排隊完全沒有進到決策。決策用的 queue_m 因此系統性低估
 #    (少看一半的進場),而 switch_gain 直接由排隊車數算出來。
 #    基準表 phases[1].cameras 也漏登記 NE-1,一併補上。
 def _phase_cams(env_key: str, default: str) -> list:
@@ -111,8 +112,12 @@ PHASE_CAMERAS = {
 #    (加聚合時差點就這樣改掉,既有測試 test_phase_camera_mapping_matches_baseline
 #     擋下來了。)聚合請用 PHASE_CAMERAS。
 PHASE_CAMERA = {
-    1: int(os.getenv("SIGNAL_SHADOW_CAM_PHASE1", "") or _role_cam(1, "constraint_camera", 3)),
-    2: int(os.getenv("SIGNAL_SHADOW_CAM_PHASE2", "") or _role_cam(2, "constraint_camera", 4)),
+    # 🛑 2026-09-17 盤點:退路值原本寫反(分相1 給 ID3=NE-2 上匝道)。
+    #    定案是分相1=下匝道(基準 ID4/WN-1)、分相2=上匝道(基準 ID3/NE-2)。
+    #    平時走 baseline,退路只有讀不到設定時才用 —— 但寫反的退路會在
+    #    出事那一刻把整組對應翻過來,比沒有退路更危險。
+    1: int(os.getenv("SIGNAL_SHADOW_CAM_PHASE1", "") or _role_cam(1, "constraint_camera", 4)),
+    2: int(os.getenv("SIGNAL_SHADOW_CAM_PHASE2", "") or _role_cam(2, "constraint_camera", 3)),
 }
 
 # 抄錄器所在的獨立服務(traffic-signal.service)。燈態只有它有。
@@ -706,8 +711,9 @@ def _phase_measure(phase: int) -> dict:
 
     🛑 全部取**最大**,不取總和 —— 這點 2026-09-05 用實際座標更正過:
        原本以為同相的兩台是「相鄰車道」,所以車數該加總。但量了實際距離:
-         分相1  NE-1 ↔ NE-2  相距 52.7 m
-         分相2  WN-1 ↔ WN-2  相距 16.0 m
+         上匝道那一相  NE-1 ↔ NE-2  相距 52.7 m
+         下匝道那一相  WN-1 ↔ WN-2  相距 16.0 m
+       (只寫匝道不寫分相號碼:編號會因現場改線路對調)
        相鄰車道只會差 3~4 公尺。數十公尺代表它們是**同一個進場的不同位置**
        (一台在停等區、一台在上游),看的是同一批車。
        車流區設定也證實:NE-2「上匝道前停等區」、NE-1「上高速公路前平面道路」
@@ -819,7 +825,7 @@ def _phase_lanes(phase: int) -> dict:
 
     與 /plan 的 flow_lanes 同一個來源(_flow_lanes_for 的排除法),60 秒快取。
     用 lane 篩而不是 direction 標籤 —— 同一台相機上可能有別條匝道的斷面
-    (cam3 的 lane 2 是下匝道後平面道路,屬分相2)。
+    (NE-2 的 lane 2 是下匝道後平面道路,屬下匝道那一相)。
     """
     import time as _t
     hit = _PHASE_LANES_CACHE.get(phase)
@@ -2263,10 +2269,17 @@ def _outcome_window(since_iso: str, until_iso: str) -> dict:
             #    成效視窗會整個變空,而成效本來就該不分誰在控都算得出來。
             "WHERE ts>=? AND ts<=? ORDER BY id",
             (since_iso, until_iso))
+        # 🛑 2026-09-17 盤點抓到的真 bug:原本只送 storage_2,所以
+        #    evaluate_outcome 裡的 spill1 條件(要 storage_1)永遠不成立 ——
+        #    spillback_events_1 恆為 0。而現行主線保護相就是分相1(下匝道),
+        #    下面 spillback_events_mainline 取的正是它 → 主線回堵次數**永遠報 0**。
+        #    兩相的儲車上限都要送,不可以只送一邊。
+        st1 = (phase_role(1) or {}).get("storage_m")
         st2 = (phase_role(2) or {}).get("storage_m")
         for q1, q2, actual in cur.fetchall():
             samples.append({"queue_m_1": q1 or 0, "queue_m_2": q2 or 0,
-                            "storage_2": st2, "interval_sec": SHADOW_INTERVAL_SEC,
+                            "storage_1": st1, "storage_2": st2,
+                            "interval_sec": SHADOW_INTERVAL_SEC,
                             "switched": (actual == "SWITCH")})
         conn.close()
     except Exception as e:
@@ -3127,15 +3140,22 @@ def shadow_stats(minutes: int = Query(360, ge=5, le=10080),
             out["trend_agg"] = True
             out["trend_bucket_sec"] = round(width, 1)
 
-    # 出口(下匝道 = 分相2)滯留:取區間內的平均與最大,這是主線回堵的前哨
-    q2 = [float(r[5]) for r in rows if r[5] is not None]
-    if q2:
+    # 出口(下匝道)滯留:取區間內的平均與最大,這是主線回堵的前哨。
+    # 🛑 2026-09-17 盤點抓到:原本寫死「下匝道 = 分相2」取 queue_m_2。
+    #    現行下匝道是分相1,這個 KPI 會把**上匝道**的排隊報成出口滯留。
+    #    欄位一律由 role 決定:queue_m_1 在 r[4]、queue_m_2 在 r[5]。
+    from detection.signal_timing_lookup import phase_of_role as _phase_of_role
+    _off = _phase_of_role("off_ramp") or 1
+    _col = 4 if int(_off) == 1 else 5
+    q_exit = [float(r[_col]) for r in rows if r[_col] is not None]
+    if q_exit:
         from detection.signal_decision_engine import DEFAULT_METERS_PER_VEHICLE as MPV
-        out["exit_queue_m"] = {"avg": round(sum(q2) / len(q2), 1),
-                               "max": round(max(q2), 1)}
+        out["exit_queue_phase"] = int(_off)
+        out["exit_queue_m"] = {"avg": round(sum(q_exit) / len(q_exit), 1),
+                               "max": round(max(q_exit), 1)}
         out["exit_queue_vehicles"] = {
-            "avg": round(sum(q2) / len(q2) / MPV, 1),
-            "max": round(max(q2) / MPV, 1)}
+            "avg": round(sum(q_exit) / len(q_exit) / MPV, 1),
+            "max": round(max(q_exit) / MPV, 1)}
     return out
 
 @router.get("/simulate", summary="模擬驗證(先校準,校準過才給比較結果)")
@@ -3630,12 +3650,14 @@ def _role_approach(phase: int, fallback: float) -> float:
 
 
 PHASE_STOPLINE = {
-    1: int(os.getenv("SIGNAL_EVAL_STOPLINE_PHASE1", "") or _role_cam(1, "stopline_camera", 3)),
-    2: int(os.getenv("SIGNAL_EVAL_STOPLINE_PHASE2", "") or _role_cam(2, "stopline_camera", 5)),
+    # 🛑 退路值同上,2026-09-17 改為與定案同向:分相1=ID5(WN-2)、分相2=ID3(NE-2)。
+    1: int(os.getenv("SIGNAL_EVAL_STOPLINE_PHASE1", "") or _role_cam(1, "stopline_camera", 5)),
+    2: int(os.getenv("SIGNAL_EVAL_STOPLINE_PHASE2", "") or _role_cam(2, "stopline_camera", 3)),
 }
 APPROACH_LEN_M = {
-    1: float(os.getenv("SIGNAL_EVAL_APPROACH_M_PHASE1", "") or _role_approach(1, 52.7)),
-    2: float(os.getenv("SIGNAL_EVAL_APPROACH_M_PHASE2", "") or _role_approach(2, 16.0)),
+    # 🛑 退路值同上:分相1(下匝道)16.0 m、分相2(上匝道)52.7 m。
+    1: float(os.getenv("SIGNAL_EVAL_APPROACH_M_PHASE1", "") or _role_approach(1, 16.0)),
+    2: float(os.getenv("SIGNAL_EVAL_APPROACH_M_PHASE2", "") or _role_approach(2, 52.7)),
 }
 # 使用者定義的尖峰(一天內的分鐘):09:00-12:00、16:30-20:00
 # (2026-09-13 使用者:「尖峰 1630 1700 1730 1800 1830 1900 1930 這也是尖峰」)

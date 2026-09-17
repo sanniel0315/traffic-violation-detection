@@ -13,6 +13,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from detection.signal_timing_lookup import ramp_name as _ramp_name_of_phase
+
+
+def _ramp_name(ph) -> str:
+    """分相編號 → 匝道名稱。查不到就只寫分相,不要猜。"""
+    try:
+        return _ramp_name_of_phase(int(ph)) or ("分相 %s" % ph)
+    except Exception:
+        return "分相 %s" % ph
+
 METHOD_TAG = {"measured": "實測", "approx": "近似", "unavailable": "無資料"}
 CORE_LABEL = [
     ("avg_delay_sec", "平均延滯", "秒/車"),
@@ -174,7 +184,10 @@ def render(report: dict, paired_a: dict | None = None, paired_b: dict | None = N
         for ph in ("1", "2"):
             pa = (a.get("by_phase") or {}).get(ph, {})
             pb = ((b or {}).get("by_phase") or {}).get(ph) if b else None
-            lines += [f"**分相 {ph}**（{'上匝道' if ph == '1' else '下匝道'}）", "",
+            # 🛑 2026-09-17 盤點抓到:這裡原本寫死「1=上匝道」,與現行定案相反,
+            #    報表會把兩條匝道的數字**掛在對方名下**。匝道名稱一律查
+            #    signal_timing_lookup.ramp_name(源頭是 ramp_timing_baseline.json)。
+            lines += [f"**分相 {ph}**（{_ramp_name(ph)}）", "",
                       _core_table(pa, pb, tier), ""]
         lines += ["### 平均旅行時間（國道主線，TDX eTag 實測）", "",
                   "A：", _tdx_block(a.get("travel_time_tdx")), ""]

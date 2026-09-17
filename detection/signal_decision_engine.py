@@ -69,7 +69,8 @@ DEFAULT_KEEP_WEIGHT = 1.0
 @dataclass
 class ApproachState:
     """單一方向(分相)的即時狀態。"""
-    phase_no: int                    # 分相編號(1=上匝道 2=下匝道)
+    phase_no: int                    # 分相編號(2026-09-17 定案:1=下匝道 2=上匝道;
+                                     # 對應一律查 ramp_timing_baseline.json,不要照這行改設定)
     queue_m: Optional[float] = None  # 排隊長度(公尺)，來自我方壅塞偵測
     arrivals: float = 0.0            # 觀測窗內到達車數
     waiting_sec: float = 0.0         # 這一側已經紅燈等待幾秒(紅側才有意義)
