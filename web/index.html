@@ -27399,15 +27399,30 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 //    不再沿線段取比例。這樣它跟自己的燈是一組,看的人不必猜
                 //    哪個標籤講哪條路;上匝道維持沿線 55% 往下,兩者自然分開。
                 //    拿不到燈座標(還沒拖曳定位)才退回沿線比例。
+                // 🛑 2026-09-17 使用者:「分相2 不要放在交叉處,容易誤會」。
+                //    phHeadPts 已依「距路口由近到遠」排序:
+                //      下匝道 → 取兩座燈的**中點**,標籤壓在自己的燈上方
+                //      上匝道 → 取**最遠的那座燈**(3 號,距交叉處 175 m;
+                //               5 號 55 m、6 號 30 m 都太靠近交叉處),標籤往下
+                //    兩個錨點因此一個在路口北側高處、一個在上游遠端,不會再被
+                //    看成在講同一條路。
                 let LP, lblOpt;
-                const _headMid = (_isOff && phHeadPts.length)
-                    ? [phHeadPts.reduce((a, c) => a + c.lat, 0) / phHeadPts.length,
-                       phHeadPts.reduce((a, c) => a + c.lng, 0) / phHeadPts.length]
-                    : null;
-                if (_headMid) {
-                    LP = _headMid;
-                    // 燈箱高 22px、錨點在正中央 → 要推到 11px 之上才不會壓到燈
-                    lblOpt = {permanent: true, direction: 'top', offset: [0, -20],
+                let _anchor = null;
+                if (phHeadPts.length) {
+                    if (_isOff) {
+                        _anchor = [phHeadPts.reduce((a, c) => a + c.lat, 0) / phHeadPts.length,
+                                   phHeadPts.reduce((a, c) => a + c.lng, 0) / phHeadPts.length];
+                    } else {
+                        const far = phHeadPts[phHeadPts.length - 1];
+                        _anchor = [far.lat, far.lng];
+                    }
+                }
+                if (_anchor) {
+                    LP = _anchor;
+                    // 燈箱高 22px、錨點在正中央 → 要推到 11px 之外才不會壓到燈
+                    lblOpt = {permanent: true,
+                              direction: _isOff ? 'top' : 'bottom',
+                              offset: _isOff ? [0, -20] : [0, 20],
                               opacity: .95,
                               className: 'wr-seg-label' + (isPri ? ' pri' : '')};
                 } else {
