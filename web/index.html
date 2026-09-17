@@ -9573,7 +9573,15 @@
                                     <!-- 🛑 這個標籤只會出現在「正在放行」那一欄。用 v-if 的話
                                          兩欄的這一列寬度不同,窄螢幕會其中一欄換行 → 高度不齊。
                                          改成永遠在 DOM 裡,用 visibility 控制顯示,佔位一致。 -->
-                                    <span class="wr-rel-run" :style="{visibility: col.rel.running?'visible':'hidden'}">（本段進行中）</span>
+                                    <!-- 🛑 2026-09-17 現場回報「上下匝道位置相反」:這個標記原本用
+                                         col.rel.running(來源是 5 秒取樣的影子紀錄),而同一欄的燈色
+                                         用的是控制器即時回報的分相。換相後最多一個取樣週期(約 5 秒)
+                                         標記還留在**剛結束**的那一欄,綠燈那欄反而沒有 —— 看起來
+                                         就是兩個匝道對調。改成跟燈色同一個來源(col.isGreen),
+                                         一個畫面只用一個時間軸。
+                                         後端的 rel.running 保留:它另有用途(把還沒結束的那一段
+                                         排除在「上次綠燈」之外),不是顯示用的。 -->
+                                    <span class="wr-rel-run" :style="{visibility: col.isGreen?'visible':'hidden'}">（本段進行中）</span>
                                 </div>
                                 <div class="wr-cams">
                                     <figure v-for="cam in col.cams" :key="'wcam'+cam.camera_id"
@@ -26948,7 +26956,9 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             const phases = [];
             cams.forEach((c) => { if (phases.indexOf(c.phase_no) === -1) phases.push(c.phase_no); });
             // 🛑 2026-09-11 使用者:分相一律「2 在前、1 在後」。只動排列,
-            //    分相編號與匝道對應不變(實測 分相1=上匝道、分相2=下匝道)。
+            //    分相編號與匝道對應不變(2026-09-17 使用者再次確認:分相1=下匝道、
+            //    分相2=上匝道,「一下二上沒問題」)。對應一律看
+            //    ramp_timing_baseline.json,不要照這行註解改設定。
             phases.sort((a, b) => b - a);
             return phases.map((ph) => {
                 const meta = sigPhaseMeta.value[ph] || {ramp: '分相 ' + ph, zone: ''};
