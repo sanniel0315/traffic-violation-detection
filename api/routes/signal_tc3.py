@@ -791,7 +791,9 @@ FIELD_OPERATE = {0x01: "手動", 0x02: "全紅", 0x40: "閃光", 0x80: "回復�
 
 # 手動介入要「持續」這麼久才算數。OPAC 續約的過渡態只有 1 秒,撐不過去。
 MANUAL_CONFIRM_SEC = float(os.getenv("SIGNAL_MANUAL_CONFIRM_SEC", "8") or 8)
-_safety = {"strategy": None, "strategy_ts": 0.0, "abnormal_step": None}
+_safety = {"strategy": None, "strategy_ts": 0.0, "abnormal_step": None,
+           # 5FC0 查詢回報的實際策略(權威值);5F00 只是變化通知,會有暫態
+           "strategy_confirmed": None, "strategy_confirmed_ts": 0.0}
 _safety_events: deque = deque(maxlen=100)   # 記憶體副本(DB 讀不到時的後路)
 _safety_dedup: dict = {}                    # 事件鍵 -> 上次記錄時間(擋重送框)
 _safety_db_ready = False
@@ -979,6 +981,13 @@ def _safety_watch(rec: dict) -> None:
             prev = _safety["strategy"]
             _safety["strategy"] = v
             _safety["strategy_ts"] = rec["ts"]
+            # 🛑 2026-09-17:「現在是什麼策略」要以 **5FC0(查詢回報的實際值)** 為準。
+            #    5F00 是**變化通知**,續約瞬間會連報 01 → 10 的暫態(見下方註解),
+            #    只取最後一則 5F00 會讓畫面停在「定時控制」,但實際是 14 時相控制
+            #    —— 現場問過「切了動態控制為什麼還在定時控制」就是這個。
+            if code == "5FC0":
+                _safety["strategy_confirmed"] = v
+                _safety["strategy_confirmed_ts"] = rec["ts"]
             if prev is not None and v != prev:
                 # 🛑 不可以用「bit2/bit3 有沒有亮」判手動 —— 2026-09-03 實測:
                 #    OPAC 每 60 秒送一次 5F10 續約,續約瞬間控制器會連著回報
@@ -1079,7 +1088,11 @@ def _safety_watch(rec: dict) -> None:
 
 @router.get("/safety", summary="安全網狀態(控制策略/異常步階/最近事件)")
 async def safety_status(limit: int = 50, _user=Depends(get_current_user)):
-    v = _safety["strategy"]
+    # 🛑 以 5FC0(查詢回報)的實際值為準;沒有(剛啟動)才退回 5F00 的最後一則。
+    #    只看 5F00 會停在續約瞬間的暫態(01 定時控制),與實際的 14 時相控制不符。
+    v = _safety.get("strategy_confirmed")
+    if v is None:
+        v = _safety["strategy"]
     events: list = []
     try:
         conn = _safety_db()
@@ -1097,7 +1110,11 @@ async def safety_status(limit: int = 50, _user=Depends(get_current_user)):
         "push_enabled": bool(_conn.get("safety_push", True)),
         "strategy": v,
         "strategy_text": _strategy_text(v) if isinstance(v, int) else None,
-        "strategy_ts": _safety["strategy_ts"] or None,
+        "strategy_ts": (_safety.get("strategy_confirmed_ts")
+                        or _safety["strategy_ts"] or None),
+        # 變化通知的最後一則(含續約瞬間的暫態)——除錯用,不要拿它當「現在的策略」
+        "strategy_last_notice": _safety["strategy"],
+        "strategy_source": "5FC0" if _safety.get("strategy_confirmed") is not None else "5F00",
         "manual": bool(v & STRATEGY_MANUAL_MASK) if isinstance(v, int) else False,
         "control_mode": _control_mode(v),
         "abnormal_step": _safety["abnormal_step"],
@@ -1959,7 +1976,11 @@ async def status(_user=Depends(get_current_user)):
             "phase_elapsed_sec": phase_elapsed,  # 本分相已亮幾秒(逐框追蹤,精確)
             "stale": (r_age is None or r_age > SIGNAL_STALE_SEC),
             # 誰在控制(見 _control_mode 的判讀說明)
-            "control_mode": _control_mode(_safety.get("strategy")),
+            # 🛑 用 5FC0 的實際策略,不要用 5F00 的最後一則 —— 後者含續約瞬間的
+            #    暫態(01 定時控制),會讓演算法誤判「現在沒有時相控制」而擋下下發。
+            "control_mode": _control_mode(_safety.get("strategy_confirmed")
+                                          if _safety.get("strategy_confirmed") is not None
+                                          else _safety.get("strategy")),
         })
     return {
         **{k: s[k] for k in ("enabled", "host", "port", "connected",
