@@ -44,7 +44,9 @@ def _seed(db, now):
 def test_rolling_endpoint_reports_live_history_and_agreement(tmp_path, monkeypatch):
     from api.routes import signal_shadow as S
 
-    now = time.time()
+    # 🛑 對齊整秒:signal_shadow_log 的 ts 只存到秒,種子帶小數會讓
+    #    「實際幾秒後換相」被截掉不固定的零頭,測試就會時好時壞。
+    now = float(int(time.time()))
     db = tmp_path / "s.db"
     _seed(db, now)
     monkeypatch.setattr(S, "_db", lambda: sqlite3.connect(str(db)))
@@ -61,8 +63,7 @@ def test_rolling_endpoint_reports_live_history_and_agreement(tmp_path, monkeypat
     acc = out["accuracy"]
     assert acc["said_switch_now"] == 1 and acc["hit"] == 1
     assert acc["hit_rate_pct"] == 100.0
-    # 種子資料的秒數會被 isoformat 截掉小數,容忍 ±0.5 秒
-    assert abs(acc["keep_err_median_sec"] - 5.0) <= 0.5
+    assert acc["keep_err_median_sec"] == 5.0
     assert "一致率" in acc["note"] and "成效" in acc["note"]
     assert "不下發" in out["caveat"]
 
