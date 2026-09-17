@@ -1746,6 +1746,77 @@ def _rule_shadow_record(g_no: int, green_since: float, green_elapsed: float,
             _stats["rule_shadow_error"] = "%s: %s" % (type(exc).__name__, exc)
 
 
+ROLLING_SHADOW = os.getenv("SIGNAL_ROLLING_SHADOW", "1") != "0"
+ROLLING_HORIZON_SEC = float(os.getenv("SIGNAL_ROLLING_HORIZON_SEC", "120") or 120)
+
+
+class _RollCfg:
+    """rolling_horizon 要的設定物件(只讀欄位,不帶行為)。"""
+
+    def __init__(self, min_green: dict, max_green: float, lost_time: float):
+        self.min_green_sec = min_green
+        self.max_green_sec = max_green
+        self.lost_time_sec = lost_time
+
+
+def _rolling_shadow_record(g_no: int, green_elapsed: float, min_green_map: dict,
+                           max_green: float, q_map: dict, f_map: dict,
+                           live: dict) -> None:
+    """滾動時程(rolling horizon)的影子評估 —— **只算不送**。
+
+    🛑 為什麼要它:現行 decide() 是瞬時成本比較,看不到「再等 8 秒這一波就放完」。
+       2026-09-16 的模擬對照就打在這一點:我方贏固定時制 68%、贏 Webster 72%,
+       但**輸感應控制 97%** —— 感應控制正是用未來資訊在決策。
+
+    🛑 與模擬不同的是,線上拿不到校準過的到達曲線,只有**當下量到的流量**。
+       所以這裡的 rate_fn 是「把此刻的到達率延伸到未來」—— 這是已知的近似,
+       不可以拿它的結果直接宣稱線上成效。它回答的是一個較小的問題:
+       「在同樣的量測下,rolling 會不會比現行引擎早切/晚切」。
+    🛑 這支不可以呼叫 _actuate / _daemon_post(守門測試會檢查)。
+    """
+    if not ROLLING_SHADOW or live.get("clearance"):
+        return
+    try:
+        from detection.signal_rolling import plan_extra_green
+        mpv = _mpv()
+        q_veh = {p: (float(q_map.get(p) or 0.0) / mpv) for p in (1, 2)}
+        # 飽和流(輛/小時)→ 輛/秒;到達率同理。量不到的當 0,不要拿預設值頂替 ——
+        # 那會讓「沒量到」看起來像「沒有車」以外的東西。
+        sat = {p: _sat_for(p) / 3600.0 for p in (1, 2)}
+        rate = {p: (float(f_map.get(p) or 0.0) / 60.0) for p in (1, 2)}
+        # 🛑 最小綠是**各相各一個值**(現場 10 / 20 秒不同),不可以兩相共用綠側那個 ——
+        #    共用會讓模型以為對向也能在 10 秒內切走,推出來的最佳時機整個偏移。
+        cfg = _RollCfg({p: float(min_green_map.get(p) or 15.0) for p in (1, 2)},
+                       max_green, _lost_time_for(g_no))
+        plan = plan_extra_green(
+            rate_fn=lambda _t, p: rate.get(p, 0.0), sat=sat, cfg=cfg,
+            t0=time.time(), green=g_no, q0=q_veh, elapsed=green_elapsed,
+            horizon_sec=ROLLING_HORIZON_SEC)
+        conn = _db()
+        conn.execute("""CREATE TABLE IF NOT EXISTS signal_rule_shadow (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, epoch REAL,
+                            rule TEXT, green_phase INTEGER, green_elapsed REAL,
+                            step_id INTEGER, would INTEGER, reason TEXT,
+                            queue_green REAL, queue_red REAL)""")
+        conn.execute("INSERT INTO signal_rule_shadow(ts,epoch,rule,green_phase,green_elapsed,"
+                     "step_id,would,reason,queue_green,queue_red) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                     (datetime.now().isoformat(timespec="seconds"), time.time(), "rolling",
+                      g_no, round(green_elapsed, 1), live.get("step_id"),
+                      1 if plan.get("switch_now") else 0,
+                      json.dumps({"best_sec": plan.get("best_sec"),
+                                  "horizon_sec": ROLLING_HORIZON_SEC,
+                                  "rate_vpm": {str(p): f_map.get(p) for p in (1, 2)},
+                                  "sat_vph": {str(p): round(_sat_for(p), 1) for p in (1, 2)},
+                                  "note": "rate_fn=當下流量外推,非校準到達曲線"},
+                                 ensure_ascii=False),
+                      q_map.get(g_no), q_map.get(2 if g_no == 1 else 1)))
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        with _lock:
+            _stats["rolling_shadow_error"] = "%s: %s" % (type(exc).__name__, exc)
+
+
 def _daemon_post(path: str, body: dict) -> dict:
     """對 signal_daemon 送 POST。daemon 內部不驗登入(見 services/signal_daemon.py),
     所以這裡不帶憑證;它只綁 127.0.0.1。403/409 的原因原樣帶出來給畫面顯示。"""
@@ -1913,6 +1984,11 @@ def _loop():
             # 候選規則影子評估(只記錄,不下發;失敗也不影響主迴圈)
             _rule_shadow_record(g_no, green_since, green_elapsed, min_green,
                                 q_map, bool(g_role.get("priority")), live)
+            # 滾動時程的影子評估(只算不送);與上面同一批量測,才比得起來
+            _rolling_shadow_record(
+                g_no, green_elapsed,
+                {p: float(mins[p - 1]) if len(mins) >= p else 15.0 for p in (1, 2)},
+                _max_green(pp), q_map, f_map, live)
             _input_shadow_record(g_no, green_elapsed, min_green, _max_green(pp), q_map, live)
 
             conn = _db()
