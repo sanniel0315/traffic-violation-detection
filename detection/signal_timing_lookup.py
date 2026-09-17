@@ -94,6 +94,36 @@ def ramp_name(phase_no: int) -> str:
     return p.get("ramp") or ("分相 %d" % phase_no)
 
 
+def role_of_phase(phase_no: int) -> Optional[str]:
+    """該分相的角色(on_ramp/off_ramp)。查無回 None。"""
+    return (phase_role(phase_no) or {}).get("role")
+
+
+def by_ramp(value_of_phase) -> dict:
+    """把「以分相編號為鍵」的東西翻成「以匝道為鍵」。
+
+    🛑 2026-09-17 使用者定調:**主鍵是匝道(上匝道/下匝道),不是分相編號。**
+       編號只是控制器協定當下的身分,現場改線路就會對調(09-11、09-12、09-16
+       各換過一次),而每一次對調都會在某個寫死編號的角落留下靜靜算錯的數字
+       —— 當天盤點就抓到「主線回堵次數恆為 0」與「出口滯留取到上匝道」兩個。
+       對外輸出一律經過這裡,畫面與報告就不必自己把編號翻成匝道名。
+
+    value_of_phase:吃分相編號、回該相的值(可以是 dict、數字、None)。
+    回 {"off_ramp": {"ramp": "下匝道", "phase_no": 1, "priority": True, "value": ...}, ...}
+    """
+    out = {}
+    for role in ("off_ramp", "on_ramp"):
+        ph = phase_of_role(role)
+        out[role] = {
+            "ramp": ramp_name(ph),
+            "phase_no": ph,
+            "priority": bool((phase_role(ph) or {}).get("priority")),
+            "storage_m": storage_limit_m(ph),
+            "value": value_of_phase(ph),
+        }
+    return out
+
+
 def storage_limit_m(phase_no: int) -> Optional[int]:
     """該分相對應匝道的儲車上限(公尺):下匝道 600、上匝道 210。"""
     p = phase_role(phase_no)

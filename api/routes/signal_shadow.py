@@ -2288,11 +2288,19 @@ def _outcome_window(since_iso: str, until_iso: str) -> dict:
     # 🛑 畫面要標「上匝道/下匝道」與「主線回堵」,但指標鍵是分相編號。
     #    對應會因現場改線路而換,所以把匝道名與主線回堵那一相一起送出去,
     #    前端不要再自己把編號翻成匝道名。
-    from detection.signal_timing_lookup import priority_phase
+    from detection.signal_timing_lookup import priority_phase, by_ramp
     out.update({"since": since_iso, "until": until_iso,
                 "ramp_1": _ramp_name(1), "ramp_2": _ramp_name(2),
                 "mainline_phase": priority_phase(),
                 "spillback_events_mainline": out.get("spillback_events_%d" % priority_phase())})
+    # 🛑 2026-09-17 使用者定調:**主鍵是匝道,不是分相編號**。
+    #    以 _1/_2 結尾的欄位保留給既有呼叫端,但新的判讀一律用 by_ramp ——
+    #    編號會因現場改線路對調,這一組不會。
+    out["by_ramp"] = by_ramp(lambda ph: {
+        "avg_queue_m": out.get("avg_queue_m_%d" % ph),
+        "max_queue_m": out.get("max_queue_m_%d" % ph),
+        "spillback_events": out.get("spillback_events_%d" % ph),
+    })
     if not samples:
         out["insufficient_data"] = True
     return out
@@ -2656,9 +2664,22 @@ def shadow_plan(_user=Depends(get_current_user)):
 
     cams = _camera_live()
     releases = _release_stats()
+    # 🛑 2026-09-17 使用者定調:**主鍵是匝道(上匝道/下匝道)**,分相編號只是
+    #    控制器協定當下的身分,現場改線路就會對調。以編號為鍵的欄位保留給
+    #    既有呼叫端,新的判讀請用這一組 —— 它不會因為對調而錯位。
+    from detection.signal_timing_lookup import by_ramp as _by_ramp
+    ramp_state = _by_ramp(lambda ph: {
+        "is_green": (ph == g_no),
+        "queue_m": (meas.get(ph) or {}).get("queue_m"),
+        "plan_green_sec": pp.get("phase%d_green" % ph),
+        "last_green_sec": ((releases.get(str(ph)) or {}).get("last_sec")),
+        "cameras": PHASE_CAMERAS.get(ph),
+        "camera_names": [camera_label(c) for c in PHASE_CAMERAS.get(ph, [])],
+    })
     return {
         "cameras": cams,
         "release_stats": releases,
+        "ramp_state": ramp_state,
         "available": True,
         "ts": datetime.now().isoformat(timespec="seconds"),
         "control_mode": live.get("control_mode"),
