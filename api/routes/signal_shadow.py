@@ -721,6 +721,7 @@ def _phase_measure(phase: int) -> dict:
     fmax = None
     veh = 0.0
     seen = 0
+    q_by_cam: dict = {}
     for cam in PHASE_CAMERAS.get(phase, []):
         r = congestion_results.get(cam) or {}
         if not _cam_ok(r):               # 斷線/過期的相機不參與聚合(不可當成 0 台車)
@@ -729,6 +730,7 @@ def _phase_measure(phase: int) -> dict:
         q = r.get("estimated_queue_length_m")
         if q is not None:
             qv = float(q)
+            q_by_cam[cam] = qv
             qmax = qv if qmax is None else max(qmax, qv)
         n = r.get("stopped_vehicle_count")
         if n is None:
@@ -750,8 +752,62 @@ def _phase_measure(phase: int) -> dict:
         ev = _events_flow_vpm(phase)
         if ev is not None:
             fmax = ev
+    qmax, clamp = _queue_physics_clamp(phase, qmax, fmax)
+    # 🛑 同相兩台看的是同一批車,差太多代表這一輪的量測不可信 ——
+    #    決策照常跑(方向不受影響,實測逐筆翻轉率 0.5~1%),但把不一致帶出去,
+    #    讓紀錄與畫面看得到,也讓成效評估知道這段資料要打折。
+    disagree = None
+    if len(q_by_cam) >= 2:
+        hi, lo = max(q_by_cam.values()), min(q_by_cam.values())
+        disagree = round(hi - lo, 1)
     return {"queue_m": qmax, "flow_vpm": fmax,
-            "vehicles": veh, "cameras": seen}
+            "vehicles": veh, "cameras": seen, "queue_clamped": clamp,
+            "queue_by_camera": {camera_label(k): round(v, 1) for k, v in q_by_cam.items()},
+            "queue_disagree_m": disagree}
+
+
+# 分相 → 上一次採用的排隊值與時間(物理一致性用)
+_q_hist: dict = {}
+# 被夾住的次數(累積),/plan 與 /actuate 會帶出去,便於稽核
+_q_clamp_stat: dict = {1: 0, 2: 0}
+# 量測不可能比物理更快變化,但要留餘裕給量測本身的雜訊(公尺)
+QUEUE_CLAMP_SLACK_M = float(os.getenv("SIGNAL_QUEUE_CLAMP_SLACK_M", "12") or 12)
+QUEUE_CLAMP_ENABLED = os.getenv("SIGNAL_QUEUE_CLAMP", "1") != "0"
+
+
+def _queue_physics_clamp(phase: int, q_m, flow_vpm=None):
+    """用物理限制夾住排隊量測 —— 演算法自己吸收計數誤差,不要求量測完美。
+
+    🛑 2026-09-17:上下游兩台相機看同一批車,逐時計數差 0~30%(多數 10~20%)。
+       這個量級不影響決策方向(實測逐筆翻轉率 0.5~1%),但**單筆跳動**會讓
+       續綠/換相在同一秒來回。所以在進決策之前先過一道物理檢查:
+
+         這一輪排隊最多只能增加「到達率 × 經過時間」
+         最多只能減少「飽和流 × 經過時間」(而且只有綠燈側會減少)
+
+       超出範圍就夾到邊界(再加 QUEUE_CLAMP_SLACK_M 的餘裕給量測雜訊),
+       並記錄被夾的次數 —— 夾太多次代表量測真的壞了,那要修量測,不是繼續夾。
+    """
+    if not QUEUE_CLAMP_ENABLED or q_m is None:
+        return q_m, False
+    now = time.time()
+    prev = _q_hist.get(phase)
+    _q_hist[phase] = (now, float(q_m))
+    if not prev:
+        return q_m, False
+    dt = max(0.0, now - prev[0])
+    if dt <= 0 or dt > 60:                       # 中斷太久就重新起算,不要拿舊值夾
+        return q_m, False
+    arr_m_per_s = (float(flow_vpm or 0.0) / 60.0) * _mpv()
+    sat_m_per_s = (_sat_for(phase) / 3600.0) * _mpv()
+    hi = prev[1] + arr_m_per_s * dt + QUEUE_CLAMP_SLACK_M
+    lo = max(0.0, prev[1] - sat_m_per_s * dt - QUEUE_CLAMP_SLACK_M)
+    out = min(hi, max(lo, float(q_m)))
+    if abs(out - float(q_m)) > 0.05:
+        _q_clamp_stat[phase] = _q_clamp_stat.get(phase, 0) + 1
+        _q_hist[phase] = (now, out)              # 之後以夾過的值為基準,才不會被拖著走
+        return out, True
+    return q_m, False
 
 
 _EV_FLOW_CACHE: dict = {}
@@ -2554,6 +2610,11 @@ def shadow_plan(_user=Depends(get_current_user)):
             "camera": camera_label(role.get("constraint_camera")),
             "camera_key": role.get("constraint_camera"),
             "cameras_used": meas[a.phase_no]["cameras"],
+            # 量測品質:兩台相機的排隊差、這一輪有沒有被物理夾制擋下跳動
+            "queue_by_camera": meas[a.phase_no].get("queue_by_camera"),
+            "queue_disagree_m": meas[a.phase_no].get("queue_disagree_m"),
+            "queue_clamped": bool(meas[a.phase_no].get("queue_clamped")),
+            "queue_clamped_count": _q_clamp_stat.get(a.phase_no, 0),
             "camera_ids": PHASE_CAMERAS.get(a.phase_no, []),
             "camera_names": [camera_label(c) for c in PHASE_CAMERAS.get(a.phase_no, [])],
             "vehicles_measured": round(meas[a.phase_no]["vehicles"], 1),
