@@ -4312,6 +4312,32 @@
         /* 🛑「本段進行中」要會動:它表達的是「前次那個秒數還在累積」,
            靜止的文字看不出這件事。用呼吸而不是閃爍 —— 閃爍是警示語彙,
            而這只是狀態。 */
+        /* 控制驗證整合卡(2026-09-18)。🛑 先前指標列用了不存在的 st-kpis,沒有排版規則 → 跑版。 */
+        .vx-head { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+        .vx-title { font-weight:600; }
+        .vx-tabs { display:flex; gap:4px; background:var(--gov-surface-2, #f7f9fc); border:1px solid var(--gov-border, #d7dee8); border-radius:8px; padding:3px; }
+        .vx-tab { border:0; background:transparent; padding:4px 12px; border-radius:6px; cursor:pointer; color:var(--gov-muted, #5b6778); font-size:13px; }
+        .vx-tab.active { background:var(--gov-primary, #0b5ea8); color:#fff; }
+        .vx-tab:focus-visible, .vx-chip:focus-visible { outline:2px solid var(--gov-primary, #0b5ea8); outline-offset:2px; }
+        .vx-range { color:var(--gov-muted, #5b6778); font-size:12px; margin-left:auto; }
+        .vx-kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:10px; margin-bottom:12px; }
+        .vx-kpis .ds-kpi-card { min-width:0; }
+        .vx-kpis .ds-kpi-hint { overflow-wrap:anywhere; }
+        .vx-bar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+        .vx-bar-label { color:var(--gov-muted, #5b6778); font-size:12px; margin-right:4px; }
+        .vx-bar-note { color:var(--gov-warn, #d97706); font-size:12px; margin-left:8px; }
+        .vx-chip { border:1px solid var(--gov-border, #d7dee8); background:#fff; border-radius:999px; padding:2px 10px; font-size:12px; cursor:pointer; }
+        .vx-chip.active { border-color:var(--gov-primary, #0b5ea8); color:var(--gov-primary, #0b5ea8); background:var(--gov-primary-soft, #eaf2fb); }
+        .vx-table-wrap { overflow:auto; max-height:420px; border:1px solid var(--gov-border, #d7dee8); border-radius:6px; }
+        .vx-table { width:100%; min-width:760px; }
+        .vx-table thead th { position:sticky; top:0; background:var(--gov-surface-2, #f7f9fc); z-index:1; }
+        .vx-t { white-space:nowrap; font-variant-numeric:tabular-nums; }
+        .vx-ok { color:var(--gov-ok, #1f9d55); font-weight:600; }
+        .vx-muted { color:var(--gov-muted, #5b6778); }
+        .vx-bad { color:var(--gov-fault, #c43a31); font-weight:600; }
+        .vx-warn { color:var(--gov-warn, #d97706); }
+        .vx-note { margin-top:8px; color:var(--gov-muted, #5b6778); font-size:12px; }
+        .vx-empty { color:var(--gov-muted, #5b6778); padding:12px 0; }
         .wr-rel-run { font-size:var(--fs-small); color:var(--gov-ok); font-weight:600;
                       animation:wrRunPulse 1.8s ease-in-out infinite; }
         .wr-rel-run::before { content:'●'; margin-right:4px; font-size:.8em; }
@@ -8982,199 +9008,6 @@
                         <el-button size="small" plain :loading="sigStatLoading" @click="loadSigStats"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>立即重查</el-button>
                     </div>
 
-                    <!-- ══ VD 線圈(地面實況)══
-                         🛑 使用者 2026-09-18:「系統上有呈現紀錄」。線圈是獨立於攝影機的量測,
-                            拿來驗證我方車流計數與校準用的到達率 —— 所以卡上直接放逐分鐘對照。
-                         🛑 對照以我方收到時刻為準;設備時鐘實測慢 30 分鐘,時間戳只記不用。 -->
-                    <div class="card">
-                        <div class="card-header">
-                            <span>VD 線圈（{{ sigLoop.device || '未設定' }}）· 攝影機計數對照</span>
-                            <el-button size="small" plain :loading="sigLoopLoading" @click="loadSigLoop">重查</el-button>
-                        </div>
-                        <div class="card-body">
-                            <div v-if="!sigLoop.available" style="color:var(--gov-muted)">{{ sigLoop.reason || '尚未收到 VD 資料。' }}</div>
-                            <template v-else>
-                                <div class="st-kpis" style="margin-bottom:10px">
-                                    <div class="ds-kpi-card">
-                                        <div class="ds-kpi-label">連線</div>
-                                        <div class="ds-kpi-value ds-kpi-value--text" :style="{color: sigLoop.status.connected ? 'var(--gov-ok)' : 'var(--gov-fault)'}">{{ sigLoop.status.connected ? '連線中' : '未連線' }}</div>
-                                        <div class="ds-kpi-hint">{{ sigLoop.status.host }}:{{ sigLoop.status.port }} · 收 {{ sigLoop.status.frames || 0 }} 框 · 已回 ACK {{ sigLoop.status.acks || 0 }}</div>
-                                        <!-- 🛑 完整度依框序號算:設備每送一框 +1,跳號 = 設備有送、我們沒存到 -->
-                                        <div class="ds-kpi-hint" :style="{color: (sigLoop.completeness||{}).missed ? 'var(--gov-warn)' : 'var(--gov-ok)'}">
-                                            完整度 {{ (sigLoop.completeness||{}).rate_pct==null ? '—' : ((sigLoop.completeness||{}).rate_pct + '%') }}{{ (sigLoop.completeness||{}).missed ? ('，漏 ' + sigLoop.completeness.missed + ' 框：' + (sigLoop.completeness.missed_minutes||[]).join('、')) : '，無漏收' }}
-                                        </div>
-                                    </div>
-                                    <div class="ds-kpi-card">
-                                        <div class="ds-kpi-label">設備時鐘</div>
-                                        <div class="ds-kpi-value ds-kpi-value--text">{{ sigLoopClock }}</div>
-                                        <div class="ds-kpi-hint">對照一律用我方收到時刻</div>
-                                    </div>
-                                    <div class="ds-kpi-card">
-                                        <div class="ds-kpi-label">攝影機 vs 線圈</div>
-                                        <div class="ds-kpi-value">{{ sigLoop.compare && sigLoop.compare.camera_vs_vd_pct!=null ? ((sigLoop.compare.camera_vs_vd_pct>0?'+':'') + sigLoop.compare.camera_vs_vd_pct + '%') : '—' }}</div>
-                                        <div class="ds-kpi-hint">{{ sigLoop.compare ? ('近 ' + sigLoop.compare.minutes + ' 分鐘:線圈 ' + sigLoop.compare.vd_total + ' 輛 / 攝影機 ' + sigLoop.compare.camera_total + ' 輛') : '等待資料' }}</div>
-                                    </div>
-                                    <div class="ds-kpi-card">
-                                        <div class="ds-kpi-label">逐分鐘誤差</div>
-                                        <div class="ds-kpi-value">{{ sigLoop.compare ? (sigLoop.compare.mae_per_min + ' 輛') : '—' }}</div>
-                                        <div class="ds-kpi-hint">平均每分鐘差幾輛（絕對值）</div>
-                                    </div>
-                                </div>
-                                <div style="overflow-x:auto">
-                                    <table class="sc-table">
-                                        <thead><tr><th>分鐘</th><th>線圈 小/大/聯結</th><th>線圈合計</th><th>攝影機</th><th>速度 小/大</th><th>佔有率</th><th>車間距</th><th>設備時間</th></tr></thead>
-                                        <tbody>
-                                            <tr v-for="(r,ri) in sigLoopRows" :key="'vl'+ri">
-                                                <td>{{ r.minute }}</td>
-                                                <td class="sc-num">{{ r.fault ? '故障' : (r.small_n + ' / ' + r.large_n + ' / ' + r.trailer_n) }}</td>
-                                                <td class="sc-num"><b>{{ r.vd_total==null ? '—' : r.vd_total }}</b></td>
-                                                <td class="sc-num">{{ r.camera_n==null ? '—' : r.camera_n }}</td>
-                                                <td class="sc-num">{{ r.small_kmh }} / {{ r.large_kmh }} km/h</td>
-                                                <td class="sc-num">{{ r.occ_pct }}%</td>
-                                                <td class="sc-num">{{ r.headway_s }} s</td>
-                                                <td style="color:var(--gov-muted)">{{ r.device_time }}</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                                <div style="margin-top:8px;color:var(--gov-muted);font-size:12px">{{ sigLoop.note }}</div>
-                            </template>
-                        </div>
-                    </div>
-
-                    <!-- ══ 延長綠燈(P0-5)══
-                         🛑 使用者 2026-09-18 核准 P1 試行(晚尖峰限時)。這張卡要讓人一眼看出:
-                            現在是真的在下發,還是只算不送;若被自動停止,停的原因是什麼。
-                            逐筆紀錄的「實際幾秒後換相」對照 T − 已亮,就看得出控制器有沒有照走。 -->
-                    <div class="card">
-                        <div class="card-header">
-                            <span>延長綠燈（5F1C 延長主綠）</span>
-                            <el-button size="small" plain :loading="sigExtLoading" @click="loadSigExt">重查</el-button>
-                        </div>
-                        <div class="card-body">
-                            <div v-if="!sigExt.available" style="color:var(--gov-muted)">尚無延長紀錄。</div>
-                            <template v-else>
-                                <div class="st-kpis" style="margin-bottom:10px">
-                                    <div class="ds-kpi-card">
-                                        <div class="ds-kpi-label">現在</div>
-                                        <div class="ds-kpi-value ds-kpi-value--text"
-                                             :style="{color: sigExt.trip && sigExt.trip.tripped ? 'var(--gov-fault)' : (sigExt.live_now ? 'var(--gov-ok)' : 'var(--gov-muted)')}">
-                                            {{ sigExt.trip && sigExt.trip.tripped ? '已自動停止' : (sigExt.live_now ? '下發中' : '只算不送') }}
-                                        </div>
-                                        <div class="ds-kpi-hint">{{ sigExt.live_now ? ('單次最多 ' + sigExt.max_delta + ' 秒') : (sigExt.live_why || '') }}</div>
-                                    </div>
-                                    <div class="ds-kpi-card">
-                                        <div class="ds-kpi-label">試行時段</div>
-                                        <div class="ds-kpi-value ds-kpi-value--text">{{ sigExt.window && sigExt.window.since ? sigExt.window.since.slice(11,16) : '—' }} – {{ sigExt.window && sigExt.window.until ? sigExt.window.until.slice(11,16) : '—' }}</div>
-                                        <div class="ds-kpi-hint">時段外自動退回只算不送</div>
-                                    </div>
-                                    <div class="ds-kpi-card">
-                                        <div class="ds-kpi-label">近 {{ sigExt.minutes }} 分鐘</div>
-                                        <div class="ds-kpi-value">{{ sigExt.counts.sent }} <small style="font-size:12px;color:var(--gov-muted)">已送出</small></div>
-                                        <div class="ds-kpi-hint">想延未送 {{ sigExt.counts.wanted_not_sent }} · 評估 {{ sigExt.counts.evaluated }} 次</div>
-                                    </div>
-                                    <div class="ds-kpi-card">
-                                        <div class="ds-kpi-label">自動停止檢查</div>
-                                        <div class="ds-kpi-value ds-kpi-value--text">{{ sigExt.trip && sigExt.trip.tripped ? sigExt.trip.why : '正常' }}</div>
-                                        <div class="ds-kpi-hint">被拒 {{ (sigExt.trip||{}).naks || 0 }} · 未照命令走 {{ (sigExt.trip||{}).mismatch || 0 }} · 已送 {{ (sigExt.trip||{}).sends || 0 }}</div>
-                                    </div>
-                                </div>
-                                <div style="overflow-x:auto">
-                                    <table class="sc-table">
-                                        <thead><tr><th>時間</th><th>匝道（分相）</th><th>已亮/剩</th><th>狀態</th><th>延長</th><th>總長 T</th><th>卡在</th><th>實際幾秒後換相</th><th>排隊 綠/對向</th></tr></thead>
-                                        <tbody>
-                                            <tr v-for="(r,ri) in sigExtRows" :key="'ex'+ri">
-                                                <td>{{ (r.ts||'').slice(11,19) }}</td>
-                                                <td>{{ r.ramp }}（分相 {{ r.phase_no }}）</td>
-                                                <td class="sc-num">{{ r.green_elapsed_sec }} / {{ r.remain_sec }} s</td>
-                                                <td :style="{color: r.state==='已送出' ? 'var(--gov-ok)' : 'var(--gov-muted)', fontWeight: r.state==='已送出' ? 600 : 400}">{{ r.state }}</td>
-                                                <td class="sc-num">+{{ r.delta }} s</td>
-                                                <td class="sc-num">{{ r.T }} s</td>
-                                                <td>{{ r.binding }}</td>
-                                                <td class="sc-num">{{ r.actual_switch_in_sec==null ? '—' : (r.actual_switch_in_sec + ' s') }}</td>
-                                                <td class="sc-num">{{ sigWarNum(r.queue_green_m) }} / {{ sigWarNum(r.queue_red_m) }} m</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-
-                    <!-- ══ 滾動時程預測(只算不下發)══
-                         🛑 使用者 2026-09-18:「預測的要有地方顯示動態跟紀錄」。
-                            動態 = 目前這一刻的建議;紀錄 = 逐筆預測與它後來發生什麼。
-                         🛑 一致率不是成效:現在真正下發的是成本式,rolling 只在旁邊算。
-                            說中只代表兩者看法相同,不代表 rolling 比較好。 -->
-                    <div class="card">
-                        <div class="card-header">
-                            <!-- 🛑 2026-09-18 17:45 修:原本寫 (x||0).toFixed ? x.toFixed(0) : x —— 資料未載入時 x 是空的,前半段成立就去呼叫 undefined.toFixed(),渲染例外讓整個號誌頁壞掉(現場「登入後開不起來」)。 -->
-                            <span>滾動時程預測（往前看 {{ sigRoll.horizon_sec != null ? Number(sigRoll.horizon_sec).toFixed(0) : '—' }} 秒 · 只算不下發）</span>
-                            <el-button size="small" plain :loading="sigRollLoading" @click="loadSigRoll">重查</el-button>
-                        </div>
-                        <div class="card-body">
-                            <div v-if="!sigRoll.available" style="color:var(--gov-muted)">尚無預測紀錄（影子評估要在有綠燈取樣時才會產生）。</div>
-                            <template v-else>
-                                <div class="st-kpis" style="margin-bottom:10px">
-                                    <div class="ds-kpi-card">
-                                        <div class="ds-kpi-label">目前建議</div>
-                                        <div class="ds-kpi-value ds-kpi-value--text">{{ sigRoll.live ? sigRoll.live.advice : '—' }}</div>
-                                        <div class="ds-kpi-hint">{{ sigRoll.live ? (sigRoll.live.ramp + '綠燈已亮 ' + sigRoll.live.green_elapsed_sec + ' 秒') : '' }}</div>
-                                    </div>
-                                    <div class="ds-kpi-card">
-                                        <div class="ds-kpi-label">說「現在切」的次數</div>
-                                        <div class="ds-kpi-value">{{ sigRoll.accuracy.said_switch_now }}</div>
-                                        <div class="ds-kpi-hint">近 {{ sigRoll.minutes }} 分鐘 · 共 {{ sigRoll.samples }} 筆預測</div>
-                                    </div>
-                                    <div class="ds-kpi-card">
-                                        <div class="ds-kpi-label">與實際換相一致</div>
-                                        <div class="ds-kpi-value">{{ sigRoll.accuracy.hit_rate_pct==null ? '—' : (sigRoll.accuracy.hit_rate_pct + '%') }}</div>
-                                        <div class="ds-kpi-hint">{{ sigRoll.accuracy.note }}</div>
-                                    </div>
-                                    <div class="ds-kpi-card">
-                                        <div class="ds-kpi-label">「再給 N 秒」誤差中位</div>
-                                        <div class="ds-kpi-value">{{ sigRoll.accuracy.keep_err_median_sec==null ? '—' : (sigRoll.accuracy.keep_err_median_sec + ' s') }}</div>
-                                        <div class="ds-kpi-hint">預測的剩餘綠燈 vs 實際還跑了多久（{{ sigRoll.accuracy.keep_advice_n }} 筆）</div>
-                                    </div>
-                                </div>
-                                <!-- 🛑 一致率要分時段看:夜間幾乎沒有車,模型一直建議續綠,
-                                     與控制器照時制跑本來就對不上。混在一起的總數不可判讀。 -->
-                                <div style="overflow-x:auto;margin-bottom:10px">
-                                    <table class="sc-table">
-                                        <thead><tr><th>時段</th><th>說「現在切」</th><th>一致</th><th>一致率</th><th>「再給N秒」誤差中位</th></tr></thead>
-                                        <tbody>
-                                            <tr v-for="tk in ['尖峰','離峰','夜間']" :key="'rt'+tk">
-                                                <td>{{ tk }}</td>
-                                                <td class="sc-num">{{ ((sigRoll.accuracy.by_tier||{})[tk]||{}).said_switch_now }}</td>
-                                                <td class="sc-num">{{ ((sigRoll.accuracy.by_tier||{})[tk]||{}).hit }}</td>
-                                                <td class="sc-num">{{ ((sigRoll.accuracy.by_tier||{})[tk]||{}).hit_rate_pct==null ? '—' : (((sigRoll.accuracy.by_tier||{})[tk]||{}).hit_rate_pct + '%') }}</td>
-                                                <td class="sc-num">{{ ((sigRoll.accuracy.by_tier||{})[tk]||{}).keep_err_median_sec==null ? '—' : (((sigRoll.accuracy.by_tier||{})[tk]||{}).keep_err_median_sec + ' s') }}</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                                <div style="color:var(--gov-muted);font-size:12px;margin-bottom:10px">{{ sigRoll.accuracy.tier_note }}</div>
-                                <div style="overflow-x:auto">
-                                    <table class="sc-table">
-                                        <thead><tr><th>時間</th><th>時段</th><th>匝道（分相）</th><th>已亮</th><th>預測建議</th><th>實際幾秒後換相</th><th>排隊 綠/紅</th></tr></thead>
-                                        <tbody>
-                                            <tr v-for="(r,ri) in sigRoll.items.slice(0,40)" :key="'rl'+ri">
-                                                <td>{{ (r.ts||'').slice(11,19) }}</td>
-                                                <td>{{ r.tier }}</td>
-                                                <td>{{ r.ramp }}（分相 {{ r.phase_no }}）</td>
-                                                <td class="sc-num">{{ r.green_elapsed_sec }} s</td>
-                                                <td>{{ r.advice }}</td>
-                                                <td class="sc-num">{{ r.actual_switch_in_sec==null ? '—' : (r.actual_switch_in_sec + ' s') }}</td>
-                                                <td class="sc-num">{{ sigWarNum(r.queue_green_m) }} / {{ sigWarNum(r.queue_red_m) }} m</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                                <div style="margin-top:8px;color:var(--gov-muted);font-size:12px">{{ sigRoll.caveat }}</div>
-                            </template>
-                        </div>
-                    </div>
-
                     <!-- ══ 查詢列 ══
                          🛑 即時與歷史是同一份統計、只差區間,所以放同一列:
                             相對區間(最近 N)=即時,可自動更新;
@@ -9270,6 +9103,165 @@
                                 這段時間沒有可用樣本。線上演算法比對需要抄錄器連線正常，且控制模式為外部動態才會納入。</p>
                         </div>
                     </div>
+
+                    <!-- ══ 控制驗證(整合)══
+                         🛑 2026-09-18 使用者:「運作統計太雜,整合一起;VD 報表也跑版;也要有查詢功能」。
+                            原本三張卡(線圈對照/延長綠燈/預測)各自一塊、還插在查詢列上方把整頁往下推,
+                            而且用了不存在的 CSS 類別 st-kpis,指標卡沒有排版規則 → 跑版。
+                            改成一張卡、分頁切換,放在查詢列下面,區間**跟著查詢列走**(選一次,整頁一起)。
+                         🛑 所有運算式都要能在「資料還沒載入」時執行(17:45 事故:空值呼叫 .toFixed 讓整頁壞掉)。 -->
+                    <div class="card vx-card">
+                        <div class="card-header vx-head">
+                            <span class="vx-title">控制驗證</span>
+                            <div class="vx-tabs" role="tablist">
+                                <button v-for="t in sigVxTabs" :key="'vx'+t.key" type="button" role="tab"
+                                        class="vx-tab" :class="{active: sigVxTab===t.key}"
+                                        :aria-selected="sigVxTab===t.key" @click="sigVxPick(t.key)">{{ t.label }}</button>
+                            </div>
+                            <span class="vx-range">{{ sigVxRangeText }}</span>
+                            <el-button size="small" plain :loading="sigVxLoading" @click="loadSigVx">重查</el-button>
+                        </div>
+                        <div class="card-body">
+                            <!-- ── 線圈對照 ── -->
+                            <template v-if="sigVxTab==='loop'">
+                                <div v-if="!sigLoop.available" class="vx-empty">{{ sigLoop.reason || '尚未收到線圈資料。' }}</div>
+                                <template v-else>
+                                    <div class="vx-kpis">
+                                        <div class="ds-kpi-card">
+                                            <div class="ds-kpi-label">線圈連線</div>
+                                            <div class="ds-kpi-value ds-kpi-value--text" :style="{color: (sigLoop.status||{}).connected ? 'var(--gov-ok)' : 'var(--gov-fault)'}">{{ (sigLoop.status||{}).connected ? '連線中' : '未連線' }}</div>
+                                            <div class="ds-kpi-hint">完整度 {{ sigPctPlain((sigLoop.completeness||{}).rate_pct) }} · 設備時鐘 {{ sigLoopClock }}</div>
+                                        </div>
+                                        <div class="ds-kpi-card">
+                                            <div class="ds-kpi-label">總數(線圈 / 攝影機)</div>
+                                            <div class="ds-kpi-value">{{ sigNum0((sigLoop.summary||{}).vd_total) }} / {{ sigNum0((sigLoop.summary||{}).cam_total) }}</div>
+                                            <div class="ds-kpi-hint">差 {{ sigPctTxt((sigLoop.summary||{}).total_pct) }}</div>
+                                        </div>
+                                        <div class="ds-kpi-card">
+                                            <div class="ds-kpi-label">小型車(線圈 / 攝影機)</div>
+                                            <div class="ds-kpi-value">{{ sigNum0((sigLoop.summary||{}).vd_small) }} / {{ sigNum0((sigLoop.summary||{}).cam_small) }}</div>
+                                            <div class="ds-kpi-hint">差 {{ sigPctTxt((sigLoop.summary||{}).small_pct) }}</div>
+                                        </div>
+                                        <div class="ds-kpi-card">
+                                            <div class="ds-kpi-label">大型車(線圈 / 攝影機)</div>
+                                            <div class="ds-kpi-value">{{ sigNum0((sigLoop.summary||{}).vd_large) }} / {{ sigNum0((sigLoop.summary||{}).cam_large) }}</div>
+                                            <div class="ds-kpi-hint">差 {{ sigPctTxt((sigLoop.summary||{}).large_pct) }}</div>
+                                        </div>
+                                        <div class="ds-kpi-card">
+                                            <div class="ds-kpi-label">每組平均誤差</div>
+                                            <div class="ds-kpi-value">{{ sigNum0((sigLoop.summary||{}).mae_per_bucket) }} 輛</div>
+                                            <div class="ds-kpi-hint">每組 {{ sigLoop.bucket || sigLoopBucket }} 分鐘,共 {{ sigNum0((sigLoop.summary||{}).buckets) }} 組</div>
+                                        </div>
+                                    </div>
+                                    <div class="vx-bar">
+                                        <span class="vx-bar-label">統計粒度</span>
+                                        <button v-for="bk in sigLoopBuckets" :key="'bk'+bk.v" type="button" class="vx-chip"
+                                                :class="{active: sigLoopBucket===bk.v}" @click="sigLoopPickBucket(bk.v)">{{ bk.label }}</button>
+                                        <span class="vx-bar-note" v-if="(sigLoop.completeness||{}).missed">漏收 {{ (sigLoop.completeness||{}).missed }} 框:{{ ((sigLoop.completeness||{}).missed_minutes||[]).join('、') }}</span>
+                                    </div>
+                                    <div class="vx-table-wrap">
+                                        <table class="sc-table vx-table">
+                                            <thead><tr><th>時間</th><th>線圈 小</th><th>線圈 大</th><th>線圈 合計</th><th>攝影機 小</th><th>攝影機 大</th><th>攝影機 合計</th><th>差</th><th>佔有率</th><th>小車速度</th></tr></thead>
+                                            <tbody>
+                                                <tr v-for="(r,ri) in sigLoopRows" :key="'vl'+ri">
+                                                    <td class="vx-t">{{ (r.t||'').slice(5) }}</td>
+                                                    <td class="sc-num">{{ r.vd_small }}</td>
+                                                    <td class="sc-num">{{ r.vd_large }}</td>
+                                                    <td class="sc-num"><b>{{ r.vd_total }}</b></td>
+                                                    <td class="sc-num">{{ sigNum0(r.cam_small) }}</td>
+                                                    <td class="sc-num">{{ sigNum0(r.cam_large) }}</td>
+                                                    <td class="sc-num"><b>{{ sigNum0(r.cam_total) }}</b></td>
+                                                    <td class="sc-num" :class="sigDiffCls(r.diff_pct)">{{ sigPctTxt(r.diff_pct) }}</td>
+                                                    <td class="sc-num">{{ sigPctPlain(r.occ_pct) }}</td>
+                                                    <td class="sc-num">{{ sigNum0(r.small_kmh) }} km/h</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div class="vx-note">{{ sigLoop.note }}</div>
+                                </template>
+                            </template>
+
+                            <!-- ── 延長綠燈 ── -->
+                            <template v-else-if="sigVxTab==='extend'">
+                                <div v-if="!sigExt.available" class="vx-empty">{{ sigExt.reason || '尚無延長紀錄。' }}</div>
+                                <template v-else>
+                                    <div class="vx-kpis">
+                                        <div class="ds-kpi-card">
+                                            <div class="ds-kpi-label">現在</div>
+                                            <div class="ds-kpi-value ds-kpi-value--text" :style="{color: (sigExt.trip||{}).tripped ? 'var(--gov-fault)' : (sigExt.live_now ? 'var(--gov-ok)' : 'var(--gov-muted)')}">{{ (sigExt.trip||{}).tripped ? '已自動停止' : (sigExt.live_now ? '下發中' : '只算不送') }}</div>
+                                            <div class="ds-kpi-hint">{{ (sigExt.trip||{}).tripped ? ((sigExt.trip||{}).why || '') : (sigExt.live_why || '') }}</div>
+                                        </div>
+                                        <div class="ds-kpi-card">
+                                            <div class="ds-kpi-label">試行時段</div>
+                                            <div class="ds-kpi-value ds-kpi-value--text">{{ ((sigExt.window||{}).since||'').slice(11,16) || '—' }} – {{ ((sigExt.window||{}).until||'').slice(11,16) || '—' }}</div>
+                                            <div class="ds-kpi-hint">時段外自動只算不送</div>
+                                        </div>
+                                        <div class="ds-kpi-card">
+                                            <div class="ds-kpi-label">已送出 / 想延未送</div>
+                                            <div class="ds-kpi-value">{{ sigNum0((sigExt.counts||{}).sent) }} / {{ sigNum0((sigExt.counts||{}).wanted_not_sent) }}</div>
+                                            <div class="ds-kpi-hint">共評估 {{ sigNum0((sigExt.counts||{}).evaluated) }} 次</div>
+                                        </div>
+                                    </div>
+                                    <div class="vx-table-wrap">
+                                        <table class="sc-table vx-table">
+                                            <thead><tr><th>時間</th><th>匝道(分相)</th><th>已亮 / 剩</th><th>狀態</th><th>延長</th><th>總長 T</th><th>卡在</th><th>實際幾秒後換相</th><th>排隊 綠/對向</th></tr></thead>
+                                            <tbody>
+                                                <tr v-for="(r,ri) in sigExtRows" :key="'ex'+ri">
+                                                    <td class="vx-t">{{ (r.ts||'').slice(5,19).replace('T',' ') }}</td>
+                                                    <td>{{ r.ramp }}(分相 {{ r.phase_no }})</td>
+                                                    <td class="sc-num">{{ sigNum0(r.green_elapsed_sec) }} / {{ sigNum0(r.remain_sec) }} s</td>
+                                                    <td :class="r.state==='已送出' ? 'vx-ok' : 'vx-muted'">{{ r.state }}</td>
+                                                    <td class="sc-num">+{{ sigNum0(r.delta) }} s</td>
+                                                    <td class="sc-num">{{ sigNum0(r.T) }} s</td>
+                                                    <td>{{ r.binding }}</td>
+                                                    <td class="sc-num">{{ sigNum0(r.actual_switch_in_sec) }} s</td>
+                                                    <td class="sc-num">{{ sigWarNum(r.queue_green_m) }} / {{ sigWarNum(r.queue_red_m) }} m</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </template>
+                            </template>
+
+                            <!-- ── 預測 ── -->
+                            <template v-else>
+                                <div v-if="!sigRoll.available" class="vx-empty">{{ sigRoll.reason || '尚無預測紀錄。' }}</div>
+                                <template v-else>
+                                    <div class="vx-kpis">
+                                        <div class="ds-kpi-card">
+                                            <div class="ds-kpi-label">目前建議(往前看 {{ sigNum0(sigRoll.horizon_sec) }} 秒)</div>
+                                            <div class="ds-kpi-value ds-kpi-value--text">{{ (sigRoll.live||{}).advice || '—' }}</div>
+                                            <div class="ds-kpi-hint">只算不下發</div>
+                                        </div>
+                                        <div class="ds-kpi-card" v-for="tk in sigRollTiers" :key="'rk'+tk">
+                                            <div class="ds-kpi-label">{{ tk }} 一致率</div>
+                                            <div class="ds-kpi-value">{{ sigPctPlain(sigRollTier(tk).hit_rate_pct) }}</div>
+                                            <div class="ds-kpi-hint">說「現在切」{{ sigNum0(sigRollTier(tk).said_switch_now) }} 次 · 誤差中位 {{ sigNum0(sigRollTier(tk).keep_err_median_sec) }} s</div>
+                                        </div>
+                                    </div>
+                                    <div class="vx-table-wrap">
+                                        <table class="sc-table vx-table">
+                                            <thead><tr><th>時間</th><th>時段</th><th>匝道(分相)</th><th>已亮</th><th>預測建議</th><th>實際幾秒後換相</th><th>排隊 綠/紅</th></tr></thead>
+                                            <tbody>
+                                                <tr v-for="(r,ri) in sigRollRows" :key="'rl'+ri">
+                                                    <td class="vx-t">{{ (r.ts||'').slice(5,19).replace('T',' ') }}</td>
+                                                    <td>{{ r.tier }}</td>
+                                                    <td>{{ r.ramp }}(分相 {{ r.phase_no }})</td>
+                                                    <td class="sc-num">{{ sigNum0(r.green_elapsed_sec) }} s</td>
+                                                    <td>{{ r.advice }}</td>
+                                                    <td class="sc-num">{{ sigNum0(r.actual_switch_in_sec) }} s</td>
+                                                    <td class="sc-num">{{ sigWarNum(r.queue_green_m) }} / {{ sigWarNum(r.queue_red_m) }} m</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div class="vx-note">{{ (sigRoll.accuracy||{}).note }} {{ (sigRoll.accuracy||{}).tier_note }}</div>
+                                </template>
+                            </template>
+                        </div>
+                    </div>
+
                     <div class="card pfm-card">
                         <div class="card-header">
                             <span><svg class="text-icon"><use href="#i-bar"/></svg>執行績效</span>
@@ -25659,7 +25651,7 @@ const app=createApp({
             //    原本只呼叫 loadSigConsole(),等於載入一次就凍住。
             eval:   () => { loadSigFaults(); loadViz(); startVizTimer(); loadVizHourly();
                             loadSigStats(); startSigStatTimer(); loadSigRuns(); loadSigFg();
-                            loadSigRoll(); loadSigExt(); loadSigLoop();
+
                             loadSigConsole(); startSigConsoleTimer(); startSigLiveTimer(); },
             // 🛑 統計報表已併入 eval(2026-09-08 使用者:「不要這樣設計,要以使用者
             //    角度」)—— 同一份調整紀錄出現在兩頁,第一個問題就是「我該看哪個」。
@@ -26253,12 +26245,49 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         const loadSigLoop = async () => {
             sigLoopLoading.value = true;
             try {
-                const r = await fetch('/api/vd/status?minutes=60', {credentials: 'include'});
+                const r = await fetch('/api/vd/status?' + sigStatQuery() + '&bucket=' + sigLoopBucket.value,
+                                      {credentials: 'include'});
                 if (r.ok) sigLoop.value = await r.json();
             } catch (e) { /* 維持上一次內容 */ }
             sigLoopLoading.value = false;
         };
-        const sigLoopRows = computed(() => (sigLoop.value.items || []).slice(0, 30));
+        const sigLoopBucket = ref(5);
+        const sigLoopBuckets = [
+            {v: 1, label: '每分鐘'}, {v: 5, label: '每 5 分'}, {v: 15, label: '每 15 分'}, {v: 60, label: '每小時'},
+        ];
+        const sigLoopRows = computed(() => sigLoop.value.items || []);
+        const sigLoopPickBucket = (bk) => { sigLoopBucket.value = bk; loadSigLoop(); };
+        // 控制驗證整合卡:分頁 + 跟著查詢列的區間
+        const sigVxTabs = [
+            {key: 'loop', label: '線圈對照'},
+            {key: 'extend', label: '延長綠燈'},
+            {key: 'roll', label: '預測'},
+        ];
+        const sigVxTab = ref('loop');
+        const sigVxLoading = computed(() => sigLoopLoading.value || sigExtLoading.value || sigRollLoading.value);
+        const loadSigVx = () => {
+            if (sigVxTab.value === 'loop') return loadSigLoop();
+            if (sigVxTab.value === 'extend') return loadSigExt();
+            return loadSigRoll();
+        };
+        const sigVxPick = (k) => { sigVxTab.value = k; loadSigVx(); };
+        const sigVxRangeText = computed(() => {
+            const d = sigVxTab.value === 'loop' ? sigLoop.value
+                    : (sigVxTab.value === 'extend' ? sigExt.value : sigRoll.value);
+            const a = (d && d.since) || '', b = (d && d.until) || '';
+            return a ? ('區間 ' + a.replace('T', ' ').slice(0, 16) + ' ~ ' + b.replace('T', ' ').slice(0, 16)) : '';
+        });
+        // 顯示小工具:空值一律「—」,不用 0 冒充
+        const sigNum0 = (v) => (v === null || v === undefined) ? '—' : v;
+        const sigPctTxt = (v) => (v === null || v === undefined) ? '—' : ((0 < v ? '+' : '') + v + '%');
+        const sigPctPlain = (v) => (v === null || v === undefined) ? '—' : (v + '%');
+        const sigDiffCls = (v) => {
+            if (v === null || v === undefined) return '';
+            const a = Math.abs(v);
+            return 20 <= a ? 'vx-bad' : (10 <= a ? 'vx-warn' : '');
+        };
+        const sigRollTiers = ['尖峰', '離峰', '夜間'];
+        const sigRollTier = (tk) => (((sigRoll.value.accuracy || {}).by_tier || {})[tk]) || {};
         // 設備時鐘偏差用文字講清楚,不讓人去讀秒數正負號
         const sigLoopClock = computed(() => {
             const o = (sigLoop.value.status || {}).clock_offset_sec;
@@ -26273,7 +26302,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         const loadSigExt = async () => {
             sigExtLoading.value = true;
             try {
-                const r = await fetch('/api/signal/shadow/extend?minutes=180&limit=300',
+                const r = await fetch('/api/signal/shadow/extend?' + sigStatQuery() + '&limit=500',
                                       {credentials: 'include'});
                 if (r.ok) sigExt.value = await r.json();
             } catch (e) { /* 維持上一次內容 */ }
@@ -26282,13 +26311,14 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         // 🛑 過濾放在 computed,不寫在 v-for 裡:模板指令內的 `=>` 會帶進 `>`,
         //    專案規範明令避免(曾因模板內比較運算子整頁白屏)。
         const sigExtRows = computed(() => (sigExt.value.items || [])
-            .filter((x) => x.state !== '不延').slice(0, 40));
+            .filter((x) => x.state !== '不延'));
+        const sigRollRows = computed(() => sigRoll.value.items || []);
         const sigRoll = ref({available: false, items: [], accuracy: {}, minutes: 60});
         const sigRollLoading = ref(false);
         const loadSigRoll = async () => {
             sigRollLoading.value = true;
             try {
-                const r = await fetch('/api/signal/shadow/rolling?minutes=60&limit=200',
+                const r = await fetch('/api/signal/shadow/rolling?' + sigStatQuery() + '&limit=500',
                                       {credentials: 'include'});
                 if (r.ok) sigRoll.value = await r.json();
             } catch (e) { /* 拿不到就維持上一次的內容,不要清空畫面 */ }
@@ -26513,6 +26543,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             sigAdjSearch();
             loadViz();
             loadVizHourly();
+            loadSigVx();        // 控制驗證整合卡也跟著同一個區間
         };
         // 即時輪詢。只在「停在運作統計這一頁 + 分頁在前景 + 相對區間」時才打,
         // 切走或切到別的 tab 就停 —— 背景頁每 30 秒打一次 API 是白費的。
@@ -29617,7 +29648,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigConnDirty,sigConnTouch,sigConnReset,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPhaseMeta,sigRoll,sigRollLoading,loadSigRoll,sigExt,sigExtLoading,loadSigExt,sigExtRows,sigLoop,sigLoopLoading,loadSigLoop,sigLoopRows,sigLoopClock,sigCamPhase,sigVdLanes,sigVdTypes,sigBlockedTotal,sigBlockedTop,sigRuns,sigRunsLoading,sigRunRamp,loadSigRuns,sigFg,sigFgLoading,sigFgRows,sigFgVerdicts,loadSigFg,sigPhDesc,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwCenterText,sigHwSetMode,sigHwRestore,SIG_HW_BIT_NAMES,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigConnDirty,sigConnTouch,sigConnReset,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPhaseMeta,sigRoll,sigRollLoading,loadSigRoll,sigExt,sigExtLoading,loadSigExt,sigExtRows,sigLoop,sigLoopLoading,loadSigLoop,sigLoopRows,sigLoopClock,sigLoopBucket,sigLoopPickBucket,sigVxTabs,sigVxTab,sigVxLoading,loadSigVx,sigVxPick,sigVxRangeText,sigNum0,sigPctTxt,sigPctPlain,sigDiffCls,sigRollRows,sigLoopBuckets,sigRollTiers,sigRollTier,sigCamPhase,sigVdLanes,sigVdTypes,sigBlockedTotal,sigBlockedTop,sigRuns,sigRunsLoading,sigRunRamp,loadSigRuns,sigFg,sigFgLoading,sigFgRows,sigFgVerdicts,loadSigFg,sigPhDesc,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwCenterText,sigHwSetMode,sigHwRestore,SIG_HW_BIT_NAMES,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigAdjExportPdf,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,sigDegHas,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgSectionsOrdered,sigCfgOrder,sigCfgDragKey,sigCfgDragStart,sigCfgDrop,sigCfgResetOrder,sigCfgReceived,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgBusy,sigCfgRefreshOne,sigCfgAutoOn,sigCfgAutoHours,sigCfgAutoBusy,sigCfgAutoText,sigCfgSetAuto,sigCfgRunAuto,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigAbOn,sigAbMin,sigAbBusy,sigAbText,sigAbSet,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBitsShown,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatTrendBars,sigStatTrendLines,sigStatBucketText,sigGreenExport,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigStepCells,sigCycleDash,sigCycleText,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,specCells,specPerfCells,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,

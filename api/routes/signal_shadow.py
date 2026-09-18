@@ -4325,9 +4325,27 @@ def rule_shadow_offramp(since: str = Query("", description="起(ISO);空=近 24 
                     "規則生效時要停下的車;效益 = 上匝道在等車數 × 省下秒數。反事實估計,僅供決定是否試行。"}
 
 
+def _range_epochs(minutes: int, since: str, until: str) -> tuple:
+    """運作統計頁共用的區間:since/until(ISO)優先,否則用最近 minutes 分鐘。回 (起, 訖) epoch。"""
+    # 直接呼叫(非經 HTTP)時,預設值會是 FastAPI 的 Query 物件,不是字串
+    since = since if isinstance(since, str) else ""
+    until = until if isinstance(until, str) else ""
+    minutes = minutes if isinstance(minutes, (int, float)) else 60
+    def _ep(v):
+        try:
+            return datetime.fromisoformat(v).timestamp()
+        except Exception:
+            return None
+    end = _ep(until) if until else time.time()
+    cut = _ep(since) if since else (end or time.time()) - minutes * 60
+    return cut, end
+
+
 @router.get("/extend", summary="延長綠燈:目前狀態(試行時段/自動停止)、逐筆紀錄與實際結果")
-def extend_status(minutes: int = Query(180, ge=5, le=1440),
-                  limit: int = Query(80, ge=1, le=500),
+def extend_status(minutes: int = Query(180, ge=5, le=10080),
+                  limit: int = Query(80, ge=1, le=2000),
+                  since: str = Query("", description="起(ISO);給了就蓋過 minutes"),
+                  until: str = Query("", description="訖(ISO)"),
                   _user=Depends(get_current_user)):
     """延長綠燈的動態與紀錄(使用者 2026-09-18 P0-5)。
 
@@ -4335,17 +4353,19 @@ def extend_status(minutes: int = Query(180, ge=5, le=1440),
     實際結果:送出的那一則,之後幾秒真的換相 —— 對照 T − 已亮 就知道控制器有沒有照走。
     """
     now = time.time()
-    cut = now - minutes * 60
+    cut, end = _range_epochs(minutes, since, until)
+    if cut is None or end is None or cut >= end:
+        return {"available": False, "reason": "查詢區間不正確"}
     live_on, live_why = extend_live_now(now)
     try:
         conn = _db()
         rows = list(conn.execute(
             "SELECT ts,epoch,green_phase,green_elapsed,would,reason,queue_green,queue_red "
-            "FROM signal_rule_shadow WHERE rule='extend' AND epoch>=? ORDER BY epoch DESC LIMIT ?",
-            (cut, limit)))
+            "FROM signal_rule_shadow WHERE rule='extend' AND epoch>=? AND epoch<? "
+            "ORDER BY epoch DESC LIMIT ?", (cut, end, limit)))
         tot = dict(conn.execute(
-            "SELECT would,count(*) FROM signal_rule_shadow WHERE rule='extend' AND epoch>=? "
-            "GROUP BY would", (cut,)).fetchall())
+            "SELECT would,count(*) FROM signal_rule_shadow WHERE rule='extend' AND epoch>=? AND epoch<? "
+            "GROUP BY would", (cut, end)).fetchall())
         sw = []
         prev = None
         for ts_s, ph in conn.execute(
@@ -4379,6 +4399,8 @@ def extend_status(minutes: int = Query(180, ge=5, le=1440),
         })
     return {
         "available": True, "minutes": minutes,
+        "since": datetime.fromtimestamp(cut).isoformat(timespec="seconds"),
+        "until": datetime.fromtimestamp(end).isoformat(timespec="seconds"),
         "mode": ("停用" if not EXTEND_GREEN else ("影子" if EXTEND_SHADOW else "下發")),
         "window": {"since": EXTEND_SINCE or None, "until": EXTEND_UNTIL or None},
         "live_now": live_on, "live_why": live_why,
@@ -4391,8 +4413,10 @@ def extend_status(minutes: int = Query(180, ge=5, le=1440),
 
 
 @router.get("/rolling", summary="滾動時程預測:目前預測、歷史紀錄與命中率(只算不下發)")
-def rolling_shadow(minutes: int = Query(60, ge=5, le=1440),
-                   limit: int = Query(100, ge=1, le=1000),
+def rolling_shadow(minutes: int = Query(60, ge=5, le=10080),
+                   limit: int = Query(100, ge=1, le=2000),
+                   since: str = Query("", description="起(ISO);給了就蓋過 minutes"),
+                   until: str = Query("", description="訖(ISO)"),
                    _user=Depends(get_current_user)):
     """往前看 N 秒的預測:現在建議再給幾秒綠燈,以及過去的預測有沒有說中。
 
@@ -4406,20 +4430,23 @@ def rolling_shadow(minutes: int = Query(60, ge=5, le=1440),
     🛑 這是**對照**不是驗證:現在下發的是成本式,不是 rolling ——
        rolling 說中只代表它與現行決策一致,不代表它比較好。
     """
-    cut = time.time() - minutes * 60
+    cut, end = _range_epochs(minutes, since, until)
+    if cut is None or end is None or cut >= end:
+        return {"available": False, "reason": "查詢區間不正確"}
     SW = 10.0                       # 「現在就切」的認定窗(秒)
     rows, switches = [], []
     try:
         conn = _db()
         rows = list(conn.execute(
             "SELECT ts,epoch,green_phase,green_elapsed,would,reason,queue_green,queue_red "
-            "FROM signal_rule_shadow WHERE rule='rolling' AND epoch>=? "
-            "ORDER BY epoch DESC LIMIT ?", (cut, limit)))
+            "FROM signal_rule_shadow WHERE rule='rolling' AND epoch>=? AND epoch<? "
+            "ORDER BY epoch DESC LIMIT ?", (cut, end, limit)))
         # 實際換相時刻:green_phase 變了的那一筆
         prev_ph, prev_ts = None, None
         for ts_s, ph in conn.execute(
-                "SELECT ts,green_phase FROM signal_shadow_log WHERE ts>=? ORDER BY ts",
-                (datetime.fromtimestamp(cut).isoformat(timespec="seconds"),)):
+                "SELECT ts,green_phase FROM signal_shadow_log WHERE ts>=? AND ts<=? ORDER BY ts",
+                (datetime.fromtimestamp(cut).isoformat(timespec="seconds"),
+                 datetime.fromtimestamp(end + 300).isoformat(timespec="seconds"))):
             try:
                 t = datetime.fromisoformat(ts_s).timestamp()
             except Exception:
@@ -4495,6 +4522,8 @@ def rolling_shadow(minutes: int = Query(60, ge=5, le=1440),
         }
     return {
         "available": True, "minutes": minutes, "samples": len(items),
+        "since": datetime.fromtimestamp(cut).isoformat(timespec="seconds"),
+        "until": datetime.fromtimestamp(end).isoformat(timespec="seconds"),
         "horizon_sec": ROLLING_HORIZON_SEC,
         "live": (items[0] if items else None),
         "accuracy": {

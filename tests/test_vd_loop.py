@@ -136,3 +136,54 @@ def test_spool_keeps_frame_when_db_still_failing(tmp_path, monkeypatch):
     monkeypatch.setattr(V, "_store", boom)
     assert V._flush_spool("WN") == 0
     assert "WN" in (tmp_path / "spool.jsonl").read_text(), "還寫不進去就要留著"
+
+
+def _seed_vd(tmp_path, monkeypatch, minutes):
+    """種 N 分鐘的線圈資料:每分鐘 小 5、大 1;攝影機每分鐘 4 輛(其中大 2)。"""
+    import sqlite3
+    from datetime import datetime, timedelta
+    import api.routes.vd_loop as V
+    monkeypatch.setattr(V, "_DB", str(tmp_path / "vd.db"))
+    monkeypatch.setattr(V, "_DEVICES_RAW", "WN@1.2.3.4:1002")
+    c = V._conn()
+    t0 = datetime(2026, 9, 18, 10, 0)
+    cam = {}
+    for i in range(minutes):
+        recv = t0 + timedelta(minutes=i + 1)          # hh:mm+1 收到 = hh:mm 那一分鐘
+        c.execute("INSERT INTO vd_minute(device,recv_ts,recv_iso,dev_time,clock_offset_sec,hw_status,lane,fault,"
+                  "small_n,small_kmh,large_n,large_kmh,trailer_n,headway_s,occ_pct,raw) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  ("WN", recv.timestamp(), recv.isoformat(), "x", 1800.0, "00000000", 1, 0,
+                   5, 50, 1, 40, 0, 10.0, 5, "10 01 %02X FF FF" % (0x80 + i)))
+        cam[(t0 + timedelta(minutes=i)).strftime("%Y-%m-%d %H:%M")] = {"n": 4, "large": 2}
+    c.commit(); c.close()
+    monkeypatch.setattr(V, "_camera_minutes", lambda a, b: {"camera": 4, "lanes": [1], "minutes": cam})
+    return V, t0
+
+
+def test_vd_status_range_and_bucket(tmp_path, monkeypatch):
+    """查詢功能:since/until 取區間、bucket 分組;大小車分開對照。"""
+    V, t0 = _seed_vd(tmp_path, monkeypatch, 30)
+    out = V.vd_status(device="", minutes=60, since=t0.isoformat(), until=(t0.replace(minute=30)).isoformat(),
+                      bucket=5, _user="t")
+    assert out["available"] and out["bucket"] == 5
+    assert len(out["items"]) == 6, "30 分鐘 / 每 5 分一組 = 6 組"
+    first = out["items"][-1]                          # 最早那組
+    assert first["vd_small"] == 25 and first["vd_large"] == 5 and first["vd_total"] == 30
+    assert first["cam_small"] == 10 and first["cam_large"] == 10
+    sm = out["summary"]
+    assert sm["vd_small"] == 150 and sm["cam_small"] == 60 and sm["small_pct"] == -60.0
+    assert sm["vd_large"] == 30 and sm["cam_large"] == 60 and sm["large_pct"] == 100.0
+
+
+def test_vd_status_rejects_bad_range(tmp_path, monkeypatch):
+    V, t0 = _seed_vd(tmp_path, monkeypatch, 5)
+    out = V.vd_status(device="", minutes=60, since="2026-09-18T12:00:00", until="2026-09-18T11:00:00",
+                      bucket=1, _user="t")
+    assert out["available"] is False
+
+
+def test_camera_minute_key_includes_date():
+    """跨日查詢:攝影機分鐘鍵要含日期,不然兩天同一分鐘會加在一起。"""
+    import inspect
+    import api.routes.vd_loop as V
+    assert "%%Y-%%m-%%d %%H:%%M" in inspect.getsource(V._camera_minutes)

@@ -344,7 +344,9 @@ def start_vd() -> list:
 
 
 def _camera_minutes(since_utc: str, until_utc: str) -> dict:
-    """我方攝影機逐分鐘計數(下匝道那一相的基準測點與車道),key = 本地時間 'HH:MM'。
+    """我方攝影機逐分鐘計數(下匝道那一相的基準測點與車道),key = 本地時間 'YYYY-MM-DD HH:MM'。
+
+    🛑 鍵要含日期:只用 HH:MM 時,查「昨日全日 + 今天」會把兩天同一分鐘加在一起。
 
     🛑 與 signal_eval 同一口徑:排除進出線事件(IN/OUT/EXIT),那是 OPAC 的,不當通過量。
     🛑 traffic_events.created_at 是 UTC,這裡轉本地時間再對齊。
@@ -362,7 +364,7 @@ def _camera_minutes(since_utc: str, until_utc: str) -> dict:
         c = sqlite3.connect("file:data/violations.db?mode=ro", uri=True, timeout=10)
         try:
             rows = c.execute(
-                "SELECT strftime('%%H:%%M', created_at, 'localtime'), count(*), "
+                "SELECT strftime('%%Y-%%m-%%d %%H:%%M', created_at, 'localtime'), count(*), "
                 "sum(CASE WHEN label IN ('truck','heavy_truck','bus','trailer') THEN 1 ELSE 0 END) "
                 "FROM traffic_events WHERE camera_id=? AND lane_no IN (%s) AND direction NOT IN (%s) "
                 "AND created_at>=? AND created_at<? GROUP BY 1"
@@ -399,59 +401,121 @@ def completeness(rows: list) -> dict:
             "rate_pct": (round(got / (got + len(missed)) * 100, 1) if got else None)}
 
 
-@router.get("/status", summary="VD 線圈:連線狀態、時鐘偏差、逐分鐘紀錄與攝影機對照")
+@router.get("/status", summary="VD 線圈:連線狀態、時鐘偏差、紀錄與攝影機對照(可查詢區間、可分組)")
 def vd_status(device: str = Query("", description="設備名稱;空 = 第一台"),
-              minutes: int = Query(60, ge=5, le=1440),
+              minutes: int = Query(60, ge=5, le=10080),
+              since: str = Query("", description="起(ISO);給了就蓋過 minutes"),
+              until: str = Query("", description="訖(ISO);空 = 現在"),
+              bucket: int = Query(1, description="分組分鐘數:1/5/15/60"),
               _user=Depends(get_current_user)):
-    """逐分鐘紀錄 + 同一分鐘我方攝影機的計數。
+    """線圈紀錄 + 同一時段我方攝影機的計數,大小車分開對照。
 
     對照用**我方收到的時刻**:設備在 hh:mm:00 送出的那一筆,算作前一分鐘
     (hh:mm-1)的車流 —— 設備時間戳會偏(實測慢 30 分鐘),不拿來對齊。
+    🛑 線圈與攝影機看的是同一條下匝道、同一批車(使用者 2026-09-18),
+       差異就是我方計數的誤差,不是位置不同。
+    🛑 區間跟著運作統計頁的查詢列走(使用者:「也要有查詢功能」)。
     """
+    # 直接呼叫(非經 HTTP)時,預設值會是 FastAPI 的 Query 物件,不是字串/數字
+    device = device if isinstance(device, str) else ""
+    since = since if isinstance(since, str) else ""
+    until = until if isinstance(until, str) else ""
+    minutes = minutes if isinstance(minutes, int) else 60
     names = [n for n, _, _ in parse_devices(_DEVICES_RAW)]
     name = device or (names[0] if names else "")
     st = dict(_state.get(name) or {})
+    bucket = bucket if bucket in (1, 5, 15, 60) else 1
+
+    def _ep(v):
+        try:
+            return datetime.fromisoformat(v).timestamp()
+        except Exception:
+            return None
     now = time.time()
-    since = now - minutes * 60
-    rows = []
-    comp = {}
+    t_until = _ep(until) if until else now
+    t_since = _ep(since) if since else t_until - minutes * 60
+    if t_since is None or t_until is None or t_since >= t_until:
+        return {"available": False, "reason": "查詢區間不正確", "devices": names}
+
+    rows, comp = [], {}
     try:
         c = _conn()
         comp = completeness(c.execute(
-            "SELECT recv_ts, raw FROM vd_minute WHERE device=? AND recv_ts>=? AND lane=1 ORDER BY recv_ts",
-            (name, since)).fetchall())
+            "SELECT recv_ts, raw FROM vd_minute WHERE device=? AND recv_ts>=? AND recv_ts<? "
+            "AND lane=1 ORDER BY recv_ts", (name, t_since + 30, t_until + 30)).fetchall())
         rows = c.execute(
-            "SELECT recv_ts,recv_iso,dev_time,clock_offset_sec,hw_status,lane,fault,"
-            "small_n,small_kmh,large_n,large_kmh,trailer_n,headway_s,occ_pct "
-            "FROM vd_minute WHERE device=? AND recv_ts>=? ORDER BY recv_ts DESC",
-            (name, since)).fetchall()
+            "SELECT recv_ts,dev_time,clock_offset_sec,fault,small_n,small_kmh,large_n,large_kmh,"
+            "trailer_n,headway_s,occ_pct FROM vd_minute WHERE device=? AND recv_ts>=? AND recv_ts<? "
+            "ORDER BY recv_ts", (name, t_since + 30, t_until + 30)).fetchall()
         c.close()
     except Exception as exc:
         return {"available": False, "reason": str(exc)[:160], "devices": names}
 
     utc = lambda t: datetime.utcfromtimestamp(t).strftime("%Y-%m-%d %H:%M:%S")
-    cam = _camera_minutes(utc(since - 120), utc(now))
-    items, pairs = [], []
-    for (rts, riso, dtime, off, hw, lane, fault, sn, sv, ln, lv, tn, hwy, occ) in rows:
-        minute = (datetime.fromtimestamp(rts) - timedelta(seconds=30)).strftime("%H:%M")
-        vd_n = None if fault else (sn or 0) + (ln or 0) + (tn or 0)
-        cm = (cam.get("minutes") or {}).get(minute)
-        items.append({"recv": riso, "minute": minute, "device_time": dtime,
-                      "clock_offset_sec": off, "hw_status": hw, "lane": lane, "fault": bool(fault),
-                      "small_n": sn, "small_kmh": sv, "large_n": ln, "large_kmh": lv,
-                      "trailer_n": tn, "headway_s": hwy, "occ_pct": occ,
-                      "vd_total": vd_n, "camera_n": (cm or {}).get("n", 0) if cam.get("camera") else None,
-                      "camera_large": (cm or {}).get("large") if cam.get("camera") else None})
-        if vd_n is not None and cam.get("camera"):
-            pairs.append((vd_n, (cm or {}).get("n", 0)))
-    cmp = None
-    if pairs:
-        sv_, sc_ = sum(p[0] for p in pairs), sum(p[1] for p in pairs)
-        cmp = {"minutes": len(pairs), "vd_total": sv_, "camera_total": sc_,
-               "camera_vs_vd_pct": (round((sc_ - sv_) / sv_ * 100, 1) if sv_ else None),
-               "mae_per_min": round(sum(abs(a - b) for a, b in pairs) / len(pairs), 2)}
+    cam = _camera_minutes(utc(t_since - 120), utc(t_until + 60))
+    cm_all = cam.get("minutes") or {}
+    has_cam = bool(cam.get("camera"))
+
+    agg: dict = {}
+    for (rts, dtime, off, fault, sn, sv, ln, lv, tn, hwy, occ) in rows:
+        m = datetime.fromtimestamp(rts) - timedelta(seconds=30)
+        m = m.replace(second=0, microsecond=0)
+        b0 = m - timedelta(minutes=(m.hour * 60 + m.minute) % bucket)
+        a = agg.setdefault(b0, {"minutes": 0, "fault": 0, "vd_small": 0, "vd_large": 0,
+                                "cam_small": 0, "cam_large": 0, "occ": [], "kmh": [],
+                                "dev_time": dtime, "headway": [], "clock_offset_sec": off})
+        a["minutes"] += 1
+        if fault:
+            a["fault"] += 1
+            continue
+        a["vd_small"] += sn or 0
+        a["vd_large"] += (ln or 0) + (tn or 0)
+        cmm = cm_all.get(m.strftime("%Y-%m-%d %H:%M")) or {}
+        a["cam_large"] += cmm.get("large", 0) or 0
+        a["cam_small"] += (cmm.get("n", 0) or 0) - (cmm.get("large", 0) or 0)
+        if occ is not None:
+            a["occ"].append(occ)
+        if sv:
+            a["kmh"].append(sv)
+        if hwy:
+            a["headway"].append(hwy)
+
+    def pct(c_, v_):
+        return round((c_ - v_) / v_ * 100, 1) if v_ else None
+
+    items = []
+    for b0 in sorted(agg, reverse=True)[:1500]:
+        a = agg[b0]
+        vt, ct = a["vd_small"] + a["vd_large"], a["cam_small"] + a["cam_large"]
+        items.append({
+            "t": b0.strftime("%Y-%m-%d %H:%M"), "minutes": a["minutes"], "fault_minutes": a["fault"],
+            "vd_small": a["vd_small"], "vd_large": a["vd_large"], "vd_total": vt,
+            "cam_small": a["cam_small"] if has_cam else None,
+            "cam_large": a["cam_large"] if has_cam else None,
+            "cam_total": ct if has_cam else None,
+            "diff_pct": pct(ct, vt) if has_cam else None,
+            "occ_pct": round(sum(a["occ"]) / len(a["occ"]), 1) if a["occ"] else None,
+            "small_kmh": round(sum(a["kmh"]) / len(a["kmh"])) if a["kmh"] else None,
+            "headway_s": round(sum(a["headway"]) / len(a["headway"]), 1) if a["headway"] else None,
+            "device_time": a["dev_time"] if bucket == 1 else None,
+        })
+    tv_s = sum(a["vd_small"] for a in agg.values()); tv_l = sum(a["vd_large"] for a in agg.values())
+    tc_s = sum(a["cam_small"] for a in agg.values()); tc_l = sum(a["cam_large"] for a in agg.values())
+    summary = {
+        "vd_small": tv_s, "vd_large": tv_l, "vd_total": tv_s + tv_l,
+        "cam_small": tc_s if has_cam else None, "cam_large": tc_l if has_cam else None,
+        "cam_total": (tc_s + tc_l) if has_cam else None,
+        "small_pct": pct(tc_s, tv_s) if has_cam else None,
+        "large_pct": pct(tc_l, tv_l) if has_cam else None,
+        "total_pct": pct(tc_s + tc_l, tv_s + tv_l) if has_cam else None,
+        "mae_per_bucket": (round(sum(abs(i["cam_total"] - i["vd_total"]) for i in items) / len(items), 1)
+                           if items and has_cam else None),
+        "buckets": len(items),
+    }
     return {
-        "available": True, "device": name, "devices": names, "minutes": minutes,
+        "available": True, "device": name, "devices": names, "bucket": bucket,
+        "since": datetime.fromtimestamp(t_since).isoformat(timespec="seconds"),
+        "until": datetime.fromtimestamp(t_until).isoformat(timespec="seconds"),
         "status": {k: st.get(k) for k in ("host", "port", "connected", "last_rx", "frames",
                                           "bad_lrc", "junk_bytes", "acks", "errors",
                                           "last_error", "clock_offset_sec", "other_codes",
@@ -459,9 +523,8 @@ def vd_status(device: str = Query("", description="設備名稱;空 = 第一台"
         "completeness": comp,
         "camera": {"camera_id": cam.get("camera"), "lanes": cam.get("lanes"),
                    "note": "下匝道那一相的基準測點,排除進出線事件(IN/OUT/EXIT)"},
-        "compare": cmp,
+        "summary": summary,
         "items": items,
-        "note": ("對照以我方收到時刻為準:hh:mm:00 收到的一筆算作前一分鐘。"
-                 "設備時間戳只記錄不對齊(會偏)。線圈與攝影機的量測位置不一定相同,"
-                 "差異先看是否穩定(系統性)再判斷誰對。"),
+        "note": ("線圈與攝影機看的是同一條下匝道、同一批車,差異就是攝影機計數的誤差。"
+                 "對照以我方收到時刻為準;設備時間戳只記錄不對齊。"),
     }
