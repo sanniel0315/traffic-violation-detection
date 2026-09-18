@@ -4337,6 +4337,8 @@
         .vx-bad { color:var(--gov-fault, #c43a31); font-weight:600; }
         .vx-warn { color:var(--gov-warn, #d97706); }
         .vx-note { margin-top:8px; color:var(--gov-muted, #5b6778); font-size:12px; }
+        .vx-summary { font-size:13px; margin-bottom:6px; line-height:1.7; font-variant-numeric:tabular-nums; }
+        .vx-dt { border:1px solid var(--gov-border, #d7dee8); border-radius:6px; padding:2px 6px; font-size:12px; }
         .vx-empty { color:var(--gov-muted, #5b6778); padding:12px 0; }
         .wr-rel-run { font-size:var(--fs-small); color:var(--gov-ok); font-weight:600;
                       animation:wrRunPulse 1.8s ease-in-out infinite; }
@@ -9122,68 +9124,8 @@
                             <el-button size="small" plain :loading="sigVxLoading" @click="loadSigVx">重查</el-button>
                         </div>
                         <div class="card-body">
-                            <!-- ── 線圈對照 ── -->
-                            <template v-if="sigVxTab==='loop'">
-                                <div v-if="!sigLoop.available" class="vx-empty">{{ sigLoop.reason || '尚未收到線圈資料。' }}</div>
-                                <template v-else>
-                                    <div class="vx-kpis">
-                                        <div class="ds-kpi-card">
-                                            <div class="ds-kpi-label">線圈連線</div>
-                                            <div class="ds-kpi-value ds-kpi-value--text" :style="{color: (sigLoop.status||{}).connected ? 'var(--gov-ok)' : 'var(--gov-fault)'}">{{ (sigLoop.status||{}).connected ? '連線中' : '未連線' }}</div>
-                                            <div class="ds-kpi-hint">完整度 {{ sigPctPlain((sigLoop.completeness||{}).rate_pct) }} · 設備時鐘 {{ sigLoopClock }}</div>
-                                        </div>
-                                        <div class="ds-kpi-card">
-                                            <div class="ds-kpi-label">總數(線圈 / 攝影機)</div>
-                                            <div class="ds-kpi-value">{{ sigNum0((sigLoop.summary||{}).vd_total) }} / {{ sigNum0((sigLoop.summary||{}).cam_total) }}</div>
-                                            <div class="ds-kpi-hint">差 {{ sigPctTxt((sigLoop.summary||{}).total_pct) }}</div>
-                                        </div>
-                                        <div class="ds-kpi-card">
-                                            <div class="ds-kpi-label">小型車(線圈 / 攝影機)</div>
-                                            <div class="ds-kpi-value">{{ sigNum0((sigLoop.summary||{}).vd_small) }} / {{ sigNum0((sigLoop.summary||{}).cam_small) }}</div>
-                                            <div class="ds-kpi-hint">差 {{ sigPctTxt((sigLoop.summary||{}).small_pct) }}</div>
-                                        </div>
-                                        <div class="ds-kpi-card">
-                                            <div class="ds-kpi-label">大型車(線圈 / 攝影機)</div>
-                                            <div class="ds-kpi-value">{{ sigNum0((sigLoop.summary||{}).vd_large) }} / {{ sigNum0((sigLoop.summary||{}).cam_large) }}</div>
-                                            <div class="ds-kpi-hint">差 {{ sigPctTxt((sigLoop.summary||{}).large_pct) }}</div>
-                                        </div>
-                                        <div class="ds-kpi-card">
-                                            <div class="ds-kpi-label">每組平均誤差</div>
-                                            <div class="ds-kpi-value">{{ sigNum0((sigLoop.summary||{}).mae_per_bucket) }} 輛</div>
-                                            <div class="ds-kpi-hint">每組 {{ sigLoop.bucket || sigLoopBucket }} 分鐘,共 {{ sigNum0((sigLoop.summary||{}).buckets) }} 組</div>
-                                        </div>
-                                    </div>
-                                    <div class="vx-bar">
-                                        <span class="vx-bar-label">統計粒度</span>
-                                        <button v-for="bk in sigLoopBuckets" :key="'bk'+bk.v" type="button" class="vx-chip"
-                                                :class="{active: sigLoopBucket===bk.v}" @click="sigLoopPickBucket(bk.v)">{{ bk.label }}</button>
-                                        <span class="vx-bar-note" v-if="(sigLoop.completeness||{}).missed">漏收 {{ (sigLoop.completeness||{}).missed }} 框:{{ ((sigLoop.completeness||{}).missed_minutes||[]).join('、') }}</span>
-                                    </div>
-                                    <div class="vx-table-wrap">
-                                        <table class="sc-table vx-table">
-                                            <thead><tr><th>時間</th><th>線圈 小</th><th>線圈 大</th><th>線圈 合計</th><th>攝影機 小</th><th>攝影機 大</th><th>攝影機 合計</th><th>差</th><th>佔有率</th><th>小車速度</th></tr></thead>
-                                            <tbody>
-                                                <tr v-for="(r,ri) in sigLoopRows" :key="'vl'+ri">
-                                                    <td class="vx-t">{{ (r.t||'').slice(5) }}</td>
-                                                    <td class="sc-num">{{ r.vd_small }}</td>
-                                                    <td class="sc-num">{{ r.vd_large }}</td>
-                                                    <td class="sc-num"><b>{{ r.vd_total }}</b></td>
-                                                    <td class="sc-num">{{ sigNum0(r.cam_small) }}</td>
-                                                    <td class="sc-num">{{ sigNum0(r.cam_large) }}</td>
-                                                    <td class="sc-num"><b>{{ sigNum0(r.cam_total) }}</b></td>
-                                                    <td class="sc-num" :class="sigDiffCls(r.diff_pct)">{{ sigPctTxt(r.diff_pct) }}</td>
-                                                    <td class="sc-num">{{ sigPctPlain(r.occ_pct) }}</td>
-                                                    <td class="sc-num">{{ sigNum0(r.small_kmh) }} km/h</td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                    <div class="vx-note">{{ sigLoop.note }}</div>
-                                </template>
-                            </template>
-
                             <!-- ── 延長綠燈 ── -->
-                            <template v-else-if="sigVxTab==='extend'">
+                            <template v-if="sigVxTab==='extend'">
                                 <div v-if="!sigExt.available" class="vx-empty">{{ sigExt.reason || '尚無延長紀錄。' }}</div>
                                 <template v-else>
                                     <div class="vx-kpis">
@@ -10765,6 +10707,67 @@
                 <div v-if="page==='signal_hub'" v-show="signalTab==='frames'">
                     <div class="sig-tab-bar">
                         <span class="sig-tab-title">通訊紀錄</span>
+                    </div>
+                    <!-- ══ VD 線圈 · WN 下匝道 ══
+                         🛑 2026-09-18 使用者:「VD 線圈放到通訊紀錄,不需要那麼多卡片」。
+                            線圈是一台外部設備的通訊資料,歸在通訊紀錄;摘要改成一行文字,不用指標卡。
+                            這一頁沒有運作統計的查詢列,所以自帶查詢(快捷區間/自訂起訖/統計粒度)。
+                         🛑 所有運算式都要能在「資料還沒載入」時執行(17:45 事故)。 -->
+                    <div class="card">
+                        <div class="card-header vx-head">
+                            <span><svg class="text-icon"><use href="#i-activity"/></svg>VD 線圈 · WN 下匝道(與攝影機計數對照)</span>
+                            <el-button size="small" plain :loading="sigLoopLoading" @click="loadSigLoop">查詢</el-button>
+                        </div>
+                        <div class="card-body">
+                            <div class="vx-bar">
+                                <span class="vx-bar-label">區間</span>
+                                <button v-for="rq in sigLoopRanges" :key="'lr'+rq.key" type="button" class="vx-chip"
+                                        :class="{active: sigLoopRange===rq.key}" @click="sigLoopPickRange(rq.key)">{{ rq.label }}</button>
+                                <input id="sig-loop-from" type="datetime-local" class="vx-dt" v-model="sigLoopFrom" aria-label="自訂起">
+                                <span class="vx-bar-label">~</span>
+                                <input id="sig-loop-to" type="datetime-local" class="vx-dt" v-model="sigLoopTo" aria-label="自訂訖">
+                                <button type="button" class="vx-chip" :class="{active: sigLoopRange==='custom'}" @click="sigLoopPickRange('custom')">套用自訂</button>
+                                <span class="vx-bar-label" style="margin-left:12px">粒度</span>
+                                <button v-for="bk in sigLoopBuckets" :key="'bk'+bk.v" type="button" class="vx-chip"
+                                        :class="{active: sigLoopBucket===bk.v}" @click="sigLoopPickBucket(bk.v)">{{ bk.label }}</button>
+                            </div>
+                            <div v-if="!sigLoop.available" class="vx-empty">{{ sigLoop.reason || '尚未查詢或尚無線圈資料。' }}</div>
+                            <template v-else>
+                                <div class="vx-summary">
+                                    <span :class="(sigLoop.status||{}).connected ? 'vx-ok' : 'vx-bad'">{{ (sigLoop.status||{}).connected ? '● 連線中' : '● 未連線' }}</span>
+                                    · 完整度 {{ sigPctPlain((sigLoop.completeness||{}).rate_pct) }}<span v-if="(sigLoop.completeness||{}).missed">(漏 {{ (sigLoop.completeness||{}).missed }} 框)</span>
+                                    · 設備時鐘 {{ sigLoopClock }}
+                                    · {{ sigLoopRangeText }}
+                                </div>
+                                <div class="vx-summary">
+                                    線圈 <b>{{ sigNum0((sigLoop.summary||{}).vd_total) }}</b>(小 {{ sigNum0((sigLoop.summary||{}).vd_small) }} / 大 {{ sigNum0((sigLoop.summary||{}).vd_large) }})
+                                    · 攝影機 <b>{{ sigNum0((sigLoop.summary||{}).cam_total) }}</b>(小 {{ sigNum0((sigLoop.summary||{}).cam_small) }} / 大 {{ sigNum0((sigLoop.summary||{}).cam_large) }})
+                                    · 差 <b :class="sigDiffCls((sigLoop.summary||{}).total_pct)">{{ sigPctTxt((sigLoop.summary||{}).total_pct) }}</b>
+                                    (小 <span :class="sigDiffCls((sigLoop.summary||{}).small_pct)">{{ sigPctTxt((sigLoop.summary||{}).small_pct) }}</span>
+                                    / 大 <span :class="sigDiffCls((sigLoop.summary||{}).large_pct)">{{ sigPctTxt((sigLoop.summary||{}).large_pct) }}</span>)
+                                </div>
+                                <div class="vx-table-wrap">
+                                    <table class="sc-table vx-table">
+                                        <thead><tr><th>時間</th><th>線圈 小</th><th>線圈 大</th><th>線圈 合計</th><th>攝影機 小</th><th>攝影機 大</th><th>攝影機 合計</th><th>差</th><th>佔有率</th><th>小車速度</th></tr></thead>
+                                        <tbody>
+                                            <tr v-for="(r,ri) in sigLoopRows" :key="'vl'+ri">
+                                                <td class="vx-t">{{ (r.t||'').slice(5) }}</td>
+                                                <td class="sc-num">{{ sigNum0(r.vd_small) }}</td>
+                                                <td class="sc-num">{{ sigNum0(r.vd_large) }}</td>
+                                                <td class="sc-num"><b>{{ sigNum0(r.vd_total) }}</b></td>
+                                                <td class="sc-num">{{ sigNum0(r.cam_small) }}</td>
+                                                <td class="sc-num">{{ sigNum0(r.cam_large) }}</td>
+                                                <td class="sc-num"><b>{{ sigNum0(r.cam_total) }}</b></td>
+                                                <td class="sc-num" :class="sigDiffCls(r.diff_pct)">{{ sigPctTxt(r.diff_pct) }}</td>
+                                                <td class="sc-num">{{ sigPctPlain(r.occ_pct) }}</td>
+                                                <td class="sc-num">{{ sigNum0(r.small_kmh) }} km/h</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="vx-note">{{ sigLoop.note }}</div>
+                            </template>
+                        </div>
                     </div>
                     <!-- 🛑 2026-09-08 使用者:「通訊紀錄兩個卡片格式要一致」。
                          原本這一塊是 <details class="wr-detail">,下面那塊是 .card ——
@@ -25663,7 +25666,7 @@ const app=createApp({
                             loadSigTime(0); loadSigTimeHistory();
                             loadSigStrategy(); },
             lamp:   () => { loadSignal(); startSignalTimer(); loadSignalFrames(); },
-            frames: () => { loadSignalFrames(); loadSigConsole(); },
+            frames: () => { loadSignalFrames(); loadSigConsole(); loadSigLoop(); },
         };
         // 明細區預設收合;從舊的 ?tab=plan 進來的人自動展開,不然會以為東西不見了。
         const sigDetailOpen = ref(false);
@@ -26245,7 +26248,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         const loadSigLoop = async () => {
             sigLoopLoading.value = true;
             try {
-                const r = await fetch('/api/vd/status?' + sigStatQuery() + '&bucket=' + sigLoopBucket.value,
+                const r = await fetch('/api/vd/status?' + sigLoopQuery() + '&bucket=' + sigLoopBucket.value,
                                       {credentials: 'include'});
                 if (r.ok) sigLoop.value = await r.json();
             } catch (e) { /* 維持上一次內容 */ }
@@ -26257,23 +26260,49 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         ];
         const sigLoopRows = computed(() => sigLoop.value.items || []);
         const sigLoopPickBucket = (bk) => { sigLoopBucket.value = bk; loadSigLoop(); };
+        // 🛑 通訊紀錄分頁沒有運作統計的查詢列,線圈卡自帶區間(不共用 sigStatQuery)。
+        const sigLoopRanges = [
+            {key: '1h', label: '近 1 小時'}, {key: '6h', label: '近 6 小時'},
+            {key: 'today', label: '今天'}, {key: 'yday', label: '昨天'},
+        ];
+        const sigLoopRange = ref('6h');
+        const sigLoopFrom = ref('');
+        const sigLoopTo = ref('');
+        const sigLoopQuery = () => {
+            const k = sigLoopRange.value;
+            if (k === '1h') return 'minutes=60';
+            if (k === 'today') return 'since=' + sigDayOffsetAt(0, 0) + '&until=' + sigDayOffsetAt(1, 0);
+            if (k === 'yday') return 'since=' + sigDayOffsetAt(-1, 0) + '&until=' + sigDayOffsetAt(0, 0);
+            if (k === 'custom') return 'since=' + encodeURIComponent(sigLoopFrom.value)
+                                       + '&until=' + encodeURIComponent(sigLoopTo.value);
+            return 'minutes=360';
+        };
+        const sigLoopPickRange = (k) => {
+            if (k === 'custom' && !(sigLoopFrom.value && sigLoopTo.value)) {
+                ElMessage.warning('請先填自訂的起、訖時間');
+                return;
+            }
+            sigLoopRange.value = k;
+            loadSigLoop();
+        };
+        const sigLoopRangeText = computed(() => {
+            const a = sigLoop.value.since || '', b = sigLoop.value.until || '';
+            return a ? ('區間 ' + a.replace('T', ' ').slice(0, 16) + ' ~ ' + b.replace('T', ' ').slice(0, 16)) : '';
+        });
         // 控制驗證整合卡:分頁 + 跟著查詢列的區間
         const sigVxTabs = [
-            {key: 'loop', label: '線圈對照'},
             {key: 'extend', label: '延長綠燈'},
             {key: 'roll', label: '預測'},
         ];
-        const sigVxTab = ref('loop');
-        const sigVxLoading = computed(() => sigLoopLoading.value || sigExtLoading.value || sigRollLoading.value);
+        const sigVxTab = ref('extend');
+        const sigVxLoading = computed(() => sigExtLoading.value || sigRollLoading.value);
         const loadSigVx = () => {
-            if (sigVxTab.value === 'loop') return loadSigLoop();
             if (sigVxTab.value === 'extend') return loadSigExt();
             return loadSigRoll();
         };
         const sigVxPick = (k) => { sigVxTab.value = k; loadSigVx(); };
         const sigVxRangeText = computed(() => {
-            const d = sigVxTab.value === 'loop' ? sigLoop.value
-                    : (sigVxTab.value === 'extend' ? sigExt.value : sigRoll.value);
+            const d = sigVxTab.value === 'extend' ? sigExt.value : sigRoll.value;
             const a = (d && d.since) || '', b = (d && d.until) || '';
             return a ? ('區間 ' + a.replace('T', ' ').slice(0, 16) + ' ~ ' + b.replace('T', ' ').slice(0, 16)) : '';
         });
@@ -29648,7 +29677,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigConnDirty,sigConnTouch,sigConnReset,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPhaseMeta,sigRoll,sigRollLoading,loadSigRoll,sigExt,sigExtLoading,loadSigExt,sigExtRows,sigLoop,sigLoopLoading,loadSigLoop,sigLoopRows,sigLoopClock,sigLoopBucket,sigLoopPickBucket,sigVxTabs,sigVxTab,sigVxLoading,loadSigVx,sigVxPick,sigVxRangeText,sigNum0,sigPctTxt,sigPctPlain,sigDiffCls,sigRollRows,sigLoopBuckets,sigRollTiers,sigRollTier,sigCamPhase,sigVdLanes,sigVdTypes,sigBlockedTotal,sigBlockedTop,sigRuns,sigRunsLoading,sigRunRamp,loadSigRuns,sigFg,sigFgLoading,sigFgRows,sigFgVerdicts,loadSigFg,sigPhDesc,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwCenterText,sigHwSetMode,sigHwRestore,SIG_HW_BIT_NAMES,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigConnDirty,sigConnTouch,sigConnReset,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPhaseMeta,sigRoll,sigRollLoading,loadSigRoll,sigExt,sigExtLoading,loadSigExt,sigExtRows,sigLoop,sigLoopLoading,loadSigLoop,sigLoopRows,sigLoopClock,sigLoopBucket,sigLoopPickBucket,sigLoopRanges,sigLoopRange,sigLoopFrom,sigLoopTo,sigLoopPickRange,sigLoopRangeText,sigVxTabs,sigVxTab,sigVxLoading,loadSigVx,sigVxPick,sigVxRangeText,sigNum0,sigPctTxt,sigPctPlain,sigDiffCls,sigRollRows,sigLoopBuckets,sigRollTiers,sigRollTier,sigCamPhase,sigVdLanes,sigVdTypes,sigBlockedTotal,sigBlockedTop,sigRuns,sigRunsLoading,sigRunRamp,loadSigRuns,sigFg,sigFgLoading,sigFgRows,sigFgVerdicts,loadSigFg,sigPhDesc,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwCenterText,sigHwSetMode,sigHwRestore,SIG_HW_BIT_NAMES,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigAdjExportPdf,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,sigDegHas,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgSectionsOrdered,sigCfgOrder,sigCfgDragKey,sigCfgDragStart,sigCfgDrop,sigCfgResetOrder,sigCfgReceived,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgBusy,sigCfgRefreshOne,sigCfgAutoOn,sigCfgAutoHours,sigCfgAutoBusy,sigCfgAutoText,sigCfgSetAuto,sigCfgRunAuto,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigAbOn,sigAbMin,sigAbBusy,sigAbText,sigAbSet,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBitsShown,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatTrendBars,sigStatTrendLines,sigStatBucketText,sigGreenExport,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigStepCells,sigCycleDash,sigCycleText,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,specCells,specPerfCells,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
