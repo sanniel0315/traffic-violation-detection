@@ -8999,6 +8999,10 @@
                                         <div class="ds-kpi-label">連線</div>
                                         <div class="ds-kpi-value ds-kpi-value--text" :style="{color: sigLoop.status.connected ? 'var(--gov-ok)' : 'var(--gov-fault)'}">{{ sigLoop.status.connected ? '連線中' : '未連線' }}</div>
                                         <div class="ds-kpi-hint">{{ sigLoop.status.host }}:{{ sigLoop.status.port }} · 收 {{ sigLoop.status.frames || 0 }} 框 · 已回 ACK {{ sigLoop.status.acks || 0 }}</div>
+                                        <!-- 🛑 完整度依框序號算:設備每送一框 +1,跳號 = 設備有送、我們沒存到 -->
+                                        <div class="ds-kpi-hint" :style="{color: (sigLoop.completeness||{}).missed ? 'var(--gov-warn)' : 'var(--gov-ok)'}">
+                                            完整度 {{ (sigLoop.completeness||{}).rate_pct==null ? '—' : ((sigLoop.completeness||{}).rate_pct + '%') }}{{ (sigLoop.completeness||{}).missed ? ('，漏 ' + sigLoop.completeness.missed + ' 框：' + (sigLoop.completeness.missed_minutes||[]).join('、')) : '，無漏收' }}
+                                        </div>
                                     </div>
                                     <div class="ds-kpi-card">
                                         <div class="ds-kpi-label">設備時鐘</div>

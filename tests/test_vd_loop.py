@@ -90,3 +90,49 @@ def test_parse_devices():
     assert parse_devices("WN下匝道@10.42.39.60:1002, 壞格式, x@h:abc") == [
         ("WN下匝道", "10.42.39.60", 1002)]
     assert parse_devices("") == []
+
+
+def test_seq_step_wraps_in_terminal_range():
+    """終端設備序號在 0x80~0xFF 循環:FF 的下一個是 80。"""
+    from api.routes.vd_loop import seq_step
+    assert seq_step(0xAA, 0xAB) == 1
+    assert seq_step(0xAA, 0xAC) == 2, "中間漏一框"
+    assert seq_step(0xAA, 0xAA) == 0, "重送同一框"
+    assert seq_step(0xFF, 0x80) == 1, "循環回 80 不是漏框"
+    assert seq_step(0xFE, 0x81) == 3
+
+
+def test_completeness_finds_todays_real_gaps():
+    """重現 2026-09-18 現場:14:06(AB)與 14:10(AF)兩框設備有送、我們沒存到。"""
+    from datetime import datetime
+    from api.routes.vd_loop import completeness
+    seqs = [(3, 0xA8), (4, 0xA9), (5, 0xAA), (7, 0xAC), (8, 0xAD), (9, 0xAE), (11, 0xB0)]
+    rows = [(datetime(2026, 9, 18, 14, m).timestamp(), "10 01 %02X FF FF" % s) for m, s in seqs]
+    out = completeness(rows)
+    assert out["missed"] == 2
+    assert out["missed_minutes"] == ["14:06", "14:10"]
+    assert out["received"] == 7 and out["rate_pct"] == 77.8
+
+
+def test_store_failure_spools_instead_of_losing(tmp_path, monkeypatch):
+    """寫庫失敗要先暫存、之後補寫 —— 不可以丟資料。"""
+    import api.routes.vd_loop as V
+    monkeypatch.setattr(V, "_SPOOL", str(tmp_path / "spool.jsonl"))
+    V._spool("WN", 1789700000.0, F1)
+    stored = []
+    monkeypatch.setattr(V, "_store", lambda name, ts, fr, d, off: stored.append((name, fr)))
+    assert V._flush_spool("WN") == 1
+    assert stored == [("WN", F1)]
+    assert (tmp_path / "spool.jsonl").read_text() == "", "補寫成功後要從暫存移除"
+
+
+def test_spool_keeps_frame_when_db_still_failing(tmp_path, monkeypatch):
+    import api.routes.vd_loop as V
+    monkeypatch.setattr(V, "_SPOOL", str(tmp_path / "spool.jsonl"))
+    V._spool("WN", 1789700000.0, F1)
+
+    def boom(*a, **k):
+        raise RuntimeError("database is locked")
+    monkeypatch.setattr(V, "_store", boom)
+    assert V._flush_spool("WN") == 0
+    assert "WN" in (tmp_path / "spool.jsonl").read_text(), "還寫不進去就要留著"

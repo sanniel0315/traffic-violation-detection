@@ -103,6 +103,17 @@ def ack_for(frame: bytes) -> bytes:
     return a + bytes([lrc(a)])
 
 
+def seq_step(prev: int, cur: int) -> int:
+    """兩框序號的前進量。1 = 連續;0 = 重送同一框;>1 = 中間漏了 (step−1) 框。
+
+    協定 3.2:終端設備自行指定的 SEQ 落在 128~255,所以序號在 0x80~0xFF 這 128 格裡循環
+    (FF 的下一個是 80,不是 00)。不在這個範圍的序號就用一般的 256 循環算。
+    """
+    if 0x80 <= prev <= 0xFF and 0x80 <= cur <= 0xFF:
+        return (cur - prev) % 128
+    return (cur - prev) % 256
+
+
 def decode_10h(text: bytes) -> Optional[dict]:
     """10H 週期性資料。長度不符文件規定就回 None(不猜)。"""
     if len(text) < 10 or text[0] != 0x10:
@@ -179,11 +190,58 @@ def _store(name: str, recv_ts: float, frame: bytes, d: dict, offset: Optional[fl
         c.close()
 
 
+_SPOOL = os.getenv("SIGNAL_VD_SPOOL", "data/vd_spool.jsonl")
+
+
+def _log(name: str, msg: str) -> None:
+    """異常一律進系統日誌 —— 2026-09-18 14:06 漏收一框,當時沒有任何紀錄可查。"""
+    print("[vd][%s] %s" % (name, msg), flush=True)
+
+
+def _spool(name: str, recv_ts: float, frame: bytes) -> None:
+    """寫庫失敗時先存原始框,之後補寫。🛑 寫入失敗不可以丟資料,也不可以因此斷線。"""
+    import json as _j
+    with open(_SPOOL, "a", encoding="utf-8") as f:
+        f.write(_j.dumps({"device": name, "recv_ts": recv_ts, "raw": frame.hex()}) + "\n")
+
+
+def _flush_spool(name: str) -> int:
+    """把暫存檔裡屬於這台設備的框補寫進資料庫。回補寫筆數。"""
+    import json as _j
+    if not os.path.exists(_SPOOL):
+        return 0
+    keep, done = [], 0
+    with open(_SPOOL, encoding="utf-8") as f:
+        lines = f.readlines()
+    for ln in lines:
+        try:
+            r = _j.loads(ln)
+        except Exception:
+            continue
+        if r.get("device") != name:
+            keep.append(ln)
+            continue
+        fr = bytes.fromhex(r["raw"])
+        d = decode_10h(fr[8:-1])
+        if d is None:
+            continue
+        try:
+            _store(name, r["recv_ts"], fr, d,
+                   device_clock_offset(r["recv_ts"], d["day"], d["hour"], d["minute"]))
+            done += 1
+        except Exception:
+            keep.append(ln)
+    with open(_SPOOL, "w", encoding="utf-8") as f:
+        f.writelines(keep)
+    return done
+
+
 def _run(name: str, host: str, port: int) -> None:
     st = _state.setdefault(name, {"host": host, "port": port, "connected": False, "last_rx": None,
                                   "frames": 0, "bad_lrc": 0, "junk_bytes": 0, "acks": 0,
                                   "errors": 0, "last_error": "", "clock_offset_sec": None,
-                                  "other_codes": {}})
+                                  "other_codes": {}, "store_fail": 0, "spooled": 0,
+                                  "seq_gaps": 0, "seq_gap_last": None, "last_seq": None})
     backoff = 5.0
     while not _stop.is_set():
         s = None
@@ -192,6 +250,13 @@ def _run(name: str, host: str, port: int) -> None:
             s.settimeout(5)
             st["connected"] = True
             backoff = 5.0
+            _log(name, "已連線 %s:%d" % (host, port))
+            try:
+                n = _flush_spool(name)
+                if n:
+                    _log(name, "補寫暫存的 %d 框" % n)
+            except Exception as exc:
+                _log(name, "補寫暫存失敗:%s" % exc)
             buf = b""
             while not _stop.is_set():
                 try:
@@ -211,22 +276,48 @@ def _run(name: str, host: str, port: int) -> None:
                     st["last_rx"] = now
                     if lrc(fr[:-1]) != fr[-1]:
                         st["bad_lrc"] += 1          # 不回 ACK,讓設備依協定重送
+                        _log(name, "整框 LRC 錯,不回 ACK 等重送:%s" % fr.hex(" "))
                         continue
                     st["frames"] += 1
                     s.sendall(ack_for(fr))
                     st["acks"] += 1
+                    # 序號連續性:設備每送一框 +1。
+                    # 🛑 跳號 = 設備有送、我們沒存到(14:06、14:10 就是這樣被發現的)
+                    seq = fr[2]
+                    if st["last_seq"] is not None:
+                        step = seq_step(st["last_seq"], seq)
+                        if step == 0:
+                            _log(name, "序號 %02X 重複(設備重送,已回 ACK,不重複存)" % seq)
+                            continue
+                        if step > 1:
+                            st["seq_gaps"] += step - 1
+                            st["seq_gap_last"] = time.time()
+                            _log(name, "序號由 %02X 跳到 %02X,漏收 %d 框" % (st["last_seq"], seq, step - 1))
+                    st["last_seq"] = seq
                     text = fr[8:-1]
                     d = decode_10h(text)
                     if d is None:
                         code = "%02X" % text[0] if text else "??"
                         st["other_codes"][code] = st["other_codes"].get(code, 0) + 1
+                        _log(name, "非 10H 或長度不符,只記錄:%s" % fr.hex(" "))
                         continue
                     off = device_clock_offset(now, d["day"], d["hour"], d["minute"])
                     st["clock_offset_sec"] = off
-                    _store(name, now, fr, d, off)
+                    # 🛑 寫庫失敗不可以讓整條連線斷掉 —— 那一框會就此遺失。先暫存,之後補寫。
+                    try:
+                        _store(name, now, fr, d, off)
+                    except Exception as exc:
+                        st["store_fail"] += 1
+                        _log(name, "寫庫失敗(%s),先暫存原始框" % exc)
+                        try:
+                            _spool(name, now, fr)
+                            st["spooled"] += 1
+                        except Exception as exc2:
+                            _log(name, "暫存也失敗,這一框遺失:%s | %s" % (exc2, fr.hex(" ")))
         except Exception as exc:
             st["errors"] += 1
             st["last_error"] = "%s: %s" % (type(exc).__name__, exc)
+            _log(name, "連線中斷:%s(%.0f 秒後重連)" % (st["last_error"], backoff))
         finally:
             st["connected"] = False
             try:
@@ -286,6 +377,28 @@ def _camera_minutes(since_utc: str, until_utc: str) -> dict:
         return {"camera": None, "minutes": {}, "error": str(exc)[:160]}
 
 
+def completeness(rows: list) -> dict:
+    """依存下的框序號,算「設備有送、我們沒存到」幾框、是哪幾分鐘。rows = [(recv_ts, raw), ...]
+
+    🛑 用資料庫裡的序號算,不用記憶體計數:服務一重啟記憶體歸零,
+       但重啟正是最容易漏的時刻(14:10 就是)。
+    """
+    missed, prev = [], None
+    for ts, raw in rows:
+        try:
+            seq = int(str(raw).split()[2], 16)
+        except Exception:
+            continue
+        if prev is not None:
+            step = seq_step(prev[1], seq)
+            for k in range(1, step):
+                missed.append((datetime.fromtimestamp(prev[0]) + timedelta(minutes=k)).strftime("%H:%M"))
+        prev = (ts, seq)
+    got = len(rows)
+    return {"received": got, "missed": len(missed), "missed_minutes": missed[-20:],
+            "rate_pct": (round(got / (got + len(missed)) * 100, 1) if got else None)}
+
+
 @router.get("/status", summary="VD 線圈:連線狀態、時鐘偏差、逐分鐘紀錄與攝影機對照")
 def vd_status(device: str = Query("", description="設備名稱;空 = 第一台"),
               minutes: int = Query(60, ge=5, le=1440),
@@ -301,8 +414,12 @@ def vd_status(device: str = Query("", description="設備名稱;空 = 第一台"
     now = time.time()
     since = now - minutes * 60
     rows = []
+    comp = {}
     try:
         c = _conn()
+        comp = completeness(c.execute(
+            "SELECT recv_ts, raw FROM vd_minute WHERE device=? AND recv_ts>=? AND lane=1 ORDER BY recv_ts",
+            (name, since)).fetchall())
         rows = c.execute(
             "SELECT recv_ts,recv_iso,dev_time,clock_offset_sec,hw_status,lane,fault,"
             "small_n,small_kmh,large_n,large_kmh,trailer_n,headway_s,occ_pct "
@@ -337,7 +454,9 @@ def vd_status(device: str = Query("", description="設備名稱;空 = 第一台"
         "available": True, "device": name, "devices": names, "minutes": minutes,
         "status": {k: st.get(k) for k in ("host", "port", "connected", "last_rx", "frames",
                                           "bad_lrc", "junk_bytes", "acks", "errors",
-                                          "last_error", "clock_offset_sec", "other_codes")},
+                                          "last_error", "clock_offset_sec", "other_codes",
+                                          "store_fail", "spooled", "seq_gaps", "seq_gap_last")},
+        "completeness": comp,
         "camera": {"camera_id": cam.get("camera"), "lanes": cam.get("lanes"),
                    "note": "下匝道那一相的基準測點,排除進出線事件(IN/OUT/EXIT)"},
         "compare": cmp,
