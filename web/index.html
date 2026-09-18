@@ -4318,23 +4318,17 @@
         .vx-tabs { display:flex; gap:4px; background:var(--gov-surface-2, #f7f9fc); border:1px solid var(--gov-border, #d7dee8); border-radius:8px; padding:3px; }
         .vx-tab { border:0; background:transparent; padding:4px 12px; border-radius:6px; cursor:pointer; color:var(--gov-muted, #5b6778); font-size:13px; }
         .vx-tab.active { background:var(--gov-primary, #0b5ea8); color:#fff; }
-        .vx-tab:focus-visible, .vx-chip:focus-visible { outline:2px solid var(--gov-primary, #0b5ea8); outline-offset:2px; }
+        .vx-tab:focus-visible { outline:2px solid var(--gov-primary, #0b5ea8); outline-offset:2px; }
         .vx-range { color:var(--gov-muted, #5b6778); font-size:12px; margin-left:auto; }
         .vx-kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:10px; margin-bottom:12px; }
         .vx-kpis .ds-kpi-card { min-width:0; }
         .vx-kpis .ds-kpi-hint { overflow-wrap:anywhere; }
-        .vx-bar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
-        .vx-bar-label { color:var(--gov-muted, #5b6778); font-size:12px; margin-right:4px; }
-        .vx-bar-note { color:var(--gov-warn, #d97706); font-size:12px; margin-left:8px; }
-        .vx-chip { border:1px solid var(--gov-border, #d7dee8); background:#fff; border-radius:999px; padding:2px 10px; font-size:12px; cursor:pointer; }
-        .vx-chip.active { border-color:var(--gov-primary, #0b5ea8); color:var(--gov-primary, #0b5ea8); background:var(--gov-primary-soft, #eaf2fb); }
         .vx-table-wrap { overflow:auto; max-height:420px; border:1px solid var(--gov-border, #d7dee8); border-radius:6px; }
         /* 🛑 2026-09-18 使用者「表格跑掉」:數字欄內容靠右、標題卻靠左,標題跟數字對不上。
-              數字欄標題一律靠右、不換行;線圈/攝影機兩組之間加分隔線。 */
+              數字欄標題一律靠右、不換行。 */
         .vx-table { width:100%; min-width:760px; table-layout:auto; }
         .vx-table th, .vx-table td { white-space:nowrap; padding:5px 10px; }
         .vx-table th.sc-num { text-align:right; }
-        .vx-table .vx-grp-end { border-right:2px solid var(--gov-border, #d7dee8); }
         .vx-table thead th { position:sticky; top:0; background:var(--gov-surface-2, #f7f9fc); z-index:1; }
         .vx-t { white-space:nowrap; font-variant-numeric:tabular-nums; }
         .vx-ok { color:var(--gov-ok, #1f9d55); font-weight:600; }
@@ -4342,8 +4336,8 @@
         .vx-bad { color:var(--gov-fault, #c43a31); font-weight:600; }
         .vx-warn { color:var(--gov-warn, #d97706); }
         .vx-note { margin-top:8px; color:var(--gov-muted, #5b6778); font-size:12px; }
-        .vx-summary { font-size:13px; margin-bottom:6px; line-height:1.7; font-variant-numeric:tabular-nums; }
-        .vx-dt { border:1px solid var(--gov-border, #d7dee8); border-radius:6px; padding:2px 6px; font-size:12px; }
+        .vd-sum { font-size:12px; color:var(--gov-muted, #5b6778); margin-bottom:6px; line-height:1.7; font-variant-numeric:tabular-nums; }
+        .vd-sum b { color:var(--gov-text, #1f2937); }
         .vx-empty { color:var(--gov-muted, #5b6778); padding:12px 0; }
         .wr-rel-run { font-size:var(--fs-small); color:var(--gov-ok); font-weight:600;
                       animation:wrRunPulse 1.8s ease-in-out infinite; }
@@ -10714,63 +10708,79 @@
                         <span class="sig-tab-title">通訊紀錄</span>
                     </div>
                     <!-- ══ VD 線圈 · WN 下匝道 ══
-                         🛑 2026-09-18 使用者:「VD 線圈放到通訊紀錄,不需要那麼多卡片」。
-                            線圈是一台外部設備的通訊資料,歸在通訊紀錄;摘要改成一行文字,不用指標卡。
-                            這一頁沒有運作統計的查詢列,所以自帶查詢(快捷區間/自訂起訖/統計粒度)。
+                         🛑 2026-09-18 使用者:「VD 線圈放到通訊紀錄,不需要那麼多卡片」、
+                            「通訊紀錄三種紀錄報表三種格式,字體大小樣式沒統一」。
+                            三張卡一律照「TC3 通訊紀錄」的寫法:標題列右側放 size=small 的篩選,
+                            內容用 el-table size=small max-height=380,時間欄 12px 等寬字。
+                         🛑 欄位來源要看得出來:佔有率、小車速度是**線圈本身**回報的;
+                            「差」是我方算的 (攝影機 − 線圈) ÷ 線圈。
                          🛑 所有運算式都要能在「資料還沒載入」時執行(17:45 事故)。 -->
                     <div class="card">
-                        <div class="card-header vx-head">
-                            <span><svg class="text-icon"><use href="#i-activity"/></svg>VD 線圈 · WN 下匝道(與攝影機計數對照)</span>
-                            <el-button size="small" plain :loading="sigLoopLoading" @click="loadSigLoop">查詢</el-button>
+                        <div class="card-header">
+                            <span><svg class="text-icon"><use href="#i-activity"/></svg>VD 線圈 · WN 下匝道</span>
+                            <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                                <el-select v-model="sigLoopRange" size="small" style="width:120px" @change="sigLoopPickRange">
+                                    <el-option v-for="rq in sigLoopRanges" :key="'lr'+rq.key" :label="rq.label" :value="rq.key"></el-option>
+                                    <el-option label="自訂起訖" value="custom"></el-option>
+                                </el-select>
+                                <template v-if="sigLoopRange==='custom'">
+                                    <el-date-picker v-model="sigLoopFrom" type="datetime" size="small" style="width:172px" placeholder="起" format="MM/DD HH:mm" value-format="YYYY-MM-DDTHH:mm:ss" @change="sigLoopPickRange('custom')" :teleported="true"></el-date-picker>
+                                    <span style="color:#94a3b8">~</span>
+                                    <el-date-picker v-model="sigLoopTo" type="datetime" size="small" style="width:172px" placeholder="迄" format="MM/DD HH:mm" value-format="YYYY-MM-DDTHH:mm:ss" @change="sigLoopPickRange('custom')" :teleported="true"></el-date-picker>
+                                </template>
+                                <el-select v-model="sigLoopBucket" size="small" style="width:104px" @change="loadSigLoop">
+                                    <el-option v-for="bk in sigLoopBuckets" :key="'bk'+bk.v" :label="bk.label" :value="bk.v"></el-option>
+                                </el-select>
+                                <el-button size="small" :loading="sigLoopLoading" @click="loadSigLoop">重新載入</el-button>
+                            </span>
                         </div>
                         <div class="card-body">
-                            <div class="vx-bar">
-                                <span class="vx-bar-label">區間</span>
-                                <button v-for="rq in sigLoopRanges" :key="'lr'+rq.key" type="button" class="vx-chip"
-                                        :class="{active: sigLoopRange===rq.key}" @click="sigLoopPickRange(rq.key)">{{ rq.label }}</button>
-                                <input id="sig-loop-from" type="datetime-local" class="vx-dt" v-model="sigLoopFrom" aria-label="自訂起">
-                                <span class="vx-bar-label">~</span>
-                                <input id="sig-loop-to" type="datetime-local" class="vx-dt" v-model="sigLoopTo" aria-label="自訂訖">
-                                <button type="button" class="vx-chip" :class="{active: sigLoopRange==='custom'}" @click="sigLoopPickRange('custom')">套用自訂</button>
-                                <span class="vx-bar-label" style="margin-left:12px">粒度</span>
-                                <button v-for="bk in sigLoopBuckets" :key="'bk'+bk.v" type="button" class="vx-chip"
-                                        :class="{active: sigLoopBucket===bk.v}" @click="sigLoopPickBucket(bk.v)">{{ bk.label }}</button>
-                            </div>
-                            <div v-if="!sigLoop.available" class="vx-empty">{{ sigLoop.reason || '尚未查詢或尚無線圈資料。' }}</div>
+                            <div v-if="!sigLoop.available" class="wr-empty">{{ sigLoop.reason || '尚未查詢或尚無線圈資料。' }}</div>
                             <template v-else>
-                                <div class="vx-summary">
-                                    <span :class="(sigLoop.status||{}).connected ? 'vx-ok' : 'vx-bad'">{{ (sigLoop.status||{}).connected ? '● 連線中' : '● 未連線' }}</span>
+                                <div class="vd-sum">
+                                    <span :style="{color: (sigLoop.status||{}).connected ? 'var(--gov-ok)' : 'var(--gov-fault)', fontWeight: 700}">{{ (sigLoop.status||{}).connected ? '連線中' : '未連線' }}</span>
                                     · 完整度 {{ sigPctPlain((sigLoop.completeness||{}).rate_pct) }}<span v-if="(sigLoop.completeness||{}).missed">(漏 {{ (sigLoop.completeness||{}).missed }} 框)</span>
                                     · 設備時鐘 {{ sigLoopClock }}
                                     <span v-if="(sigLoop.events||{}).n" :title="(sigLoop.events||{}).note">· 線圈判逆向 {{ (sigLoop.events||{}).n }} 筆(大車 {{ (sigLoop.events||{}).large }},排隊壓線圈誤判)</span>
                                     · {{ sigLoopRangeText }}
                                 </div>
-                                <div class="vx-summary">
-                                    線圈 <b>{{ sigNum0((sigLoop.summary||{}).vd_total) }}</b>(小 {{ sigNum0((sigLoop.summary||{}).vd_small) }} / 大 {{ sigNum0((sigLoop.summary||{}).vd_large) }})
+                                <div class="vd-sum">
+                                    合計 線圈 <b>{{ sigNum0((sigLoop.summary||{}).vd_total) }}</b>(小 {{ sigNum0((sigLoop.summary||{}).vd_small) }} / 大 {{ sigNum0((sigLoop.summary||{}).vd_large) }})
                                     · 攝影機 <b>{{ sigNum0((sigLoop.summary||{}).cam_total) }}</b>(小 {{ sigNum0((sigLoop.summary||{}).cam_small) }} / 大 {{ sigNum0((sigLoop.summary||{}).cam_large) }})
                                     · 差 <b :class="sigDiffCls((sigLoop.summary||{}).total_pct)">{{ sigPctTxt((sigLoop.summary||{}).total_pct) }}</b>
                                     (小 <span :class="sigDiffCls((sigLoop.summary||{}).small_pct)">{{ sigPctTxt((sigLoop.summary||{}).small_pct) }}</span>
                                     / 大 <span :class="sigDiffCls((sigLoop.summary||{}).large_pct)">{{ sigPctTxt((sigLoop.summary||{}).large_pct) }}</span>)
                                 </div>
-                                <div class="vx-table-wrap">
-                                    <table class="sc-table vx-table">
-                                        <thead><tr><th>時間</th><th class="sc-num">線圈 小</th><th class="sc-num">線圈 大</th><th class="sc-num vx-grp-end">線圈 合計</th><th class="sc-num">攝影機 小</th><th class="sc-num">攝影機 大</th><th class="sc-num vx-grp-end">攝影機 合計</th><th class="sc-num">差</th><th class="sc-num">佔有率</th><th class="sc-num">小車速度</th></tr></thead>
-                                        <tbody>
-                                            <tr v-for="(r,ri) in sigLoopRows" :key="'vl'+ri">
-                                                <td class="vx-t">{{ (r.t||'').slice(5) }}</td>
-                                                <td class="sc-num">{{ sigNum0(r.vd_small) }}</td>
-                                                <td class="sc-num">{{ sigNum0(r.vd_large) }}</td>
-                                                <td class="sc-num vx-grp-end"><b>{{ sigNum0(r.vd_total) }}</b></td>
-                                                <td class="sc-num">{{ sigNum0(r.cam_small) }}</td>
-                                                <td class="sc-num">{{ sigNum0(r.cam_large) }}</td>
-                                                <td class="sc-num vx-grp-end"><b>{{ sigNum0(r.cam_total) }}</b></td>
-                                                <td class="sc-num" :class="sigDiffCls(r.diff_pct)">{{ sigPctTxt(r.diff_pct) }}</td>
-                                                <td class="sc-num">{{ sigPctPlain(r.occ_pct) }}</td>
-                                                <td class="sc-num">{{ r.small_kmh == null ? '—' : (r.small_kmh + ' km/h') }}</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
+                                <el-table :data="sigLoopRows" size="small" max-height="380" style="width:100%">
+                                    <el-table-column label="時間" width="120">
+                                        <template #default="sc"><span style="font-size:12px;font-family:monospace">{{ (sc.row.t||'').slice(5) }}</span></template>
+                                    </el-table-column>
+                                    <el-table-column label="線圈">
+                                        <el-table-column prop="vd_small" label="小" align="right"></el-table-column>
+                                        <el-table-column prop="vd_large" label="大" align="right"></el-table-column>
+                                        <el-table-column prop="vd_total" label="合計" align="right"></el-table-column>
+                                        <el-table-column label="佔有率" align="right">
+                                            <template #default="sc">{{ sigPctPlain(sc.row.occ_pct) }}</template>
+                                        </el-table-column>
+                                        <el-table-column label="小車速度" align="right" width="90">
+                                            <template #default="sc">{{ sc.row.small_kmh == null ? '—' : (sc.row.small_kmh + ' km/h') }}</template>
+                                        </el-table-column>
+                                    </el-table-column>
+                                    <el-table-column label="攝影機">
+                                        <el-table-column label="小" align="right">
+                                            <template #default="sc">{{ sigNum0(sc.row.cam_small) }}</template>
+                                        </el-table-column>
+                                        <el-table-column label="大" align="right">
+                                            <template #default="sc">{{ sigNum0(sc.row.cam_large) }}</template>
+                                        </el-table-column>
+                                        <el-table-column label="合計" align="right">
+                                            <template #default="sc">{{ sigNum0(sc.row.cam_total) }}</template>
+                                        </el-table-column>
+                                    </el-table-column>
+                                    <el-table-column label="差(攝影機−線圈)" align="right" width="130">
+                                        <template #default="sc"><span :class="sigDiffCls(sc.row.diff_pct)">{{ sigPctTxt(sc.row.diff_pct) }}</span></template>
+                                    </el-table-column>
+                                </el-table>
                             </template>
                         </div>
                     </div>
@@ -10786,16 +10796,18 @@
                             <el-button size="small" @click="sigRawOpen=!sigRawOpen">{{ sigRawOpen?'收合':'展開' }}</el-button>
                         </div>
                         <div class="card-body" v-show="sigRawOpen">
-                            <div class="wr-log">
-                                <div class="wr-log-body">
-                                    <div v-for="(f,fi) in sigWarFrames" :key="'wf'+fi" class="wr-log-row">
-                                        <span class="wr-log-d"><i :class="sigWarFrameDesc(f).cls">{{ sigWarFrameDesc(f).tag }}</i> {{ sigWarFrameDesc(f).text }}</span>
-                                        <span class="wr-log-ts">[{{ sigFrameTimeFull(f.ts) }}] <span class="wr-log-code">SEQ: {{ f.seq==null?'—':f.seq }}</span></span>
-                                        <span class="wr-log-raw">RAW: {{ f.raw }}</span>
-                                    </div>
-                                    <p v-if="!sigWarFrames.length" class="wr-empty">尚無訊框。</p>
-                                </div>
-                            </div>
+                            <el-table :data="sigWarFrames" size="small" max-height="380" style="width:100%" empty-text="尚無訊框。">
+                                <el-table-column label="時間" width="158">
+                                    <template #default="sc"><span style="font-size:12px;font-family:monospace">{{ sigFrameTimeFull(sc.row.ts) }}</span></template>
+                                </el-table-column>
+                                <el-table-column label="SEQ" width="60">
+                                    <template #default="sc">{{ sc.row.seq==null?'—':sc.row.seq }}</template>
+                                </el-table-column>
+                                <el-table-column label="內容" width="260">
+                                    <template #default="sc"><span class="wr-log-d"><i :class="sigWarFrameDesc(sc.row).cls">{{ sigWarFrameDesc(sc.row).tag }}</i> {{ sigWarFrameDesc(sc.row).text }}</span></template>
+                                </el-table-column>
+                                <el-table-column prop="raw" label="RAW HEX"></el-table-column>
+                            </el-table>
                         </div>
                     </div>
                     <div class="card">
@@ -26283,11 +26295,8 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             return 'minutes=360';
         };
         const sigLoopPickRange = (k) => {
-            if (k === 'custom' && !(sigLoopFrom.value && sigLoopTo.value)) {
-                ElMessage.warning('請先填自訂的起、訖時間');
-                return;
-            }
             sigLoopRange.value = k;
+            if (k === 'custom' && !(sigLoopFrom.value && sigLoopTo.value)) return;   // 起訖都選了才查
             loadSigLoop();
         };
         const sigLoopRangeText = computed(() => {
