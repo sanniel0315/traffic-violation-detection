@@ -187,3 +187,37 @@ def test_camera_minute_key_includes_date():
     import inspect
     import api.routes.vd_loop as V
     assert "%%Y-%%m-%%d %%H:%%M" in inspect.getsource(V._camera_minutes)
+
+
+def test_time_set_frame_follows_protocol():
+    """02H 對時:格式照協定文件頁 19;框/LRC 的算法用文件頁 12 的範例(04 07 → LRC 31)核對。"""
+    from api.routes.vd_loop import time_set_frame, lrc
+    f = time_set_frame(0x23, datetime(2026, 9, 18, 19, 30, 5))
+    assert f.hex(" ") == "10 01 23 ff ff 00 08 08 02 07 ea 09 12 13 1e 05 ce"
+    assert f[2] <= 0x7F                                   # 中央端 SEQ 範圍 0~127
+    assert time_set_frame(0xA3, datetime(2026, 1, 1))[2] == 0x23
+    h = b"\xff\xff\x00\x02"
+    g = bytes([0x10, 0x01, 0x23]) + h + bytes([lrc(h)]) + b"\x04\x07"
+    assert (g + bytes([lrc(g)])).hex(" ") == "10 01 23 ff ff 00 02 02 04 07 31"
+
+
+def test_split_recognizes_device_ack_and_nak():
+    """設備對我方命令回的 ACK(文件頁 14 範例 10 06 24 FF FF 32)/ NAK 要切得出來,資料框照舊。"""
+    from api.routes.vd_loop import split_frames, lrc
+    ack = bytes.fromhex("100624ffff32")
+    nak = bytes([0x10, 0x15, 0x25, 0xFF, 0xFF, 0x00, 0x20])
+    nak += bytes([lrc(nak)])
+    frames, rest, junk = split_frames(ack + F1 + nak + F2)
+    assert [fr[1] for fr in frames] == [0x06, 0x01, 0x15, 0x01]
+    assert frames[1] == F1 and frames[3] == F2 and rest == b"" and junk == 0
+    # LRC 錯的「假 ACK」不收,當雜訊
+    frames, _, _ = split_frames(bytes.fromhex("100624ffff33") + F1)
+    assert [fr[1] for fr in frames] == [0x01]
+
+
+def test_timesync_refuses_when_not_connected(monkeypatch):
+    from api.routes import vd_loop
+    monkeypatch.setattr(vd_loop, "_DEVICES_RAW", "X@127.0.0.1:1")
+    monkeypatch.setattr(vd_loop, "_state", {})
+    r = vd_loop.vd_timesync(device="", _user=None)
+    assert r["ok"] is False and "X" not in vd_loop._timesync_req

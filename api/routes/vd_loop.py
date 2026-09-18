@@ -14,10 +14,15 @@
         response_type(1) hardware_status(4) day hour minute lane_count
         每車道:小型/大型/聯結 各 (流量, 速度 km/h, 車長 0.1m) + 車間距(2, 0.1s) + 佔有率(%)
 
-🛑 只收資料、只回 ACK,**不送任何查詢或設定命令** —— 這台設備的主人是中央,
-   我方只是旁聽者;改它的設定(例如回報週期 03H)會影響中央拿到的資料。
-🛑 設備時鐘會偏:2026-09-18 實測 13:16:00 收到的框時間戳是 12:46(慢 30 分鐘)。
-   對照攝影機一律用**我方收到的時刻**,設備時間戳只記錄、並回報偏差。
+🛑 只收資料、只回 ACK;**唯一會送的設定命令是 02H 對時** —— 這台設備的主人是中央,
+   我方只是旁聽者;改它其他設定(例如回報週期 03H)會影響中央拿到的資料,不可以送。
+🛑 設備時鐘會偏:2026-09-18 實測 13:16:00 收到的框時間戳是 12:46(慢 30 分鐘,
+   整天穩定在 1800±1 秒,不像晶振漂移)。對照攝影機一律用**我方收到的時刻**,
+   設備時間戳只記錄、並回報偏差。
+   02H 對時(協定文件頁 19;設備回 ACK,並可能以 02H+誤差秒數回報):使用者 2026-09-18
+   「VD 線圈應該可以校時它」。手動:POST /api/vd/timesync;
+   自動:SIGNAL_VD_TIMESYNC_SEC(秒,0 = 關;協定寫中央每小時對時一次)。
+   我方時鐘由 NTP 校準(timedatectl: synchronized)。
 
 設定:SIGNAL_VD_DEVICES="名稱@host:port,名稱@host:port"(空 = 不啟動)
 """
@@ -71,13 +76,27 @@ def lrc(bs: bytes) -> int:
 def split_frames(buf: bytes) -> tuple:
     """從緩衝區切出完整資料框。回 (frames, 剩餘緩衝, 丟棄的雜訊 byte 數)。
 
-    只認 DLE SOH 開頭的資料框;長度由表頭 LEN 決定(本協定沒有框尾)。
+    認 DLE SOH 開頭的資料框;長度由表頭 LEN 決定(本協定沒有框尾)。
+    也認設備對我方命令(02H 對時)回的 DLE ACK(6 byte)/ DLE NAK(8 byte)控制框:
+    LRC 對才算,放進 frames,由呼叫端用 fr[1] 區分。
     表頭 LRC 不對就只丟掉這個 DLE,往後找下一個起點 —— 不可整段丟,
     否則一個壞 byte 會吃掉後面好幾筆正常資料。
     """
     frames, junk = [], 0
     while True:
         i = buf.find(b"\x10\x01")
+        ctl = None
+        for tag, size in ((b"\x10\x06", 6), (b"\x10\x15", 8)):
+            j = buf.find(tag)
+            if 0 <= j and (i < 0 or j < i) and len(buf) >= j + size \
+                    and lrc(buf[j:j + size - 1]) == buf[j + size - 1]:
+                ctl = (j, size)
+                break
+        if ctl:
+            junk += ctl[0]
+            frames.append(buf[ctl[0]:ctl[0] + ctl[1]])
+            buf = buf[ctl[0] + ctl[1]:]
+            continue
         if i < 0:
             junk += max(0, len(buf) - 1)
             return frames, buf[-1:] if buf.endswith(b"\x10") else b"", junk
@@ -101,6 +120,21 @@ def ack_for(frame: bytes) -> bytes:
     """對資料框回的 ACK:DLE ACK SEQ ADDR(2) LRC。"""
     a = bytes([0x10, 0x06, frame[2]]) + frame[3:5]
     return a + bytes([lrc(a)])
+
+
+def time_set_frame(seq: int, dt: datetime, addr: bytes = b"\xff\xff") -> bytes:
+    """02H 設定日期和時間:DLE SOH SEQ ADDR LEN 表頭LRC | 02 年(2) 月 日 時 分 秒 | LRC。
+
+    中央端指定的 SEQ 範圍是 0~127(協定 3.2),這裡取低 7 bit。ADDR 用設備自己框裡的位址。
+    """
+    text = bytes([0x02]) + dt.year.to_bytes(2, "big") + bytes([dt.month, dt.day, dt.hour, dt.minute, dt.second])
+    head = addr + len(text).to_bytes(2, "big")
+    f = bytes([0x10, 0x01, seq & 0x7F]) + head + bytes([lrc(head)]) + text
+    return f + bytes([lrc(f)])
+
+
+_TIMESYNC_SEC = float(os.getenv("SIGNAL_VD_TIMESYNC_SEC", "0") or 0)
+_timesync_req: dict = {}     # name -> 要求時刻;由收集執行緒在同一條連線送出(設備同時只接受一個使用者端)
 
 
 def seq_step(prev: int, cur: int) -> int:
@@ -241,7 +275,10 @@ def _run(name: str, host: str, port: int) -> None:
                                   "frames": 0, "bad_lrc": 0, "junk_bytes": 0, "acks": 0,
                                   "errors": 0, "last_error": "", "clock_offset_sec": None,
                                   "other_codes": {}, "store_fail": 0, "spooled": 0,
-                                  "seq_gaps": 0, "seq_gap_last": None, "last_seq": None})
+                                  "seq_gaps": 0, "seq_gap_last": None, "last_seq": None,
+                                  "addr": "FFFF", "timesync": {}})
+    cmd_seq = int(time.time()) & 0x7F
+    last_sync = 0.0
     backoff = 5.0
     while not _stop.is_set():
         s = None
@@ -266,6 +303,21 @@ def _run(name: str, host: str, port: int) -> None:
                     if st["last_rx"] and time.time() - st["last_rx"] > 180:
                         raise ConnectionError("超過 3 分鐘沒有收到資料")
                     continue
+                finally:
+                    # 對時:手動要求,或自動週期到了(要先收過一框,才知道設備位址)
+                    due = _TIMESYNC_SEC > 0 and st["frames"] and time.time() - last_sync >= _TIMESYNC_SEC
+                    if _timesync_req.pop(name, None) is not None or due:
+                        cmd_seq = (cmd_seq + 1) & 0x7F
+                        now_dt = datetime.now()
+                        out = time_set_frame(cmd_seq, now_dt, bytes.fromhex(st["addr"]))
+                        s.sendall(out)
+                        last_sync = time.time()
+                        st["timesync"] = {"sent_at": now_dt.isoformat(timespec="seconds"), "seq": cmd_seq,
+                                          "offset_before_sec": st["clock_offset_sec"],
+                                          "result": "已送出,等設備回應", "second_diff": None,
+                                          "frame": out.hex(" ").upper()}
+                        _log(name, "送出 02H 對時 %s(seq %02X):%s" % (
+                            st["timesync"]["sent_at"], cmd_seq, st["timesync"]["frame"]))
                 if not data:
                     raise ConnectionError("對方關閉連線")
                 buf += data
@@ -274,6 +326,13 @@ def _run(name: str, host: str, port: int) -> None:
                 for fr in frames:
                     now = time.time()
                     st["last_rx"] = now
+                    if fr[1] in (0x06, 0x15):       # 設備對我方命令的 ACK / NAK
+                        ok = fr[1] == 0x06
+                        ts = st["timesync"]
+                        if ts and ts.get("seq") == fr[2]:
+                            ts["result"] = "設備已 ACK" if ok else ("設備 NAK,ERR=" + fr[5:7].hex().upper())
+                        _log(name, "收到 %s(seq %02X):%s" % ("ACK" if ok else "NAK", fr[2], fr.hex(" ")))
+                        continue
                     if lrc(fr[:-1]) != fr[-1]:
                         st["bad_lrc"] += 1          # 不回 ACK,讓設備依協定重送
                         _log(name, "整框 LRC 錯,不回 ACK 等重送:%s" % fr.hex(" "))
@@ -281,6 +340,16 @@ def _run(name: str, host: str, port: int) -> None:
                     st["frames"] += 1
                     s.sendall(ack_for(fr))
                     st["acks"] += 1
+                    text = fr[8:-1]
+                    # 02H 回報誤差秒數(0~255)。🛑 它帶的是我方命令的序號(0~127),
+                    #    要在序號連續性檢查之前處理,否則會被當成跳號、誤記漏框。
+                    if text[:1] == b"\x02" and len(text) == 2:
+                        if st["timesync"]:
+                            st["timesync"]["second_diff"] = text[1]
+                            st["timesync"]["result"] = "設備回報誤差 %d 秒%s" % (
+                                text[1], "(255 是上限,實際可能更大)" if text[1] == 255 else "")
+                        _log(name, "02H 回報誤差秒數 %d:%s" % (text[1], fr.hex(" ")))
+                        continue
                     # 序號連續性:設備每送一框 +1。
                     # 🛑 跳號 = 設備有送、我們沒存到(14:06、14:10 就是這樣被發現的)
                     seq = fr[2]
@@ -294,7 +363,7 @@ def _run(name: str, host: str, port: int) -> None:
                             st["seq_gap_last"] = time.time()
                             _log(name, "序號由 %02X 跳到 %02X,漏收 %d 框" % (st["last_seq"], seq, step - 1))
                     st["last_seq"] = seq
-                    text = fr[8:-1]
+                    st["addr"] = fr[3:5].hex().upper()
                     d = decode_10h(text)
                     if d is None:
                         code = "%02X" % text[0] if text else "??"
@@ -399,6 +468,20 @@ def completeness(rows: list) -> dict:
     got = len(rows)
     return {"received": got, "missed": len(missed), "missed_minutes": missed[-20:],
             "rate_pct": (round(got / (got + len(missed)) * 100, 1) if got else None)}
+
+
+@router.post("/timesync", summary="VD 線圈:以我方 NTP 時間對設備送 02H 對時")
+def vd_timesync(device: str = Query("", description="設備名稱;空 = 第一台"),
+                _user=Depends(get_current_user)):
+    """排一次 02H 對時,由收集執行緒在現有連線上送出(最多約 5 秒內)。結果看 /api/vd/status 的 status.timesync。"""
+    device = device if isinstance(device, str) else ""
+    names = [n for n, _, _ in parse_devices(_DEVICES_RAW)]
+    name = device or (names[0] if names else "")
+    st = _state.get(name)
+    if not st or not st.get("connected"):
+        return {"ok": False, "reason": "設備未連線", "devices": names}
+    _timesync_req[name] = time.time()
+    return {"ok": True, "device": name, "note": "已排入,5 秒內送出;下一筆 10H 資料的時間戳會反映結果"}
 
 
 @router.get("/status", summary="VD 線圈:連線狀態、時鐘偏差、紀錄與攝影機對照(可查詢區間、可分組)")
