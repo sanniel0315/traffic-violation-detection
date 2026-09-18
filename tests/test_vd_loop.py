@@ -245,3 +245,49 @@ def test_completeness_counts_event_frames_as_received():
     rows = [(t0, "10 01 91 FF FF"), (t0 + 56, F_1F.hex(" ").upper()), (t0 + 60, "10 01 93 FF FF")]
     assert completeness(rows)["missed"] == 0
     assert completeness([rows[0], rows[2]])["missed"] == 1   # 舊算法(只看 10H)會誤判
+
+
+def test_timesync_sends_after_frame_then_reconnects(tmp_path, monkeypatch):
+    """對時流程(09-18 實測規則):收到一筆資料 → 回 ACK → 送 02H(值 = 下一筆預計到達 + 延遲)→ 主動重連。"""
+    import socket
+    import threading
+    from api.routes import vd_loop
+    monkeypatch.setattr(vd_loop, "_DB", str(tmp_path / "vd.db"))
+    monkeypatch.setattr(vd_loop, "_SPOOL", str(tmp_path / "spool.jsonl"))
+    monkeypatch.setattr(vd_loop, "_state", {})
+    monkeypatch.setattr(vd_loop, "_timesync_req", {"T": 1.0})
+    stop = threading.Event()
+    monkeypatch.setattr(vd_loop, "_stop", stop)
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(2)
+    srv.settimeout(10)
+    port = srv.getsockname()[1]
+    th = threading.Thread(target=vd_loop._run, args=("T", "127.0.0.1", port), daemon=True)
+    th.start()
+    try:
+        c1, _ = srv.accept()
+        t_sent = time.time()
+        c1.sendall(F1)
+        c1.settimeout(5)
+        got = b""
+        while len(got) < 6 + 17:                         # ACK(6) + 02H(17)
+            chunk = c1.recv(100)
+            if not chunk:
+                break
+            got += chunk
+        assert got[:6] == vd_loop.ack_for(F1)
+        f = got[6:23]
+        assert f[:3] == bytes([0x10, 0x01, f[2]]) and f[2] <= 0x7F and f[8] == 0x02
+        val = datetime(int.from_bytes(f[9:11], "big"), f[11], f[12], f[13], f[14], f[15]).timestamp()
+        assert abs(val - (t_sent + 60 + vd_loop.TIMESYNC_APPLY_LAG_SEC)) < 3
+        c1.settimeout(3)
+        assert c1.recv(10) == b""                        # 主動斷線
+        c2, _ = srv.accept()                             # 5 秒內重連
+        c2.close()
+        c1.close()
+        assert vd_loop._state["T"]["errors"] == 0        # 主動重連不算錯誤
+    finally:
+        stop.set()
+        srv.close()

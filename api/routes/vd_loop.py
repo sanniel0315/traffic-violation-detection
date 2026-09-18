@@ -19,15 +19,13 @@
 🛑 設備時鐘會偏:2026-09-18 實測 13:16:00 收到的框時間戳是 12:46(慢 30 分鐘,
    整天穩定在 1800±1 秒,不像晶振漂移)。對照攝影機一律用**我方收到的時刻**,
    設備時間戳只記錄、並回報偏差。
-   02H 對時(協定文件頁 19;設備回 ACK,並可能以 02H+誤差秒數回報):使用者 2026-09-18
-   「VD 線圈應該可以校時它」。手動:POST /api/vd/timesync;
-   自動:SIGNAL_VD_TIMESYNC_SEC(秒,0 = 關;協定寫中央每小時對時一次)。
+   02H 對時(協定文件頁 19):使用者 2026-09-18「VD 線圈應該可以校時它」。
+   手動:POST /api/vd/timesync;自動:SIGNAL_VD_TIMESYNC_SEC(秒,0 = 關)。
+   🛑 實測(19:29~20:13):送出後**沒有 ACK、不會馬上改**;要等**重連後設備送出第一筆資料**,
+      約 1~2 秒後才依序套用排隊中的 02H,套用的是**命令裡帶的時間**(排多久就差多久)。
+      19:29:45 送、19:42 重連才套用 → 慢 736 秒;20:11:12 送、20:12:18 套用 → 慢 66 秒。
+      所以程式在剛收到一筆資料後送,時間帶「下一筆預計到達 + 1.5 秒」,送完主動重連。
    我方時鐘由 NTP 校準(timedatectl: synchronized)。
-   🛑 2026-09-18 19:29 實測:經 10.42.39.60:1002 送 02H,**沒有 ACK、沒有 NAK、沒有誤差回報,
-      時鐘沒變**(19:30 那筆仍慢 1800 秒)。19:32 另開短連線送 01H/0EH/0BH 三個唯讀查詢
-      也全無回應,而且收集連線沒被踢掉(協定規定設備只接受單一使用者端)——
-      1002 是只往上送資料的分流口,不收下行命令。要對時得走中央那一路(1001),
-      那是中央的連線,我方不接。畫面上的對時按鈕因此拿掉,API 保留、自動預設關。
 
 設定:SIGNAL_VD_DEVICES="名稱@host:port,名稱@host:port"(空 = 不啟動)
 """
@@ -139,6 +137,8 @@ def time_set_frame(seq: int, dt: datetime, addr: bytes = b"\xff\xff") -> bytes:
 
 
 _TIMESYNC_SEC = float(os.getenv("SIGNAL_VD_TIMESYNC_SEC", "0") or 0)
+# 設備送出資料框後約 1~2 秒才套用排隊中的 02H(19:42:00→約 19:42:01、20:12:16→約 20:12:18)
+TIMESYNC_APPLY_LAG_SEC = float(os.getenv("SIGNAL_VD_TIMESYNC_LAG_SEC", "1.5") or 1.5)
 _timesync_req: dict = {}     # name -> 要求時刻;由收集執行緒在同一條連線送出(設備同時只接受一個使用者端)
 
 
@@ -352,21 +352,6 @@ def _run(name: str, host: str, port: int) -> None:
                     if st["last_rx"] and time.time() - st["last_rx"] > 180:
                         raise ConnectionError("超過 3 分鐘沒有收到資料")
                     continue
-                finally:
-                    # 對時:手動要求,或自動週期到了(要先收過一框,才知道設備位址)
-                    due = _TIMESYNC_SEC > 0 and st["frames"] and time.time() - last_sync >= _TIMESYNC_SEC
-                    if _timesync_req.pop(name, None) is not None or due:
-                        cmd_seq = (cmd_seq + 1) & 0x7F
-                        now_dt = datetime.now()
-                        out = time_set_frame(cmd_seq, now_dt, bytes.fromhex(st["addr"]))
-                        s.sendall(out)
-                        last_sync = time.time()
-                        st["timesync"] = {"sent_at": now_dt.isoformat(timespec="seconds"), "seq": cmd_seq,
-                                          "offset_before_sec": st["clock_offset_sec"],
-                                          "result": "已送出,等設備回應", "second_diff": None,
-                                          "frame": out.hex(" ").upper()}
-                        _log(name, "送出 02H 對時 %s(seq %02X):%s" % (
-                            st["timesync"]["sent_at"], cmd_seq, st["timesync"]["frame"]))
                 if not data:
                     raise ConnectionError("對方關閉連線")
                 buf += data
@@ -440,6 +425,30 @@ def _run(name: str, host: str, port: int) -> None:
                             st["spooled"] += 1
                         except Exception as exc2:
                             _log(name, "暫存也失敗,這一框遺失:%s | %s" % (exc2, fr.hex(" ")))
+                    # 對時(手動要求,或自動週期到了)。🛑 設備收到 02H 不會馬上改,
+                    #   要等「重連後的第一筆資料」才套用命令裡帶的時間(2026-09-18 19:42、20:12 實測)。
+                    #   所以:剛收到一筆就送,時間帶「下一筆預計到達 + 套用延遲」,然後主動重連。
+                    due = _TIMESYNC_SEC > 0 and time.time() - last_sync >= _TIMESYNC_SEC
+                    if _timesync_req.pop(name, None) is not None or due:
+                        cmd_seq = (cmd_seq + 1) & 0x7F
+                        apply_at = datetime.fromtimestamp(now + 60 + TIMESYNC_APPLY_LAG_SEC)
+                        out = time_set_frame(cmd_seq, apply_at, fr[3:5])
+                        s.sendall(out)
+                        last_sync = time.time()
+                        st["timesync"] = {"sent_at": datetime.now().isoformat(timespec="seconds"),
+                                          "value": apply_at.isoformat(timespec="seconds"), "seq": cmd_seq,
+                                          "offset_before_sec": off,
+                                          "result": "已送出,重連後下一筆資料時套用", "second_diff": None,
+                                          "frame": out.hex(" ").upper()}
+                        _log(name, "送出 02H 對時(值 %s,預計下一筆資料時套用),主動重連:%s" % (
+                            st["timesync"]["value"], st["timesync"]["frame"]))
+                        raise ConnectionResetError("對時後主動重連,讓設備套用")
+        except ConnectionResetError as exc:
+            if "對時後主動重連" not in str(exc):
+                st["errors"] += 1
+            st["last_error"] = str(exc)
+            _log(name, "%s(5 秒後重連)" % exc)
+            backoff = 5.0
         except Exception as exc:
             st["errors"] += 1
             st["last_error"] = "%s: %s" % (type(exc).__name__, exc)
@@ -538,7 +547,8 @@ def vd_timesync(device: str = Query("", description="設備名稱;空 = 第一�
     if not st or not st.get("connected"):
         return {"ok": False, "reason": "設備未連線", "devices": names}
     _timesync_req[name] = time.time()
-    return {"ok": True, "device": name, "note": "已排入,5 秒內送出;下一筆 10H 資料的時間戳會反映結果"}
+    return {"ok": True, "device": name,
+            "note": "收到下一筆資料後送出並重連,再下一筆資料時設備才套用(約 1~2 分鐘後看時鐘偏差)"}
 
 
 @router.get("/status", summary="VD 線圈:連線狀態、時鐘偏差、紀錄與攝影機對照(可查詢區間、可分組)")
