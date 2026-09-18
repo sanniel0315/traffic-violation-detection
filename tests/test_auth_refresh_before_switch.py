@@ -72,3 +72,26 @@ def test_refresh_disabled_by_zero(monkeypatch):
     monkeypatch.setattr(T, "AUTH_REFRESH_BEFORE_SEC", 0.0)
     _send(T2)
     assert calls == [], "設 0 要能關掉這個行為"
+
+
+def test_seq_assigned_at_send_after_refresh(monkeypatch):
+    """🛑 2026-09-18 16:30:19 現場:補授權 5F10 與延長 5F1C 同為序號 0x28,
+    控制器只回 5F10,5F1C 被當成重複框丟掉。序號要在送出當下重新分配。"""
+    T, calls = _setup(monkeypatch, age_sec=30)
+    sock = T._sock_ref["sock"]
+
+    def fake_reassert(kind=""):
+        calls.append(kind)
+        T._seq_next["n"] = (int(T._seq_next.get("n", 0)) + 1) & 0xFF   # 補授權用掉一個序號
+    monkeypatch.setattr(T, "_do_reassert", fake_reassert)
+    monkeypatch.setattr(T, "AUTH_REFRESH_GAP_SEC", 0.0)
+    T._seq_next["n"] = 0x27
+    frame = T.build_frame(0xFFFF, 0x28, bytes([0x5F, 0x1C, 0x01, 0x01, 0x19]))
+    out = T._finish_prepare(frame, "5F1C", 0x1C, 0x5F, 0xFFFF, 0x28, "algorithm-extend")
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(T.control_send({"token": out["token"]}, _user="t"))
+    assert calls, "應該先補授權"
+    sent = sock.sent[-1]
+    assert sent[2] == 0x29, "5F1C 不可以沿用 prepare 時的 0x28(已被補授權用掉)"
+    d = T.decode_frame(sent)
+    assert d and d["cks_ok"] and d["code"] == "5F1C", "重新組框後檢查碼要正確"

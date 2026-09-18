@@ -1548,6 +1548,23 @@ _downlink = {"seen": 0, "held": 0, "passed": 0, "last_held": None,
 AUTH_RENEW_SEC = float(os.getenv("SIGNAL_TC3_AUTH_RENEW_SEC", "20") or 20)
 # 換相(5F1C)送出前,授權若比這個秒數舊就先補一次 5F10。0 = 關閉。
 AUTH_REFRESH_BEFORE_SEC = float(os.getenv("SIGNAL_TC3_AUTH_REFRESH_BEFORE_SEC", "8") or 0)
+# 補授權與 5F1C 之間的間隔。_do_reassert 註解記過「0.2 秒不夠,連 0F80 都沒有」,
+# 控制器對 5F10 的 0F80 實測約 0.13 秒回來,取 0.5 秒。
+AUTH_REFRESH_GAP_SEC = float(os.getenv("SIGNAL_TC3_AUTH_REFRESH_GAP_SEC", "0.5") or 0.5)
+
+
+def _refresh_frame_seq(item: dict) -> dict:
+    """在送出當下重新分配序號並重新組框。prepare 時拿的序號可能已被別的命令用掉。"""
+    frame = item["frame"]
+    # 解析不出完整碼框就原樣送(不應發生;寧可沿用原序號,也不要讓命令整則送不出去)
+    if not decode_frame(frame):
+        return item
+    info = _unstuff(frame[7:-3])
+    seq = (int(_seq_next.get("n", 0)) + 1) & 0xFF
+    new = dict(item)
+    new["seq"] = seq
+    new["frame"] = build_frame(item["addr"], seq, info)
+    return new
 # 啟動後等抄到控制策略就立刻續約(每 2 秒探一次,最多等這麼久)。
 # 🛑 不可以直接等一個完整週期 —— 2026-09-08 重啟後第一次續約拖到 90 秒,
 #    授權在第 60 秒就到期了,路口白白退回定時控制一分鐘。
@@ -3553,6 +3570,17 @@ async def control_send(body: dict, _user=Depends(get_current_user)):
             _auth["last"] = time.time()
         except Exception as exc:                 # 補不成也照送,不要因此擋掉換相
             _auth["last_error"] = "換相前補授權失敗:%s" % exc
+        # 🛑 2026-09-18 16:30:19 現場:補授權的 5F10 與延長的 5F1C 相隔 7 毫秒送出,
+        #    **兩則序號都是 0x28** —— 5F1C 在 prepare 時就拿了序號,補授權又用掉同一個。
+        #    控制器只回了 5F10 的 0F80,5F1C 被當成同序號的重複框丟掉,延長沒有生效。
+        #    序號要在「真正送出」這一刻重新分配,並重新組框(含 stuffing 與 CKS)。
+        #    另外兩則貼太近本來就會被丟(見 _do_reassert 註解),補完授權後稍等再送。
+        import asyncio as _aio
+        await _aio.sleep(AUTH_REFRESH_GAP_SEC)       # 非同步等待,不卡住整個服務
+
+    # 🛑 所有命令一律在送出這一刻才分配序號:prepare 到 send 之間,背景續約或補授權
+    #    都可能先用掉 prepare 時拿的那一個(16:30:19 就是 5F10 與 5F1C 同為 0x28)。
+    item = _refresh_frame_seq(item)
 
     user = getattr(_user, "username", None) or str(_user)
     # 自稱來源 + 實際登入者,兩個都留 —— 只留一個事後無法交叉查核。
