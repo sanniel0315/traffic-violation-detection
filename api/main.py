@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 from api.models import init_db
 from api.routes import auth, frigate, hanwha, lpr, lpr_stream, lpr_visual, violations, cameras, stream, traffic, nx
 from api.routes import signal_shadow
+from api.routes import vd_loop as vd_loop_route
 from api.routes import acceptance as acceptance_route
 from api.routes import go2rtc as go2rtc_route
 from api.routes import nport as nport_route
@@ -389,6 +390,13 @@ async def lifespan(app: FastAPI):
                   flush=True)
     except Exception as _e:
         print(f"⚠️ 號誌影子模式啟動失敗: {_e}", flush=True)
+    # VD 線圈逐分鐘資料(我方攝影機計數的地面實況)。只收、只回 ACK,不送任何命令。
+    try:
+        _vd = vd_loop_route.start_vd()
+        if _vd:
+            print("📟 VD 線圈收集啟動:%s" % "、".join(_vd), flush=True)
+    except Exception as _e:
+        print(f"⚠️ VD 收集啟動失敗: {_e}", flush=True)
     print("✅ 系統初始化完成")
     yield
     # 通知所有 streaming generator 退出，避免 sync while True 卡到 SIGKILL
@@ -511,6 +519,8 @@ app.include_router(nport_route.router)
 #    但後端資料明明在寫。從 localhost 測看到 401 還誤以為端點存在 ——
 #    那個 401 是 middleware 擋在路由之前,亂打的路徑也一樣回 401。
 app.include_router(signal_shadow.router)
+# VD 線圈:prefix /api/vd,刻意不放在 /api/signal 底下(萬用代理會吃掉,見上)。
+app.include_router(vd_loop_route.router)
 # 驗收清單。prefix 是 /api/acceptance,刻意不放在 /api/signal 底下 ——
 # 那條路徑有萬用代理會整個吃掉(見上面的說明)。
 app.include_router(acceptance_route.router)
