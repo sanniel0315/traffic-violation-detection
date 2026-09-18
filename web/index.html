@@ -9108,7 +9108,8 @@
                             說中只代表兩者看法相同,不代表 rolling 比較好。 -->
                     <div class="card">
                         <div class="card-header">
-                            <span>滾動時程預測（往前看 {{ (sigRoll.horizon_sec||0).toFixed ? sigRoll.horizon_sec.toFixed(0) : sigRoll.horizon_sec }} 秒 · 只算不下發）</span>
+                            <!-- 🛑 2026-09-18 17:45 修:原本寫 (x||0).toFixed ? x.toFixed(0) : x —— 資料未載入時 x 是空的,前半段成立就去呼叫 undefined.toFixed(),渲染例外讓整個號誌頁壞掉(現場「登入後開不起來」)。 -->
+                            <span>滾動時程預測（往前看 {{ sigRoll.horizon_sec != null ? Number(sigRoll.horizon_sec).toFixed(0) : '—' }} 秒 · 只算不下發）</span>
                             <el-button size="small" plain :loading="sigRollLoading" @click="loadSigRoll">重查</el-button>
                         </div>
                         <div class="card-body">
