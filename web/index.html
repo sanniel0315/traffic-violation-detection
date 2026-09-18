@@ -10742,6 +10742,7 @@
                                     <span :class="(sigLoop.status||{}).connected ? 'vx-ok' : 'vx-bad'">{{ (sigLoop.status||{}).connected ? '● 連線中' : '● 未連線' }}</span>
                                     · 完整度 {{ sigPctPlain((sigLoop.completeness||{}).rate_pct) }}<span v-if="(sigLoop.completeness||{}).missed">(漏 {{ (sigLoop.completeness||{}).missed }} 框)</span>
                                     · 設備時鐘 {{ sigLoopClock }}
+                                    <span v-if="(sigLoop.events||{}).n" :title="(sigLoop.events||{}).note">· 線圈判逆向 {{ (sigLoop.events||{}).n }} 筆(大車 {{ (sigLoop.events||{}).large }},排隊壓線圈誤判)</span>
                                     · {{ sigLoopRangeText }}
                                 </div>
                                 <div class="vx-summary">

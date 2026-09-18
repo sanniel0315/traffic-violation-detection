@@ -178,6 +178,30 @@ def decode_10h(text: bytes) -> Optional[dict]:
             "day": text[6], "hour": text[7], "minute": text[8], "lanes": lanes}
 
 
+def decode_1f02(text: bytes) -> Optional[list]:
+    """1FH+02H 回報逆向車事件(協定文件頁 110~111)。長度不符回 None。
+
+    格式:1F 02 response_type(1) hardware_status(4) car_volume(1)
+          + 每車 {day hour minute second lane_id car_length(0.1m) car_interval(2, 0.1s) car_type}
+    car_type:1 小車、2 大車、10 聯結車。car_interval 65530 = 上限(前面沒車)。
+
+    🛑 2026-09-18 實測 12 筆(11 筆大車)都在排隊時段、lane_id 都是 0;攝影機在同一時刻
+       多半拍到**正向**通過的大車 —— 是排隊走走停停壓在線圈上被判成逆向,不是真的逆行。
+    """
+    if len(text) < 8 or text[0] != 0x1F or text[1] != 0x02:
+        return None
+    n = text[7]
+    if len(text) != 8 + 9 * n:
+        return None
+    out = []
+    for k in range(n):
+        e = text[8 + 9 * k: 17 + 9 * k]
+        out.append({"day": e[0], "hour": e[1], "minute": e[2], "second": e[3], "lane_id": e[4],
+                    "car_length_m": e[5] / 10.0, "car_interval_s": int.from_bytes(e[6:8], "big") / 10.0,
+                    "car_type": e[8]})
+    return out
+
+
 def device_clock_offset(recv_ts: float, day: int, hour: int, minute: int) -> Optional[float]:
     """設備時間戳(只有日/時/分)與我方收到時刻的差(秒,正值 = 設備慢)。
 
@@ -206,7 +230,27 @@ def _conn():
         large_n INTEGER, large_kmh INTEGER, large_len_m REAL,
         trailer_n INTEGER, trailer_kmh INTEGER, headway_s REAL, occ_pct INTEGER, raw TEXT)""")
     c.execute("CREATE INDEX IF NOT EXISTS ix_vd_minute_ts ON vd_minute(device, recv_ts)")
+    c.execute("""CREATE TABLE IF NOT EXISTS vd_event (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, device TEXT, recv_ts REAL, recv_iso TEXT, code TEXT,
+        dev_time TEXT, lane_id INTEGER, car_length_m REAL, car_interval_s REAL, car_type INTEGER, raw TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS ix_vd_event_ts ON vd_event(device, recv_ts)")
     return c
+
+
+def _store_event(name: str, recv_ts: float, frame: bytes, events: list) -> None:
+    c = _conn()
+    try:
+        for e in events:
+            c.execute(
+                "INSERT INTO vd_event(device,recv_ts,recv_iso,code,dev_time,lane_id,car_length_m,"
+                "car_interval_s,car_type,raw) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (name, recv_ts, datetime.fromtimestamp(recv_ts).isoformat(timespec="seconds"), "1F02",
+                 "%02d日 %02d:%02d:%02d" % (e["day"], e["hour"], e["minute"], e["second"]),
+                 e["lane_id"], e["car_length_m"], e["car_interval_s"], e["car_type"],
+                 frame.hex(" ").upper()))
+        c.commit()
+    finally:
+        c.close()
 
 
 def _store(name: str, recv_ts: float, frame: bytes, d: dict, offset: Optional[float]) -> None:
@@ -369,6 +413,14 @@ def _run(name: str, host: str, port: int) -> None:
                             _log(name, "序號由 %02X 跳到 %02X,漏收 %d 框" % (st["last_seq"], seq, step - 1))
                     st["last_seq"] = seq
                     st["addr"] = fr[3:5].hex().upper()
+                    ev = decode_1f02(text)
+                    if ev is not None:
+                        st["other_codes"]["1F02"] = st["other_codes"].get("1F02", 0) + 1
+                        try:
+                            _store_event(name, now, fr, ev)
+                        except Exception as exc:
+                            _log(name, "逆向事件寫庫失敗(%s):%s" % (exc, fr.hex(" ")))
+                        continue
                     d = decode_10h(text)
                     if d is None:
                         code = "%02X" % text[0] if text else "??"
@@ -525,12 +577,19 @@ def vd_status(device: str = Query("", description="設備名稱;空 = 第一台"
     if t_since is None or t_until is None or t_since >= t_until:
         return {"available": False, "reason": "查詢區間不正確", "devices": names}
 
-    rows, comp = [], {}
+    rows, comp, ev_rows = [], {}, []
     try:
         c = _conn()
+        # 🛑 1FH 事件框也佔設備序號 —— 只看 10H 會把每一筆事件誤算成「漏收」
+        #    (2026-09-18 的「漏 16 框」裡有 10 框其實是逆向事件)。
         comp = completeness(c.execute(
-            "SELECT recv_ts, raw FROM vd_minute WHERE device=? AND recv_ts>=? AND recv_ts<? "
-            "AND lane=1 ORDER BY recv_ts", (name, t_since + 30, t_until + 30)).fetchall())
+            "SELECT recv_ts, raw FROM vd_minute WHERE device=? AND recv_ts>=? AND recv_ts<? AND lane=1 "
+            "UNION SELECT DISTINCT recv_ts, raw FROM vd_event WHERE device=? AND recv_ts>=? AND recv_ts<? "
+            "ORDER BY 1", (name, t_since + 30, t_until + 30, name, t_since, t_until + 30)).fetchall())
+        ev_rows = c.execute(
+            "SELECT recv_iso, dev_time, lane_id, car_length_m, car_type FROM vd_event "
+            "WHERE device=? AND recv_ts>=? AND recv_ts<? ORDER BY recv_ts DESC",
+            (name, t_since, t_until)).fetchall()
         rows = c.execute(
             "SELECT recv_ts,dev_time,clock_offset_sec,fault,small_n,small_kmh,large_n,large_kmh,"
             "trailer_n,headway_s,occ_pct FROM vd_minute WHERE device=? AND recv_ts>=? AND recv_ts<? "
@@ -609,6 +668,11 @@ def vd_status(device: str = Query("", description="設備名稱;空 = 第一台"
                                           "last_error", "clock_offset_sec", "other_codes",
                                           "store_fail", "spooled", "seq_gaps", "seq_gap_last")},
         "completeness": comp,
+        "events": {"n": len(ev_rows), "large": sum(1 for r in ev_rows if r[4] in (2, 10)),
+                   "items": [{"t": r[0], "dev_time": r[1], "lane_id": r[2], "car_length_m": r[3],
+                              "car_type": {1: "小車", 2: "大車", 10: "聯結車"}.get(r[4], str(r[4]))}
+                             for r in ev_rows[:50]],
+                   "note": "線圈判為逆向(1FH+02H)。實測同一時刻攝影機多為正向大車,是排隊壓線圈的誤判。"},
         "camera": {"camera_id": cam.get("camera"), "lanes": cam.get("lanes"),
                    "note": "下匝道那一相的基準測點,排除進出線事件(IN/OUT/EXIT)"},
         "summary": summary,

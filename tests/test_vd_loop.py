@@ -221,3 +221,27 @@ def test_timesync_refuses_when_not_connected(monkeypatch):
     monkeypatch.setattr(vd_loop, "_state", {})
     r = vd_loop.vd_timesync(device="", _user=None)
     assert r["ok"] is False and "X" not in vd_loop._timesync_req
+
+
+# 2026-09-18 15:44:56 現場收到的 1FH+02H(逆向車事件)原框
+F_1F = bytes.fromhex("10 01 92 ff ff 00 11 11 1f 02 00 00 00 00 00 01 12 0f 0e 39 00 53 ff fa 02 e1".replace(" ", ""))
+
+
+def test_decode_wrong_way_event_frame():
+    from api.routes.vd_loop import decode_1f02, decode_10h, lrc, split_frames
+    frames, rest, junk = split_frames(F_1F)
+    assert frames == [F_1F] and lrc(F_1F[:-1]) == F_1F[-1]
+    ev = decode_1f02(F_1F[8:-1])
+    assert ev == [{"day": 18, "hour": 15, "minute": 14, "second": 57, "lane_id": 0,
+                   "car_length_m": 8.3, "car_interval_s": 6553.0, "car_type": 2}]
+    assert decode_10h(F_1F[8:-1]) is None
+    assert decode_1f02(F_1F[8:-2]) is None                 # 長度不符不猜
+
+
+def test_completeness_counts_event_frames_as_received():
+    """1FH 事件框也佔序號:10H 序號 91→93 中間夾 92 的事件框,不是漏收。"""
+    from api.routes.vd_loop import completeness
+    t0 = datetime(2026, 9, 18, 15, 44).timestamp()
+    rows = [(t0, "10 01 91 FF FF"), (t0 + 56, F_1F.hex(" ").upper()), (t0 + 60, "10 01 93 FF FF")]
+    assert completeness(rows)["missed"] == 0
+    assert completeness([rows[0], rows[2]])["missed"] == 1   # 舊算法(只看 10H)會誤判
