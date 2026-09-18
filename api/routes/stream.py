@@ -1414,7 +1414,7 @@ def _follow_recent(recent: list, boxes_now: list, now_ts: float,
         t_seen, box = ent[0], ent[1]
         t_count = ent[2] if len(ent) > 2 else ent[0]
         if now_ts - t_count > max_sec:
-            out.append((t_seen, box, t_count))
+            out.append((t_seen, box, t_count) + tuple(ent[3:]))
             continue
         best_i, best = -1, 0.0
         for i, b in enumerate(boxes_now):
@@ -1425,10 +1425,76 @@ def _follow_recent(recent: list, boxes_now: list, now_ts: float,
                 best_i, best = i, v
         if best_i >= 0 and best >= follow_iou:
             used.add(best_i)
-            out.append((now_ts, dict(boxes_now[best_i]), t_count))
+            out.append((now_ts, dict(boxes_now[best_i]), t_count) + tuple(ent[3:]))
         else:
-            out.append((t_seen, box, t_count))
+            out.append((t_seen, box, t_count) + tuple(ent[3:]))
     return out
+
+
+# ── 影子計數線(2026-09-18,找出和線圈最吻合的計數位置)──────────────────────
+# 🛑 使用者:「解好」—— 下匝道線圈與 WN-1/WN-2 看同一批車,每一種車都要對得上。
+#    現況:小車少算約 3 成(排隊遮擋漏偵測),大車多算 1.4~2.8 倍(慢車重複計數)。
+#    計數線的位置目前取「被最多軌跡跨過的點」—— 排隊時軌跡斷成好幾段,這個規則
+#    反而把線拉進最擁擠、最常遮擋的排隊區。不再用猜的:在框內沿行進方向等距放
+#    6 條影子線,各自照同樣的窄帶規則記錄「哪台車在哪條線被看到」,只寫紀錄、
+#    不影響正式流量。之後拿每條線的逐分鐘小車/大車數去跟線圈比,選出最吻合的位置,
+#    大車該用多長的去重窗也從同一份資料算出來。
+# 開關:SIGNAL_FLOW_SHADOW_LINES = ""(關)/"4,5"(相機 id)。
+_SHADOW_LINES_RAW = os.getenv("SIGNAL_FLOW_SHADOW_LINES", "").strip()
+SHADOW_LINE_FRACS = (0.10, 0.25, 0.40, 0.55, 0.70, 0.85)
+_sl_buf: list = []
+_sl_last_flush = [0.0]
+_SL_DB = os.getenv("SIGNAL_FLOW_SHADOW_DB", "data/signal_shadow.db")
+
+
+_LARGE_LABELS = {"heavy_truck", "truck", "bus", "trailer"}
+
+
+def _dedup_window(entry: tuple, normal_sec: float, large_sec: float) -> float:
+    """這一筆去重紀錄的有效秒數:大車用 large_sec(>0 時),其餘用 normal_sec。"""
+    is_large = len(entry) > 3 and bool(entry[3])
+    return large_sec if (is_large and large_sec > 0) else normal_sec
+
+
+def _shadow_lines_on(camera_id) -> bool:
+    if not _SHADOW_LINES_RAW:
+        return False
+    try:
+        return int(camera_id) in {int(x) for x in _SHADOW_LINES_RAW.split(",") if x.strip()}
+    except (TypeError, ValueError):
+        return False
+
+
+def shadow_line_positions(t_values: list, fracs=SHADOW_LINE_FRACS) -> list:
+    """框的頂點投影到行進軸後的範圍 [tmin, tmax],依比例取影子線的位置。"""
+    if not t_values:
+        return []
+    lo, hi = min(t_values), max(t_values)
+    return [(k, f, lo + (hi - lo) * f) for k, f in enumerate(fracs)]
+
+
+def _sl_flush(force: bool = False) -> None:
+    """把影子線紀錄批次寫進資料庫(每 15 秒或累積 200 筆)。寫不進去就丟掉並記一次錯誤
+    —— 這是分析用的旁支紀錄,絕不可以卡住偵測迴圈。"""
+    import time as _t
+    import sqlite3 as _sq
+    now = _t.time()
+    if not _sl_buf or (not force and len(_sl_buf) < 200 and now - _sl_last_flush[0] < 15):
+        return
+    rows, _sl_buf[:] = list(_sl_buf), []
+    _sl_last_flush[0] = now
+    try:
+        c = _sq.connect(_SL_DB, timeout=2)
+        c.execute("""CREATE TABLE IF NOT EXISTS flow_line_shadow (
+            ts REAL, cam INTEGER, zone TEXT, k INTEGER, frac REAL, t_line REAL,
+            down_sign INTEGER, track INTEGER, label TEXT,
+            x1 INTEGER, y1 INTEGER, x2 INTEGER, y2 INTEGER)""")
+        c.execute("CREATE INDEX IF NOT EXISTS ix_fls_ts ON flow_line_shadow(cam, ts)")
+        c.executemany("INSERT INTO flow_line_shadow VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+        c.commit()
+        c.close()
+    except Exception as exc:
+        print("[flow-shadow-lines] 寫入失敗,丟棄 %d 筆:%s" % (len(rows), exc), flush=True)
 
 
 def _get_unicode_font(size: int = 16):
@@ -3410,6 +3476,12 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                 _FLOW_COUNT_MODE = str(os.getenv("SIGNAL_FLOW_COUNT_MODE", "enter") or "enter").lower()
                 # 斷面去重:同一斷面 N 秒內、框重疊 IoU 超過門檻 = 同一台車(對 track 重新編號免疫)
                 _FLOW_DEDUP_SEC = float(os.getenv("SIGNAL_FLOW_DEDUP_SEC", "1.5") or 1.5)
+                # 🛑 2026-09-18 依車種去重:大車(大貨車/大客車/聯結車)慢、長、常停在斷面上,
+                #    偵測一中斷就被當成新車再算 —— 線圈對照大車多算 1.4~2.8 倍;離線把
+                #    框重疊的大車事件在 20~30 秒內合併,就接近線圈。小車不能這樣做:排隊時
+                #    前後兩台小車幾秒內就會經過同一點,合併會把真的車吃掉(10 秒窗就 −63%)。
+                #    所以只對大車拉長。0 = 與一般相同(預設,待影子計數線資料定出窗口再開)。
+                _FLOW_DEDUP_LARGE_SEC = float(os.getenv("SIGNAL_FLOW_DEDUP_LARGE_SEC", "0") or 0)
                 _FLOW_DEDUP_IOU = float(os.getenv("SIGNAL_FLOW_DEDUP_IOU", "0.4") or 0.4)
                 # 🛑 2026-09-12:長框的重複計數防治。
                 #    車輛在長條形 ROI 裡走很久,追蹤 ID 中途斷掉再接上,就會被當成
@@ -3510,6 +3582,40 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             _prev = _track_state.get("_flow_prev")
                             if _cur is None:
                                 continue
+                            # 影子計數線(見 SHADOW_LINE_FRACS 的說明)。
+                            # 🛑 一定要放在「這一趟已經算過」的提早跳出**之前** ——
+                            #    否則正式線算過的車就看不到了,下游的影子線永遠少算。
+                            if _shadow_lines_on(camera_id):
+                                try:
+                                    _slax = _zone_axis(pick_zone)
+                                    _slpts = pick_zone.get("points") or []
+                                    if _slax and len(_slpts) >= 3:
+                                        _slm = cv2.moments(np.array(_slpts, dtype=np.float32).reshape(-1, 1, 2))
+                                        if _slm["m00"]:
+                                            _slgx, _slgy = _slm["m10"] / _slm["m00"], _slm["m01"] / _slm["m00"]
+                                            _slt = [(px - _slgx) * _slax[0] + (py - _slgy) * _slax[1] for px, py in _slpts]
+                                            _slcur = (_cur[0] - _slgx) * _slax[0] + (_cur[1] - _slgy) * _slax[1]
+                                            _slst = _zone_step.get(id(pick_zone)) or [0.0, 0]
+                                            _slstep = (_slst[0] / _slst[1]) if _slst[1] >= 30 else 40.0
+                                            _slband = max(25.0, min(150.0, 2.0 * _slstep))
+                                            _slacc = _zone_dir_acc.get(id(pick_zone)) or [0.0, 0.0]
+                                            _sldown = 1 if (_slacc[0] * _slax[0] + _slacc[1] * _slax[1]) >= 0 else -1
+                                            _sldone = _track_state.setdefault("_sl_done", set())
+                                            _slbb = v.get("bbox", {}) or {}
+                                            for _slk, _slf, _sltl in shadow_line_positions(_slt):
+                                                if abs(_slcur - _sltl) > _slband:
+                                                    continue
+                                                if (_zone_log_key, _slk) in _sldone:
+                                                    continue
+                                                _sldone.add((_zone_log_key, _slk))
+                                                _sl_buf.append((now_ts, int(camera_id), _zone_log_key, _slk, _slf,
+                                                                round(_sltl, 1), _sldown, int(_track_id),
+                                                                str(v.get("class_name") or ""),
+                                                                int(_slbb.get("x1", 0)), int(_slbb.get("y1", 0)),
+                                                                int(_slbb.get("x2", 0)), int(_slbb.get("y2", 0))))
+                                            _sl_flush()
+                                except Exception as _slexc:
+                                    print("[flow-shadow-lines] cam%s: %s" % (camera_id, _slexc), flush=True)
                             if _zone_log_key in _inz:
                                 continue          # 這一趟已經算過
                             _zone_note_motion(pick_zone, _prev, _cur)
@@ -3571,10 +3677,16 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                             if _FLOW_DEDUP_SEC > 0:
                                 _b0 = v.get("bbox", {}) or {}
                                 _recent = _zone_recent.setdefault(id(pick_zone), [])
-                                _recent[:] = [x for x in _recent if now_ts - x[0] <= _FLOW_DEDUP_SEC]
+                                _is_large = str(v.get("class_name") or "") in _LARGE_LABELS
+                                _recent[:] = [x for x in _recent
+                                              if now_ts - x[0] <= _dedup_window(x, _FLOW_DEDUP_SEC, _FLOW_DEDUP_LARGE_SEC)]
                                 _dup = False
                                 for _ent in _recent:
                                     _bx = _ent[1]
+                                    # 大車只和大車比:長窗口不可以拿來擋同一位置的小車
+                                    if (len(_ent) > 3 and _ent[3]) and not _is_large:
+                                        if now_ts - _ent[0] > _FLOW_DEDUP_SEC:
+                                            continue
                                     if bbox_iou(_b0, _bx) >= _FLOW_DEDUP_IOU:
                                         _dup = True
                                         break
@@ -3587,7 +3699,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                         pass
                                     _inz.add(_zone_log_key)   # 這一趟就算過了,別再重複
                                     continue
-                                _recent.append((now_ts, dict(_b0), now_ts))
+                                _recent.append((now_ts, dict(_b0), now_ts, _is_large))
                             _inz.add(_zone_log_key)
                         else:
                             _inz = _track_state.setdefault("_in_zone", set())
