@@ -10752,8 +10752,8 @@
                                     / 大 <span :class="sigDiffCls((sigLoop.summary||{}).large_pct)">{{ sigPctTxt((sigLoop.summary||{}).large_pct) }}</span>)
                                 </div>
                                 <el-table :data="sigLoopRows" size="small" max-height="380" style="width:100%">
-                                    <el-table-column label="時間" width="120">
-                                        <template #default="sc"><span style="font-size:12px;font-family:monospace">{{ (sc.row.t||'').slice(5) }}</span></template>
+                                    <el-table-column label="時間" width="158">
+                                        <template #default="sc"><span style="font-size:12px;font-family:monospace">{{ (sc.row.t||'').slice(5).replace('-', '/') }}</span></template>
                                     </el-table-column>
                                     <el-table-column label="線圈">
                                         <el-table-column prop="vd_small" label="小" align="right"></el-table-column>
@@ -10798,13 +10798,20 @@
                         <div class="card-body" v-show="sigRawOpen">
                             <el-table :data="sigWarFrames" size="small" max-height="380" style="width:100%" empty-text="尚無訊框。">
                                 <el-table-column label="時間" width="158">
-                                    <template #default="sc"><span style="font-size:12px;font-family:monospace">{{ sigFrameTimeFull(sc.row.ts) }}</span></template>
+                                    <template #default="sc">
+                                        <el-tooltip :content="sigFrameTimeFull(sc.row.ts)" placement="top">
+                                            <span style="font-size:12px;font-family:monospace">{{ sigFrameTime(sc.row.ts) }}</span>
+                                        </el-tooltip>
+                                    </template>
                                 </el-table-column>
                                 <el-table-column label="SEQ" width="60">
                                     <template #default="sc">{{ sc.row.seq==null?'—':sc.row.seq }}</template>
                                 </el-table-column>
-                                <el-table-column label="內容" width="260">
-                                    <template #default="sc"><span class="wr-log-d"><i :class="sigWarFrameDesc(sc.row).cls">{{ sigWarFrameDesc(sc.row).tag }}</i> {{ sigWarFrameDesc(sc.row).text }}</span></template>
+                                <el-table-column label="內容" width="340">
+                                    <template #default="sc">
+                                        <el-tag size="small" :type="sigWarFrameDesc(sc.row).cls==='ok' ? 'success' : (sigWarFrameDesc(sc.row).cls==='clr' ? 'warning' : 'info')">{{ sigWarFrameDesc(sc.row).tag }}</el-tag>
+                                        <span style="font-size:12px;margin-left:6px">{{ sigWarFrameDesc(sc.row).text }}</span>
+                                    </template>
                                 </el-table-column>
                                 <el-table-column prop="raw" label="RAW HEX"></el-table-column>
                             </el-table>
