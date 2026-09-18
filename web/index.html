@@ -10744,13 +10744,6 @@
                                     <span v-if="(sigLoop.events||{}).n" :title="(sigLoop.events||{}).note">· 線圈判逆向 {{ (sigLoop.events||{}).n }} 筆(大車 {{ (sigLoop.events||{}).large }},排隊壓線圈誤判)</span>
                                     · {{ sigLoopRangeText }}
                                 </div>
-                                <div class="vd-sum">
-                                    合計 線圈 <b>{{ sigNum0((sigLoop.summary||{}).vd_total) }}</b>(小 {{ sigNum0((sigLoop.summary||{}).vd_small) }} / 大 {{ sigNum0((sigLoop.summary||{}).vd_large) }})
-                                    · 攝影機 <b>{{ sigNum0((sigLoop.summary||{}).cam_total) }}</b>(小 {{ sigNum0((sigLoop.summary||{}).cam_small) }} / 大 {{ sigNum0((sigLoop.summary||{}).cam_large) }})
-                                    · 差 <b :class="sigDiffCls((sigLoop.summary||{}).total_pct)">{{ sigPctTxt((sigLoop.summary||{}).total_pct) }}</b>
-                                    (小 <span :class="sigDiffCls((sigLoop.summary||{}).small_pct)">{{ sigPctTxt((sigLoop.summary||{}).small_pct) }}</span>
-                                    / 大 <span :class="sigDiffCls((sigLoop.summary||{}).large_pct)">{{ sigPctTxt((sigLoop.summary||{}).large_pct) }}</span>)
-                                </div>
                                 <el-table :data="sigLoopRows" size="small" max-height="380" style="width:100%">
                                     <el-table-column label="時間" width="158">
                                         <template #default="sc"><span style="font-size:12px;font-family:monospace">{{ (sc.row.t||'').slice(5).replace('-', '/') }}</span></template>
