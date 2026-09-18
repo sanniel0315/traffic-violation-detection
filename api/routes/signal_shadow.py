@@ -1064,6 +1064,97 @@ _EXT_MODE = str(os.getenv("SIGNAL_EXTEND_GREEN", "0") or "0").strip().lower()
 EXTEND_GREEN = _EXT_MODE not in ("0", "", "false")
 EXTEND_SHADOW = _EXT_MODE == "shadow"
 EXTEND_UNTIL = os.getenv("SIGNAL_EXTEND_UNTIL", "") or ""
+# 🛑 2026-09-18 P1 試行要「只在某個時段下發」,原本只有截止時間沒有開始時間。
+#    時段外一律退回影子模式(照算、照記錄、不送),紀錄才不會在時段外中斷。
+EXTEND_SINCE = os.getenv("SIGNAL_EXTEND_SINCE", "") or ""
+
+# ── 延長下發的自動停止(P1 停止條件)───────────────────────────────
+# 🛑 停止條件必須由程式自己判:試行在 16:30-19:00,不能假設那時有人盯著。
+#    任一條件成立 → 本次服務期間退回影子模式(重啟才會解除),並寫系統日誌。
+EXT_TRIP_OPP_RATIO = float(os.getenv("SIGNAL_EXTEND_TRIP_OPP_RATIO", "0.8") or 0.8)
+EXT_TRIP_NAK_MAX = int(os.getenv("SIGNAL_EXTEND_TRIP_NAK_MAX", "3") or 3)
+EXT_TRIP_MISMATCH_SEC = float(os.getenv("SIGNAL_EXTEND_TRIP_MISMATCH_SEC", "2") or 2)
+EXT_TRIP_MISMATCH_MAX = int(os.getenv("SIGNAL_EXTEND_TRIP_MISMATCH_MAX", "2") or 2)
+_ext_trip: dict = {"tripped": False, "at": None, "why": "", "naks": 0, "sends": 0,
+                   "mismatch": 0, "pending": None}
+
+
+def _iso_ts(v: str):
+    try:
+        return datetime.fromisoformat(v).timestamp()
+    except Exception:
+        return None
+
+
+def extend_live_now(now: float) -> tuple:
+    """這一刻延長是「真的下發」還是只算不送。回 (是否下發, 原因)。
+
+    三層:設定成 1 → 在 SINCE~UNTIL 時段內 → 沒有被自動停止。
+    任何一層不成立都退回影子(照算照記),不是關掉。
+    """
+    if not EXTEND_GREEN or EXTEND_SHADOW:
+        return False, "影子模式"
+    a, b = _iso_ts(EXTEND_SINCE) if EXTEND_SINCE else None, _iso_ts(EXTEND_UNTIL) if EXTEND_UNTIL else None
+    if (EXTEND_SINCE and a is None) or (EXTEND_UNTIL and b is None):
+        return False, "SIGNAL_EXTEND_SINCE/UNTIL 格式錯"
+    if a is not None and now < a:
+        return False, "試行時段尚未開始"
+    if b is not None and now >= b:
+        return False, "試行時段已結束"
+    if _ext_trip["tripped"]:
+        return False, "已自動停止:" + _ext_trip["why"]
+    return True, ""
+
+
+def _ext_trip_now(why: str) -> None:
+    if _ext_trip["tripped"]:
+        return
+    _ext_trip.update({"tripped": True, "at": time.time(), "why": why})
+    try:
+        add_log("warning", "延長綠燈自動停止(退回影子模式):" + why, "signal")
+    except Exception:
+        pass
+    print("[signal-shadow][延長][自動停止] " + why, flush=True)
+
+
+def _ext_watch(g_no: int, live: dict, q_map: dict) -> None:
+    """試行期間每一輪檢查停止條件。只在延長真的在下發時才有意義。"""
+    live_on, _ = extend_live_now(time.time())
+    if not live_on:
+        return
+    from detection.signal_timing_lookup import storage_limit_m
+    # ① 任一側排隊逼近儲車上限(下匝道 480 m / 上匝道 168 m)
+    for ph in (1, 2):
+        cap = storage_limit_m(ph) or 0
+        q = q_map.get(ph)
+        if cap and isinstance(q, (int, float)) and q >= cap * EXT_TRIP_OPP_RATIO:
+            _ext_trip_now("%s 排隊 %.0f m ≥ 儲車 %d m 的 %.0f%%" % (
+                _ramp_name(ph), q, cap, EXT_TRIP_OPP_RATIO * 100))
+            return
+    # ② 控制器有沒有照 T 結束:送出後同一段主綠內,剩餘應 ≈ T − 已亮
+    pend = _ext_trip.get("pending")
+    if pend and live.get("step_id") == FIRST_GREEN_STEP and g_no == pend["phase"]:
+        rem, el = live.get("step_remain_sec"), live.get("phase_elapsed_sec")
+        if isinstance(rem, (int, float)) and isinstance(el, (int, float)) and time.time() - pend["ts"] >= 2:
+            exp = pend["T"] - el
+            if abs(rem - exp) > EXT_TRIP_MISMATCH_SEC:
+                _ext_trip["mismatch"] += 1
+                if _ext_trip["mismatch"] >= EXT_TRIP_MISMATCH_MAX:
+                    _ext_trip_now("控制器沒有照延長後的總長結束(剩 %s 秒,應為 %.0f 秒)" % (rem, exp))
+                    return
+            _ext_trip["pending"] = None
+    elif pend and g_no != pend["phase"]:
+        _ext_trip["pending"] = None
+    # ③ 延長命令被拒:送出後等控制器回覆,只判一次
+    ack_ts = _ext_trip.get("ack_check")
+    if ack_ts:
+        ok = _ack_of_last_send(since_ts=ack_ts)
+        if ok is not None:
+            _ext_trip["ack_check"] = None
+            if ok is False:
+                _ext_trip["naks"] += 1
+    if _ext_trip["naks"] >= EXT_TRIP_NAK_MAX:
+        _ext_trip_now("延長命令被控制器拒絕 %d 次" % _ext_trip["naks"])
 EXTEND_TRIGGER_REMAIN = int(os.getenv("SIGNAL_EXTEND_TRIGGER_REMAIN", "6") or 6)   # 剩 ≤ 這個才評估
 EXTEND_MIN_REMAIN = int(os.getenv("SIGNAL_EXTEND_MIN_REMAIN", "4") or 4)           # 剩 < 這個不送(黃燈保護)
 EXTEND_MIN_GAP_SEC = float(os.getenv("SIGNAL_EXTEND_MIN_GAP_SEC", "5") or 5)       # 與我方上一則命令的間隔
@@ -1129,13 +1220,8 @@ def _extend_decision(d, g_no: int, live: dict, now: float) -> tuple:
     from detection.signal_timing_lookup import phase_role, plan_params, current_base_plan
     if not EXTEND_GREEN:
         return "延長未啟用", None, {}
-    if EXTEND_UNTIL:
-        try:
-            if now >= datetime.fromisoformat(EXTEND_UNTIL).timestamp():
-                return "延長驗證時段已結束", None, {}
-        except ValueError:
-            return "SIGNAL_EXTEND_UNTIL 格式錯", None, {}
-    if not _act["enabled"] and not EXTEND_SHADOW:
+    _live_on, _ = extend_live_now(now)
+    if not _act["enabled"] and _live_on:
         return "演算法下發未啟用", None, {}
     if d.action != "KEEP" or getattr(d, "decided_by", "") != "cost":
         return "不是成本比較判續綠", None, {}
@@ -1150,7 +1236,7 @@ def _extend_decision(d, g_no: int, live: dict, now: float) -> tuple:
     if rem < EXTEND_MIN_REMAIN:
         return "剩太少不送(黃燈保護)", None, {}
     last = max(_act.get("last_ts") or 0, _act.get("ext_last_ts") or 0)
-    if not EXTEND_SHADOW and last and now - last < EXTEND_MIN_GAP_SEC:
+    if _live_on and last and now - last < EXTEND_MIN_GAP_SEC:
         return "距上一則命令不到 %.0f 秒" % EXTEND_MIN_GAP_SEC, None, {}
     r_no = 2 if g_no == 1 else 1
     rr = phase_role(r_no) or {}
@@ -1208,7 +1294,7 @@ def ab_firstgreen_side(now_ts: float | None = None) -> str:
     return "A" if slot % 2 == 0 else "B"
 
 
-def _ack_of_last_send() -> Optional[bool]:
+def _ack_of_last_send(since_ts: Optional[float] = None) -> Optional[bool]:
     """我方上一則 5F1C 有沒有被控制器接受。True 接受 / False 被拒 / None 還不知道。
 
     🛑 不能用 seq 配對。實測 0F80 的 seq 全是 1(控制器自己的計數),不是回我方
@@ -1223,7 +1309,8 @@ def _ack_of_last_send() -> Optional[bool]:
        實際上控制器一則都沒吃 —— 那正是條文說的「指令傳輸錯誤導致動態控制
        策略無法有效運作」。
     """
-    last = _act.get("last_ts") or 0
+    # since_ts:延長命令(algorithm-extend)自己的送出時刻;不給就看結束命令
+    last = since_ts or _act.get("last_ts") or 0
     if not last:
         return None
     now = time.time()
@@ -1566,9 +1653,12 @@ def _actuate(d, g_no: int, live: dict) -> None:
         # 延長綠燈:判續綠、綠燈這邊有車、步階1 快結束 → 把步階1 總長往後推
         why_ext, T, plan = _extend_decision(d, g_no, live, now)
         _act["ext_blocked"] = why_ext
+        _live_on, _live_why = extend_live_now(now)
+        _act["ext_live"] = _live_on
+        _act["ext_live_why"] = _live_why
         if plan:
-            _extend_shadow_record(g_no, live, plan, sent=bool(T is not None and not EXTEND_SHADOW))
-        if T is None or EXTEND_SHADOW:
+            _extend_shadow_record(g_no, live, plan, sent=bool(T is not None and _live_on))
+        if T is None or not _live_on:
             return stop("")
         try:
             tok = _daemon_post("/api/signal/control/prepare",
@@ -1579,6 +1669,10 @@ def _actuate(d, g_no: int, live: dict) -> None:
                 return stop("prepare 沒拿到 token")
             res = _daemon_post("/api/signal/control/send", {"token": token})
             sent = (res or {}).get("sent") or {}
+            # 登記這一則,讓 _ext_watch 驗證控制器有沒有照 T 結束、有沒有被拒
+            _ext_trip["pending"] = {"phase": g_no, "T": T, "ts": now}
+            _ext_trip["ack_check"] = now
+            _ext_trip["sends"] += 1
             _act.update({"ext_n": _act.get("ext_n", 0) + 1, "ext_last_ts": now,
                          "ext_last": "分相%d 步階1 總長延到 %d 秒(+%d,受「%s」限制)" % (
                              g_no, T, plan.get("delta") or 0, plan.get("binding") or "")})
@@ -1959,6 +2053,12 @@ def _loop():
             # 🛑 先下發再寫這一筆 log —— 反過來的話這一筆決策的執行結果
             #    會落到下一筆去,稽核時對不上。
             _last_meas.update({"q": dict(q_map), "ts": now})
+            # 延長試行的自動停止:放在下發之前,先確認還有沒有資格延
+            try:
+                _ext_watch(g_no, live, q_map)
+            except Exception as exc:
+                with _lock:
+                    _stats["ext_watch_error"] = "%s: %s" % (type(exc).__name__, exc)
             _actuate(d, g_no, live)
             with _lock:
                 _stats["decisions"] = _stats.get("decisions", 0) + 1
@@ -4225,6 +4325,71 @@ def rule_shadow_offramp(since: str = Query("", description="起(ISO);空=近 24 
                     "規則生效時要停下的車;效益 = 上匝道在等車數 × 省下秒數。反事實估計,僅供決定是否試行。"}
 
 
+@router.get("/extend", summary="延長綠燈:目前狀態(試行時段/自動停止)、逐筆紀錄與實際結果")
+def extend_status(minutes: int = Query(180, ge=5, le=1440),
+                  limit: int = Query(80, ge=1, le=500),
+                  _user=Depends(get_current_user)):
+    """延長綠燈的動態與紀錄(使用者 2026-09-18 P0-5)。
+
+    would:0 = 評估了但不延;1 = 想延但沒送(影子/時段外/自動停止);2 = 真的送出。
+    實際結果:送出的那一則,之後幾秒真的換相 —— 對照 T − 已亮 就知道控制器有沒有照走。
+    """
+    now = time.time()
+    cut = now - minutes * 60
+    live_on, live_why = extend_live_now(now)
+    try:
+        conn = _db()
+        rows = list(conn.execute(
+            "SELECT ts,epoch,green_phase,green_elapsed,would,reason,queue_green,queue_red "
+            "FROM signal_rule_shadow WHERE rule='extend' AND epoch>=? ORDER BY epoch DESC LIMIT ?",
+            (cut, limit)))
+        tot = dict(conn.execute(
+            "SELECT would,count(*) FROM signal_rule_shadow WHERE rule='extend' AND epoch>=? "
+            "GROUP BY would", (cut,)).fetchall())
+        sw = []
+        prev = None
+        for ts_s, ph in conn.execute(
+                "SELECT ts,green_phase FROM signal_shadow_log WHERE ts>=? ORDER BY ts",
+                (datetime.fromtimestamp(cut).isoformat(timespec="seconds"),)):
+            if prev is not None and ph != prev:
+                try:
+                    sw.append(datetime.fromisoformat(ts_s).timestamp())
+                except Exception:
+                    pass
+            prev = ph
+        conn.close()
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:160]}
+
+    items = []
+    for ts_s, ep, ph, el, would, reason, qg, qr in rows:
+        try:
+            j = json.loads(reason or "{}")
+        except Exception:
+            j = {}
+        nxt = next((x for x in sw if x >= ep), None)
+        items.append({
+            "ts": ts_s, "phase_no": ph, "ramp": _ramp_name(int(ph or 0)),
+            "green_elapsed_sec": el, "remain_sec": j.get("rem"),
+            "delta": j.get("delta"), "T": j.get("T"), "binding": j.get("binding"),
+            "why": j.get("why"),
+            "state": {0: "不延", 1: "想延(未送)", 2: "已送出"}.get(int(would or 0), "—"),
+            "queue_green_m": qg, "queue_red_m": qr,
+            "actual_switch_in_sec": (round(nxt - ep, 1) if nxt is not None else None),
+        })
+    return {
+        "available": True, "minutes": minutes,
+        "mode": ("停用" if not EXTEND_GREEN else ("影子" if EXTEND_SHADOW else "下發")),
+        "window": {"since": EXTEND_SINCE or None, "until": EXTEND_UNTIL or None},
+        "live_now": live_on, "live_why": live_why,
+        "trip": {k: _ext_trip.get(k) for k in ("tripped", "at", "why", "naks", "sends", "mismatch")},
+        "max_delta": EXTEND_MAX_DELTA,
+        "counts": {"evaluated": sum(tot.values()), "not_extend": tot.get(0, 0),
+                   "wanted_not_sent": tot.get(1, 0), "sent": tot.get(2, 0)},
+        "items": items,
+    }
+
+
 @router.get("/rolling", summary="滾動時程預測:目前預測、歷史紀錄與命中率(只算不下發)")
 def rolling_shadow(minutes: int = Query(60, ge=5, le=1440),
                    limit: int = Query(100, ge=1, le=1000),
@@ -5187,7 +5352,11 @@ def actuate_status(_user=Depends(get_current_user)):
         #    攤開,才看得出我方到底是「不想切」還是「想切但被擋」。
         "blocked_24h": _blocked_reason_counts(24),
         # 延長綠燈(規範 K(C)d):行程啟動以來的統計
-        "extend": {"enabled": EXTEND_GREEN, "until": EXTEND_UNTIL, "sent": _act.get("ext_n", 0),
+        "extend": {"enabled": EXTEND_GREEN, "since": EXTEND_SINCE, "until": EXTEND_UNTIL,
+                   "live_now": extend_live_now(time.time())[0],
+                   "live_why": extend_live_now(time.time())[1],
+                   "trip": {k: _ext_trip.get(k) for k in ("tripped", "at", "why", "naks", "sends", "mismatch")},
+                   "sent": _act.get("ext_n", 0),
                    "last": _act.get("ext_last", ""), "last_not_sent": _act.get("ext_blocked", "")},
         "last_error": _act["last_error"],
         "events": [dict(e) for e in reversed(ev)],

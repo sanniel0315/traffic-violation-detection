@@ -156,8 +156,15 @@ def test_end_command_blocked_right_after_extend(S, monkeypatch):
 
 
 def test_disabled_or_after_until(S, monkeypatch):
+    """🛑 2026-09-18 契約變更:試行時段外**照算照記、只是不送**。
+
+    舊版截止後 _extend_decision 直接回「結束」不再計算,時段外的影子紀錄就斷了。
+    現在「送不送」統一由 extend_live_now 判,_extend_decision 只管「該不該延、延幾秒」。
+    """
     import time
+    monkeypatch.setattr(S, "EXTEND_SHADOW", False)
     monkeypatch.setattr(S, "EXTEND_UNTIL", "2020-01-01T00:00:00")
-    assert "結束" in S._extend_decision(_D(), 1, _live(), time.time())[0]
+    on, why = S.extend_live_now(time.time())
+    assert on is False and "結束" in why, "截止後不可再下發"
     monkeypatch.setattr(S, "EXTEND_GREEN", False)
     assert S._extend_decision(_D(), 1, _live(), 1000.0)[1] is None

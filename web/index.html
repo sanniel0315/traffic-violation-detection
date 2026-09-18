@@ -8982,6 +8982,65 @@
                         <el-button size="small" plain :loading="sigStatLoading" @click="loadSigStats"><svg class="text-icon" style="margin-right:4px"><use href="#i-refresh"/></svg>立即重查</el-button>
                     </div>
 
+                    <!-- ══ 延長綠燈(P0-5)══
+                         🛑 使用者 2026-09-18 核准 P1 試行(晚尖峰限時)。這張卡要讓人一眼看出:
+                            現在是真的在下發,還是只算不送;若被自動停止,停的原因是什麼。
+                            逐筆紀錄的「實際幾秒後換相」對照 T − 已亮,就看得出控制器有沒有照走。 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span>延長綠燈（5F1C 延長主綠）</span>
+                            <el-button size="small" plain :loading="sigExtLoading" @click="loadSigExt">重查</el-button>
+                        </div>
+                        <div class="card-body">
+                            <div v-if="!sigExt.available" style="color:var(--gov-muted)">尚無延長紀錄。</div>
+                            <template v-else>
+                                <div class="st-kpis" style="margin-bottom:10px">
+                                    <div class="ds-kpi-card">
+                                        <div class="ds-kpi-label">現在</div>
+                                        <div class="ds-kpi-value ds-kpi-value--text"
+                                             :style="{color: sigExt.trip && sigExt.trip.tripped ? 'var(--gov-fault)' : (sigExt.live_now ? 'var(--gov-ok)' : 'var(--gov-muted)')}">
+                                            {{ sigExt.trip && sigExt.trip.tripped ? '已自動停止' : (sigExt.live_now ? '下發中' : '只算不送') }}
+                                        </div>
+                                        <div class="ds-kpi-hint">{{ sigExt.live_now ? ('單次最多 ' + sigExt.max_delta + ' 秒') : (sigExt.live_why || '') }}</div>
+                                    </div>
+                                    <div class="ds-kpi-card">
+                                        <div class="ds-kpi-label">試行時段</div>
+                                        <div class="ds-kpi-value ds-kpi-value--text">{{ sigExt.window && sigExt.window.since ? sigExt.window.since.slice(11,16) : '—' }} – {{ sigExt.window && sigExt.window.until ? sigExt.window.until.slice(11,16) : '—' }}</div>
+                                        <div class="ds-kpi-hint">時段外自動退回只算不送</div>
+                                    </div>
+                                    <div class="ds-kpi-card">
+                                        <div class="ds-kpi-label">近 {{ sigExt.minutes }} 分鐘</div>
+                                        <div class="ds-kpi-value">{{ sigExt.counts.sent }} <small style="font-size:12px;color:var(--gov-muted)">已送出</small></div>
+                                        <div class="ds-kpi-hint">想延未送 {{ sigExt.counts.wanted_not_sent }} · 評估 {{ sigExt.counts.evaluated }} 次</div>
+                                    </div>
+                                    <div class="ds-kpi-card">
+                                        <div class="ds-kpi-label">自動停止檢查</div>
+                                        <div class="ds-kpi-value ds-kpi-value--text">{{ sigExt.trip && sigExt.trip.tripped ? sigExt.trip.why : '正常' }}</div>
+                                        <div class="ds-kpi-hint">被拒 {{ (sigExt.trip||{}).naks || 0 }} · 未照命令走 {{ (sigExt.trip||{}).mismatch || 0 }} · 已送 {{ (sigExt.trip||{}).sends || 0 }}</div>
+                                    </div>
+                                </div>
+                                <div style="overflow-x:auto">
+                                    <table class="sc-table">
+                                        <thead><tr><th>時間</th><th>匝道（分相）</th><th>已亮/剩</th><th>狀態</th><th>延長</th><th>總長 T</th><th>卡在</th><th>實際幾秒後換相</th><th>排隊 綠/對向</th></tr></thead>
+                                        <tbody>
+                                            <tr v-for="(r,ri) in sigExtRows" :key="'ex'+ri">
+                                                <td>{{ (r.ts||'').slice(11,19) }}</td>
+                                                <td>{{ r.ramp }}（分相 {{ r.phase_no }}）</td>
+                                                <td class="sc-num">{{ r.green_elapsed_sec }} / {{ r.remain_sec }} s</td>
+                                                <td :style="{color: r.state==='已送出' ? 'var(--gov-ok)' : 'var(--gov-muted)', fontWeight: r.state==='已送出' ? 600 : 400}">{{ r.state }}</td>
+                                                <td class="sc-num">+{{ r.delta }} s</td>
+                                                <td class="sc-num">{{ r.T }} s</td>
+                                                <td>{{ r.binding }}</td>
+                                                <td class="sc-num">{{ r.actual_switch_in_sec==null ? '—' : (r.actual_switch_in_sec + ' s') }}</td>
+                                                <td class="sc-num">{{ sigWarNum(r.queue_green_m) }} / {{ sigWarNum(r.queue_red_m) }} m</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
                     <!-- ══ 滾動時程預測(只算不下發)══
                          🛑 使用者 2026-09-18:「預測的要有地方顯示動態跟紀錄」。
                             動態 = 目前這一刻的建議;紀錄 = 逐筆預測與它後來發生什麼。
@@ -25539,7 +25598,7 @@ const app=createApp({
             //    原本只呼叫 loadSigConsole(),等於載入一次就凍住。
             eval:   () => { loadSigFaults(); loadViz(); startVizTimer(); loadVizHourly();
                             loadSigStats(); startSigStatTimer(); loadSigRuns(); loadSigFg();
-                            loadSigRoll();
+                            loadSigRoll(); loadSigExt();
                             loadSigConsole(); startSigConsoleTimer(); startSigLiveTimer(); },
             // 🛑 統計報表已併入 eval(2026-09-08 使用者:「不要這樣設計,要以使用者
             //    角度」)—— 同一份調整紀錄出現在兩頁,第一個問題就是「我該看哪個」。
@@ -26127,6 +26186,22 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
         const sigStatLoading = ref(false);
         // 🛑 滾動時程預測(只算不下發)。使用者 2026-09-18:「預測的要有地方顯示動態跟紀錄」。
         //    live = 這一刻的建議;items = 逐筆紀錄與它後來發生什麼;accuracy = 與實際換相的一致率。
+        // 延長綠燈狀態與紀錄(P0-5)。
+        const sigExt = ref({available: false, items: [], counts: {}, trip: {}, window: {}});
+        const sigExtLoading = ref(false);
+        const loadSigExt = async () => {
+            sigExtLoading.value = true;
+            try {
+                const r = await fetch('/api/signal/shadow/extend?minutes=180&limit=300',
+                                      {credentials: 'include'});
+                if (r.ok) sigExt.value = await r.json();
+            } catch (e) { /* 維持上一次內容 */ }
+            sigExtLoading.value = false;
+        };
+        // 🛑 過濾放在 computed,不寫在 v-for 裡:模板指令內的 `=>` 會帶進 `>`,
+        //    專案規範明令避免(曾因模板內比較運算子整頁白屏)。
+        const sigExtRows = computed(() => (sigExt.value.items || [])
+            .filter((x) => x.state !== '不延').slice(0, 40));
         const sigRoll = ref({available: false, items: [], accuracy: {}, minutes: 60});
         const sigRollLoading = ref(false);
         const loadSigRoll = async () => {
@@ -29461,7 +29536,7 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
             load,loadCameras,loadViolations,loadPendingViolations,setReviewQuickRange,loadStats,loadVdReport,setStatsQuickRange,loadRepeatOffenders,setRepeatQuickRange,repeatKPIs,repeatTypesText,repeatRiskClass,exportRepeatCSV,openRepeatDetail,repeatDetailModal,repeatDetailPlate,repeatDetailItems,repeatDetailLoading,loadNVRStatus,loadNVRCameras,loadNVREvents,loadNVRPlayback,openNvrPlayback,selectNvrPlaybackCamera,selectNvrPlaybackRow,selectPrevNvrPlayback,selectNextNvrPlayback,toggleNvrPlaybackPlay,seekNvrPlaybackBy,seekNvrPlaybackTimeline,applyNvrPlaybackRate,onNvrPlaybackVideoLoaded,onNvrPlaybackVideoTimeUpdate,onNvrPlaybackVideoPlay,onNvrPlaybackVideoPause,captureNvrPlaybackFrame,clearNVRPlaybackFilters,setNVRPlaybackQuickRange,nvrCameraDisplayName,nvrEventCameraDisplayName,camRecordEnabled,camDetectEnabled,camSnapshotEnabled,switchNVRCameraFeature,toggleNvrMotionSnapshot,openNvrMotionRoiEditor,closeNvrMotionRoiEditor,refreshNvrMotionRoiFrame,initNvrMotionRoiCanvas,addNvrMotionRoiPoint,undoNvrMotionRoiPoint,clearNvrMotionRoi,saveNvrMotionRoi,clearNVRFilters,startRecordScheduleDrag,paintRecordSchedule,stopRecordScheduleDrag,setRecordScheduleAll,setRecordScheduleWeekdays,setRecordScheduleWeekend,setRecordScheduleClear,testNVRConnection,saveNVRSettings,syncCamerasToNVR,nvrSyncHistory,loadNvrSyncHistory,restartNVR,viewNVRCamera,viewNVREvent,deleteNVRCamera,showAddNVRCamera,addNVRCamera,showNVRCameraDialog,frigateCameraForm,playEventClip,onEventClipError,eventClipDialog,mqttStatus,mqttSettings,mqttNewSub,mqttSent,mqttRecv,mqttPublishForm,mqttLogAutoRefresh,mqttHostIp,loadMqttStatus,loadMqttMessages,saveMqttSettings,mqttAddSub,mqttManualPublish,clearMqttMessages,frigateRtspUrl,formatNVRTime,formatPlaybackDuration,formatPlaybackClock,loadLprStatus,loadLprHistory,resetLprHistoryFilters,handleLprFile,recognizeLpr,recognizeFromCamera,startLprStream,stopLprStream,startLprByCamera,stopLprByCamera,pollLprResults,openPreview,openRoiEditor,closePreview,refreshPreview,saveConfig,confirmRestartTrafficApi,saveZoneBinding,initRoiCanvas,drawRoi,zoneInoutLabel,showInoutEdgePicker,isInoutZone,
             sortedCameras,monitorLayout,monitorLayoutEditable,canEditMonitorLayout,monitorDragIndex,monitorDragOverIndex,
             toggleMonitorLayoutLock,onMonitorDragStart,onMonitorDragOver,onMonitorDragLeave,onMonitorDrop,onMonitorDragEnd,
-            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigConnDirty,sigConnTouch,sigConnReset,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPhaseMeta,sigRoll,sigRollLoading,loadSigRoll,sigCamPhase,sigVdLanes,sigVdTypes,sigBlockedTotal,sigBlockedTop,sigRuns,sigRunsLoading,sigRunRamp,loadSigRuns,sigFg,sigFgLoading,sigFgRows,sigFgVerdicts,loadSigFg,sigPhDesc,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwCenterText,sigHwSetMode,sigHwRestore,SIG_HW_BIT_NAMES,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
+            addRoiPoint,undoRoiPoint,clearRoi,saveRoi,deleteZone,resolveCameraStreamMode,isNxProxyCamera,ensureBandwidthProbe,lowBandwidth,bandwidthKBps,sigStatus,sigCoverage,sigCovFilter,sigCovQuery,sigCovHideOptional,sigCovCapturable,sigCovRows,sigCovSummary,sigCovRowClass,sigFrames,sigAuto,sigPhase,sigLampClass,sigHex,sigIntersections,xnPoleStyle,xnPoleHoriz,xnLampOn,xnRemainLive,loadSignal,loadSignalCoverage,loadSignalFrames,startSignalTimer,sigConn,sigConnTesting,sigConnSaving,sigConnTestResult,loadSigConn,sigConnTest,sigConnSave,sigConnDirty,sigConnTouch,sigConnReset,sigCenterRelay,sigCenterConnected,sigSetCenterRelay,sigSafety,sigSafetyEvents,sigSafetyPush,sigFmtTs,loadSigSafety,sigSetSafetyPush,sigCtl,sigCmds,sigCmdSel,sigCmdVals,sigCmdCur,sigCtlPreview,sigCtlBusy,sigCtlSchemaOk,sigCtlHex,sigQryLog,loadSigControl,sigSelectCmd,sigPrepare,sigSend,sigFieldHelp,sigDir,sigKind,sigSrcDir,sigFrameTime,sigFrameTimeFull,sigFrameSortTs,sigFrameFSrc,sigFrameFCode,sigFrameFCks,sigFrameTotal,sigFrameFrom,sigFrameTo,sigFrameClearRange,sigFrameMatched,sigFrameHasRange,sigFrameDecodeCache,sigFrameDecode,sigFrameKey,sigFrameExpanded,sigOnFrameExpand,sigDecodeValue,sigIntOpts,sigRepeatN,sigRepeatModel,sigRepeatOpts,sigRepeatLabel,sigFillFromQuery,sigCmdKind,sigOptOn,sigRepeatObj,sigCmdCount,sigCmdGroups,sigQryHistory,sigQryHistFilter,sigQryExpand,loadQueryHistory,sigPlans,sigPhaseMeta,sigRoll,sigRollLoading,loadSigRoll,sigExt,sigExtLoading,loadSigExt,sigExtRows,sigCamPhase,sigVdLanes,sigVdTypes,sigBlockedTotal,sigBlockedTop,sigRuns,sigRunsLoading,sigRunRamp,loadSigRuns,sigFg,sigFgLoading,sigFgRows,sigFgVerdicts,loadSigFg,sigPhDesc,sigPlanView,isPlanOpen,togglePlan,toggleAllPlans,sigPlansAllOpen,sigRunningPlanId,sigCell,loadTimingPlans,sigSetBaseline,sigProbing,sigSelfProbe,sigHwBits,sigHwHex,sigHwCenterText,sigHwSetMode,sigHwRestore,SIG_HW_BIT_NAMES,sigHwSendTest,sigHwLoadCurrent,npForm,npResult,npProbing,npFrameUrl,npLogging,npLoginMsg,npLoginOk,npTapping,npTapResult,npProbe,npOpenFrame,npReloadFrame,npTap,npDiscovering,npDiscovered,npDiscover,getMonitorStreamUrl,getMonitorMediaKind,getMonitorMediaUrl,getGo2rtcWsUrl,getMonitorWsUrl,gridWsUrl,hlsUrl,hasGo2rtcAnnotated,hasGo2rtcLite,hasGo2rtcLofi,remoteSaver,toggleRemoteSaver,overlaySvgStyle,ovlPoly,ovlBox,overlayZonesFor,showSvgRoi,overlayDetsFor,overlayDetLabel,previewUsesVideo,applyMonitorModeToAll,toggleCameraStreamMode,handleMonitorStreamLoad,handleMonitorStreamError,autoCalibrateCamera,speedCalibReport,loadSpeedCalibReport,applySuggestedCoeff,reloadMonitorStreams,openMonitorZoom,refreshMonitorZoom,hasPtz,ptzSpeed,ptzPanelOpen,ptzPanelHoriz,ptzPanelPos,ptzOverlayStyle,ptzToggleHoriz,ptzDragStart,ptzLockMode,ptzToggleLockMode,ptzStageClick,ptzSetFilter,ptzStopP,ptzStopT,ptzStopZ,ptzStopDelay,ptzStopPreset,ptzStopWinState,ptzStopWinUseCurrent,ptzStopWinSave,ptzPresetNo,ptzPos,ptzTrackBusy,ptzHold,ptzRelease,ptzFocus,ptzHome,ptzGotoPreset,ptzSetPreset,ptzObjSize,ptzSetObjSize,ptzTracking,ptzQuery,
             showDetail,editViolationField,violationEditDialog,confirmEditViolationField,review,newCamera,editCamera,saveCamera,loadNxCameraDevices,loadCameraServerFiles,importCameraServerFile,testCamera,handleCameraSourceFile,uploadCameraSourceFile,testCameraForm,toggleCameraEnabled,deleteCamera,isCameraListVideo,getCameraListMediaUrl,handleThumbLoad,handleThumbError,startDetection,stopDetection,startCongestion,stopCongestion,loadCongestionStatus,loadCongestionParams,saveCongestionParams,setLogsQuickRange,loadSystemLogs,clearSystemLogs,
             signalTab,sigTabs,switchSigTab,sigFault,sigDeg,sigAdj,sigAdjAck,sigAdjQ,sigAdjTime,sigAdjMatch,sigAdjMatchTip,sigFaultLoading,loadSigFaults,loadSigAdjust,sigAdjFCode,sigAdjFAck,sigAdjFBy,sigAdjWithQuery,sigAdjLoading,sigAdjRange,SIG_ADJ_SHORTCUTS,sigAdjOffset,sigAdjSearch,sigAdjGo,sigAdjPages,sigAdjPageNo,sigAdjHasNext,sigAdjExport,sigAdjExportPdf,sigFaultLevel,sigFaultKindName,sigDegDur,sigDegDurTip,sigDegText,sigDegHas,SIG_TP_PURPOSES,sigTp,sigTpLabels,sigTpLoading,sigTpBusy,sigTpRealOnly,sigTpEdit,sigTpRows,sigTpNow,sigTpAgeText,sigTpAgeType,loadSigTp,sigTpRun,sigTpEditOpen,sigTpSaveLabel,sigDetailOpen,openSigHub,sigAcc,sigAccIssuesOnly,sigAccCount,sigAccPct,sigAccStateText,sigAccStateType,sigAccGroups,sigAccItems,sigAccGroupType,sigAccGroupText,loadSigAcceptance,sigCfg,sigCfgSections,sigCfgSectionsOrdered,sigCfgOrder,sigCfgDragKey,sigCfgDragStart,sigCfgDrop,sigCfgResetOrder,sigCfgReceived,sigCfgAge,sigCfgSecType,sigCfgSecText,sigCfgBusy,sigCfgRefreshOne,sigCfgAutoOn,sigCfgAutoHours,sigCfgAutoBusy,sigCfgAutoText,sigCfgSetAuto,sigCfgRunAuto,sigCfgVal,sigCfgHasFields,loadSigConfig,sigLiveOn,sigLiveErr,sigLiveSrc,onWarCamLoad,sigCamFullName,warCamWs,sigVd,sigWarCols,sigWarFrames,sigRawOpen,sigWarNum,sigWarPct,sigLvRank,sigPctW,sigMeterCls,sigQueueW,sigWarHot,sigLiveXn0,sigLiveRemainText,sigLiveRemainCls,sigWarMapNote,sigWarMapCams,sigHeadNote,sigCtlWay,sigWhoCtl,sigLedCtl,sigDyn,sigDl,sigDynOn,sigDlPolicy,sigDlText,sigDynBusy,sigSetDyn,sigSetPolicy,sigAbOn,sigAbMin,sigAbBusy,sigAbText,sigAbSet,sigRebootBusy,sigRemoteReboot,sigAlgoRunning,sigTime,sigTimeRows,sigTimeBusy,sigTimeAutoOn,sigTimeAuto,loadSigTime,loadSigTimeHistory,sigTimeDiffText,sigTimeDriftCls,sigTimeDriftType,sigTimeDriftText,sigTimeLastText,sigTimeLastSub,sigSetTimeAuto,sigTimeSyncNow,sigCs,sigCsBits,sigCsBitsShown,sigCsBusy,sigCsValue,sigCsDirty,sigCsPhase,sigCsSame,loadSigStrategy,sigResetStrategy,sigSaveStrategy,sigAct,sigActOn,sigActBusy,sigActText,sigSetAct,startSigDynTimer,sigWarExportUrl,sigWarFrameDesc,vzLive,vzLoading,vzData,vzPaired,vzDay,vzHourly,vzHourlyLoading,vzHourlyDays,vzHourlyCapped,vzLowAgree,vzOldParam,loadVizHourly,vzCursor,vzWrapEl,vzW,vzH,vzLanes,vzNum,loadViz,vzRangeText,vzBands,vzActualX,vzOurs,vzQ1Path,vzQ2Path,vzMarginPath,vzQ1Area,vzQ2Area,vzMarginArea,vzGrid,vzMarginZero,vzGaps,vzTicks,vzHover,vzTipStyle,sigStrategyFlags,sigStrategyHex,sigStrategyNote,sigStats,sigStatMins,sigStatOk,sigStatQuicks,sigStatRange,sigStatFrom,sigStatTo,sigStatLive,sigStatLoading,sigStatFixed,sigStatCustomReady,sigStatRangeHint,sigStatPick,sigStatTrendAxis,sigStatTrendBars,sigStatTrendLines,sigStatBucketText,sigGreenExport,sigStatNum,sigStatForcedPct,sigStatExit,sigStatExitWarn,sigStatBarH,sigStatYTicks,sigStatRefLines,loadSigStats,sigPhaseBar,sigPlan,sigBalW,sigOccW,sigPlanSides,sigPlanGates,sigFc,sigCtlModeText,sigCtlModeNote,sigPlanTiming,sigCtlGreenRamp,sigCtlPlanId,sigStepCells,sigCycleDash,sigCycleText,sigMarginStyle,sigGateName,sigKeepW,spec,specLoading,loadSpec,specExport,specNum,specOpMode,specActText,specDegLevel,specDegReason,specEngine,specPerf,specCells,specPerfCells,sigFmtNum,sigFmtPct,sigRoadmap,loadSigConsole,startSigConsoleTimer,sigShadowHours,sigHourPct,sigHourStyle,sigShadow,sigShadowRecent,sigShadowMins,sigShadowPct,sigShadowRateStyle,sigShadowRowType,sigShadowRowText,loadSigShadow,formatTime,formatTimeHHMM,getTagType,getStatusType,getStatusText,getCongestionLevelType,getCongestionLevelClass,resolveCongestionLaneRows,xnBit,xnPedFlash,xnStepSpecial,formatQueueLengthCell,formatQueueDurationCell,hwStatus,hwAutoRefresh,nxSettings,nxSettingsSaving,nxSettingsModeText,nxSettingsModeType,nxViewerKey,nxRtspReady,nxRtspPreview,cameraAnalysisSourcePreview,loadNxSettings,saveNxSettings,deviceIdentity,ntpSettings,ntpServersText,formatNtpLastResult,ntpTechnicalNote,loadHwStatus,loadNtpSettings,saveNtpSettings,syncNtpNow,ntpSyncHistory,loadNtpSyncHistory,
             ntpQueryMode,ntpFilter,queryNtpSyncHistory,resetNtpFilter,exportNtpSyncHistory,
