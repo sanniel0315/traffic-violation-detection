@@ -1373,6 +1373,64 @@ def _assign_tracks(dets: list, tracks: dict, max_dist: float, now_ts: float,
     return out
 
 
+# ── 去重框跟著車走(2026-09-18,線圈揭露的大車重複計數)──────────────────────
+# 🛑 WN-1 15:17~15:18 一分鐘記了 6 筆大貨車,線圈同一分鐘大型只有 2 輛:一台聯結車
+#    停在斷面窄帶內,框隨車身晃動、軌跡斷掉換新編號,每個新片段都再算一次。
+#    原本的去重只看「1.5 秒內、同一位置的框」—— 片段間隔 3~8 秒就擋不住。
+#    不能單純把時間窗拉長:排隊時前後兩台車會在幾秒內經過同一位置,會被誤判成同一台。
+# 修法:已計數的車,去重框每一幀更新到它**目前**的位置(與上一幀框重疊最大的偵測),
+#       車還在就一直有效;車開走,框跟著走,後車進到帶內不會和它重疊 → 照常計數。
+#       跟隨上限 _FOLLOW_MAX_SEC 秒,避免前車消失後框黏到後車身上擋住太久。
+# 開關:SIGNAL_FLOW_DEDUP_FOLLOW = ""(關)/"all"/"4,5"(相機 id)。
+_DEDUP_FOLLOW_RAW = os.getenv("SIGNAL_FLOW_DEDUP_FOLLOW", "").strip()
+_FOLLOW_IOU = float(os.getenv("SIGNAL_FLOW_DEDUP_FOLLOW_IOU", "0.5") or 0.5)
+_FOLLOW_MAX_SEC = float(os.getenv("SIGNAL_FLOW_DEDUP_FOLLOW_MAX_SEC", "20") or 20)
+
+
+def _dedup_follow_on(camera_id) -> bool:
+    if not _DEDUP_FOLLOW_RAW:
+        return False
+    if _DEDUP_FOLLOW_RAW.lower() == "all":
+        return True
+    try:
+        return int(camera_id) in {int(x) for x in _DEDUP_FOLLOW_RAW.split(",") if x.strip()}
+    except (TypeError, ValueError):
+        return False
+
+
+def _follow_recent(recent: list, boxes_now: list, now_ts: float,
+                   follow_iou: float = None, max_sec: float = None) -> list:
+    """把已計數的去重框更新到該車目前的位置。recent = [(最後看到, bbox, 計數時刻), ...]
+
+    每一筆找目前偵測框中重疊最大者;≥ follow_iou 就跟過去並刷新「最後看到」。
+    被跟隨超過 max_sec 秒的不再刷新(交給原本的過期規則收掉)。
+    一個偵測框只能被一筆跟走 —— 兩台已計數的車不可以共用同一個框。
+    """
+    follow_iou = _FOLLOW_IOU if follow_iou is None else follow_iou
+    max_sec = _FOLLOW_MAX_SEC if max_sec is None else max_sec
+    used = set()
+    out = []
+    for ent in recent:
+        t_seen, box = ent[0], ent[1]
+        t_count = ent[2] if len(ent) > 2 else ent[0]
+        if now_ts - t_count > max_sec:
+            out.append((t_seen, box, t_count))
+            continue
+        best_i, best = -1, 0.0
+        for i, b in enumerate(boxes_now):
+            if i in used:
+                continue
+            v = bbox_iou(box, b)
+            if v > best:
+                best_i, best = i, v
+        if best_i >= 0 and best >= follow_iou:
+            used.add(best_i)
+            out.append((now_ts, dict(boxes_now[best_i]), t_count))
+        else:
+            out.append((t_seen, box, t_count))
+    return out
+
+
 def _get_unicode_font(size: int = 16):
     cached = _unicode_font_cache.get(size)
     if cached is not None:
@@ -3392,6 +3450,11 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                               f"{_z.get('direction')!r},已視為 INOUT", flush=True)
                         _z["direction"] = "INOUT"
                 _inout_zones = [z for z in det_zones if _normalize_event_direction(z.get("direction")) == "INOUT"]
+                # 去重框跟著車走(見 _follow_recent):每一幀先把已計數的框移到車目前的位置
+                if _FLOW_DEDUP_SEC > 0 and _zone_recent and _dedup_follow_on(camera_id):
+                    _boxes_now = [(v.get("bbox") or {}) for v in vehicles]
+                    for _zid in list(_zone_recent.keys()):
+                        _zone_recent[_zid] = _follow_recent(_zone_recent[_zid], _boxes_now, now_ts)
                 for v in vehicles:
                     bbox = v.get("bbox", {}) or {}
                     hit_zones = _vehicle_hit_zones(v, det_zones)
@@ -3510,7 +3573,8 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                 _recent = _zone_recent.setdefault(id(pick_zone), [])
                                 _recent[:] = [x for x in _recent if now_ts - x[0] <= _FLOW_DEDUP_SEC]
                                 _dup = False
-                                for _t0, _bx in _recent:
+                                for _ent in _recent:
+                                    _bx = _ent[1]
                                     if bbox_iou(_b0, _bx) >= _FLOW_DEDUP_IOU:
                                         _dup = True
                                         break
@@ -3523,7 +3587,7 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                                         pass
                                     _inz.add(_zone_log_key)   # 這一趟就算過了,別再重複
                                     continue
-                                _recent.append((now_ts, dict(_b0)))
+                                _recent.append((now_ts, dict(_b0), now_ts))
                             _inz.add(_zone_log_key)
                         else:
                             _inz = _track_state.setdefault("_in_zone", set())
