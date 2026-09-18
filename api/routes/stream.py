@@ -1305,6 +1305,74 @@ def _nearest_track_id(center: tuple, class_name: str, tracks: dict, max_dist: fl
     return None
 
 
+# ── 一對一軌跡配對(2026-09-18,線圈地面實況揭露的漏車)────────────────────
+# 🛑 WN 下匝道線圈(VD-N8-E-9-O-WN-21-Loop)與 WN-1 攝影機看的是同一條路、同一批車,
+#    12 分鐘實測:線圈 84 輛、攝影機一般流量 60 輛(−29%),逐分鐘相關 0.93 ——
+#    固定比例地漏車。同期「進框」事件 180 筆 = 每台車約 2.1 個軌跡編號。
+#    原因在 _nearest_track_id 的用法:每個偵測框**各自**找最近的舊軌跡,沒有一對一限制,
+#    配對距離最大 260 px。停等區車貼車時,前後兩台會配到**同一個**軌跡 → 跨線只記一次;
+#    又沒有速度預測,移動超過配對距離就另開新軌跡 → 斷成好幾段。
+# 修法:列出所有候選(偵測框 × 軌跡,用速度預測的位置算距離)→ 由近到遠配 →
+#       配過的兩邊都不再使用。沒配到的偵測框開新軌跡。
+# 開關:SIGNAL_TRACK_ASSIGN = ""(關,維持舊行為)/"all"/"4,5"(指定相機 id)。
+_TRACK_ASSIGN_RAW = os.getenv("SIGNAL_TRACK_ASSIGN", "").strip()
+
+
+def _track_assign_on(camera_id) -> bool:
+    if not _TRACK_ASSIGN_RAW:
+        return False
+    if _TRACK_ASSIGN_RAW.lower() == "all":
+        return True
+    try:
+        return int(camera_id) in {int(x) for x in _TRACK_ASSIGN_RAW.split(",") if x.strip()}
+    except (TypeError, ValueError):
+        return False
+
+
+def _assign_tracks(dets: list, tracks: dict, max_dist: float, now_ts: float,
+                   cross_class_ratio: float = 0.6, max_pred_dt: float = 1.5) -> list:
+    """一對一配對。dets = [(cx, cy, class_name), ...];回同長度的 track_id(或 None=開新軌跡)。
+
+    · 距離用**預測位置**:軌跡上次位置 + 速度 × 經過時間(超過 max_pred_dt 秒就不外推,
+      久沒看到的軌跡外推會飄走)
+    · 同車型放寬到 max_dist,跨車型只接受 max_dist × cross_class_ratio(沿用舊規則:
+      吸收車型逐幀跳動,又不把相鄰的不同車併在一起)
+    · 由近到遠配,一個軌跡只給一個框、一個框只拿一個軌跡
+    · 配到後更新軌跡速度(與上次平均,抑制偵測框抖動);只寫 "vel",不動其他欄位
+    """
+    import math as _m
+    pairs = []
+    for tid, tr in tracks.items():
+        tx, ty = tr.get("center", (0, 0))
+        dt = now_ts - tr.get("t", now_ts)
+        vx, vy = tr.get("vel") or (0.0, 0.0)
+        if not (0 < dt <= max_pred_dt):
+            vx = vy = 0.0
+        px, py = tx + vx * dt, ty + vy * dt
+        same_cls = tr.get("class_name")
+        for i, (cx, cy, cls) in enumerate(dets):
+            d = _m.hypot(cx - px, cy - py)
+            lim = max_dist if same_cls == cls else max_dist * cross_class_ratio
+            if d <= lim:
+                pairs.append((d, i, tid))
+    pairs.sort(key=lambda x: (x[0], x[1], x[2]))
+    out = [None] * len(dets)
+    used = set()
+    for d, i, tid in pairs:
+        if out[i] is not None or tid in used:
+            continue
+        out[i] = tid
+        used.add(tid)
+        tr = tracks[tid]
+        dt = now_ts - tr.get("t", now_ts)
+        if dt > 0:
+            tx, ty = tr.get("center", (0, 0))
+            nvx, nvy = (dets[i][0] - tx) / dt, (dets[i][1] - ty) / dt
+            ov = tr.get("vel")
+            tr["vel"] = (nvx, nvy) if not ov else (0.5 * ov[0] + 0.5 * nvx, 0.5 * ov[1] + 0.5 * nvy)
+    return out
+
+
 def _get_unicode_font(size: int = 16):
     cached = _unicode_font_cache.get(size)
     if cached is not None:
@@ -3011,12 +3079,20 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
                     _SPEED_MIN_SAMPLES = int(detection_config.get("speed_min_samples", 5) or 5)
                     _SPEED_OUTLIER_FACTOR = float(detection_config.get("speed_outlier_factor", 2.0) or 2.0)
                     _SPEED_ABS_CAP = float(detection_config.get("speed_abs_cap", 130.0) or 130.0)
-                    for v in vehicles:
+                    _assigned = None
+                    if _track_assign_on(camera_id):
+                        _assigned = _assign_tracks(
+                            [(int(((v.get("bbox") or {}).get("x1", 0) + (v.get("bbox") or {}).get("x2", 0)) / 2),
+                              int(((v.get("bbox") or {}).get("y1", 0) + (v.get("bbox") or {}).get("y2", 0)) / 2),
+                              str(v.get("class_name") or "")) for v in vehicles],
+                            tracks, _match_dist, now_ts)
+                    for _vi, v in enumerate(vehicles):
                         b = v.get("bbox", {}) or {}
                         cx = int((b.get("x1", 0) + b.get("x2", 0)) / 2)
                         cy = int((b.get("y1", 0) + b.get("y2", 0)) / 2)
                         cls = str(v.get("class_name") or "")
-                        track_id = _nearest_track_id((cx, cy), cls, tracks, max_dist=_match_dist)
+                        track_id = (_assigned[_vi] if _assigned is not None
+                                    else _nearest_track_id((cx, cy), cls, tracks, max_dist=_match_dist))
                         if track_id is None:
                             track_id = next_track_id
                             next_track_id += 1
@@ -3220,12 +3296,20 @@ def run_detection(camera_id: int, source: str, location: str, detection_config: 
             for _tid in [_t for _t, _tr in tracks.items()
                          if (now_ts - _tr.get("t", now_ts)) > track_ttl_sec]:
                 tracks.pop(_tid, None)
-            for v in vehicles:
+            _assigned = None
+            if _track_assign_on(camera_id):
+                _assigned = _assign_tracks(
+                    [(int(((v.get("bbox") or {}).get("x1", 0) + (v.get("bbox") or {}).get("x2", 0)) / 2),
+                      int(((v.get("bbox") or {}).get("y1", 0) + (v.get("bbox") or {}).get("y2", 0)) / 2),
+                      str(v.get("class_name") or "")) for v in vehicles],
+                    tracks, _match_dist, now_ts)
+            for _vi, v in enumerate(vehicles):
                 b = v.get("bbox", {}) or {}
                 cx = int((b.get("x1", 0) + b.get("x2", 0)) / 2)
                 cy = int((b.get("y1", 0) + b.get("y2", 0)) / 2)
                 cls = str(v.get("class_name") or "")
-                track_id = _nearest_track_id((cx, cy), cls, tracks, max_dist=_match_dist)
+                track_id = (_assigned[_vi] if _assigned is not None
+                            else _nearest_track_id((cx, cy), cls, tracks, max_dist=_match_dist))
                 if track_id is None:
                     track_id = next_track_id
                     next_track_id += 1
