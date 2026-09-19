@@ -1140,8 +1140,11 @@ EXTEND_SINCE = os.getenv("SIGNAL_EXTEND_SINCE", "") or ""
 EXT_TRIP_OPP_RATIO = float(os.getenv("SIGNAL_EXTEND_TRIP_OPP_RATIO", "0.8") or 0.8)
 EXT_TRIP_NAK_MAX = int(os.getenv("SIGNAL_EXTEND_TRIP_NAK_MAX", "3") or 3)
 EXT_TRIP_MISMATCH_SEC = float(os.getenv("SIGNAL_EXTEND_TRIP_MISMATCH_SEC", "2") or 2)
-EXT_TRIP_MISMATCH_MAX = int(os.getenv("SIGNAL_EXTEND_TRIP_MISMATCH_MAX", "2") or 2)
+# 🛑 控制器沒照新總長走 = 延長沒生效、照原時制結束,沒有危險;實測約 17% 會這樣。
+#    預設 0 = 只記錄生效/未生效次數,不因此自動停止(被拒 NAK、排隊逼近儲車仍會停)。
+EXT_TRIP_MISMATCH_MAX = int(os.getenv("SIGNAL_EXTEND_TRIP_MISMATCH_MAX", "0") or 0)
 _ext_trip: dict = {"tripped": False, "at": None, "why": "", "naks": 0, "sends": 0,
+                   "applied": 0, "not_applied": 0, "last_green_key": None,
                    "mismatch": 0, "pending": None}
 
 
@@ -1205,9 +1208,12 @@ def _ext_watch(g_no: int, live: dict, q_map: dict) -> None:
             exp = pend["T"] - el
             if abs(rem - exp) > EXT_TRIP_MISMATCH_SEC:
                 _ext_trip["mismatch"] += 1
-                if _ext_trip["mismatch"] >= EXT_TRIP_MISMATCH_MAX:
+                _ext_trip["not_applied"] = _ext_trip.get("not_applied", 0) + 1
+                if EXT_TRIP_MISMATCH_MAX and _ext_trip["mismatch"] >= EXT_TRIP_MISMATCH_MAX:
                     _ext_trip_now("控制器沒有照延長後的總長結束(剩 %s 秒,應為 %.0f 秒)" % (rem, exp))
                     return
+            else:
+                _ext_trip["applied"] = _ext_trip.get("applied", 0) + 1
             _ext_trip["pending"] = None
     elif pend and g_no != pend["phase"]:
         _ext_trip["pending"] = None
@@ -1221,7 +1227,13 @@ def _ext_watch(g_no: int, live: dict, q_map: dict) -> None:
                 _ext_trip["naks"] += 1
     if _ext_trip["naks"] >= EXT_TRIP_NAK_MAX:
         _ext_trip_now("延長命令被控制器拒絕 %d 次" % _ext_trip["naks"])
-EXTEND_TRIGGER_REMAIN = int(os.getenv("SIGNAL_EXTEND_TRIGGER_REMAIN", "6") or 6)   # 剩 ≤ 這個才評估
+EXTEND_TRIGGER_REMAIN = int(os.getenv("SIGNAL_EXTEND_TRIGGER_REMAIN", "6") or 6)   # (late 模式)剩 ≤ 這個才評估
+# 🛑 2026-09-19 受控驗證(4 場、共 35 次延長):控制器**在最小綠燈期間**收到延長,12 次有 10 次照做;
+#    過了最小綠燈才送,11 次只有 2 次照做。舊做法「剩 ≤6 秒才評估」正好落在不會生效的時段。
+#    early(預設):綠燈亮到「最小綠 − EXTEND_EARLY_LEAD」~「最小綠 − 1」之間評估一次,每段綠燈只決定一次。
+#    late:舊行為(快結束才評估),保留做對照與回退。
+EXTEND_TIMING = str(os.getenv("SIGNAL_EXTEND_TIMING", "early") or "early").strip().lower()
+EXTEND_EARLY_LEAD = float(os.getenv("SIGNAL_EXTEND_EARLY_LEAD", "6") or 6)   # 影子迴圈每 5 秒一輪,窗要 ≥5 秒
 EXTEND_MIN_REMAIN = int(os.getenv("SIGNAL_EXTEND_MIN_REMAIN", "4") or 4)           # 剩 < 這個不送(黃燈保護)
 EXTEND_MIN_GAP_SEC = float(os.getenv("SIGNAL_EXTEND_MIN_GAP_SEC", "5") or 5)       # 與我方上一則命令的間隔
 EXTEND_MIN_DELTA = int(os.getenv("SIGNAL_EXTEND_MIN_DELTA", "3") or 3)             # 算出來 < 這個就不值得送
@@ -1233,7 +1245,7 @@ CONTROLLER_MAX_GREEN = 210                                                      
 _last_meas: dict = {}                                                               # 本輪量測(迴圈寫、延長判斷讀)
 
 
-def extend_plan(*, el: float, rem: float, q_green_m: float, q_red_m: float,
+def extend_plan(*, el: float, rem: float, q_green_m: float, q_red_m: float, arr_green_vpm: float = 0.0,
                 arr_red_vpm: float, storage_red_m: float, min_green_other: float,
                 mpv: float, sat_vph: float, yellow: float, all_red: float,
                 ped_flash: float = PED_FLASH_SEC, max_green: float = 100.0,
@@ -1254,7 +1266,9 @@ def extend_plan(*, el: float, rem: float, q_green_m: float, q_red_m: float,
     h = 3600.0 / sat_vph if sat_vph and sat_vph > 0 else 3.7
     clear = ped_flash + yellow + all_red
     caps = {}
-    caps["需求"] = (q_green_m / mpv) * h - (rem + ped_flash) if mpv > 0 else 0.0
+    # 提早決定時,剩下這段綠燈裡還會陸續有車到(arr_green_vpm);快結束時這一項很小
+    caps["需求"] = ((q_green_m / mpv) + max(0.0, arr_green_vpm) / 60.0 * rem) * h - (rem + ped_flash) \
+        if mpv > 0 else 0.0
     caps["最大綠"] = min(max_green, CONTROLLER_MAX_GREEN) - (el + rem + ped_flash)
     if arr_red_vpm and arr_red_vpm > 0 and storage_red_m:
         room_veh = (storage_red_m * opp_ratio - (q_red_m or 0)) / mpv
@@ -1289,15 +1303,29 @@ def _extend_decision(d, g_no: int, live: dict, now: float) -> tuple:
     _live_on, _ = extend_live_now(now)
     if not _act["enabled"] and _live_on:
         return "演算法下發未啟用", None, {}
-    if d.action != "KEEP" or getattr(d, "decided_by", "") != "cost":
-        return "不是成本比較判續綠", None, {}
+    early = EXTEND_TIMING != "late"
+    # early:最小綠燈期間引擎標的是 min_green(一律續綠),那正是要評估的時候
+    if d.action != "KEEP" or getattr(d, "decided_by", "") not in (("cost", "min_green") if early else ("cost",)):
+        return "不是續綠", None, {}
     if (live.get("control_mode") != "external_dynamic" or live.get("clearance")
             or live.get("stale") or live.get("step_id") != FIRST_GREEN_STEP):
         return "不在主綠燈或狀態不允許", None, {}
     rem, el = live.get("step_remain_sec"), live.get("phase_elapsed_sec")
     if not isinstance(rem, (int, float)) or not isinstance(el, (int, float)):
         return "不知道剩餘/已亮秒數", None, {}
-    if rem > EXTEND_TRIGGER_REMAIN:
+    pp = plan_params(current_base_plan()) or {}
+    mins = pp.get("min_green") or [10, 20]
+    if early:
+        mg = float(mins[g_no - 1] if len(mins) >= g_no else 10)
+        if el < mg - EXTEND_EARLY_LEAD:
+            return "還沒到評估時機(最小綠 %.0f 秒前 %.0f 秒內)" % (mg, EXTEND_EARLY_LEAD), None, {}
+        if el > mg - 1:
+            return "已過最小綠,延長多半不會生效", None, {}
+        key = (g_no, int(round((now - el) / 5.0)))       # 這一段綠燈(開始時刻,5 秒容差)
+        if _ext_trip.get("last_green_key") == key:
+            return "這段綠燈已評估過", None, {}
+        _ext_trip["last_green_key"] = key
+    elif rem > EXTEND_TRIGGER_REMAIN:
         return "還沒快結束", None, {}
     if rem < EXTEND_MIN_REMAIN:
         return "剩太少不送(黃燈保護)", None, {}
@@ -1306,15 +1334,15 @@ def _extend_decision(d, g_no: int, live: dict, now: float) -> tuple:
         return "距上一則命令不到 %.0f 秒" % EXTEND_MIN_GAP_SEC, None, {}
     r_no = 2 if g_no == 1 else 1
     rr = phase_role(r_no) or {}
-    pp = plan_params(current_base_plan()) or {}
-    mins = pp.get("min_green") or [10, 20]
     q = _last_meas.get("q") or {}
     plan = extend_plan(
         el=float(el), rem=float(rem), q_green_m=float(q.get(g_no) or 0), q_red_m=float(q.get(r_no) or 0),
+        arr_green_vpm=float(_events_flow_vpm(g_no) or 0) if early else 0.0,
         arr_red_vpm=float(_events_flow_vpm(r_no) or 0), storage_red_m=float(rr.get("storage_m") or 0),
         min_green_other=float(mins[r_no - 1] if len(mins) >= r_no else 10),
         mpv=_mpv(), sat_vph=_sat_for(g_no), yellow=float(pp.get("yellow") or 3),
         all_red=float(pp.get("all_red") or 2), max_green=_max_green(pp))
+    plan["timing"] = "early" if early else "late"
     if plan["T"] is None:
         return plan["why"], None, plan
     return "", plan["T"], plan
@@ -1856,7 +1884,8 @@ def _extend_shadow_record(g_no: int, live: dict, plan: dict, sent: bool) -> None
                       (2 if sent else 1) if plan.get("T") else 0,
                       json.dumps({"delta": plan.get("delta"), "T": plan.get("T"), "binding": plan.get("binding"),
                                   "caps": plan.get("caps"), "why": plan.get("why"),
-                                  "rem": live.get("step_remain_sec")}, ensure_ascii=False),
+                                  "rem": live.get("step_remain_sec"), "timing": plan.get("timing")},
+                                 ensure_ascii=False),
                       q.get(g_no), q.get(r_no)))
         conn.commit(); conn.close()
     except Exception as exc:

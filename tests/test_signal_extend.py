@@ -89,6 +89,7 @@ def S(monkeypatch):
     monkeypatch.setattr(S, "EXTEND_GREEN", True)
     monkeypatch.setattr(S, "EXTEND_SHADOW", False)
     monkeypatch.setattr(S, "EXTEND_UNTIL", "")
+    monkeypatch.setattr(S, "EXTEND_TIMING", "late")      # 這組測試驗的是舊行為(快結束才評估)
     monkeypatch.setitem(S._act, "enabled", True)
     monkeypatch.setitem(S._act, "last_ts", 0)
     monkeypatch.setitem(S._act, "ext_last_ts", 0)
@@ -168,3 +169,49 @@ def test_disabled_or_after_until(S, monkeypatch):
     assert on is False and "結束" in why, "截止後不可再下發"
     monkeypatch.setattr(S, "EXTEND_GREEN", False)
     assert S._extend_decision(_D(), 1, _live(), 1000.0)[1] is None
+
+
+# ── early(預設):最小綠燈結束前決定 —— 2026-09-19 受控驗證:最小綠內 10/12 生效、之後 2/11 ──
+@pytest.fixture
+def E(S, monkeypatch):
+    import detection.signal_timing_lookup as L
+    monkeypatch.setattr(S, "EXTEND_TIMING", "early")
+    monkeypatch.setattr(S, "EXTEND_EARLY_LEAD", 6.0)
+    monkeypatch.setitem(S._ext_trip, "last_green_key", None)
+    monkeypatch.setattr(S, "_last_meas", {"q": {1: 150.0, 2: 150.0}})   # 剩下的綠燈放不完的排隊
+    monkeypatch.setattr(L, "plan_params", lambda pid: {"min_green": [10, 20], "yellow": 3, "all_red": 2})
+    monkeypatch.setattr(L, "current_base_plan", lambda *a, **k: 1)
+    return S
+
+
+def test_early_evaluates_inside_min_green_even_when_engine_says_min_green(E):
+    why, T, plan = E._extend_decision(_D(by="min_green"), 1, _live(rem=22, el=7.0), 1000.0)
+    assert why == "" and T is not None and plan["timing"] == "early"
+
+
+@pytest.mark.parametrize("ph,el,frag", [
+    (1, 3.0, "還沒到評估時機"),      # 分相1 最小綠 10:4~9 秒才評估
+    (1, 9.5, "已過最小綠"),
+    (2, 12.0, "還沒到評估時機"),     # 分相2 最小綠 20:14~19 秒
+    (2, 19.5, "已過最小綠"),
+])
+def test_early_window_follows_each_phase_min_green(E, ph, el, frag):
+    w, T, _ = E._extend_decision(_D(by="min_green"), ph, _live(rem=20, el=el), 1000.0)
+    assert T is None and frag in w
+
+
+def test_early_decides_once_per_green(E):
+    assert E._extend_decision(_D(by="min_green"), 1, _live(rem=22, el=5.0), 1000.0)[1] is not None
+    w, T, _ = E._extend_decision(_D(by="min_green"), 1, _live(rem=18, el=9.0), 1004.0)
+    assert T is None and "已評估過" in w
+    # 下一段綠燈(開始時刻不同)可以再評估
+    assert E._extend_decision(_D(by="min_green"), 1, _live(rem=22, el=5.0), 1100.0)[1] is not None
+
+
+def test_early_demand_counts_arrivals_during_remaining_green(E):
+    """提早決定時,剩下的綠燈裡還會有車到:到達率越高,要延的越多。"""
+    base = dict(el=7.0, rem=20.0, q_green_m=60.0, q_red_m=0.0, arr_red_vpm=0.0, storage_red_m=210.0,
+                min_green_other=20.0, mpv=6.0, sat_vph=1200.0, yellow=3.0, all_red=2.0, max_delta=30)
+    lo = E.extend_plan(arr_green_vpm=0.0, **base)["caps"]["需求"]
+    hi = E.extend_plan(arr_green_vpm=12.0, **base)["caps"]["需求"]
+    assert hi - lo == pytest.approx(12.0 / 60.0 * 20.0 * 3.0, abs=0.2)   # 4 台 × 3 秒

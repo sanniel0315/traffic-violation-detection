@@ -69,8 +69,9 @@ def test_trip_on_storage(monkeypatch):
 
 
 def test_trip_when_controller_ignores_T(monkeypatch):
-    """送了 T=36,已亮 20 → 剩餘應為 16;控制器回報剩 5 → 不照命令走,兩次就停。"""
+    """送了 T=36,已亮 20 → 剩餘應為 16;控制器回報剩 5 → 不照命令走,兩次就停(要明確開啟)。"""
     S = _mod(monkeypatch)
+    monkeypatch.setattr(S, "EXT_TRIP_MISMATCH_MAX", 2)
     for _ in range(2):
         S._ext_trip["pending"] = {"phase": 1, "T": 36, "ts": time.time() - 3}
         S._ext_watch(1, {"step_id": 1, "step_remain_sec": 5, "phase_elapsed_sec": 20},
@@ -104,3 +105,13 @@ def test_watch_does_nothing_outside_window(monkeypatch):
     S = _mod(monkeypatch, since=_iso(now + timedelta(hours=1)))
     S._ext_watch(1, {"step_id": 1}, {1: 590.0, 2: 200.0})
     assert S._ext_trip["tripped"] is False
+
+
+def test_default_only_counts_not_applied(monkeypatch):
+    """2026-09-19:沒照新總長走 = 延長沒生效、照原時制結束,沒有危險;預設只記錄,不停止。"""
+    S = _mod(monkeypatch)
+    for rem in (5, 16, 5):
+        S._ext_trip["pending"] = {"phase": 1, "T": 36, "ts": time.time() - 3}
+        S._ext_watch(1, {"step_id": 1, "step_remain_sec": rem, "phase_elapsed_sec": 20}, {1: 10.0, 2: 10.0})
+    assert S._ext_trip["tripped"] is False
+    assert S._ext_trip["not_applied"] == 2 and S._ext_trip["applied"] == 1
