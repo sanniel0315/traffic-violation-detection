@@ -77,12 +77,16 @@ class ApproachState:
     storage_m: Optional[int] = None  # 該匝道儲車上限(公尺)
     priority: bool = False           # 是否主線保護優先
     flow_vpm: Optional[float] = None # 實測到達流量(輛/分),來自壅塞偵測
+    # 並排車道的排隊公尺**加總**(2026-09-19:停止線前兩線並排時,兩線的車都要算)。
+    # None = 單一車道,等於 queue_m。溢流判斷仍看 queue_m(最長那一線先回堵)。
+    queue_total_m: Optional[float] = None
 
     def queue_vehicles(self, meters_per_vehicle: float) -> float:
-        """排隊公尺換算成輛。queue_m 為 None(未量到)時以 0 計。"""
-        if not self.queue_m or meters_per_vehicle <= 0:
+        """排隊公尺換算成輛。並排車道用加總;queue_m 為 None(未量到)時以 0 計。"""
+        q = self.queue_total_m if self.queue_total_m is not None else self.queue_m
+        if not q or meters_per_vehicle <= 0:
             return 0.0
-        return self.queue_m / meters_per_vehicle
+        return q / meters_per_vehicle
 
     def arrival_rate_per_sec(self) -> float:
         """每秒到達輛數。優先用實測 flow_vpm,沒有才退回觀測窗車數。"""

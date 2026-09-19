@@ -728,6 +728,7 @@ def _phase_measure(phase: int) -> dict:
     """
     from api.routes.congestion import congestion_results
     qmax = None
+    qtot = None                          # 並排車道加總後的排隊(相機之間仍取最大:上下游看同一批車)
     fmax = None
     veh = 0.0
     seen = 0
@@ -739,6 +740,9 @@ def _phase_measure(phase: int) -> dict:
         seen += 1
         r = _lane_view(cam, r, phase)
         q = r.get("queue_m")
+        qt = r.get("queue_total_m")
+        if qt is not None:
+            qtot = float(qt) if qtot is None else max(qtot, float(qt))
         if q is not None:
             qv = float(q)
             q_by_cam[cam] = qv
@@ -763,7 +767,12 @@ def _phase_measure(phase: int) -> dict:
         ev = _events_flow_vpm(phase)
         if ev is not None:
             fmax = ev
+    q_raw = qmax
     qmax, clamp = _queue_physics_clamp(phase, qmax, fmax)
+    if qtot is not None and q_raw and qmax is not None and clamp:
+        qtot = qtot * (qmax / q_raw)     # 被物理夾住時,加總值同比例調整
+    if qtot is not None and qmax is not None:
+        qtot = max(qtot, qmax)
     # 🛑 同相兩台看的是同一批車,差太多代表這一輪的量測不可信 ——
     #    決策照常跑(方向不受影響,實測逐筆翻轉率 0.5~1%),但把不一致帶出去,
     #    讓紀錄與畫面看得到,也讓成效評估知道這段資料要打折。
@@ -771,7 +780,7 @@ def _phase_measure(phase: int) -> dict:
     if len(q_by_cam) >= 2:
         hi, lo = max(q_by_cam.values()), min(q_by_cam.values())
         disagree = round(hi - lo, 1)
-    return {"queue_m": qmax, "flow_vpm": fmax,
+    return {"queue_m": qmax, "queue_total_m": qtot, "flow_vpm": fmax,
             "vehicles": veh, "cameras": seen, "queue_clamped": clamp,
             "queue_by_camera": {camera_label(k): round(v, 1) for k, v in q_by_cam.items()},
             "queue_disagree_m": disagree}
@@ -858,7 +867,8 @@ def _lane_view(cam: int, r: dict, phase: int) -> dict:
 
     多條車道:排隊/佔有率/壅塞分數取最大(同一個進場),流量與車數加總(不同車道的車)。
     """
-    whole = {"queue_m": r.get("estimated_queue_length_m"), "raw_occupancy": r.get("raw_occupancy"),
+    whole = {"queue_m": r.get("estimated_queue_length_m"), "queue_total_m": r.get("estimated_queue_length_m"),
+             "raw_occupancy": r.get("raw_occupancy"),
              "occupancy": r.get("occupancy"), "flow_vpm": r.get("flow_vpm"),
              "vehicle_count": r.get("vehicle_count"), "stopped_vehicle_count": r.get("stopped_vehicle_count"),
              "level": r.get("level"), "level_name": r.get("level_name"), "scope": "camera", "lanes": None}
@@ -873,7 +883,7 @@ def _lane_view(cam: int, r: dict, phase: int) -> dict:
         # 🛑 相機有車道區、但沒有一個屬於本分相 → 回報「量不到」,不可退回整台相機。
         #    2026-09-19 14:59 NE-2 重畫後只剩右邊「下匝道後平面道路」一個壅塞區;
         #    退回整台相機等於把那條路的排隊當成上匝道的。量不到,本相就只用另一台相機。
-        return {"queue_m": None, "raw_occupancy": None, "occupancy": None, "flow_vpm": None,
+        return {"queue_m": None, "queue_total_m": None, "raw_occupancy": None, "occupancy": None, "flow_vpm": None,
                 "vehicle_count": None, "stopped_vehicle_count": None,
                 "level": None, "level_name": "本相無車道區", "scope": "none", "lanes": sorted(lanes)}
 
@@ -885,7 +895,9 @@ def _lane_view(cam: int, r: dict, phase: int) -> dict:
         v = [float(z[k]) for z in zs if z.get(k) is not None]
         return sum(v) if v else None
     top = max(zs, key=lambda z: _LV_RANK.get(z.get("level"), 0))
-    return {"queue_m": mx("estimated_queue_length_m"), "raw_occupancy": mx("raw_occupancy"),
+    # 同一台相機、同一分相的多個車道 = 並排車道:車數要加總(queue_total_m),溢流看最長那一線(queue_m)
+    return {"queue_m": mx("estimated_queue_length_m"), "queue_total_m": sm("estimated_queue_length_m"),
+            "raw_occupancy": mx("raw_occupancy"),
             "occupancy": mx("occupancy"), "flow_vpm": sm("flow_vpm"),
             "vehicle_count": sm("vehicle_count"), "stopped_vehicle_count": sm("stopped_vehicle_count"),
             "level": top.get("level"), "level_name": top.get("level_name"),
@@ -2069,6 +2081,7 @@ def _loop():
             #    順序反了的話,故障那一輪還是會送出一則命令。
             _fault_check(live, m1, m2)
             q1, q2 = m1["queue_m"], m2["queue_m"]
+            qt_map = {1: m1.get("queue_total_m"), 2: m2.get("queue_total_m")}
             f1, f2 = m1["flow_vpm"], m2["flow_vpm"]
             # 綠燈側 = 當下分相；紅燈側 = 另一相
             g_no, r_no = (cur_phase, 2 if cur_phase == 1 else 1)
@@ -2083,12 +2096,12 @@ def _loop():
             d = decide(
                 green_phase=g_no, green_elapsed_sec=green_elapsed,
                 green_side=ApproachState(
-                    g_no, queue_m=q_map.get(g_no),
+                    g_no, queue_m=q_map.get(g_no), queue_total_m=qt_map.get(g_no),
                     flow_vpm=f_map.get(g_no),
                     storage_m=g_role.get("storage_m"),
                     priority=bool(g_role.get("priority"))),
                 red_side=ApproachState(
-                    r_no, queue_m=q_map.get(r_no),
+                    r_no, queue_m=q_map.get(r_no), queue_total_m=qt_map.get(r_no),
                     flow_vpm=f_map.get(r_no),
                     storage_m=r_role.get("storage_m"),
                     priority=bool(r_role.get("priority")),
@@ -2909,6 +2922,7 @@ def shadow_plan(_user=Depends(get_current_user)):
 
     meas = {1: _phase_measure(1), 2: _phase_measure(2)}
     q = {p: meas[p]["queue_m"] for p in (1, 2)}
+    qt = {p: meas[p].get("queue_total_m") for p in (1, 2)}
     f = {p: meas[p]["flow_vpm"] for p in (1, 2)}
     roles = {1: phase_role(1) or {}, 2: phase_role(2) or {}}
     plan_id = current_base_plan()
@@ -2917,12 +2931,12 @@ def shadow_plan(_user=Depends(get_current_user)):
     min_green = float(mins[g_no - 1] if len(mins) >= g_no else 15)
     max_green = _max_green(pp)
 
-    green = ApproachState(g_no, queue_m=q.get(g_no), flow_vpm=f.get(g_no),
+    green = ApproachState(g_no, queue_m=q.get(g_no), queue_total_m=qt.get(g_no), flow_vpm=f.get(g_no),
                           storage_m=roles[g_no].get("storage_m"),
                           priority=bool(roles[g_no].get("priority")))
     # 🛑 紅側的 priority 一定要帶。主線保護閘門目前只看綠側,所以漏傳不影響
     #    決策 —— 但控制盤把它顯示成「否」就是錯的,而這個畫面是要拿來稽核的。
-    red = ApproachState(r_no, queue_m=q.get(r_no), flow_vpm=f.get(r_no),
+    red = ApproachState(r_no, queue_m=q.get(r_no), queue_total_m=qt.get(r_no), flow_vpm=f.get(r_no),
                         storage_m=roles[r_no].get("storage_m"),
                         priority=bool(roles[r_no].get("priority")),
                         waiting_sec=green_elapsed)

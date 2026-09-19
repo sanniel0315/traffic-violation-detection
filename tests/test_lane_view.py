@@ -67,3 +67,34 @@ def test_lane_view_no_phase_lane_reports_nothing(monkeypatch):
     r = dict(R, zone_results=[z for z in R["zone_results"] if z["lane_no"] == 2])
     v = S._lane_view(3, r, 2)
     assert v["scope"] == "none" and v["queue_m"] is None and v["raw_occupancy"] is None
+
+
+def test_parallel_lanes_sum_vehicles_but_spillback_uses_longest(monkeypatch):
+    """同一台相機、同一分相兩條並排車道:車數加總;溢流看最長那一線。"""
+    from api.routes import signal_shadow as S
+    from detection.signal_decision_engine import ApproachState
+    monkeypatch.setattr(S, "_phase_lanes", lambda ph: {3: [1, 2]})
+    monkeypatch.setattr(S, "QUEUE_BY_LANE", True)
+    v = S._lane_view(3, R, 2)
+    assert v["queue_m"] == 18.0 and v["queue_total_m"] == 28.0
+    a = ApproachState(2, queue_m=v["queue_m"], queue_total_m=v["queue_total_m"], storage_m=100)
+    assert a.queue_vehicles(7.0) == 4.0              # 28 m ÷ 7 = 4 台(兩線合計)
+    assert a.spillback_ratio() == 0.18               # 18 m ÷ 100(最長那一線)
+    assert ApproachState(2, queue_m=14.0).queue_vehicles(7.0) == 2.0   # 沒給加總 = 單線
+
+
+def test_phase_measure_cameras_take_max_of_totals(monkeypatch):
+    """上下游兩台看同一批車:相機之間取最大,不相加。"""
+    from api.routes import signal_shadow as S
+    from api.routes import congestion
+    monkeypatch.setattr(S, "_phase_lanes", lambda ph: {3: [1, 2], 2: [1]})
+    monkeypatch.setattr(S, "QUEUE_BY_LANE", True)
+    monkeypatch.setattr(S, "PHASE_CAMERAS", {2: [2, 3]})
+    monkeypatch.setattr(S, "_cam_ok", lambda r, now=None: True)
+    monkeypatch.setattr(S, "ARRIVAL_FROM_EVENTS", False)
+    monkeypatch.setattr(S, "QUEUE_CLAMP_ENABLED", False)
+    other = dict(R, zone_results=[dict(R["zone_results"][1], estimated_queue_length_m=20.0)])
+    monkeypatch.setitem(congestion.congestion_results, 3, R)
+    monkeypatch.setitem(congestion.congestion_results, 2, other)
+    m = S._phase_measure(2)
+    assert m["queue_m"] == 20.0 and m["queue_total_m"] == 28.0
