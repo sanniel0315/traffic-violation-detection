@@ -862,6 +862,28 @@ QUEUE_BY_LANE = os.getenv("SIGNAL_QUEUE_BY_LANE", "1") != "0"
 _LV_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 
 
+# 🛑 2026-09-19:壅塞偵測「至少 2 台停下才算排隊」(congestion_detector 的 queue_min_vehicles,
+#    為了擋綠燈時緩行單車的假陽性)。副作用:紅燈時停止線前只停 1 台,排隊顯示 0 m ——
+#    09-19 06:00-16:00 實測紅燈時約 24% 的取樣是這樣(WN-2 24.5%、NE-2 23.6%),
+#    決策引擎因此以為「對向沒有車在等」,不會為它換相。
+#    紅燈時停在停止線前的車一定是真的在等,沒有緩行誤判的問題 → 紅燈側改用停著的車數。
+#    SIGNAL_RED_SINGLE_CAR=1 才用在決策;預設 0:照舊決策,但把「開的話會怎麼判」記進
+#    signal_rule_shadow(rule=red_single_car),累積後再決定要不要開。
+RED_SINGLE_CAR = os.getenv("SIGNAL_RED_SINGLE_CAR", "0") not in ("0", "", "false")
+
+
+def _red_waiting_total_m(meas: dict) -> Optional[float]:
+    """紅燈側:排隊量不到但有車停著 → 停著的車數 × 每車長度(公尺)。不適用時回 None。"""
+    n = meas.get("vehicles") or 0
+    base = meas.get("queue_total_m")
+    if base is None:
+        base = meas.get("queue_m")
+    mpv = _mpv()
+    if n >= 1 and (base or 0) < mpv:
+        return float(n) * mpv
+    return None
+
+
 def _lane_view(cam: int, r: dict, phase: int) -> dict:
     """這台相機裡屬於本分相那幾條車道的量測。車道區沒資料時退回整台相機(scope 會標明)。
 
@@ -1893,6 +1915,30 @@ def _extend_shadow_record(g_no: int, live: dict, plan: dict, sent: bool) -> None
             _stats["extend_shadow_error"] = "%s: %s" % (type(exc).__name__, exc)
 
 
+def _red_single_record(g_no: int, green_elapsed: float, live: dict, d, d_alt, q_map: dict,
+                       red_alt_m: float) -> None:
+    """紅燈側只有停著的車(排隊顯示 0)時,記下「若把它們算進去」的判斷。只記錄,不下發。"""
+    r_no = 2 if g_no == 1 else 1
+    conn = _db()
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS signal_rule_shadow (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, epoch REAL,
+                            rule TEXT, green_phase INTEGER, green_elapsed REAL,
+                            step_id INTEGER, would INTEGER, reason TEXT,
+                            queue_green REAL, queue_red REAL)""")
+        conn.execute("INSERT INTO signal_rule_shadow(ts,epoch,rule,green_phase,green_elapsed,step_id,would,"
+                     "reason,queue_green,queue_red) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                     (datetime.now().isoformat(timespec="seconds"), time.time(), "red_single_car", g_no,
+                      green_elapsed, live.get("step_id"),
+                      1 if (d_alt.action == "SWITCH" and d.action != "SWITCH") else 0,
+                      json.dumps({"now": d.action, "alt": d_alt.action, "alt_reason": d_alt.reason,
+                                  "red_waiting_m": round(red_alt_m, 1)}, ensure_ascii=False),
+                      q_map.get(g_no), q_map.get(r_no)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 _rule_prev: dict = {"since": None, "q": None}
 
 
@@ -2122,29 +2168,39 @@ def _loop():
             mins = pp.get("min_green") or [15, 15]
             min_green = float(mins[g_no - 1] if len(mins) >= g_no else 15)
 
-            d = decide(
-                green_phase=g_no, green_elapsed_sec=green_elapsed,
-                green_side=ApproachState(
-                    g_no, queue_m=q_map.get(g_no), queue_total_m=qt_map.get(g_no),
-                    flow_vpm=f_map.get(g_no),
-                    storage_m=g_role.get("storage_m"),
-                    priority=bool(g_role.get("priority"))),
-                red_side=ApproachState(
-                    r_no, queue_m=q_map.get(r_no), queue_total_m=qt_map.get(r_no),
-                    flow_vpm=f_map.get(r_no),
-                    storage_m=r_role.get("storage_m"),
-                    priority=bool(r_role.get("priority")),
-                    waiting_sec=green_elapsed),
-                min_green_sec=min_green,
-                max_green_sec=_max_green(pp),
-                # 飽和流 / 損失時間 / 每車長度全部用現場量到的(見 _measured_* 的說明)
-                saturation_vph=_sat_for(g_no),
-                meters_per_vehicle=_mpv(),
-                lost_time_sec=_lost_time_for(g_no),
-                keep_weight=KEEP_WEIGHT,
-                priority_keep_weight=PRIORITY_KEEP_WEIGHT,
-                demand_scaled_change_cost=DEMAND_SCALED_CHANGE_COST,
-            )
+            def _dec(red_total_m):
+                return decide(
+                    green_phase=g_no, green_elapsed_sec=green_elapsed,
+                    green_side=ApproachState(
+                        g_no, queue_m=q_map.get(g_no), queue_total_m=qt_map.get(g_no),
+                        flow_vpm=f_map.get(g_no),
+                        storage_m=g_role.get("storage_m"),
+                        priority=bool(g_role.get("priority"))),
+                    red_side=ApproachState(
+                        r_no, queue_m=q_map.get(r_no), queue_total_m=red_total_m,
+                        flow_vpm=f_map.get(r_no),
+                        storage_m=r_role.get("storage_m"),
+                        priority=bool(r_role.get("priority")),
+                        waiting_sec=green_elapsed),
+                    min_green_sec=min_green,
+                    max_green_sec=_max_green(pp),
+                    # 飽和流 / 損失時間 / 每車長度全部用現場量到的(見 _measured_* 的說明)
+                    saturation_vph=_sat_for(g_no),
+                    meters_per_vehicle=_mpv(),
+                    lost_time_sec=_lost_time_for(g_no),
+                    keep_weight=KEEP_WEIGHT,
+                    priority_keep_weight=PRIORITY_KEEP_WEIGHT,
+                    demand_scaled_change_cost=DEMAND_SCALED_CHANGE_COST,
+                )
+            red_alt = _red_waiting_total_m(m1 if r_no == 1 else m2)
+            d = _dec(red_alt if (RED_SINGLE_CAR and red_alt is not None) else qt_map.get(r_no))
+            if red_alt is not None and not RED_SINGLE_CAR:
+                try:
+                    d_alt = _dec(red_alt)
+                    _red_single_record(g_no, green_elapsed, live, d, d_alt, q_map, red_alt)
+                except Exception as exc:
+                    with _lock:
+                        _stats["red_single_error"] = "%s: %s" % (type(exc).__name__, exc)
 
             # 🛑 先下發再寫這一筆 log —— 反過來的話這一筆決策的執行結果
             #    會落到下一筆去,稽核時對不上。

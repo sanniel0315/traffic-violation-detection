@@ -98,3 +98,23 @@ def test_phase_measure_cameras_take_max_of_totals(monkeypatch):
     monkeypatch.setitem(congestion.congestion_results, 2, other)
     m = S._phase_measure(2)
     assert m["queue_m"] == 20.0 and m["queue_total_m"] == 28.0
+
+
+def test_red_single_waiting_car_is_counted_only_when_queue_missing(monkeypatch):
+    """壅塞偵測至少 2 台才算排隊;紅燈側只停 1 台時用停著的車數(09-19 實測紅燈時約 24%)。"""
+    from api.routes import signal_shadow as S
+    monkeypatch.setattr(S, "_mpv", lambda: 6.0)
+    assert S._red_waiting_total_m({"vehicles": 1, "queue_m": 0.0, "queue_total_m": 0.0}) == 6.0
+    assert S._red_waiting_total_m({"vehicles": 0, "queue_m": 0.0}) is None          # 沒車
+    assert S._red_waiting_total_m({"vehicles": 3, "queue_m": 18.0, "queue_total_m": 18.0}) is None  # 已量到
+    assert S._red_waiting_total_m({"vehicles": 1, "queue_m": None, "queue_total_m": None}) == 6.0
+
+
+def test_red_single_car_switch_decision_changes():
+    """對向 1 台停著等 30 秒、綠側沒車:算進去就會換相,不算就續綠。"""
+    from detection.signal_decision_engine import decide, ApproachState
+    kw = dict(green_phase=1, green_elapsed_sec=30, min_green_sec=10, max_green_sec=100,
+              meters_per_vehicle=6.0, keep_weight=3, demand_scaled_change_cost=True,
+              green_side=ApproachState(1, queue_m=0.0))
+    assert decide(red_side=ApproachState(2, queue_m=0.0, waiting_sec=30), **kw).action == "KEEP"
+    assert decide(red_side=ApproachState(2, queue_m=0.0, queue_total_m=6.0, waiting_sec=30), **kw).action == "SWITCH"
