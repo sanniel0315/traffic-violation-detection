@@ -1240,13 +1240,17 @@ def _ext_watch(g_no: int, live: dict, q_map: dict) -> None:
     elif pend and g_no != pend["phase"]:
         _ext_trip["pending"] = None
     # ③ 延長命令被拒:送出後等控制器回覆,只判一次
-    ack_ts = _ext_trip.get("ack_check")
-    if ack_ts:
-        ok = _ack_of_last_send(since_ts=ack_ts)
+    #   🛑 2026-09-19 18:17 誤停:延長命令的 ACK 要 20~51 秒才回,舊判定「5 秒內沒回覆 = 被拒」
+    #      把三則**都被接受**(兩則確認生效)的命令算成被拒,湊滿 3 次就停止。
+    #      改成:用序號配對自己的 0F80/0F81,等 EXT_ACK_WAIT_SEC;只有明確 0F81 才算被拒,
+    #      等不到回覆記為「不明」,不算被拒。
+    chk = _ext_trip.get("ack_check")
+    if chk:
+        ok = _ext_ack_result(chk.get("ts"), chk.get("seq"))
         if ok is not None:
             _ext_trip["ack_check"] = None
-            if ok is False:
-                _ext_trip["naks"] += 1
+            key = {True: "acks", False: "naks", "unknown": "ack_unknown"}[ok]
+            _ext_trip[key] = _ext_trip.get(key, 0) + 1
     if _ext_trip["naks"] >= EXT_TRIP_NAK_MAX:
         _ext_trip_now("延長命令被控制器拒絕 %d 次" % _ext_trip["naks"])
 EXTEND_TRIGGER_REMAIN = int(os.getenv("SIGNAL_EXTEND_TRIGGER_REMAIN", "6") or 6)   # (late 模式)剩 ≤ 這個才評估
@@ -1408,6 +1412,39 @@ def ab_firstgreen_side(now_ts: float | None = None) -> str:
     lt = datetime.fromtimestamp(now_ts or time.time())
     slot = int((lt.hour * 60 + lt.minute) // AB_FIRSTGREEN_MIN)
     return "A" if slot % 2 == 0 else "B"
+
+
+EXT_ACK_WAIT_SEC = float(os.getenv("SIGNAL_EXTEND_ACK_WAIT_SEC", "90") or 90)
+
+
+def _ext_ack_result(sent_ts: Optional[float], seq) -> object:
+    """延長命令的回覆:True 接受(0F80)/ False 被拒(0F81)/ "unknown" 等太久沒回 / None 還在等。
+
+    用序號配對(09-19 實測控制器回覆帶回我方序號);序號不明時退回「送出後第一則帶 5F1C 的回覆」。
+    """
+    if not sent_ts:
+        return None
+    now = time.time()
+    try:
+        conn = _sqlite3.connect("file:%s?mode=ro" % _VIOL_DB, uri=True, timeout=5)
+        rows = list(conn.execute(
+            "SELECT code,seq,raw FROM signal_frames WHERE src='controller' AND ts>=? AND ts<=? "
+            "AND code IN ('0F80','0F81') ORDER BY ts", (sent_ts, sent_ts + EXT_ACK_WAIT_SEC)))
+        conn.close()
+    except Exception:
+        return None
+    for code, rseq, raw in rows:
+        try:
+            b = bytes.fromhex(str(raw).replace(" ", ""))
+        except Exception:
+            continue
+        i = b.find(bytes([0x0F, 0x80 if code == "0F80" else 0x81]))
+        if i < 0 or len(b) < i + 4 or b[i + 2] != 0x5F or b[i + 3] != 0x1C:
+            continue
+        if seq is not None and rseq is not None and int(rseq) != int(seq):
+            continue
+        return code == "0F80"
+    return "unknown" if now - sent_ts > EXT_ACK_WAIT_SEC else None
 
 
 def _ack_of_last_send(since_ts: Optional[float] = None) -> Optional[bool]:
@@ -1787,7 +1824,7 @@ def _actuate(d, g_no: int, live: dict) -> None:
             sent = (res or {}).get("sent") or {}
             # 登記這一則,讓 _ext_watch 驗證控制器有沒有照 T 結束、有沒有被拒
             _ext_trip["pending"] = {"phase": g_no, "T": T, "ts": now}
-            _ext_trip["ack_check"] = now
+            _ext_trip["ack_check"] = {"ts": now, "seq": sent.get("seq")}
             _ext_trip["sends"] += 1
             _act.update({"ext_n": _act.get("ext_n", 0) + 1, "ext_last_ts": now,
                          "ext_last": "分相%d 步階1 總長延到 %d 秒(+%d,受「%s」限制)" % (

@@ -91,12 +91,40 @@ def test_no_trip_when_controller_honours_T(monkeypatch):
 
 def test_trip_on_repeated_nak(monkeypatch):
     S = _mod(monkeypatch)
-    monkeypatch.setattr(S, "_ack_of_last_send", lambda since_ts=None: False)
+    monkeypatch.setattr(S, "_ext_ack_result", lambda ts, seq: False)          # 明確 0F81
     for _ in range(3):
-        S._ext_trip["ack_check"] = time.time() - 5
+        S._ext_trip["ack_check"] = {"ts": time.time() - 5, "seq": 1}
         S._ext_watch(1, {"step_id": 1}, {1: 10.0, 2: 10.0})
     assert S._ext_trip["tripped"] is True
     assert "拒絕" in S._ext_trip["why"]
+
+
+def test_late_or_missing_ack_is_not_a_reject(monkeypatch):
+    """09-19 18:17 誤停:延長命令的 ACK 要 20~51 秒才回。還在等 / 等太久沒回,都不可算被拒。"""
+    S = _mod(monkeypatch)
+    for res in (None, "unknown", True, "unknown", True):
+        monkeypatch.setattr(S, "_ext_ack_result", lambda ts, seq, r=res: r)
+        S._ext_trip["ack_check"] = {"ts": time.time() - 5, "seq": 1}
+        S._ext_watch(1, {"step_id": 1}, {1: 10.0, 2: 10.0})
+    assert S._ext_trip["tripped"] is False and S._ext_trip["naks"] == 0
+    assert S._ext_trip.get("acks") == 2 and S._ext_trip.get("ack_unknown") == 2
+
+
+def test_ext_ack_matches_own_seq_even_when_late(monkeypatch, tmp_path):
+    """用序號配對:51 秒後才回的 0F80 算接受;別則命令(不同序號)的回覆不算。"""
+    import sqlite3
+    S = _mod(monkeypatch)
+    db = tmp_path / "v.db"
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE signal_frames(ts REAL, src TEXT, code TEXT, seq INTEGER, raw TEXT)")
+    t0 = time.time() - 100
+    c.execute("INSERT INTO signal_frames VALUES(?,?,?,?,?)", (t0 + 0.1, "controller", "0F80", 50, "AA BB 32 FF FF 00 0E 0F 80 5F 1C AA CC 00"))
+    c.execute("INSERT INTO signal_frames VALUES(?,?,?,?,?)", (t0 + 51.2, "controller", "0F80", 49, "AA BB 31 FF FF 00 0E 0F 80 5F 1C AA CC 84"))
+    c.commit(); c.close()
+    monkeypatch.setattr(S, "_VIOL_DB", str(db))
+    assert S._ext_ack_result(t0, 49) is True
+    assert S._ext_ack_result(t0, 77) == "unknown"                         # 90 秒內沒有自己的回覆
+    assert S._ext_ack_result(time.time() - 3, 77) is None                  # 還在等
 
 
 def test_watch_does_nothing_outside_window(monkeypatch):
