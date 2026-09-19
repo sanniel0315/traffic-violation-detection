@@ -57,3 +57,13 @@ def test_phase_measure_uses_lane_queue(monkeypatch):
     monkeypatch.setitem(congestion.congestion_results, 3, R)
     m = S._phase_measure(2)
     assert m["queue_m"] == 10.0
+
+
+def test_lane_view_no_phase_lane_reports_nothing(monkeypatch):
+    """NE-2 09-19 14:59 重畫後只剩別條路的壅塞區 —— 不可退回整台相機(那是別條路的排隊)。"""
+    from api.routes import signal_shadow as S
+    monkeypatch.setattr(S, "_phase_lanes", lambda ph: {3: [1]})
+    monkeypatch.setattr(S, "QUEUE_BY_LANE", True)
+    r = dict(R, zone_results=[z for z in R["zone_results"] if z["lane_no"] == 2])
+    v = S._lane_view(3, r, 2)
+    assert v["scope"] == "none" and v["queue_m"] is None and v["raw_occupancy"] is None

@@ -870,7 +870,12 @@ def _lane_view(cam: int, r: dict, phase: int) -> dict:
         return whole
     zs = [z for z in r["zone_results"] if z.get("lane_no") in lanes]
     if not zs:
-        return whole
+        # 🛑 相機有車道區、但沒有一個屬於本分相 → 回報「量不到」,不可退回整台相機。
+        #    2026-09-19 14:59 NE-2 重畫後只剩右邊「下匝道後平面道路」一個壅塞區;
+        #    退回整台相機等於把那條路的排隊當成上匝道的。量不到,本相就只用另一台相機。
+        return {"queue_m": None, "raw_occupancy": None, "occupancy": None, "flow_vpm": None,
+                "vehicle_count": None, "stopped_vehicle_count": None,
+                "level": None, "level_name": "本相無車道區", "scope": "none", "lanes": sorted(lanes)}
 
     def mx(k):
         v = [float(z[k]) for z in zs if z.get(k) is not None]
