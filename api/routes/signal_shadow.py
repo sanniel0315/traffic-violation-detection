@@ -1116,7 +1116,7 @@ _fault = {
     # kind -> {"since": ts, "detail": str}  已確認、正在降階中的
     "active": {},
     "clear_since": None,
-    "send_fails": 0, "logic_fails": 0, "nack_fails": 0,
+    "send_fails": 0, "logic_fails": 0, "nack_fails": 0, "judged_ts": None,
     "last_error": "",
     "events": deque(maxlen=200),
 }
@@ -1553,13 +1553,21 @@ def _fault_check(live: Optional[dict], m1: Optional[dict], m2: Optional[dict]) -
     # (2) 指令傳輸錯誤 —— 兩種都算:送不出去、以及送出後控制器沒接受。
     #     🛑 只看「送得出去」是不夠的:5F1C 的 NAK 率實測 42%,
     #        送出成功不等於被接受(見 _ack_of_last_send 的說明)。
-    ack = _ack_of_last_send()
-    if ack is False:
-        _fault["nack_fails"] += 1
-        _act["last_ack"] = "未被接受"
-    elif ack is True:
-        _fault["nack_fails"] = 0
-        _act["last_ack"] = "已接受"
+    # 🛑 2026-09-20 修:**每則命令只判一次**。舊寫法每 2 秒把「最後一則」重判一次,
+    #    一則被拒就每輪 +1 —— 60 秒後累積到約 30 次、觸發降階(紀錄上的「連續 32 次」
+    #    其實是同一則命令)。35 次傳輸故障降階中 30 次是這樣來的。而且降階後不再送命令,
+    #    「最後一則」永遠是那則被拒的,計數一直加、故障永遠不解除,只能重啟(09-19 23:50 卡 17 分鐘)。
+    last = _act.get("last_ts") or 0
+    if last and last != _fault.get("judged_ts"):
+        ack = _ack_of_last_send()
+        if ack is not None:
+            _fault["judged_ts"] = last
+            if ack is False:
+                _fault["nack_fails"] += 1
+                _act["last_ack"] = "未被接受"
+            else:
+                _fault["nack_fails"] = 0
+                _act["last_ack"] = "已接受"
     fails = max(_fault["send_fails"], _fault["nack_fails"])
     if fails >= FAULT_SEND_FAILS:
         why = ("連續 %d 次下發送不出去:%s" % (_fault["send_fails"], _act.get("last_error") or "")
@@ -1596,6 +1604,11 @@ def _fault_check(live: Optional[dict], m1: Optional[dict], m2: Optional[dict]) -
         #    授權在一分鐘內過期,控制器自己回到固定時制計畫。
         T.enter_degraded(level, detail)
         _degrade_persist(level, detail, kind)
+        if kind == "transmit":
+            # 降階後不再送命令,舊計數無從更新;歸零 → 穩定 FAULT_CLEAR_SEC 後復歸、重新嘗試。
+            # 控制器若仍持續拒收,連續 FAULT_SEND_FAILS 則後會再降階(每次都有紀錄)。
+            _fault["nack_fails"] = 0
+            _fault["send_fails"] = 0
         add_log("error", "故障檢核:%s → 停止下發,號誌回復固定時制" % detail, "signal")
         try:
             push_alert("號誌動態控制降階", detail, level="critical")
