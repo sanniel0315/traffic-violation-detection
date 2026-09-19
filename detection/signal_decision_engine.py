@@ -254,19 +254,18 @@ def decide(
     #    它們各自是怎麼來的。理由欄是給值班的人判讀用的,不是內部算式備忘。
     #    改成:先講結論,再用「幾台等幾秒」把數字還原成看得懂的量,
     #    並標明單位與權重的意思。
-    kw_txt = "" if kw == 1.0 else f"×權重{kw:g}"
-    lhs = (f"對向 {red_veh:.1f} 台已等 {max(0.0, red_wait):.0f} 秒"
-           f"，延滯 {switch_gain:.0f}")
-    rhs = (f"切走要付 {threshold:.0f}"
-           f"（綠側 {green_remain:.1f} 台會多等 {keep_gain:.0f}{kw_txt}"
-           f"，加換相損失 {change_cost:.0f}）")
-    tail = "。數字都是「車×秒」，越大代表越多車等越久"
+    # 🛑 2026-09-19 使用者:「寫精簡清楚白話的」。理由只講「誰在等、等多久、所以怎麼做」;
+    #    成本數字(車×秒、權重、換相損失)留在 detail 供稽核,不塞進理由。
+    wait_txt = f"{max(0.0, red_wait):.0f} 秒"
+    red_txt = "沒有車在等" if red_veh < 0.5 else f"{red_veh:.0f} 台等了 {wait_txt}"
+    green_txt = "綠燈這邊已沒車" if green_remain < 0.5 else f"綠燈這邊還有 {green_remain:.0f} 台"
     if switch_gain > threshold:
         d.action = "SWITCH"
-        d.reason = f"換相：{lhs}，已超過{rhs}{tail}"
+        d.reason = f"換相：對向 {red_txt}，{green_txt}，該換對向走"
     else:
         d.action = "KEEP"
-        d.reason = f"續綠：{lhs}，還不到{rhs}{tail}"
+        d.reason = (f"續綠：對向{red_txt}" if red_veh < 0.5
+                    else f"續綠：對向 {red_txt}，{green_txt}，還不值得切")
     return d
 
 
