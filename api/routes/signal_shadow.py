@@ -575,6 +575,9 @@ def _camera_live() -> list:
             r = congestion_results.get(cam) or {}
             if not _cam_ok(r):
                 r = {"level": "offline", "level_name": "斷線"}   # 斷線不給任何量測值
+                lv = {"level": "offline", "level_name": "斷線", "scope": "camera", "lanes": None}
+            else:
+                lv = _lane_view(cam, r, phase)
             out.append({
                 "camera_id": cam,
                 "name": camera_label(cam),
@@ -582,16 +585,17 @@ def _camera_live() -> list:
                 "online": r.get("level") != "offline",
                 # 顯示用一律取平滑後的佔用率。原始瞬時值抖動大,
                 # 掛在牆上會一直跳,而且跟等級判定用的不是同一個數。
-                "occupancy": r.get("occupancy"),
-                "raw_occupancy": r.get("raw_occupancy"),
-                "vehicle_count": r.get("vehicle_count"),
-                "stopped_vehicle_count": r.get("stopped_vehicle_count"),
-                "flow_vpm": r.get("flow_vpm"),
-                "queue_m": r.get("estimated_queue_length_m"),
+                "occupancy": lv.get("occupancy"),
+                "raw_occupancy": lv.get("raw_occupancy"),
+                "vehicle_count": lv.get("vehicle_count"),
+                "stopped_vehicle_count": lv.get("stopped_vehicle_count"),
+                "flow_vpm": lv.get("flow_vpm"),
+                "queue_m": lv.get("queue_m"),
+                "scope": lv.get("scope"), "lanes": lv.get("lanes"),
                 # 🛑 鍵是 level / level_name(見 congestion_detector 的 result),
                 #    第一版寫成 congestion_level,四台全回 None,圖上全是「未量到」灰。
-                "level": r.get("level"),
-                "level_name": r.get("level_name"),
+                "level": lv.get("level"),
+                "level_name": lv.get("level_name"),
             })
     return out
 
@@ -733,7 +737,8 @@ def _phase_measure(phase: int) -> dict:
         if not _cam_ok(r):               # 斷線/過期的相機不參與聚合(不可當成 0 台車)
             continue
         seen += 1
-        q = r.get("estimated_queue_length_m")
+        r = _lane_view(cam, r, phase)
+        q = r.get("queue_m")
         if q is not None:
             qv = float(q)
             q_by_cam[cam] = qv
@@ -836,6 +841,50 @@ def _phase_lanes(phase: int) -> dict:
     lanes = {int(c): v for c, v in _flow_lanes_for(phase, roles).items()}
     _PHASE_LANES_CACHE[phase] = (_t.time(), lanes)
     return lanes
+
+
+# 🛑 2026-09-19 使用者:「是分車道的,我的流量也要分車道」。
+#    同一台相機畫面裡可能有別條路的車道區 —— NE-1 的「下高速公路後平面道路」、
+#    NE-2 的「下匝道後平面道路」都不屬於上匝道。整台相機的排隊/佔有率會把它們混進來:
+#    09-19 06:00-15:00 實測 NE-2 有 12.6% 的時間整體排隊比上匝道車道多 5 m 以上,
+#    有排隊時平均 16.3 m 對 10.0 m(多 63%)—— 上匝道被高估,決策因此多給上匝道綠燈。
+#    回退:SIGNAL_QUEUE_BY_LANE=0(改回取整台相機)。
+QUEUE_BY_LANE = os.getenv("SIGNAL_QUEUE_BY_LANE", "1") != "0"
+_LV_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+def _lane_view(cam: int, r: dict, phase: int) -> dict:
+    """這台相機裡屬於本分相那幾條車道的量測。車道區沒資料時退回整台相機(scope 會標明)。
+
+    多條車道:排隊/佔有率/壅塞分數取最大(同一個進場),流量與車數加總(不同車道的車)。
+    """
+    whole = {"queue_m": r.get("estimated_queue_length_m"), "raw_occupancy": r.get("raw_occupancy"),
+             "occupancy": r.get("occupancy"), "flow_vpm": r.get("flow_vpm"),
+             "vehicle_count": r.get("vehicle_count"), "stopped_vehicle_count": r.get("stopped_vehicle_count"),
+             "level": r.get("level"), "level_name": r.get("level_name"), "scope": "camera", "lanes": None}
+    if not QUEUE_BY_LANE or not r.get("zone_results"):
+        return whole
+    try:
+        lanes = set(_phase_lanes(phase).get(cam) or [])
+    except Exception:                    # 車道設定讀不到:退回整台相機,不可讓量測中斷
+        return whole
+    zs = [z for z in r["zone_results"] if z.get("lane_no") in lanes]
+    if not zs:
+        return whole
+
+    def mx(k):
+        v = [float(z[k]) for z in zs if z.get(k) is not None]
+        return max(v) if v else None
+
+    def sm(k):
+        v = [float(z[k]) for z in zs if z.get(k) is not None]
+        return sum(v) if v else None
+    top = max(zs, key=lambda z: _LV_RANK.get(z.get("level"), 0))
+    return {"queue_m": mx("estimated_queue_length_m"), "raw_occupancy": mx("raw_occupancy"),
+            "occupancy": mx("occupancy"), "flow_vpm": sm("flow_vpm"),
+            "vehicle_count": sm("vehicle_count"), "stopped_vehicle_count": sm("stopped_vehicle_count"),
+            "level": top.get("level"), "level_name": top.get("level_name"),
+            "scope": "lane", "lanes": sorted(lanes)}
 
 
 def _events_flow_vpm(phase: int, window_sec: float = 120.0,

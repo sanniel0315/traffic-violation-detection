@@ -27931,14 +27931,17 @@ const SIG_TAB_ALIAS = {plan: 'eval', light: 'lamp', config: 'device',
                 full: sigCamFullName(c.camera_id) || c.name,
                 lv: wrLvRank(c.level),
                 color: WR_LV_COLOR[wrLvRank(c.level)],
-                occ: (c.occupancy == null) ? '—' : (Number(c.occupancy) * 100).toFixed(0) + '%',
+                // 🛑 2026-09-19 使用者「這裡佔有率不對」:原本顯示的 occupancy 是**壅塞分數**
+                //    (判級用的移動平均),而且是整台相機(混進別條路的車道)。
+                //    改顯示該分相車道區的真正佔用率 raw_occupancy(後端 _lane_view 已按車道挑)。
+                occ: (c.raw_occupancy == null) ? '—' : (Number(c.raw_occupancy) * 100).toFixed(0) + '%',
                 queue: (c.queue_m == null) ? null : Number(c.queue_m).toFixed(1),
                 // 量測棒:寬度與顏色沿用戰情牆同一組函式,不另寫一份門檻 ——
                 // 兩份門檻會漂移,同一個數字在兩處會顯示成不同顏色。
-                occCls: sigMeterCls(c.occupancy),
-                occW: sigPctW(c.occupancy),
+                occCls: sigMeterCls(c.raw_occupancy),
+                occW: sigPctW(c.raw_occupancy),
                 qW: sigQueueW(c.queue_m, c.phase_no),
-                occTip: '佔有率:車輛覆蓋 ROI 的比例(不是判級用的壅塞分數)',
+                occTip: (c.scope === 'lane' ? '本分相車道區' : '整台相機(車道區無資料)') + '的佔有率:車輛覆蓋比例,不是判級用的壅塞分數',
                 qTip: '排隊長度;棒長相對於該分相的儲車空間',
             // 🛑 分相 2 的相機排前面(與左右兩欄、時制表同一個排序規則)。
             })).sort((a, b) => (b.phase_no - a.phase_no) || (a.camera_id - b.camera_id));
